@@ -24,20 +24,71 @@ export class PostgresPrimaryAdapter implements StoragePort {
   private pool: Pool | null = null;
   private isInitialized = false;
 
+  private urlFormatError: string | null = null;
+
   constructor(private readonly connectionString?: string) {
-    const url = connectionString || process.env.DATABASE_URL;
+    let url = (connectionString || process.env.DATABASE_URL || '').trim();
+    // Remove accidental wrapping quotes or accidental leading char like lpostgresql://
+    if ((url.startsWith('"') && url.endsWith('"')) || (url.startsWith("'") && url.endsWith("'"))) {
+      url = url.slice(1, -1).trim();
+    }
+    if (url.startsWith('lpostgresql://')) {
+      url = url.slice(1);
+    }
+
     if (url) {
-      this.pool = new Pool({
-        connectionString: url,
-        max: 10,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000,
-        ssl: url.includes('supabase') || url.includes('neon') ? { rejectUnauthorized: false } : undefined,
-      });
+      if (url.startsWith('https://') || url.startsWith('http://')) {
+        this.urlFormatError =
+          'صيغة DATABASE_URL تبدأ بـ https:// (رابط مشروع Supabase REST API) بدلاً من صيغة اتصال PostgreSQL المباشرة (postgresql://user:password@host:port/database أو Pooler URI).';
+      } else if (!url.startsWith('postgresql://') && !url.startsWith('postgres://')) {
+        this.urlFormatError = 'صيغة DATABASE_URL غير صالحة. يجب أن تبدأ بـ postgresql:// أو postgres://';
+      } else {
+        try {
+          const u = new URL(url);
+          let cleanPassword = u.password ? decodeURIComponent(u.password) : '';
+          if (cleanPassword.startsWith('[') && cleanPassword.endsWith(']')) {
+            cleanPassword = cleanPassword.slice(1, -1);
+          }
+          if (cleanPassword.startsWith('%5B') && cleanPassword.endsWith('%5D')) {
+            cleanPassword = cleanPassword.slice(3, -3);
+          }
+
+          const dbName = u.pathname ? u.pathname.replace(/^\//, '') : undefined;
+
+          this.pool = new Pool({
+            host: u.hostname || undefined,
+            port: u.port ? parseInt(u.port, 10) : 5432,
+            user: u.username ? decodeURIComponent(u.username) : undefined,
+            password: cleanPassword,
+            database: dbName || 'postgres',
+            max: 10,
+            idleTimeoutMillis: 30000,
+            connectionTimeoutMillis: 10000,
+            ssl: url.includes('supabase') || url.includes('neon') || url.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
+          });
+        } catch (e: any) {
+          this.urlFormatError = `فشل إنشاء مجمع اتصالات Pool: ${e.message}`;
+        }
+      }
+    }
+  }
+
+  public async close(): Promise<void> {
+    if (this.pool) {
+      await this.pool.end();
+      this.pool = null;
     }
   }
 
   public async checkHealth(): Promise<{ connected: boolean; message: string; error?: string }> {
+    if (this.urlFormatError) {
+      return {
+        connected: false,
+        message: 'صيغة DATABASE_URL غير متوافقة مع اتصال PostgreSQL المباشر.',
+        error: this.urlFormatError,
+      };
+    }
+
     if (!this.pool) {
       return {
         connected: false,
@@ -54,10 +105,15 @@ export class PostgresPrimaryAdapter implements StoragePort {
         message: `تم الاتصال بنجاح بـ PostgreSQL: ${res.rows[0].current_time}`,
       };
     } catch (err: any) {
+      // Sanitize any password or full URL from error message
+      let sanitizedError = (err.message || 'خطأ اتصال غير معروف').replace(/\/\/([^:]+):([^@]+)@/g, '//$1:***@');
+      if (sanitizedError.includes('ECONNREFUSED') && (sanitizedError.includes('2a05:') || sanitizedError.includes('5432'))) {
+        sanitizedError += ' | ملاحظة فنية: خادم db.[ref].supabase.co يدعم اتصالات IPv6 فقط؛ يرجى نسخ رابط Connection Pooler (من تبويب URI في لوحة Supabase مع تفعيل Connection Pooling) لدعم شبكات IPv4 السحابية.';
+      }
       return {
         connected: false,
         message: 'فشل الاتصال بقاعدة بيانات PostgreSQL / Supabase.',
-        error: err.message,
+        error: sanitizedError,
       };
     }
   }
@@ -858,9 +914,9 @@ export class PostgresPrimaryAdapter implements StoragePort {
       success: false,
       error: {
         type: 'https://api.an-erp.local/errors/missing-database-url',
-        title: 'DATABASE_URL غير مهيأ',
+        title: this.urlFormatError ? 'صيغة DATABASE_URL غير متوافقة' : 'DATABASE_URL غير مهيأ',
         status: 503,
-        detail: 'قاعدة بيانات PostgreSQL / Supabase الأساسية غير متصلة لعدم توفر سر البيئة DATABASE_URL.',
+        detail: this.urlFormatError || 'قاعدة بيانات PostgreSQL / Supabase الأساسية غير متصلة لعدم توفر سر البيئة DATABASE_URL.',
       },
     };
   }

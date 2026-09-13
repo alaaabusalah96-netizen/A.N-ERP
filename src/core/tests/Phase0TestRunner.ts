@@ -249,7 +249,7 @@ export class Phase0TestRunner {
 
     const verdict = pgHealth.connected && batteryPassed
       ? 'Phase 0 مغلقة: Primary = PostgreSQL/Supabase ببطارية كاملة؛ MySQL/Mongo/Firebase = Smoke فقط؛ البطارية الكاملة لكل منها قبل تفعيل شركة على ذلك النوع.'
-      : 'البيئة لا تدعم اتصال PostgreSQL / Supabase المباشر حالياً لعدم توفر DATABASE_URL في متغيرات البيئة. لا يمكن إغلاق Phase 0 إنتاجياً على InMemory.';
+      : `تعذر الاتصال بـ PostgreSQL / Supabase الأساسي (${pgHealth.error || pgHealth.message}). لا يمكن إغلاق Phase 0 إنتاجياً على InMemory.`;
 
     return {
       timestamp: new Date().toISOString(),

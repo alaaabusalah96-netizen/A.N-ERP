@@ -1,31 +1,118 @@
 import React, { useState } from 'react';
-import { Lock, User, ArrowLeft, Building, AlertCircle } from 'lucide-react';
+import { Lock, User, ArrowLeft, Building, AlertCircle, ShieldCheck, KeyRound } from 'lucide-react';
 import { UserRole } from '../types/erp';
 
 interface LoginScreenProps {
-  onLogin: (username: string, role: UserRole) => void;
+  onLoginSuccess: (userData: any) => void;
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
-  const [username, setUsername] = useState('ahmed.almansoor');
-  const [password, setPassword] = useState('••••••••••');
-  const [selectedRole, setSelectedRole] = useState<UserRole>('accountant');
+export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
+  const [username, setUsername] = useState('accountant');
+  const [password, setPassword] = useState('erp2026');
   const [selectedBranch, setSelectedBranch] = useState('main_riyadh');
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 2FA state
+  const [show2FAPrompt, setShow2FAPrompt] = useState(false);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [backupCode, setBackupCode] = useState('');
+  const [useBackupCode, setUseBackupCode] = useState(false);
+  const [securityNote, setSecurityNote] = useState('');
+
+  // Concurrent session prompt
+  const [showConcurrentPrompt, setShowConcurrentPrompt] = useState(false);
+  const [concurrentDetail, setConcurrentDetail] = useState('');
+
+  const executeLogin = async (params: {
+    forceTerminateOldest?: boolean;
+    twoFactor?: string;
+    backup?: string;
+  }) => {
+    setIsLoading(true);
+    setError(null);
+
+    const idempotencyKey = `idemp-login-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify({
+          username,
+          password,
+          twoFactorCode: params.twoFactor,
+          backupCode: params.backup,
+          forceTerminateOldest: params.forceTerminateOldest,
+          clientGeo: { city: 'Riyadh', country: 'SA', lat: 24.7136, lon: 46.6753 },
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.status === 423) {
+        // Progressive Lockout
+        setError(data.detail || 'الحساب مقفل مؤقتاً لدواعي أمنية');
+        setIsLoading(false);
+        return;
+      }
+
+      if (res.status === 409 && data.requiresConfirmation) {
+        // Concurrent limit
+        setShowConcurrentPrompt(true);
+        setConcurrentDetail(data.detail);
+        setIsLoading(false);
+        return;
+      }
+
+      if (data.requires2FA) {
+        setShow2FAPrompt(true);
+        setSecurityNote(data.securityNote || 'التحقق الثنائي إلزامي');
+        setIsLoading(false);
+        return;
+      }
+
+      if (!res.ok) {
+        setError(data.detail || data.title || 'فشل تسجيل الدخول');
+        setIsLoading(false);
+        return;
+      }
+
+      // Successful login! Tokens are strictly inside HttpOnly Secure Cookies.
+      setIsLoading(false);
+      onLoginSuccess(data);
+    } catch (err: any) {
+      setError('تعذر الاتصال بالخادم، يرجى المحاولة مرة أخرى.');
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim()) {
-      setError('يرجى إدخال اسم المستخدم.');
+    if (!username.trim() || !password.trim()) {
+      setError('يرجى إدخال اسم المستخدم وكلمة المرور.');
       return;
     }
-    setError(null);
-    onLogin(username, selectedRole);
+    executeLogin({});
   };
 
-  const handleRoleSelect = (role: UserRole, userDefault: string) => {
-    setSelectedRole(role);
-    setUsername(userDefault);
+  const handle2FASubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    executeLogin({
+      twoFactor: useBackupCode ? undefined : twoFactorCode,
+      backup: useBackupCode ? backupCode : undefined,
+    });
+  };
+
+  const handleRolePreset = (user: string) => {
+    setUsername(user);
+    setPassword('erp2026');
+    setError(null);
+    setShow2FAPrompt(false);
+    setShowConcurrentPrompt(false);
   };
 
   return (
@@ -52,141 +139,228 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
             </div>
           )}
 
-          <form className="space-y-4" onSubmit={handleSubmit}>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                اسم المستخدم
-              </label>
-              <div className="relative rounded-lg shadow-2xs">
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                  <User className="h-4 w-4 text-slate-400" />
+          {/* Concurrent Session Prompt */}
+          {showConcurrentPrompt && (
+            <div className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs">
+              <div className="font-bold mb-1 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-amber-600" />
+                <span>تنبيه: الحد الأقصى للجلسات المتزامنة</span>
+              </div>
+              <p className="text-amber-800 mb-3 leading-relaxed">{concurrentDetail}</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => executeLogin({ forceTerminateOldest: true })}
+                  className="flex-1 py-2 px-3 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-lg text-xs transition-colors"
+                >
+                  إنهاء الجلسة الأقدم والمتابعة
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowConcurrentPrompt(false)}
+                  className="py-2 px-3 bg-white border border-amber-300 text-amber-800 rounded-lg text-xs"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 2FA Prompt */}
+          {show2FAPrompt ? (
+            <form className="space-y-4" onSubmit={handle2FASubmit}>
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900">
+                <div className="font-bold mb-1 flex items-center gap-1.5">
+                  <KeyRound className="w-4 h-4 text-blue-600" />
+                  <span>التحقق الأمني الثنائي الإلزامي</span>
                 </div>
-                <input
-                  type="text"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="block w-full pr-10 pl-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white"
-                  placeholder="اسم المستخدم المؤسسي"
-                />
+                <p className="text-blue-700">{securityNote}</p>
               </div>
-            </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                كلمة المرور
-              </label>
-              <div className="relative rounded-lg shadow-2xs">
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                  <Lock className="h-4 w-4 text-slate-400" />
+              {!useBackupCode ? (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    رمز التحقق (6 أرقام)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={6}
+                    required
+                    value={twoFactorCode}
+                    onChange={(e) => setTwoFactorCode(e.target.value)}
+                    className="block w-full text-center tracking-widest text-lg font-bold py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 bg-white"
+                    placeholder="123456"
+                  />
+                  <div className="mt-2 text-left">
+                    <button
+                      type="button"
+                      onClick={() => setUseBackupCode(true)}
+                      className="text-blue-600 hover:underline text-[11px] font-medium"
+                    >
+                      استخدام كود طوارئ لمرة واحدة؟
+                    </button>
+                  </div>
                 </div>
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full pr-10 pl-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white"
-                  placeholder="••••••••••"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                الفرع ومقر العمل
-              </label>
-              <div className="relative rounded-lg shadow-2xs">
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                  <Building className="h-4 w-4 text-slate-400" />
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    كود الطوارئ (XXXX-XXXX)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={backupCode}
+                    onChange={(e) => setBackupCode(e.target.value)}
+                    className="block w-full text-center tracking-widest text-base font-bold py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 bg-white"
+                    placeholder="A1B2-C3D4"
+                  />
+                  <div className="mt-2 text-left">
+                    <button
+                      type="button"
+                      onClick={() => setUseBackupCode(false)}
+                      className="text-blue-600 hover:underline text-[11px] font-medium"
+                    >
+                      العودة للرمز المعتاد (6 أرقام)
+                    </button>
+                  </div>
                 </div>
-                <select
-                  value={selectedBranch}
-                  onChange={(e) => setSelectedBranch(e.target.value)}
-                  className="block w-full pr-10 pl-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white"
-                >
-                  <option value="main_riyadh">الفرع الرئيسي - الرياض</option>
-                  <option value="jeddah_branch">فرع المنطقة الغربية - جدة</option>
-                  <option value="eastern_branch">فرع المنطقة الشرقية - الدمام</option>
-                </select>
-              </div>
-            </div>
+              )}
 
-            {/* Role Quick Profile Picker for daily testing */}
-            <div className="pt-2">
-              <label className="block text-[11px] font-semibold text-slate-500 mb-2">
-                اختر الحساب التشغيلي للدخول:
-              </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="flex gap-2 pt-2">
                 <button
-                  type="button"
-                  onClick={() => handleRoleSelect('accountant', 'ahmed.almansoor')}
-                  className={`py-2 px-3 text-xs font-semibold rounded-lg border text-right transition-colors ${
-                    selectedRole === 'accountant'
-                      ? 'border-blue-600 bg-blue-50 text-blue-800'
-                      : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                  }`}
+                  type="submit"
+                  disabled={isLoading}
+                  className="flex-1 py-2.5 px-4 bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold rounded-xl transition-colors shadow-2xs"
                 >
-                  <div className="font-bold">محاسب عام</div>
-                  <div className="text-[10px] text-slate-500">أحمد المنصور</div>
+                  {isLoading ? 'جارٍ التحقق...' : 'تأكيد الدخول'}
                 </button>
-
                 <button
                   type="button"
-                  onClick={() => handleRoleSelect('financial_approver', 'sulaiman.alrashed')}
-                  className={`py-2 px-3 text-xs font-semibold rounded-lg border text-right transition-colors ${
-                    selectedRole === 'financial_approver'
-                      ? 'border-blue-600 bg-blue-50 text-blue-800'
-                      : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                  }`}
+                  onClick={() => setShow2FAPrompt(false)}
+                  className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-xl"
                 >
-                  <div className="font-bold">معتمد مالي</div>
-                  <div className="text-[10px] text-slate-500">سليمان الراشد</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleRoleSelect('warehouse_keeper', 'saad.alqahtani')}
-                  className={`py-2 px-3 text-xs font-semibold rounded-lg border text-right transition-colors ${
-                    selectedRole === 'warehouse_keeper'
-                      ? 'border-blue-600 bg-blue-50 text-blue-800'
-                      : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <div className="font-bold">أمين مستودع</div>
-                  <div className="text-[10px] text-slate-500">سعد القحطاني</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleRoleSelect('branch_manager', 'fahad.altamimi')}
-                  className={`py-2 px-3 text-xs font-semibold rounded-lg border text-right transition-colors ${
-                    selectedRole === 'branch_manager'
-                      ? 'border-blue-600 bg-blue-50 text-blue-800'
-                      : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <div className="font-bold">مدير الفرع</div>
-                  <div className="text-[10px] text-slate-500">م. فهد التميمي</div>
+                  إلغاء
                 </button>
               </div>
-            </div>
+            </form>
+          ) : (
+            <form className="space-y-4" onSubmit={handleSubmit}>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  اسم المستخدم
+                </label>
+                <div className="relative rounded-lg shadow-2xs">
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                    <User className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="block w-full pr-10 pl-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white"
+                    placeholder="accountant / approver / warehouse"
+                  />
+                </div>
+              </div>
 
-            <div className="pt-3">
-              <button
-                type="submit"
-                className="w-full flex justify-center items-center gap-2 py-2.5 px-4 border border-transparent rounded-xl shadow-sm text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-600 transition-colors"
-              >
-                <span>تسجيل الدخول إلى النظام</span>
-                <ArrowLeft className="w-4 h-4" />
-              </button>
-            </div>
-          </form>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  كلمة المرور
+                </label>
+                <div className="relative rounded-lg shadow-2xs">
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                    <Lock className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="block w-full pr-10 pl-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white"
+                    placeholder="••••••••"
+                  />
+                </div>
+              </div>
 
-          <div className="mt-6 border-t border-slate-100 pt-4 text-center">
-            <p className="text-[11px] text-slate-400">
-              A.N ERP — جميع الحقوق محفوظة لشركة الأعمال الموحدة
-            </p>
-          </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  الفرع ومقر العمل
+                </label>
+                <div className="relative rounded-lg shadow-2xs">
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                    <Building className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <select
+                    value={selectedBranch}
+                    onChange={(e) => setSelectedBranch(e.target.value)}
+                    className="block w-full pr-10 pl-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white"
+                  >
+                    <option value="main_riyadh">الفرع الرئيسي - الرياض</option>
+                    <option value="jeddah_branch">فرع المنطقة الغربية - جدة</option>
+                    <option value="eastern_branch">فرع المنطقة الشرقية - الدمام</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Role Presets */}
+              <div className="pt-2">
+                <label className="block text-[11px] font-semibold text-slate-500 mb-2">
+                  اختر الحساب التشغيلي للدخول السريع:
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleRolePreset('accountant')}
+                    className={`p-2 rounded-lg border text-right transition-all text-xs ${
+                      username === 'accountant'
+                        ? 'border-blue-600 bg-blue-50/50 text-blue-900 font-bold'
+                        : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                    }`}
+                  >
+                    <div className="font-semibold text-[11px]">محاسب عام</div>
+                    <div className="text-[10px] text-slate-500">أحمد المنصور</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRolePreset('approver')}
+                    className={`p-2 rounded-lg border text-right transition-all text-xs ${
+                      username === 'approver'
+                        ? 'border-blue-600 bg-blue-50/50 text-blue-900 font-bold'
+                        : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                    }`}
+                  >
+                    <div className="font-semibold text-[11px]">معتمد مالي</div>
+                    <div className="text-[10px] text-slate-500">سليمان الراشد</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRolePreset('warehouse')}
+                    className={`p-2 rounded-lg border text-right transition-all text-xs ${
+                      username === 'warehouse'
+                        ? 'border-blue-600 bg-blue-50/50 text-blue-900 font-bold'
+                        : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                    }`}
+                  >
+                    <div className="font-semibold text-[11px]">أمين مستودع</div>
+                    <div className="text-[10px] text-slate-500">سعد القحطاني</div>
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-xl shadow-xs text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-600 transition-colors"
+                >
+                  {isLoading ? 'جارٍ تسجيل الدخول...' : 'دخول النظام'}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       </div>
     </div>

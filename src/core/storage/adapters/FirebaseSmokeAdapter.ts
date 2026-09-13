@@ -49,22 +49,39 @@ export class FirebaseSmokeAdapter {
       this.app = initializeApp(
         {
           credential: cert(serviceAccount),
+          projectId: serviceAccount.project_id,
         },
         appName
       );
 
-      const db = getFirestore(this.app);
+      // Attempt with standard '(default)', fallback to 'default' if not found
+      let db = getFirestore(this.app);
       const testId = `smoke-firebase-${Date.now()}`;
       const payload = 'A.N ERP Firestore Smoke Verification';
 
-      const docRef = db.collection('an_smoke_test').doc(testId);
+      let docRef = db.collection('an_smoke_test').doc(testId);
 
-      // Write test document
-      await docRef.set({
-        id: testId,
-        payload,
-        testedAt: FieldValue.serverTimestamp(),
-      });
+      try {
+        // Test write
+        await docRef.set({
+          id: testId,
+          payload,
+          testedAt: FieldValue.serverTimestamp(),
+        });
+      } catch (writeErr: any) {
+        if (writeErr?.code === 5 || writeErr?.message?.includes('NOT_FOUND')) {
+          // Attempt with named database 'default' (without parentheses)
+          db = getFirestore(this.app, 'default');
+          docRef = db.collection('an_smoke_test').doc(testId);
+          await docRef.set({
+            id: testId,
+            payload,
+            testedAt: FieldValue.serverTimestamp(),
+          });
+        } else {
+          throw writeErr;
+        }
+      }
 
       // Read test document
       const snapshot = await docRef.get();
