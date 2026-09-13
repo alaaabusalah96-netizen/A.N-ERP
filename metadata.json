@@ -1,0 +1,6 @@
+{
+  "name": "A.N ERP",
+  "description": "نظام تخطيط وإدارة موارد المؤسسات A.N ERP المتكامل لإدارة العمليات المالية والمخزنية والإدارية",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
