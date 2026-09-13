@@ -6,6 +6,7 @@
  */
 
 import { Pool, PoolClient } from 'pg';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   StoragePort,
   StorageResult,
@@ -17,12 +18,15 @@ import {
   ApprovalRequest,
   SystemChangeLogEntry,
   RFC7807Problem,
+  TokenFamily,
+  RefreshTokenRecord,
 } from '../StoragePort';
 
 export class PostgresPrimaryAdapter implements StoragePort {
   readonly adapterName = 'PostgreSQL (Supabase Primary)';
   private pool: Pool | null = null;
   private isInitialized = false;
+  private asyncLocalStorage = new AsyncLocalStorage<{ client: PoolClient; tenantId?: string }>();
 
   private urlFormatError: string | null = null;
 
@@ -235,6 +239,59 @@ export class PostgresPrimaryAdapter implements StoragePort {
         evidence_ref VARCHAR(255),
         version VARCHAR(32) NOT NULL
       );
+
+      -- Token Families
+      CREATE TABLE IF NOT EXISTS an_token_families (
+        family_id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        tenant_id VARCHAR(64) NOT NULL,
+        is_invalidated BOOLEAN NOT NULL DEFAULT FALSE,
+        invalidation_reason TEXT,
+        created_at BIGINT NOT NULL
+      );
+
+      -- Refresh Tokens
+      CREATE TABLE IF NOT EXISTS an_refresh_tokens (
+        token_hash VARCHAR(128) PRIMARY KEY,
+        family_id VARCHAR(64) NOT NULL REFERENCES an_token_families(family_id) ON DELETE CASCADE,
+        sequence INT NOT NULL,
+        user_id VARCHAR(64) NOT NULL,
+        tenant_id VARCHAR(64) NOT NULL,
+        session_id VARCHAR(64) NOT NULL,
+        expires_at BIGINT NOT NULL,
+        is_used BOOLEAN NOT NULL DEFAULT FALSE,
+        revoked_at BIGINT
+      );
+
+      -- Alter an_users for credentials and 2FA
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT;
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS backup_codes JSONB;
+
+      -- Enable and Force Row Level Security (RLS) on all tenant-isolated tables
+      DO $$
+      DECLARE
+        tbl text;
+        tables text[] := ARRAY[
+          'an_users',
+          'an_accounts',
+          'an_sequences',
+          'an_idempotency_keys',
+          'an_journal_entries',
+          'an_journal_lines',
+          'an_approval_requests',
+          'an_token_families',
+          'an_refresh_tokens'
+        ];
+      BEGIN
+        FOREACH tbl IN ARRAY tables LOOP
+          EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', tbl);
+          EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY;', tbl);
+          EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %I;', tbl);
+          EXECUTE format('CREATE POLICY tenant_isolation_policy ON %I FOR ALL USING (tenant_id = current_setting(''app.current_tenant_id'', true)) WITH CHECK (tenant_id = current_setting(''app.current_tenant_id'', true));', tbl);
+        END LOOP;
+      END $$;
     `;
 
     try {
@@ -329,117 +386,148 @@ export class PostgresPrimaryAdapter implements StoragePort {
   // Users & RBAC
   public async getUser(tenantId: string, userId: string): Promise<StorageResult<User>> {
     if (!this.pool) return this.missingConnError();
-    try {
-      const res = await this.pool.query('SELECT * FROM an_users WHERE tenant_id = $1 AND id = $2', [tenantId, userId]);
-      if (res.rows.length === 0) {
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const res = await this.query('SELECT * FROM an_users WHERE tenant_id = $1 AND id = $2', [tenantId, userId]);
+        if (res.rows.length === 0) {
+          return {
+            success: false,
+            error: {
+              type: 'https://api.an-erp.local/errors/user-not-found',
+              title: 'المستخدم غير موجود',
+              status: 404,
+              detail: `المستخدم ${userId} غير مسجل للشركة ${tenantId}`,
+            },
+          };
+        }
+        const r = res.rows[0];
         return {
-          success: false,
-          error: {
-            type: 'https://api.an-erp.local/errors/user-not-found',
-            title: 'المستخدم غير موجود',
-            status: 404,
-            detail: `المستخدم ${userId} غير مسجل للشركة ${tenantId}`,
+          success: true,
+          data: {
+            id: r.id,
+            tenantId: r.tenant_id,
+            username: r.username,
+            fullName: r.full_name,
+            email: r.email,
+            role: r.role,
+            status: r.status,
+            passwordHash: r.password_hash || undefined,
+            twoFactorSecret: r.two_factor_secret || undefined,
+            twoFactorEnabled: r.two_factor_enabled === true,
+            backupCodes: Array.isArray(r.backup_codes) ? r.backup_codes : undefined,
           },
         };
+      } catch (err: any) {
+        return this.dbError(err);
       }
-      const r = res.rows[0];
-      return {
-        success: true,
-        data: {
-          id: r.id,
-          tenantId: r.tenant_id,
-          username: r.username,
-          fullName: r.full_name,
-          email: r.email,
-          role: r.role,
-          status: r.status,
-        },
-      };
-    } catch (err: any) {
-      return this.dbError(err);
-    }
+    });
   }
 
   public async saveUser(user: User, idempotencyKey: string): Promise<StorageResult<User>> {
     if (!this.pool) return this.missingConnError();
-    try {
-      const query = `
-        INSERT INTO an_users (id, tenant_id, username, full_name, email, role, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (id) DO UPDATE SET
-          full_name = EXCLUDED.full_name,
-          email = EXCLUDED.email,
-          role = EXCLUDED.role,
-          status = EXCLUDED.status;
-      `;
-      await this.pool.query(query, [user.id, user.tenantId, user.username, user.fullName, user.email, user.role, user.status]);
-      return { success: true, data: user };
-    } catch (err: any) {
-      return this.dbError(err);
-    }
+    return this.withTenantScope(user.tenantId, async () => {
+      try {
+        const query = `
+          INSERT INTO an_users (
+            id, tenant_id, username, full_name, email, role, status,
+            password_hash, two_factor_secret, two_factor_enabled, backup_codes
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          ON CONFLICT (id) DO UPDATE SET
+            full_name = EXCLUDED.full_name,
+            email = EXCLUDED.email,
+            role = EXCLUDED.role,
+            status = EXCLUDED.status,
+            password_hash = COALESCE(EXCLUDED.password_hash, an_users.password_hash),
+            two_factor_secret = COALESCE(EXCLUDED.two_factor_secret, an_users.two_factor_secret),
+            two_factor_enabled = EXCLUDED.two_factor_enabled,
+            backup_codes = COALESCE(EXCLUDED.backup_codes, an_users.backup_codes);
+        `;
+        await this.query(query, [
+          user.id,
+          user.tenantId,
+          user.username,
+          user.fullName,
+          user.email,
+          user.role,
+          user.status,
+          user.passwordHash || null,
+          user.twoFactorSecret || null,
+          user.twoFactorEnabled || false,
+          user.backupCodes ? JSON.stringify(user.backupCodes) : null,
+        ]);
+        return { success: true, data: user };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
   }
 
   // Chart of Accounts & Balances
   public async getAccount(tenantId: string, accountCode: string): Promise<StorageResult<Account>> {
     if (!this.pool) return this.missingConnError();
-    try {
-      const res = await this.pool.query('SELECT * FROM an_accounts WHERE tenant_id = $1 AND code = $2', [tenantId, accountCode]);
-      if (res.rows.length === 0) {
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const res = await this.query('SELECT * FROM an_accounts WHERE tenant_id = $1 AND code = $2', [tenantId, accountCode]);
+        if (res.rows.length === 0) {
+          return {
+            success: false,
+            error: {
+              type: 'https://api.an-erp.local/errors/account-not-found',
+              title: 'الحساب غير موجود',
+              status: 404,
+              detail: `تعذر العثور على الحساب برمز ${accountCode}`,
+            },
+          };
+        }
+        const r = res.rows[0];
         return {
-          success: false,
-          error: {
-            type: 'https://api.an-erp.local/errors/account-not-found',
-            title: 'الحساب غير موجود',
-            status: 404,
-            detail: `تعذر العثور على الحساب برمز ${accountCode}`,
+          success: true,
+          data: {
+            code: r.code,
+            tenantId: r.tenant_id,
+            nameAr: r.name_ar,
+            type: r.type,
+            currency: r.currency,
+            debitBalance: Number(r.debit_balance),
+            creditBalance: Number(r.credit_balance),
+            isActive: r.is_active,
           },
         };
+      } catch (err: any) {
+        return this.dbError(err);
       }
-      const r = res.rows[0];
-      return {
-        success: true,
-        data: {
-          code: r.code,
-          tenantId: r.tenant_id,
-          nameAr: r.name_ar,
-          type: r.type,
-          currency: r.currency,
-          debitBalance: Number(r.debit_balance),
-          creditBalance: Number(r.credit_balance),
-          isActive: r.is_active,
-        },
-      };
-    } catch (err: any) {
-      return this.dbError(err);
-    }
+    });
   }
 
   public async saveAccount(tenantId: string, account: Account, idempotencyKey: string): Promise<StorageResult<Account>> {
     if (!this.pool) return this.missingConnError();
-    try {
-      const query = `
-        INSERT INTO an_accounts (code, tenant_id, name_ar, type, currency, debit_balance, credit_balance, is_active)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT (tenant_id, code) DO UPDATE SET
-          name_ar = EXCLUDED.name_ar,
-          type = EXCLUDED.type,
-          currency = EXCLUDED.currency,
-          is_active = EXCLUDED.is_active;
-      `;
-      await this.pool.query(query, [
-        account.code,
-        tenantId,
-        account.nameAr,
-        account.type,
-        account.currency,
-        account.debitBalance,
-        account.creditBalance,
-        account.isActive,
-      ]);
-      return { success: true, data: account };
-    } catch (err: any) {
-      return this.dbError(err);
-    }
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const query = `
+          INSERT INTO an_accounts (code, tenant_id, name_ar, type, currency, debit_balance, credit_balance, is_active)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          ON CONFLICT (tenant_id, code) DO UPDATE SET
+            name_ar = EXCLUDED.name_ar,
+            type = EXCLUDED.type,
+            currency = EXCLUDED.currency,
+            is_active = EXCLUDED.is_active;
+        `;
+        await this.query(query, [
+          account.code,
+          tenantId,
+          account.nameAr,
+          account.type,
+          account.currency,
+          account.debitBalance,
+          account.creditBalance,
+          account.isActive,
+        ]);
+        return { success: true, data: account };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
   }
 
   public async getAccountBalance(
@@ -877,8 +965,191 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
+  // Session & Refresh Tokens (Zero internal memory Map)
+  public async saveTokenFamily(family: TokenFamily): Promise<StorageResult<TokenFamily>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(family.tenantId, async () => {
+      try {
+        const query = `
+          INSERT INTO an_token_families (family_id, user_id, tenant_id, is_invalidated, invalidation_reason, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (family_id) DO UPDATE SET
+            is_invalidated = EXCLUDED.is_invalidated,
+            invalidation_reason = EXCLUDED.invalidation_reason;
+        `;
+        await this.query(query, [
+          family.familyId,
+          family.userId,
+          family.tenantId,
+          family.isInvalidated,
+          family.invalidationReason || null,
+          family.createdAt,
+        ]);
+        return { success: true, data: family };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async getTokenFamily(familyId: string): Promise<StorageResult<TokenFamily>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_token_families WHERE family_id = $1', [familyId]);
+      if (res.rows.length === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/token-family-not-found',
+            title: 'عائلة التوكن غير موجودة',
+            status: 404,
+            detail: `تعذر العثور على عائلة الجلسة ${familyId}`,
+          },
+        };
+      }
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          familyId: r.family_id,
+          userId: r.user_id,
+          tenantId: r.tenant_id,
+          isInvalidated: r.is_invalidated,
+          invalidationReason: r.invalidation_reason,
+          createdAt: Number(r.created_at),
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveRefreshToken(record: RefreshTokenRecord): Promise<StorageResult<RefreshTokenRecord>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(record.tenantId, async () => {
+      try {
+        const query = `
+          INSERT INTO an_refresh_tokens (token_hash, family_id, sequence, user_id, tenant_id, session_id, expires_at, is_used, revoked_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ON CONFLICT (token_hash) DO NOTHING;
+        `;
+        await this.query(query, [
+          record.tokenHash,
+          record.familyId,
+          record.sequence,
+          record.userId,
+          record.tenantId,
+          record.sessionId,
+          record.expiresAt,
+          record.isUsed,
+          record.revokedAt || null,
+        ]);
+        return { success: true, data: record };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async getRefreshToken(tokenHash: string): Promise<StorageResult<RefreshTokenRecord>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_refresh_tokens WHERE token_hash = $1', [tokenHash]);
+      if (res.rows.length === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/refresh-token-not-found',
+            title: 'رمز التحديث غير موجود',
+            status: 404,
+            detail: 'رمز التحديث غير مسجل أو منتهي',
+          },
+        };
+      }
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          tokenHash: r.token_hash,
+          familyId: r.family_id,
+          sequence: r.sequence,
+          userId: r.user_id,
+          tenantId: r.tenant_id,
+          sessionId: r.session_id,
+          expiresAt: Number(r.expires_at),
+          isUsed: r.is_used,
+          revokedAt: r.revoked_at ? Number(r.revoked_at) : undefined,
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async updateRefreshToken(record: RefreshTokenRecord): Promise<StorageResult<RefreshTokenRecord>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(record.tenantId, async () => {
+      try {
+        await this.query(
+          'UPDATE an_refresh_tokens SET is_used = $1, revoked_at = $2 WHERE token_hash = $3',
+          [record.isUsed, record.revokedAt || null, record.tokenHash]
+        );
+        return { success: true, data: record };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async invalidateTokenFamily(familyId: string, reason: string): Promise<StorageResult<boolean>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        'UPDATE an_token_families SET is_invalidated = TRUE, invalidation_reason = $1 WHERE family_id = $2',
+        [reason, familyId]
+      );
+      return { success: true, data: true };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  /**
+   * Real Row Level Security (RLS) Tenant Scoping
+   * Enforces SET LOCAL app.current_tenant_id = $1 inside transaction.
+   */
   public async withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
-    return fn();
+    if (!this.pool) return await fn();
+
+    const store = this.asyncLocalStorage.getStore();
+    if (store?.client && store.tenantId === tenantId) {
+      return await fn();
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL app.current_tenant_id = $1', [tenantId]);
+      const result = await this.asyncLocalStorage.run({ client, tenantId }, fn);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {}
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async query(text: string, params?: any[]): Promise<any> {
+    const store = this.asyncLocalStorage.getStore();
+    if (store?.client) {
+      return await store.client.query(text, params);
+    }
+    if (!this.pool) throw new Error('Database pool not connected');
+    return await this.pool.query(text, params);
   }
 
   private async checkIdempotency(tenantId: string, key: string, operation: string): Promise<any | null> {

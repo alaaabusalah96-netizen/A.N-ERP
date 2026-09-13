@@ -14,6 +14,8 @@ import {
   SequenceResult,
   ApprovalRequest,
   SystemChangeLogEntry,
+  TokenFamily,
+  RefreshTokenRecord,
 } from '../StoragePort';
 
 export class InMemoryAdapter implements StoragePort {
@@ -27,6 +29,8 @@ export class InMemoryAdapter implements StoragePort {
   private approvalRequests = new Map<string, ApprovalRequest>();
   private changeLogs: SystemChangeLogEntry[] = [];
   private idempotencyRecords = new Map<string, any>();
+  private tokenFamilies = new Map<string, TokenFamily>();
+  private refreshTokens = new Map<string, RefreshTokenRecord>();
 
   constructor() {
     this.seedDefaultData();
@@ -367,6 +371,63 @@ export class InMemoryAdapter implements StoragePort {
 
   public async getSystemChangeLogs(): Promise<StorageResult<SystemChangeLogEntry[]>> {
     return { success: true, data: [...this.changeLogs].reverse() };
+  }
+
+  // Session & Refresh Tokens (InMemory development implementation)
+  public async saveTokenFamily(family: TokenFamily): Promise<StorageResult<TokenFamily>> {
+    this.tokenFamilies.set(family.familyId, { ...family });
+    return { success: true, data: family };
+  }
+
+  public async getTokenFamily(familyId: string): Promise<StorageResult<TokenFamily>> {
+    const family = this.tokenFamilies.get(familyId);
+    if (!family) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/token-family-not-found',
+          title: 'عائلة التوكن غير موجودة',
+          status: 404,
+          detail: `تعذر العثور على عائلة الجلسة ${familyId}`,
+        },
+      };
+    }
+    return { success: true, data: { ...family } };
+  }
+
+  public async saveRefreshToken(record: RefreshTokenRecord): Promise<StorageResult<RefreshTokenRecord>> {
+    this.refreshTokens.set(record.tokenHash, { ...record });
+    return { success: true, data: record };
+  }
+
+  public async getRefreshToken(tokenHash: string): Promise<StorageResult<RefreshTokenRecord>> {
+    const record = this.refreshTokens.get(tokenHash);
+    if (!record) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/refresh-token-not-found',
+          title: 'رمز التحديث غير موجود',
+          status: 404,
+          detail: 'رمز التحديث غير مسجل أو منتهي',
+        },
+      };
+    }
+    return { success: true, data: { ...record } };
+  }
+
+  public async updateRefreshToken(record: RefreshTokenRecord): Promise<StorageResult<RefreshTokenRecord>> {
+    this.refreshTokens.set(record.tokenHash, { ...record });
+    return { success: true, data: record };
+  }
+
+  public async invalidateTokenFamily(familyId: string, reason: string): Promise<StorageResult<boolean>> {
+    const family = this.tokenFamilies.get(familyId);
+    if (family) {
+      family.isInvalidated = true;
+      family.invalidationReason = reason;
+    }
+    return { success: true, data: true };
   }
 
   public async withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {

@@ -50,6 +50,31 @@ export interface User {
   email: string;
   role: string;
   status: 'ACTIVE' | 'INACTIVE';
+  passwordHash?: string;
+  twoFactorSecret?: string;
+  twoFactorEnabled?: boolean;
+  backupCodes?: string[];
+}
+
+export interface RefreshTokenRecord {
+  tokenHash: string;
+  familyId: string;
+  sequence: number;
+  userId: string;
+  tenantId: string;
+  sessionId: string;
+  expiresAt: number; // ms timestamp
+  isUsed: boolean;
+  revokedAt?: number;
+}
+
+export interface TokenFamily {
+  familyId: string;
+  userId: string;
+  tenantId: string;
+  isInvalidated: boolean;
+  invalidationReason?: string;
+  createdAt: number;
 }
 
 export interface Account {
@@ -211,6 +236,14 @@ export interface StoragePort {
   // System Change Log (Immutable Ledger on Primary)
   appendSystemChangeLog(entry: SystemChangeLogEntry): Promise<StorageResult<SystemChangeLogEntry>>;
   getSystemChangeLogs(): Promise<StorageResult<SystemChangeLogEntry[]>>;
+
+  // Session & Refresh Token Storage (Zero internal class Map state)
+  saveTokenFamily(family: TokenFamily): Promise<StorageResult<TokenFamily>>;
+  getTokenFamily(familyId: string): Promise<StorageResult<TokenFamily>>;
+  saveRefreshToken(record: RefreshTokenRecord): Promise<StorageResult<RefreshTokenRecord>>;
+  getRefreshToken(tokenHash: string): Promise<StorageResult<RefreshTokenRecord>>;
+  updateRefreshToken(record: RefreshTokenRecord): Promise<StorageResult<RefreshTokenRecord>>;
+  invalidateTokenFamily(familyId: string, reason: string): Promise<StorageResult<boolean>>;
 
   // Tenant Scoping & Isolation
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T>;

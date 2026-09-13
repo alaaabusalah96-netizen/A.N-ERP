@@ -18,10 +18,14 @@ export class EncryptionService {
   private static readonly TAG_LENGTH = 16; // 128 bits auth tag
 
   /**
-   * Derives a 256-bit key from environment secret or fallback key
+   * Derives a 256-bit key from environment secret (PII_ENCRYPTION_SECRET)
+   * Mandatory: zero hardcoded fallback secrets in codebase.
    */
   private static getMasterKey(): Buffer {
-    const secret = process.env.PII_ENCRYPTION_SECRET || process.env.JWT_SECRET || 'an-erp-master-pii-secret-v7-2026-secure-key';
+    const secret = process.env.PII_ENCRYPTION_SECRET;
+    if (!secret) {
+      throw new Error('PII_ENCRYPTION_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
+    }
     return crypto.createHash('sha256').update(secret).digest();
   }
 
