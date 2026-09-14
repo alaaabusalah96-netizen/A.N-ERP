@@ -20,7 +20,13 @@ import {
   RFC7807Problem,
   TokenFamily,
   RefreshTokenRecord,
+  CountryTaxRule,
+  TenantModuleManifest,
+  MasterItem,
+  MasterPartner,
+  AuditChainEntry,
 } from '../StoragePort';
+import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
 export class PostgresPrimaryAdapter implements StoragePort {
   readonly adapterName = 'PostgreSQL (Supabase Primary)';
@@ -269,6 +275,86 @@ export class PostgresPrimaryAdapter implements StoragePort {
       ALTER TABLE an_users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE;
       ALTER TABLE an_users ADD COLUMN IF NOT EXISTS backup_codes JSONB;
 
+      -- Phase 2 Tables:
+      CREATE TABLE IF NOT EXISTS an_tax_rules (
+        country_code VARCHAR(8) PRIMARY KEY,
+        country_name_ar VARCHAR(255) NOT NULL,
+        standard_vat_rate NUMERIC(6, 4) NOT NULL,
+        currency_code VARCHAR(16) NOT NULL,
+        tax_authority_name VARCHAR(255) NOT NULL,
+        tax_id_format_regex VARCHAR(255) NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS an_tenant_modules (
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        module_id VARCHAR(64) NOT NULL,
+        module_name_ar VARCHAR(255) NOT NULL,
+        is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        config JSONB,
+        activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (tenant_id, module_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_master_items (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        code VARCHAR(64) NOT NULL,
+        name_ar VARCHAR(255) NOT NULL,
+        category VARCHAR(128) NOT NULL,
+        unit_price NUMERIC(18, 4) NOT NULL DEFAULT 0,
+        cost_price NUMERIC(18, 4) NOT NULL DEFAULT 0,
+        status VARCHAR(32) NOT NULL DEFAULT 'PENDING_APPROVAL',
+        created_by VARCHAR(64) NOT NULL,
+        approved_by VARCHAR(64),
+        rejection_reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        approved_at TIMESTAMPTZ
+      );
+
+      CREATE TABLE IF NOT EXISTS an_master_partners (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        type VARCHAR(32) NOT NULL,
+        code VARCHAR(64) NOT NULL,
+        name_ar VARCHAR(255) NOT NULL,
+        tax_number VARCHAR(64),
+        phone VARCHAR(64),
+        status VARCHAR(32) NOT NULL DEFAULT 'PENDING_APPROVAL',
+        created_by VARCHAR(64) NOT NULL,
+        approved_by VARCHAR(64),
+        rejection_reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        approved_at TIMESTAMPTZ
+      );
+
+      CREATE TABLE IF NOT EXISTS an_audit_chain (
+        id VARCHAR(64) PRIMARY KEY,
+        sequence_number BIGINT NOT NULL,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        actor_id VARCHAR(64) NOT NULL,
+        actor_name VARCHAR(255) NOT NULL,
+        action VARCHAR(64) NOT NULL,
+        entity_type VARCHAR(64) NOT NULL,
+        entity_id VARCHAR(64) NOT NULL,
+        before_state JSONB,
+        after_state JSONB,
+        ip_address VARCHAR(64),
+        previous_hash VARCHAR(64) NOT NULL,
+        entry_hash VARCHAR(64) NOT NULL
+      );
+
+      -- Seed country tax rules if not exist
+      INSERT INTO an_tax_rules (country_code, country_name_ar, standard_vat_rate, currency_code, tax_authority_name, tax_id_format_regex)
+      VALUES 
+        ('SA', 'المملكة العربية السعودية', 0.1500, 'SAR', 'هيئة الزكاة والضريبة والجمارك (ZATCA)', '^3[0-9]{13}3$'),
+        ('EG', 'جمهورية مصر العربية', 0.1400, 'EGP', 'مصلحة الضرائب المصرية (ETA)', '^[0-9]{9}$'),
+        ('AE', 'الإمارات العربية المتحدة', 0.0500, 'AED', 'الهيئة الاتحادية للضرائب (FTA)', '^100[0-9]{12}$'),
+        ('OM', 'سلطنة عمان', 0.0500, 'OMR', 'جهاز الضرائب العماني (OTA)', '^[0-9]{8}$'),
+        ('BH', 'مملكة البحرين', 0.1000, 'BHD', 'الجهاز الوطني للإيرادات (NBR)', '^[0-9]{15}$')
+      ON CONFLICT (country_code) DO NOTHING;
+
       -- Insert default tenant company if not present
       INSERT INTO an_tenants (id, code, name_ar, name_en, backend_config, status)
       VALUES (
@@ -294,7 +380,11 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_journal_lines',
           'an_approval_requests',
           'an_token_families',
-          'an_refresh_tokens'
+          'an_refresh_tokens',
+          'an_tenant_modules',
+          'an_master_items',
+          'an_master_partners',
+          'an_audit_chain'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -530,10 +620,10 @@ export class PostgresPrimaryAdapter implements StoragePort {
           tenantId,
           account.nameAr,
           account.type,
-          account.currency,
-          account.debitBalance,
-          account.creditBalance,
-          account.isActive,
+          account.currency || 'SAR',
+          account.debitBalance ?? 0,
+          account.creditBalance ?? 0,
+          account.isActive ?? true,
         ]);
         return { success: true, data: account };
       } catch (err: any) {
@@ -1386,6 +1476,662 @@ export class PostgresPrimaryAdapter implements StoragePort {
         detail: this.urlFormatError || 'قاعدة بيانات PostgreSQL / Supabase الأساسية غير متصلة لعدم توفر سر البيئة DATABASE_URL.',
       },
     };
+  }
+
+  // Phase 2 Implementations
+
+  public async listTenants(): Promise<StorageResult<TenantCompany[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_tenants ORDER BY created_at DESC');
+      const tenants: TenantCompany[] = res.rows.map((row: any) => ({
+        id: row.id,
+        code: row.code,
+        nameAr: row.name_ar,
+        nameEn: row.name_en,
+        taxNumber: row.tax_number,
+        backendConfig: row.backend_config,
+        status: row.status,
+        createdAt: row.created_at ? row.created_at.toISOString() : undefined,
+      }));
+      return { success: true, data: tenants };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async overrideSequence(
+    tenantId: string,
+    sequenceKey: string,
+    manualNumber: number,
+    reason: string,
+    authorizedBy: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<SequenceResult>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const queryText = `
+        INSERT INTO an_sequences (tenant_id, sequence_key, current_val, updated_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (tenant_id, sequence_key)
+        DO UPDATE SET current_val = $3, updated_at = NOW()
+        RETURNING current_val;
+      `;
+      const res = await this.query(queryText, [tenantId, sequenceKey, manualNumber]);
+      const seq = Number(res.rows[0].current_val);
+      const prefix = sequenceKey.toUpperCase().split('_')[0] || 'DOC';
+      return {
+        success: true,
+        data: {
+          sequenceNumber: seq,
+          formattedCode: `${prefix}-${String(seq).padStart(6, '0')}`,
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getAccountBalanceAsOf(
+    tenantId: string,
+    accountCode: string,
+    asOfDate: string
+  ): Promise<StorageResult<{ accountCode: string; debitTotal: number; creditTotal: number; balance: number; asOfDate: string }>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const q = `
+        SELECT 
+          COALESCE(SUM(l.debit), 0) as debit_total,
+          COALESCE(SUM(l.credit), 0) as credit_total
+        FROM an_journal_lines l
+        JOIN an_journal_entries e ON l.entry_id = e.id AND l.tenant_id = e.tenant_id
+        WHERE l.tenant_id = $1 
+          AND l.account_code = $2 
+          AND e.status = 'POSTED'
+          AND e.date <= $3::date;
+      `;
+      const res = await this.query(q, [tenantId, accountCode, asOfDate]);
+      const debitTotal = Number(res.rows[0].debit_total);
+      const creditTotal = Number(res.rows[0].credit_total);
+      return {
+        success: true,
+        data: {
+          accountCode,
+          debitTotal,
+          creditTotal,
+          balance: debitTotal - creditTotal,
+          asOfDate,
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getCountryTaxRule(countryCode: string): Promise<StorageResult<CountryTaxRule>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_tax_rules WHERE country_code = $1', [countryCode.toUpperCase()]);
+      if (res.rows.length === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/tax-rule-not-found',
+            title: 'قاعدة الضريبة غير موجودة',
+            status: 404,
+            detail: `لا توجد قاعدة ضريبية مسجلة للدولة (${countryCode})`,
+          },
+        };
+      }
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          countryCode: r.country_code,
+          countryNameAr: r.country_name_ar,
+          standardVatRate: Number(r.standard_vat_rate),
+          currencyCode: r.currency_code,
+          taxAuthorityName: r.tax_authority_name,
+          taxIdFormatRegex: r.tax_id_format_regex,
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listCountryTaxRules(): Promise<StorageResult<CountryTaxRule[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_tax_rules ORDER BY country_code ASC');
+      const list: CountryTaxRule[] = res.rows.map((r: any) => ({
+        countryCode: r.country_code,
+        countryNameAr: r.country_name_ar,
+        standardVatRate: Number(r.standard_vat_rate),
+        currencyCode: r.currency_code,
+        taxAuthorityName: r.tax_authority_name,
+        taxIdFormatRegex: r.tax_id_format_regex,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async upsertCountryTaxRule(rule: CountryTaxRule): Promise<StorageResult<CountryTaxRule>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const q = `
+        INSERT INTO an_tax_rules (country_code, country_name_ar, standard_vat_rate, currency_code, tax_authority_name, tax_id_format_regex, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        ON CONFLICT (country_code) DO UPDATE SET
+          country_name_ar = EXCLUDED.country_name_ar,
+          standard_vat_rate = EXCLUDED.standard_vat_rate,
+          currency_code = EXCLUDED.currency_code,
+          tax_authority_name = EXCLUDED.tax_authority_name,
+          tax_id_format_regex = EXCLUDED.tax_id_format_regex,
+          updated_at = NOW();
+      `;
+      await this.query(q, [
+        rule.countryCode.toUpperCase(),
+        rule.countryNameAr,
+        rule.standardVatRate,
+        rule.currencyCode,
+        rule.taxAuthorityName,
+        rule.taxIdFormatRegex,
+      ]);
+      return { success: true, data: rule };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getTenantModules(tenantId: string): Promise<StorageResult<TenantModuleManifest[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_tenant_modules WHERE tenant_id = $1', [tenantId]);
+      const list: TenantModuleManifest[] = res.rows.map((r: any) => ({
+        tenantId: r.tenant_id,
+        moduleId: r.module_id,
+        moduleNameAr: r.module_name_ar,
+        isEnabled: r.is_enabled,
+        config: r.config,
+        activatedAt: r.activated_at ? r.activated_at.toISOString() : undefined,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async enableTenantModules(
+    tenantId: string,
+    modules: TenantModuleManifest[],
+    idempotencyKey: string
+  ): Promise<StorageResult<TenantModuleManifest[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      for (const m of modules) {
+        const q = `
+          INSERT INTO an_tenant_modules (tenant_id, module_id, module_name_ar, is_enabled, config, activated_at)
+          VALUES ($1, $2, $3, $4, $5, NOW())
+          ON CONFLICT (tenant_id, module_id) DO UPDATE SET
+            module_name_ar = EXCLUDED.module_name_ar,
+            is_enabled = EXCLUDED.is_enabled,
+            config = EXCLUDED.config;
+        `;
+        await this.query(q, [
+          tenantId,
+          m.moduleId,
+          m.moduleNameAr,
+          m.isEnabled ?? true,
+          m.config ? JSON.stringify(m.config) : null,
+        ]);
+      }
+      return this.getTenantModules(tenantId);
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveMasterItem(tenantId: string, item: MasterItem, idempotencyKey: string): Promise<StorageResult<MasterItem>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const q = `
+        INSERT INTO an_master_items (id, tenant_id, code, name_ar, category, unit_price, cost_price, status, created_by, approved_by, rejection_reason, created_at, approved_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (id) DO UPDATE SET
+          code = EXCLUDED.code,
+          name_ar = EXCLUDED.name_ar,
+          category = EXCLUDED.category,
+          unit_price = EXCLUDED.unit_price,
+          cost_price = EXCLUDED.cost_price,
+          status = EXCLUDED.status,
+          approved_by = EXCLUDED.approved_by,
+          rejection_reason = EXCLUDED.rejection_reason,
+          approved_at = EXCLUDED.approved_at
+        RETURNING *;
+      `;
+      await this.query(q, [
+        item.id,
+        tenantId,
+        item.code,
+        item.nameAr,
+        item.category,
+        item.unitPrice,
+        item.costPrice,
+        item.status,
+        item.createdBy,
+        item.approvedBy || null,
+        item.rejectionReason || null,
+        item.createdAt || new Date().toISOString(),
+        item.approvedAt ? new Date(item.approvedAt) : null,
+      ]);
+      return { success: true, data: item };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getMasterItem(tenantId: string, itemId: string): Promise<StorageResult<MasterItem>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        'SELECT * FROM an_master_items WHERE tenant_id = $1 AND (id = $2 OR code = $2)',
+        [tenantId, itemId]
+      );
+      if (res.rows.length === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/item-not-found',
+            title: 'الصنف غير موجود',
+            status: 404,
+            detail: `تعذر العثور على الصنف ${itemId}`,
+          },
+        };
+      }
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          id: r.id,
+          tenantId: r.tenant_id,
+          code: r.code,
+          nameAr: r.name_ar,
+          category: r.category,
+          unitPrice: Number(r.unit_price),
+          costPrice: Number(r.cost_price),
+          status: r.status,
+          createdBy: r.created_by,
+          approvedBy: r.approved_by,
+          rejectionReason: r.rejection_reason,
+          createdAt: r.created_at ? r.created_at.toISOString() : undefined,
+          approvedAt: r.approved_at ? r.approved_at.toISOString() : undefined,
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listMasterItems(tenantId: string): Promise<StorageResult<MasterItem[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_master_items WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId]);
+      const list: MasterItem[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        code: r.code,
+        nameAr: r.name_ar,
+        category: r.category,
+        unitPrice: Number(r.unit_price),
+        costPrice: Number(r.cost_price),
+        status: r.status,
+        createdBy: r.created_by,
+        approvedBy: r.approved_by,
+        rejectionReason: r.rejection_reason,
+        createdAt: r.created_at ? r.created_at.toISOString() : undefined,
+        approvedAt: r.approved_at ? r.approved_at.toISOString() : undefined,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async approveMasterItem(
+    tenantId: string,
+    itemId: string,
+    approvedBy: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<MasterItem>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        "UPDATE an_master_items SET status = 'APPROVED', approved_by = $1, approved_at = NOW() WHERE tenant_id = $2 AND (id = $3 OR code = $3) RETURNING *",
+        [approvedBy, tenantId, itemId]
+      );
+      if (res.rows.length === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/item-not-found',
+            title: 'الصنف غير موجود',
+            status: 404,
+            detail: `تعذر العثور على الصنف ${itemId}`,
+          },
+        };
+      }
+      return this.getMasterItem(tenantId, itemId);
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveMasterPartner(tenantId: string, partner: MasterPartner, idempotencyKey: string): Promise<StorageResult<MasterPartner>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const q = `
+        INSERT INTO an_master_partners (id, tenant_id, type, code, name_ar, tax_number, phone, status, created_by, approved_by, rejection_reason, created_at, approved_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (id) DO UPDATE SET
+          code = EXCLUDED.code,
+          name_ar = EXCLUDED.name_ar,
+          tax_number = EXCLUDED.tax_number,
+          phone = EXCLUDED.phone,
+          status = EXCLUDED.status,
+          approved_by = EXCLUDED.approved_by,
+          rejection_reason = EXCLUDED.rejection_reason,
+          approved_at = EXCLUDED.approved_at
+        RETURNING *;
+      `;
+      await this.query(q, [
+        partner.id,
+        tenantId,
+        partner.type,
+        partner.code,
+        partner.nameAr,
+        partner.taxNumber || null,
+        partner.phone || null,
+        partner.status,
+        partner.createdBy,
+        partner.approvedBy || null,
+        partner.rejectionReason || null,
+        partner.createdAt || new Date().toISOString(),
+        partner.approvedAt ? new Date(partner.approvedAt) : null,
+      ]);
+      return { success: true, data: partner };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getMasterPartner(tenantId: string, partnerId: string): Promise<StorageResult<MasterPartner>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        'SELECT * FROM an_master_partners WHERE tenant_id = $1 AND (id = $2 OR code = $2)',
+        [tenantId, partnerId]
+      );
+      if (res.rows.length === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/partner-not-found',
+            title: 'الشريك غير موجود',
+            status: 404,
+            detail: `تعذر العثور على الشريك التجاري ${partnerId}`,
+          },
+        };
+      }
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          id: r.id,
+          tenantId: r.tenant_id,
+          type: r.type,
+          code: r.code,
+          nameAr: r.name_ar,
+          taxNumber: r.tax_number,
+          phone: r.phone,
+          status: r.status,
+          createdBy: r.created_by,
+          approvedBy: r.approved_by,
+          rejectionReason: r.rejection_reason,
+          createdAt: r.created_at ? r.created_at.toISOString() : undefined,
+          approvedAt: r.approved_at ? r.approved_at.toISOString() : undefined,
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listMasterPartners(tenantId: string, type?: 'CUSTOMER' | 'VENDOR'): Promise<StorageResult<MasterPartner[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const q = type
+        ? 'SELECT * FROM an_master_partners WHERE tenant_id = $1 AND type = $2 ORDER BY created_at DESC'
+        : 'SELECT * FROM an_master_partners WHERE tenant_id = $1 ORDER BY created_at DESC';
+      const params = type ? [tenantId, type] : [tenantId];
+      const res = await this.query(q, params);
+      const list: MasterPartner[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        type: r.type,
+        code: r.code,
+        nameAr: r.name_ar,
+        taxNumber: r.tax_number,
+        phone: r.phone,
+        status: r.status,
+        createdBy: r.created_by,
+        approvedBy: r.approved_by,
+        rejectionReason: r.rejection_reason,
+        createdAt: r.created_at ? r.created_at.toISOString() : undefined,
+        approvedAt: r.approved_at ? r.approved_at.toISOString() : undefined,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async approveMasterPartner(
+    tenantId: string,
+    partnerId: string,
+    approvedBy: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<MasterPartner>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        "UPDATE an_master_partners SET status = 'APPROVED', approved_by = $1, approved_at = NOW() WHERE tenant_id = $2 AND (id = $3 OR code = $3) RETURNING *",
+        [approvedBy, tenantId, partnerId]
+      );
+      if (res.rows.length === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/partner-not-found',
+            title: 'الشريك غير موجود',
+            status: 404,
+            detail: `تعذر العثور على الشريك التجاري ${partnerId}`,
+          },
+        };
+      }
+      return this.getMasterPartner(tenantId, partnerId);
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async appendAuditChain(
+    tenantId: string,
+    entry: Omit<AuditChainEntry, 'sequenceNumber' | 'previousHash' | 'entryHash'>
+  ): Promise<StorageResult<AuditChainEntry>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const lastRes = await this.query(
+        'SELECT sequence_number, entry_hash FROM an_audit_chain WHERE tenant_id = $1 ORDER BY sequence_number DESC LIMIT 1',
+        [tenantId]
+      );
+      let seq = 1;
+      let prevHash = GENESIS_PREVIOUS_HASH;
+      if (lastRes.rows.length > 0) {
+        seq = Number(lastRes.rows[0].sequence_number) + 1;
+        prevHash = lastRes.rows[0].entry_hash;
+      }
+
+      const hash = AuditChainService.computeRecordHash(
+        seq,
+        tenantId,
+        entry.timestamp,
+        entry.actorId,
+        entry.action,
+        entry.entityType,
+        entry.entityId,
+        entry.beforeState,
+        entry.afterState,
+        prevHash
+      );
+
+      const fullRecord: AuditChainEntry = {
+        ...entry,
+        sequenceNumber: seq,
+        previousHash: prevHash,
+        entryHash: hash,
+      };
+
+      const q = `
+        INSERT INTO an_audit_chain (id, sequence_number, tenant_id, timestamp, actor_id, actor_name, action, entity_type, entity_id, before_state, after_state, ip_address, previous_hash, entry_hash)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14);
+      `;
+      await this.query(q, [
+        fullRecord.id,
+        fullRecord.sequenceNumber,
+        tenantId,
+        fullRecord.timestamp,
+        fullRecord.actorId,
+        fullRecord.actorName,
+        fullRecord.action,
+        fullRecord.entityType,
+        fullRecord.entityId,
+        fullRecord.beforeState ? JSON.stringify(fullRecord.beforeState) : null,
+        fullRecord.afterState ? JSON.stringify(fullRecord.afterState) : null,
+        fullRecord.ipAddress || null,
+        fullRecord.previousHash,
+        fullRecord.entryHash,
+      ]);
+
+      return { success: true, data: fullRecord };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getAuditChain(tenantId: string, limit = 100): Promise<StorageResult<AuditChainEntry[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        'SELECT * FROM an_audit_chain WHERE tenant_id = $1 ORDER BY sequence_number ASC LIMIT $2',
+        [tenantId, limit]
+      );
+      const list: AuditChainEntry[] = res.rows.map((r: any) => ({
+        id: r.id,
+        sequenceNumber: Number(r.sequence_number),
+        tenantId: r.tenant_id,
+        timestamp: r.timestamp.toISOString(),
+        actorId: r.actor_id,
+        actorName: r.actor_name,
+        action: r.action,
+        entityType: r.entity_type,
+        entityId: r.entity_id,
+        beforeState: r.before_state,
+        afterState: r.after_state,
+        ipAddress: r.ip_address,
+        previousHash: r.previous_hash,
+        entryHash: r.entry_hash,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async verifyAuditChain(
+    tenantId: string
+  ): Promise<StorageResult<{ isValid: boolean; verifiedRecordsCount: number; brokenAtSequence?: number; messageAr: string }>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const chainRes = await this.getAuditChain(tenantId, 10000);
+      if (!chainRes.success || !chainRes.data) return chainRes as any;
+
+      const chain = chainRes.data;
+      if (chain.length === 0) {
+        return {
+          success: true,
+          data: {
+            isValid: true,
+            verifiedRecordsCount: 0,
+            messageAr: 'سلسلة التدقيق فارغة (لا توجد سجلات مسجلة بعد).',
+          },
+        };
+      }
+
+      let prev = GENESIS_PREVIOUS_HASH;
+      for (const record of chain) {
+        if (record.previousHash !== prev) {
+          return {
+            success: true,
+            data: {
+              isValid: false,
+              verifiedRecordsCount: record.sequenceNumber - 1,
+              brokenAtSequence: record.sequenceNumber,
+              messageAr: `فشل التحقق: انقطاع في الهاش السابق عند السجل رقم ${record.sequenceNumber}.`,
+            },
+          };
+        }
+
+        const expected = AuditChainService.computeRecordHash(
+          record.sequenceNumber,
+          record.tenantId,
+          record.timestamp,
+          record.actorId,
+          record.action,
+          record.entityType,
+          record.entityId,
+          record.beforeState,
+          record.afterState,
+          record.previousHash
+        );
+
+        if (expected !== record.entryHash) {
+          return {
+            success: true,
+            data: {
+              isValid: false,
+              verifiedRecordsCount: record.sequenceNumber - 1,
+              brokenAtSequence: record.sequenceNumber,
+              messageAr: `تم كشف تلاعب محتوى في السجل رقم ${record.sequenceNumber}. الهاش غير متطابق!`,
+            },
+          };
+        }
+        prev = record.entryHash;
+      }
+
+      return {
+        success: true,
+        data: {
+          isValid: true,
+          verifiedRecordsCount: chain.length,
+          messageAr: 'تم التحقق المشفر من سلامة سلسلة سجلات التدقيق بالكامل (100% مطابقة وخالية من التلاعب).',
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
   }
 
   private dbError(err: any): StorageResult<any> {

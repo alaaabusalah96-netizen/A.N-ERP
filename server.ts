@@ -29,6 +29,12 @@ import { EncryptionService } from './src/core/crypto/EncryptionService';
 import { SoDPolicyEngine } from './src/core/sod/SoDPolicyEngine';
 import { DomainEventBus } from './src/core/events/DomainEventBus';
 import { DualCalendar } from './src/core/utils/dualCalendar';
+import { CompanyWizardService } from './src/core/wizard/CompanyWizardService';
+import { HistoricalQueryService } from './src/core/reports/HistoricalQueryService';
+import { DualControlService } from './src/core/governance/DualControlService';
+import { AuditChainService } from './src/core/audit/AuditChainService';
+import { runPhase2Battery } from './src/core/tests/runPhase2Battery';
+import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
 
 const PORT = 3000;
 
@@ -1090,6 +1096,227 @@ async function startServer() {
     );
 
     return res.json({ success: true, data: approveRes.data });
+  });
+
+  // ============================================================================
+  // PHASE 2 API ROUTES: WIZARD, DATA GOVERNANCE, NUMBERING, AS-OF & AUDIT CHAIN
+  // ============================================================================
+
+  // 2A: Country Tax Rules Catalog
+  app.get('/api/wizard/tax-rules', (req: Request, res: Response) => {
+    return res.json({ success: true, data: Object.values(COUNTRY_TAX_RULES) });
+  });
+
+  // 2A: 50 Activity Templates Catalog
+  app.get('/api/wizard/activity-templates', (req: Request, res: Response) => {
+    return res.json({
+      success: true,
+      totalCount: Object.keys(ACTIVITY_TEMPLATES).length,
+      data: Object.values(ACTIVITY_TEMPLATES),
+    });
+  });
+
+  // 2A, 2B, 2H: Execute 5-Step Company Creation Wizard
+  app.post('/api/wizard/create-company', async (req: Request, res: Response) => {
+    const storage = getStorage();
+    const wizard = new CompanyWizardService(storage);
+    const result = await wizard.createCompany(req.body);
+    if (!result.success) {
+      return res.status(result.error?.status || 400).json(result.error);
+    }
+    return res.status(201).json(result);
+  });
+
+  // 2B: List Registered Tenants / Companies
+  app.get('/api/tenants', async (req: Request, res: Response) => {
+    const storage = getStorage();
+    const result = await storage.listTenants();
+    if (!result.success) {
+      return res.status(result.error?.status || 500).json(result.error);
+    }
+    return res.json(result);
+  });
+
+  // 2B: Propose BackendConfig Migration
+  app.post('/api/storage/propose-migration', (req: Request, res: Response) => {
+    const { tenantId, targetConfig, requestedBy, justificationAr } = req.body;
+    const result = globalStorageRouter.proposeMigration(tenantId, targetConfig, requestedBy || 'USR-ADMIN', justificationAr || 'ترقية البنية التحتية');
+    if (!result.success) {
+      return res.status(result.error?.status || 400).json(result.error);
+    }
+    return res.json(result);
+  });
+
+  // 2C: Numbering Sequence Manual Override with Mandatory Audit Justification
+  app.post('/api/numbering/override', async (req: Request, res: Response) => {
+    const { tenantId, sequenceKey, targetSequence, justificationAr, authorizedBy, idempotencyKey } = req.body;
+    const storage = getStorage();
+    const numbering = new NumberingEngine(storage);
+    const result = await numbering.overrideSequence(
+      tenantId || 'tenant-main',
+      sequenceKey,
+      Number(targetSequence),
+      justificationAr,
+      authorizedBy || 'USR-001',
+      idempotencyKey
+    );
+    if (!result.success) {
+      return res.status(result.error?.status || 400).json(result.error);
+    }
+    return res.json(result);
+  });
+
+  // 2D: As-Of Historical Balance Query
+  app.get('/api/reports/balance-as-of', async (req: Request, res: Response) => {
+    const { tenantId, accountCode, asOfDate } = req.query;
+    if (!accountCode || !asOfDate) {
+      return res.status(400).json({
+        type: 'https://api.an-erp.local/errors/missing-as-of-params',
+        title: 'معاملات الاستعلام التاريخي غير مكتملة',
+        status: 400,
+        detail: 'رقم الحساب (accountCode) وتاريخ الاستعلام (asOfDate بصيغة YYYY-MM-DD) مطلوبان.',
+      });
+    }
+    const storage = getStorage();
+    const historyService = new HistoricalQueryService(storage);
+    const result = await historyService.getAccountBalanceAsOf(
+      String(tenantId || 'tenant-main'),
+      String(accountCode),
+      String(asOfDate)
+    );
+    if (!result.success) {
+      return res.status(result.error?.status || 404).json(result.error);
+    }
+    return res.json(result);
+  });
+
+  // 2D: As-Of Historical Account Statement
+  app.get('/api/reports/statement-as-of', async (req: Request, res: Response) => {
+    const { tenantId, accountCode, asOfDate } = req.query;
+    if (!accountCode || !asOfDate) {
+      return res.status(400).json({
+        type: 'https://api.an-erp.local/errors/missing-statement-params',
+        title: 'معاملات كشف الحساب غير مكتملة',
+        status: 400,
+        detail: 'رقم الحساب (accountCode) وتاريخ الاستعلام (asOfDate) مطلوبان.',
+      });
+    }
+    const storage = getStorage();
+    const historyService = new HistoricalQueryService(storage);
+    const result = await historyService.getStatementAsOf(
+      String(tenantId || 'tenant-main'),
+      String(accountCode),
+      String(asOfDate)
+    );
+    if (!result.success) {
+      return res.status(result.error?.status || 404).json(result.error);
+    }
+    return res.json(result);
+  });
+
+  // 2F: Dual-Control Master Items
+  app.post('/api/master-data/items', async (req: Request, res: Response) => {
+    const { tenantId, item, createdBy, idempotencyKey } = req.body;
+    const storage = getStorage();
+    const dualControl = new DualControlService(storage);
+    const result = await dualControl.createMasterItem(
+      tenantId || 'tenant-main',
+      item,
+      createdBy || { id: 'USR-001', fullName: 'المستخدم الحالي', role: 'accountant' },
+      idempotencyKey
+    );
+    if (!result.success) {
+      return res.status(result.error?.status || 400).json(result.error);
+    }
+    return res.status(201).json(result);
+  });
+
+  app.post('/api/master-data/items/:id/approve', async (req: Request, res: Response) => {
+    const { tenantId, approvedBy, idempotencyKey } = req.body;
+    const storage = getStorage();
+    const dualControl = new DualControlService(storage);
+    const result = await dualControl.approveMasterItem(
+      tenantId || 'tenant-main',
+      req.params.id,
+      approvedBy || { id: 'USR-002', fullName: 'المدير المالي', role: 'financial_approver' },
+      idempotencyKey
+    );
+    if (!result.success) {
+      return res.status(result.error?.status || 403).json(result.error);
+    }
+    return res.json(result);
+  });
+
+  // 2F: Dual-Control Master Partners (Customer/Vendor)
+  app.post('/api/master-data/partners', async (req: Request, res: Response) => {
+    const { tenantId, partner, createdBy, idempotencyKey } = req.body;
+    const storage = getStorage();
+    const dualControl = new DualControlService(storage);
+    const result = await dualControl.createMasterPartner(
+      tenantId || 'tenant-main',
+      partner,
+      createdBy || { id: 'USR-001', fullName: 'المستخدم الحالي', role: 'accountant' },
+      idempotencyKey
+    );
+    if (!result.success) {
+      return res.status(result.error?.status || 400).json(result.error);
+    }
+    return res.status(201).json(result);
+  });
+
+  app.post('/api/master-data/partners/:id/approve', async (req: Request, res: Response) => {
+    const { tenantId, approvedBy, idempotencyKey } = req.body;
+    const storage = getStorage();
+    const dualControl = new DualControlService(storage);
+    const result = await dualControl.approveMasterPartner(
+      tenantId || 'tenant-main',
+      req.params.id,
+      approvedBy || { id: 'USR-002', fullName: 'المدير المالي', role: 'financial_approver' },
+      idempotencyKey
+    );
+    if (!result.success) {
+      return res.status(result.error?.status || 403).json(result.error);
+    }
+    return res.json(result);
+  });
+
+  // 2E & 2G: SHA-256 Tamper-Evident Hash Chain Audit
+  app.get('/api/audit-chain', async (req: Request, res: Response) => {
+    const tenantId = String(req.query.tenantId || 'tenant-main');
+    const storage = getStorage();
+    const result = await storage.getAuditChain(tenantId);
+    if (!result.success) {
+      return res.status(result.error?.status || 500).json(result.error);
+    }
+    return res.json(result);
+  });
+
+  app.post('/api/audit-chain/verify', async (req: Request, res: Response) => {
+    const tenantId = String(req.body.tenantId || 'tenant-main');
+    const storage = getStorage();
+    const auditService = new AuditChainService(storage);
+    const result = await auditService.verifyIntegrity(tenantId);
+    if (!result.success) {
+      return res.status(result.error?.status || 500).json(result.error);
+    }
+    return res.json(result);
+  });
+
+  // 2H: Tenant Active Module Manifests
+  app.get('/api/tenant-modules', async (req: Request, res: Response) => {
+    const tenantId = String(req.query.tenantId || 'tenant-main');
+    const storage = getStorage();
+    const result = await storage.getTenantModules(tenantId);
+    if (!result.success) {
+      return res.status(result.error?.status || 500).json(result.error);
+    }
+    return res.json(result);
+  });
+
+  // Phase 2 Comprehensive Acceptance Battery Endpoint
+  app.get('/api/internal/phase2-battery', async (req: Request, res: Response) => {
+    const result = await runPhase2Battery();
+    return res.json(result);
   });
 
   // 6. Internal Route: /internal/build-status (Protected audit view per section 1.3)

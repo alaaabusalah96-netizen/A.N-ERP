@@ -16,7 +16,13 @@ import {
   SystemChangeLogEntry,
   TokenFamily,
   RefreshTokenRecord,
+  CountryTaxRule,
+  TenantModuleManifest,
+  MasterItem,
+  MasterPartner,
+  AuditChainEntry,
 } from '../StoragePort';
+import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
 export class InMemoryAdapter implements StoragePort {
   readonly adapterName = 'InMemoryAdapter (Development Only - Non-Persistent)';
@@ -32,8 +38,16 @@ export class InMemoryAdapter implements StoragePort {
   private tokenFamilies = new Map<string, TokenFamily>();
   private refreshTokens = new Map<string, RefreshTokenRecord>();
 
+  // Phase 2 state collections
+  private taxRules = new Map<string, CountryTaxRule>();
+  private tenantModules = new Map<string, TenantModuleManifest[]>();
+  private masterItems = new Map<string, MasterItem>();
+  private masterPartners = new Map<string, MasterPartner>();
+  private auditChains = new Map<string, AuditChainEntry[]>();
+
   constructor() {
     this.seedDefaultData();
+    this.seedDefaultTaxRules();
   }
 
   private seedDefaultData() {
@@ -432,5 +446,339 @@ export class InMemoryAdapter implements StoragePort {
 
   public async withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
     return fn();
+  }
+
+  // Phase 2 Implementations
+
+  private seedDefaultTaxRules() {
+    const defaultRules: CountryTaxRule[] = [
+      {
+        countryCode: 'SA',
+        countryNameAr: 'المملكة العربية السعودية',
+        standardVatRate: 0.15,
+        currencyCode: 'SAR',
+        taxAuthorityName: 'هيئة الزكاة والضريبة والجمارك (ZATCA)',
+        taxIdFormatRegex: '^3[0-9]{13}3$',
+      },
+      {
+        countryCode: 'EG',
+        countryNameAr: 'جمهورية مصر العربية',
+        standardVatRate: 0.14,
+        currencyCode: 'EGP',
+        taxAuthorityName: 'مصلحة الضرائب المصرية (ETA)',
+        taxIdFormatRegex: '^[0-9]{9}$',
+      },
+      {
+        countryCode: 'AE',
+        countryNameAr: 'الإمارات العربية المتحدة',
+        standardVatRate: 0.05,
+        currencyCode: 'AED',
+        taxAuthorityName: 'الهيئة الاتحادية للضرائب (FTA)',
+        taxIdFormatRegex: '^100[0-9]{12}$',
+      },
+    ];
+    for (const r of defaultRules) {
+      this.taxRules.set(r.countryCode, r);
+    }
+  }
+
+  public async listTenants(): Promise<StorageResult<TenantCompany[]>> {
+    return { success: true, data: Array.from(this.tenants.values()) };
+  }
+
+  public async overrideSequence(
+    tenantId: string,
+    sequenceKey: string,
+    manualNumber: number,
+    reason: string,
+    authorizedBy: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<SequenceResult>> {
+    const key = `${tenantId}:${sequenceKey}`;
+    this.sequences.set(key, manualNumber);
+    const prefix = sequenceKey.toUpperCase().split('_')[0] || 'DOC';
+    return {
+      success: true,
+      data: {
+        sequenceNumber: manualNumber,
+        formattedCode: `${prefix}-${String(manualNumber).padStart(6, '0')}`,
+      },
+    };
+  }
+
+  public async getAccountBalanceAsOf(
+    tenantId: string,
+    accountCode: string,
+    asOfDate: string
+  ): Promise<StorageResult<{ accountCode: string; debitTotal: number; creditTotal: number; balance: number; asOfDate: string }>> {
+    const targetTime = new Date(asOfDate).getTime();
+    let debitTotal = 0;
+    let creditTotal = 0;
+
+    for (const entry of this.journalEntries.values()) {
+      if (entry.tenantId === tenantId && entry.status === 'POSTED') {
+        const entryTime = new Date(entry.date).getTime();
+        if (entryTime <= targetTime) {
+          for (const line of entry.lines) {
+            if (line.accountCode === accountCode) {
+              debitTotal += Number(line.debit) || 0;
+              creditTotal += Number(line.credit) || 0;
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        accountCode,
+        debitTotal,
+        creditTotal,
+        balance: debitTotal - creditTotal,
+        asOfDate,
+      },
+    };
+  }
+
+  public async getCountryTaxRule(countryCode: string): Promise<StorageResult<CountryTaxRule>> {
+    const rule = this.taxRules.get(countryCode.toUpperCase());
+    if (!rule) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/tax-rule-not-found',
+          title: 'قاعدة الضريبة غير موجودة',
+          status: 404,
+          detail: `لا توجد قاعدة ضريبية مسجلة للدولة (${countryCode})`,
+        },
+      };
+    }
+    return { success: true, data: { ...rule } };
+  }
+
+  public async listCountryTaxRules(): Promise<StorageResult<CountryTaxRule[]>> {
+    return { success: true, data: Array.from(this.taxRules.values()) };
+  }
+
+  public async upsertCountryTaxRule(rule: CountryTaxRule): Promise<StorageResult<CountryTaxRule>> {
+    this.taxRules.set(rule.countryCode.toUpperCase(), { ...rule });
+    return { success: true, data: rule };
+  }
+
+  public async getTenantModules(tenantId: string): Promise<StorageResult<TenantModuleManifest[]>> {
+    const list = this.tenantModules.get(tenantId) || [];
+    return { success: true, data: [...list] };
+  }
+
+  public async enableTenantModules(
+    tenantId: string,
+    modules: TenantModuleManifest[],
+    idempotencyKey: string
+  ): Promise<StorageResult<TenantModuleManifest[]>> {
+    const existing = this.tenantModules.get(tenantId) || [];
+    const map = new Map<string, TenantModuleManifest>();
+    for (const m of existing) map.set(m.moduleId, m);
+    for (const m of modules) map.set(m.moduleId, { ...m, tenantId });
+    const updated = Array.from(map.values());
+    this.tenantModules.set(tenantId, updated);
+    return { success: true, data: updated };
+  }
+
+  public async saveMasterItem(tenantId: string, item: MasterItem, idempotencyKey: string): Promise<StorageResult<MasterItem>> {
+    this.masterItems.set(`${tenantId}:${item.id}`, { ...item });
+    return { success: true, data: item };
+  }
+
+  public async getMasterItem(tenantId: string, itemId: string): Promise<StorageResult<MasterItem>> {
+    for (const item of this.masterItems.values()) {
+      if (item.tenantId === tenantId && (item.id === itemId || item.code === itemId)) {
+        return { success: true, data: { ...item } };
+      }
+    }
+    return {
+      success: false,
+      error: {
+        type: 'https://api.an-erp.local/errors/item-not-found',
+        title: 'الصنف غير موجود',
+        status: 404,
+        detail: `تعذر العثور على الصنف ${itemId}`,
+      },
+    };
+  }
+
+  public async listMasterItems(tenantId: string): Promise<StorageResult<MasterItem[]>> {
+    const list = Array.from(this.masterItems.values()).filter((i) => i.tenantId === tenantId);
+    return { success: true, data: list };
+  }
+
+  public async approveMasterItem(
+    tenantId: string,
+    itemId: string,
+    approvedBy: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<MasterItem>> {
+    const item = await this.getMasterItem(tenantId, itemId);
+    if (!item.success || !item.data) return item;
+
+    const updated: MasterItem = {
+      ...item.data,
+      status: 'APPROVED',
+      approvedBy,
+      approvedAt: new Date().toISOString(),
+    };
+    this.masterItems.set(`${tenantId}:${updated.id}`, updated);
+    return { success: true, data: updated };
+  }
+
+  public async saveMasterPartner(tenantId: string, partner: MasterPartner, idempotencyKey: string): Promise<StorageResult<MasterPartner>> {
+    this.masterPartners.set(`${tenantId}:${partner.id}`, { ...partner });
+    return { success: true, data: partner };
+  }
+
+  public async getMasterPartner(tenantId: string, partnerId: string): Promise<StorageResult<MasterPartner>> {
+    for (const p of this.masterPartners.values()) {
+      if (p.tenantId === tenantId && (p.id === partnerId || p.code === partnerId)) {
+        return { success: true, data: { ...p } };
+      }
+    }
+    return {
+      success: false,
+      error: {
+        type: 'https://api.an-erp.local/errors/partner-not-found',
+        title: 'الشريك التجاري غير موجود',
+        status: 404,
+        detail: `تعذر العثور على الشريك ${partnerId}`,
+      },
+    };
+  }
+
+  public async listMasterPartners(tenantId: string, type?: 'CUSTOMER' | 'VENDOR'): Promise<StorageResult<MasterPartner[]>> {
+    const list = Array.from(this.masterPartners.values()).filter(
+      (p) => p.tenantId === tenantId && (!type || p.type === type)
+    );
+    return { success: true, data: list };
+  }
+
+  public async approveMasterPartner(
+    tenantId: string,
+    partnerId: string,
+    approvedBy: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<MasterPartner>> {
+    const p = await this.getMasterPartner(tenantId, partnerId);
+    if (!p.success || !p.data) return p;
+
+    const updated: MasterPartner = {
+      ...p.data,
+      status: 'APPROVED',
+      approvedBy,
+      approvedAt: new Date().toISOString(),
+    };
+    this.masterPartners.set(`${tenantId}:${updated.id}`, updated);
+    return { success: true, data: updated };
+  }
+
+  public async appendAuditChain(
+    tenantId: string,
+    entry: Omit<AuditChainEntry, 'sequenceNumber' | 'previousHash' | 'entryHash'>
+  ): Promise<StorageResult<AuditChainEntry>> {
+    const chain = this.auditChains.get(tenantId) || [];
+    const seq = chain.length + 1;
+    const prevHash = chain.length === 0 ? GENESIS_PREVIOUS_HASH : chain[chain.length - 1].entryHash;
+    const hash = AuditChainService.computeRecordHash(
+      seq,
+      tenantId,
+      entry.timestamp,
+      entry.actorId,
+      entry.action,
+      entry.entityType,
+      entry.entityId,
+      entry.beforeState,
+      entry.afterState,
+      prevHash
+    );
+
+    const fullRecord: AuditChainEntry = {
+      ...entry,
+      sequenceNumber: seq,
+      previousHash: prevHash,
+      entryHash: hash,
+    };
+
+    chain.push(fullRecord);
+    this.auditChains.set(tenantId, chain);
+    return { success: true, data: fullRecord };
+  }
+
+  public async getAuditChain(tenantId: string, limit = 100): Promise<StorageResult<AuditChainEntry[]>> {
+    const chain = this.auditChains.get(tenantId) || [];
+    return { success: true, data: chain.slice(0, limit) };
+  }
+
+  public async verifyAuditChain(
+    tenantId: string
+  ): Promise<StorageResult<{ isValid: boolean; verifiedRecordsCount: number; brokenAtSequence?: number; messageAr: string }>> {
+    const chain = this.auditChains.get(tenantId) || [];
+    if (chain.length === 0) {
+      return {
+        success: true,
+        data: {
+          isValid: true,
+          verifiedRecordsCount: 0,
+          messageAr: 'سلسلة التدقيق فارغة (لا توجد سجلات بعد).',
+        },
+      };
+    }
+
+    let prev = GENESIS_PREVIOUS_HASH;
+    for (const record of chain) {
+      if (record.previousHash !== prev) {
+        return {
+          success: true,
+          data: {
+            isValid: false,
+            verifiedRecordsCount: record.sequenceNumber - 1,
+            brokenAtSequence: record.sequenceNumber,
+            messageAr: `فشل التحقق: انقطاع في الهاش السابق عند السجل رقم ${record.sequenceNumber}.`,
+          },
+        };
+      }
+
+      const expected = AuditChainService.computeRecordHash(
+        record.sequenceNumber,
+        record.tenantId,
+        record.timestamp,
+        record.actorId,
+        record.action,
+        record.entityType,
+        record.entityId,
+        record.beforeState,
+        record.afterState,
+        record.previousHash
+      );
+
+      if (expected !== record.entryHash) {
+        return {
+          success: true,
+          data: {
+            isValid: false,
+            verifiedRecordsCount: record.sequenceNumber - 1,
+            brokenAtSequence: record.sequenceNumber,
+            messageAr: `تم كشف تلاعب محتوى في السجل رقم ${record.sequenceNumber}. الهاش غير متطابق!`,
+          },
+        };
+      }
+      prev = record.entryHash;
+    }
+
+    return {
+      success: true,
+      data: {
+        isValid: true,
+        verifiedRecordsCount: chain.length,
+        messageAr: 'تم التحقق المشفر من سلامة سلسلة سجلات التدقيق بالكامل (100% مطابقة وخالية من التلاعب).',
+      },
+    };
   }
 }
