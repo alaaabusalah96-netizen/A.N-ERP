@@ -95,7 +95,7 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
 
       if (res.status === 409) {
         // SoD Conflict RFC 7807
-        setSodConflictError(data.detail || 'تعارض في مبدأ فصل المهام (SoD)');
+        setSodConflictError(data.detail || 'تعارض في مبدأ فصل المهام');
         return;
       }
 
@@ -334,7 +334,7 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
               <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-bold mb-0.5">تعارض فصل المهام (SoD Conflict)</div>
+                  <div className="font-bold mb-0.5">تعارض فصل المهام</div>
                   <div>{sodConflictError}</div>
                 </div>
               </div>
@@ -414,7 +414,7 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">رقم الهوية الوطنية (PII مشفر)</label>
+                <label className="block font-semibold text-slate-700 mb-1">رقم الهوية الوطنية (بيانات محمية مشفرة)</label>
                 <input
                   type="text"
                   required

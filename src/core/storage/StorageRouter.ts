@@ -8,6 +8,9 @@
 import { StoragePort, TenantCompany, BackendConfig, StorageResult } from './StoragePort';
 import { PostgresPrimaryAdapter } from './adapters/PostgresPrimaryAdapter';
 import { InMemoryAdapter } from './adapters/InMemoryAdapter';
+import { MySQLSmokeAdapter } from './adapters/MySQLSmokeAdapter';
+import { MongoDBSmokeAdapter } from './adapters/MongoDBSmokeAdapter';
+import { FirebaseSmokeAdapter } from './adapters/FirebaseSmokeAdapter';
 
 export interface BackendConfigMigrationContract {
   id: string;
@@ -25,7 +28,7 @@ export interface BackendConfigMigrationContract {
 export class StorageRouter {
   private primaryAdapter: PostgresPrimaryAdapter;
   private devInMemoryAdapter: InMemoryAdapter;
-  private dedicatedAdapters = new Map<string, PostgresPrimaryAdapter>();
+  private dedicatedAdapters = new Map<string, StoragePort>();
   private migrations = new Map<string, BackendConfigMigrationContract[]>();
 
   // Only adapters that have passed the Full Battery Test can be selected for real companies
@@ -107,6 +110,27 @@ export class StorageRouter {
   }
 
   /**
+   * Factory method to create or resolve a storage adapter instance by adapterType.
+   */
+  public createAdapterByType(adapterType: string, connectionString?: string): StoragePort {
+    const type = adapterType.toLowerCase();
+    switch (type) {
+      case 'postgresql':
+        return new PostgresPrimaryAdapter(connectionString);
+      case 'inmemory':
+        return this.devInMemoryAdapter;
+      case 'mysql':
+        return new MySQLSmokeAdapter(connectionString);
+      case 'mongodb':
+        return new MongoDBSmokeAdapter(connectionString);
+      case 'firebase':
+        return new FirebaseSmokeAdapter(connectionString);
+      default:
+        return new PostgresPrimaryAdapter(connectionString);
+    }
+  }
+
+  /**
    * Resolves storage adapter based on tenant backendConfig:
    * { adapterType, connectionRef, isolationLevel }
    */
@@ -121,32 +145,36 @@ export class StorageRouter {
       return this.devInMemoryAdapter;
     }
 
-    // Verify certification
+    // If Dedicated isolation is requested:
+    if (isolationLevel === 'Dedicated') {
+      return this.getOrCreateDedicatedAdapter(tenant.id, adapterType, connectionRef);
+    }
+
+    // Shared isolation routes to Primary with tenant_id RLS
+    if (adapterType === 'postgresql') {
+      return this.primaryAdapter;
+    }
+
+    // Verify certification for Shared isolation
     if (!this.isAdapterCertified(adapterType)) {
       throw new Error(
         `الـ Adapter المختار (${adapterType}) غير معتمد إنتاجياً حتى الآن. يتطلب اجتياز البطارية الكاملة قبل تشغيل أي شركة حقيقية عليه.`
       );
     }
 
-    // If Dedicated isolation is requested:
-    if (isolationLevel === 'Dedicated') {
-      return this.getOrCreateDedicatedAdapter(tenant.id, connectionRef);
-    }
-
-    // Shared isolation routes to Primary with tenant_id RLS
-    return this.primaryAdapter;
+    return this.createAdapterByType(adapterType, process.env[connectionRef]);
   }
 
   /**
    * Retrieves or creates a dedicated adapter instance for Dedicated isolation tenants.
    */
-  private getOrCreateDedicatedAdapter(tenantId: string, connectionRef: string): PostgresPrimaryAdapter {
+  private getOrCreateDedicatedAdapter(tenantId: string, adapterType: string, connectionRef: string): StoragePort {
     const key = `${tenantId}:${connectionRef}`;
     let adapter = this.dedicatedAdapters.get(key);
     if (!adapter) {
       // Resolve secret from process.env via connectionRef
       const connectionString = process.env[connectionRef] || process.env.DATABASE_URL_DEDICATED || process.env.DATABASE_URL;
-      adapter = new PostgresPrimaryAdapter(connectionString);
+      adapter = this.createAdapterByType(adapterType, connectionString);
       this.dedicatedAdapters.set(key, adapter);
     }
     return adapter;
