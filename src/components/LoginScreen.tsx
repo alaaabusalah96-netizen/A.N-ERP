@@ -8,7 +8,7 @@ interface LoginScreenProps {
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [username, setUsername] = useState('accountant');
-  const [password, setPassword] = useState('erp2026');
+  const [password, setPassword] = useState('');
   const [selectedBranch, setSelectedBranch] = useState('main_riyadh');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +109,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
   const handleRolePreset = (user: string) => {
     setUsername(user);
-    setPassword('erp2026');
+    setPassword('');
     setError(null);
     setShow2FAPrompt(false);
     setShowConcurrentPrompt(false);
@@ -189,7 +189,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                     value={twoFactorCode}
                     onChange={(e) => setTwoFactorCode(e.target.value)}
                     className="block w-full text-center tracking-widest text-lg font-bold py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 bg-white"
-                    placeholder="123456"
+                    placeholder="000000"
                   />
                   <div className="mt-2 text-left">
                     <button

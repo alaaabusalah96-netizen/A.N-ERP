@@ -269,6 +269,18 @@ export class PostgresPrimaryAdapter implements StoragePort {
       ALTER TABLE an_users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE;
       ALTER TABLE an_users ADD COLUMN IF NOT EXISTS backup_codes JSONB;
 
+      -- Insert default tenant company if not present
+      INSERT INTO an_tenants (id, code, name_ar, name_en, backend_config, status)
+      VALUES (
+        'tenant-main',
+        'HQ-001',
+        'شركة أ.ن للحلول المتقدمة',
+        'A.N ERP Co.',
+        '{"adapterType":"postgresql","connectionRef":"DATABASE_URL","isolationLevel":"Shared"}'::jsonb,
+        'ACTIVE'
+      )
+      ON CONFLICT (id) DO NOTHING;
+
       -- Enable and Force Row Level Security (RLS) on all tenant-isolated tables
       DO $$
       DECLARE
@@ -1116,7 +1128,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
 
   /**
    * Real Row Level Security (RLS) Tenant Scoping
-   * Enforces SET LOCAL app.current_tenant_id = $1 inside transaction.
+   * Enforces SELECT set_config('app.current_tenant_id', $1, true) inside transaction.
    */
   public async withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
     if (!this.pool) return await fn();
@@ -1129,7 +1141,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SET LOCAL app.current_tenant_id = $1', [tenantId]);
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
       const result = await this.asyncLocalStorage.run({ client, tenantId }, fn);
       await client.query('COMMIT');
       return result;
@@ -1141,6 +1153,190 @@ export class PostgresPrimaryAdapter implements StoragePort {
     } finally {
       client.release();
     }
+  }
+
+  public getCurrentTenantScope(): string | null {
+    return this.asyncLocalStorage.getStore()?.tenantId || null;
+  }
+
+  public getDdlScript(): string {
+    return `
+      CREATE TABLE IF NOT EXISTS an_tenants (
+        id VARCHAR(64) PRIMARY KEY,
+        code VARCHAR(32) NOT NULL UNIQUE,
+        name_ar VARCHAR(255) NOT NULL,
+        name_en VARCHAR(255),
+        tax_number VARCHAR(64),
+        backend_config JSONB NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS an_users (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        username VARCHAR(64) NOT NULL,
+        full_name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        role VARCHAR(64) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+        password_hash TEXT,
+        two_factor_secret TEXT,
+        two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        backup_codes JSONB
+      );
+
+      CREATE TABLE IF NOT EXISTS an_accounts (
+        code VARCHAR(64) NOT NULL,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        name_ar VARCHAR(255) NOT NULL,
+        type VARCHAR(32) NOT NULL,
+        currency VARCHAR(16) NOT NULL DEFAULT 'SAR',
+        debit_balance NUMERIC(18, 4) NOT NULL DEFAULT 0,
+        credit_balance NUMERIC(18, 4) NOT NULL DEFAULT 0,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        PRIMARY KEY (tenant_id, code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_sequences (
+        tenant_id VARCHAR(64) NOT NULL,
+        sequence_type VARCHAR(32) NOT NULL,
+        year INT NOT NULL,
+        last_value BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (tenant_id, sequence_type, year)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_idempotency_keys (
+        idempotency_key VARCHAR(128) NOT NULL,
+        tenant_id VARCHAR(64) NOT NULL,
+        operation VARCHAR(64) NOT NULL,
+        response_payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (tenant_id, idempotency_key, operation)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_journal_entries (
+        id VARCHAR(64) NOT NULL,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        entry_number VARCHAR(64) NOT NULL,
+        date VARCHAR(32) NOT NULL,
+        description VARCHAR(500) NOT NULL,
+        reference_type VARCHAR(64) NOT NULL,
+        reference_id VARCHAR(64) NOT NULL,
+        total_debit NUMERIC(18, 4) NOT NULL,
+        total_credit NUMERIC(18, 4) NOT NULL,
+        is_posted BOOLEAN NOT NULL DEFAULT TRUE,
+        posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        idempotency_key VARCHAR(128) NOT NULL,
+        is_reversal BOOLEAN NOT NULL DEFAULT FALSE,
+        reversal_of VARCHAR(64),
+        PRIMARY KEY (tenant_id, id)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_journal_lines (
+        id VARCHAR(64) NOT NULL,
+        tenant_id VARCHAR(64) NOT NULL,
+        entry_id VARCHAR(64) NOT NULL,
+        account_code VARCHAR(64) NOT NULL,
+        debit NUMERIC(18, 4) NOT NULL DEFAULT 0,
+        credit NUMERIC(18, 4) NOT NULL DEFAULT 0,
+        description VARCHAR(500),
+        PRIMARY KEY (tenant_id, id)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_token_families (
+        family_id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        tenant_id VARCHAR(64) NOT NULL,
+        session_id VARCHAR(64) NOT NULL,
+        is_revoked BOOLEAN NOT NULL DEFAULT FALSE,
+        revocation_reason VARCHAR(255),
+        created_at BIGINT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS an_refresh_tokens (
+        token_hash VARCHAR(128) PRIMARY KEY,
+        family_id VARCHAR(64) NOT NULL REFERENCES an_token_families(family_id) ON DELETE CASCADE,
+        sequence INT NOT NULL,
+        user_id VARCHAR(64) NOT NULL,
+        tenant_id VARCHAR(64) NOT NULL,
+        session_id VARCHAR(64) NOT NULL,
+        expires_at BIGINT NOT NULL,
+        is_used BOOLEAN NOT NULL DEFAULT FALSE,
+        revoked_at BIGINT
+      );
+
+      CREATE TABLE IF NOT EXISTS an_company_profiles (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        name_ar VARCHAR(255) NOT NULL,
+        name_en VARCHAR(255),
+        cr_number VARCHAR(64),
+        tax_number VARCHAR(64),
+        base_currency VARCHAR(16) NOT NULL DEFAULT 'SAR',
+        audit_retention_policy_years INT NOT NULL DEFAULT 10
+      );
+
+      CREATE TABLE IF NOT EXISTS an_custom_fields (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        module VARCHAR(64) NOT NULL,
+        field_key VARCHAR(64) NOT NULL,
+        field_label_ar VARCHAR(255) NOT NULL,
+        field_type VARCHAR(32) NOT NULL,
+        is_required BOOLEAN NOT NULL DEFAULT FALSE
+      );
+
+      CREATE TABLE IF NOT EXISTS an_audit_trail (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL,
+        actor_id VARCHAR(64) NOT NULL,
+        actor_name VARCHAR(255) NOT NULL,
+        action VARCHAR(64) NOT NULL,
+        entity_type VARCHAR(64) NOT NULL,
+        entity_id VARCHAR(64) NOT NULL,
+        details JSONB,
+        ip_address VARCHAR(64),
+        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      -- Row Level Security (RLS) enforcement
+      ALTER TABLE an_users ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE an_users FORCE ROW LEVEL SECURITY;
+      CREATE POLICY an_users_tenant_isolation_policy ON an_users FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true));
+
+      ALTER TABLE an_accounts ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE an_accounts FORCE ROW LEVEL SECURITY;
+      CREATE POLICY an_accounts_tenant_isolation_policy ON an_accounts FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true));
+
+      ALTER TABLE an_journal_entries ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE an_journal_entries FORCE ROW LEVEL SECURITY;
+      CREATE POLICY an_journal_entries_tenant_isolation_policy ON an_journal_entries FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true));
+
+      ALTER TABLE an_journal_lines ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE an_journal_lines FORCE ROW LEVEL SECURITY;
+      CREATE POLICY an_journal_lines_tenant_isolation_policy ON an_journal_lines FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true));
+
+      ALTER TABLE an_token_families ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE an_token_families FORCE ROW LEVEL SECURITY;
+      CREATE POLICY an_token_families_tenant_isolation_policy ON an_token_families FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true));
+
+      ALTER TABLE an_refresh_tokens ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE an_refresh_tokens FORCE ROW LEVEL SECURITY;
+      CREATE POLICY an_refresh_tokens_tenant_isolation_policy ON an_refresh_tokens FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true));
+
+      ALTER TABLE an_company_profiles ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE an_company_profiles FORCE ROW LEVEL SECURITY;
+      CREATE POLICY an_company_profiles_tenant_isolation_policy ON an_company_profiles FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true));
+
+      ALTER TABLE an_custom_fields ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE an_custom_fields FORCE ROW LEVEL SECURITY;
+      CREATE POLICY an_custom_fields_tenant_isolation_policy ON an_custom_fields FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true));
+
+      ALTER TABLE an_audit_trail ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE an_audit_trail FORCE ROW LEVEL SECURITY;
+      CREATE POLICY an_audit_trail_tenant_isolation_policy ON an_audit_trail FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true));
+    `;
   }
 
   private async query(text: string, params?: any[]): Promise<any> {

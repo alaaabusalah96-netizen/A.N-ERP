@@ -1,11 +1,14 @@
 /**
  * @file TokenService.ts
  * @description Short-lived JWT (15 min) + Refresh Token with Mandatory Rotation & Family Invalidation
- * Complies with Section 1A, 1I, 1L.
- * Zero token storage in localStorage — issued exclusively for HttpOnly Secure Cookies.
+ * Complies with Section 1A, 1I, 1L, and Rule 4.2/Section B.3:
+ * - ZERO internal class Map state (all token families and refresh tokens stored via StoragePort)
+ * - Zero token storage in localStorage — issued exclusively for HttpOnly Secure Cookies.
+ * - ZERO hardcoded fallback secrets: throws error immediately if JWT_SECRET is missing.
  */
 
 import crypto from 'crypto';
+import { StoragePort, TokenFamily, RefreshTokenRecord } from '../storage/StoragePort';
 
 export interface JWTPayload {
   sub: string; // userId
@@ -17,44 +20,29 @@ export interface JWTPayload {
   iat: number;
 }
 
-export interface RefreshTokenRecord {
-  tokenHash: string;
-  familyId: string;
-  sequence: number;
-  userId: string;
-  tenantId: string;
-  sessionId: string;
-  expiresAt: number; // ms
-  isUsed: boolean;
-  revokedAt?: number;
-}
-
-export interface TokenFamily {
-  familyId: string;
-  userId: string;
-  tenantId: string;
-  isInvalidated: boolean;
-  invalidationReason?: string;
-  createdAt: number;
-}
-
 export class TokenService {
   private static readonly ACCESS_TOKEN_TTL_SECONDS = 15 * 60; // 15 minutes (Section 1A)
   private static readonly REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
   private static readonly INVITE_TOKEN_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours (Section 1L)
 
-  // In-memory or persisted token families & refresh records
-  private static tokenFamilies: Map<string, TokenFamily> = new Map();
-  private static refreshTokens: Map<string, RefreshTokenRecord> = new Map();
+  constructor(private readonly storage: StoragePort) {}
 
-  private static getSecret(): string {
-    return process.env.JWT_SECRET || 'an-erp-v7-production-jwt-hmac-secret-key-phase1';
+  /**
+   * Retrieves JWT secret strictly from environment.
+   * Throws error immediately if missing — zero fallback keys permitted.
+   */
+  private getSecret(): string {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('JWT_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
+    }
+    return secret;
   }
 
   /**
    * Generates a short-lived JWT (15 minutes) using native HMAC-SHA256
    */
-  public static generateAccessToken(params: {
+  public generateAccessToken(params: {
     userId: string;
     tenantId: string;
     role: string;
@@ -70,7 +58,7 @@ export class TokenService {
       sessionId: params.sessionId,
       familyId: params.familyId,
       iat: nowSec,
-      exp: nowSec + this.ACCESS_TOKEN_TTL_SECONDS,
+      exp: nowSec + TokenService.ACCESS_TOKEN_TTL_SECONDS,
     };
 
     const b64Header = Buffer.from(JSON.stringify(header)).toString('base64url');
@@ -84,9 +72,9 @@ export class TokenService {
   }
 
   /**
-   * Verifies and decodes a JWT access token
+   * Verifies and decodes a JWT access token, and confirms the token family is active
    */
-  public static verifyAccessToken(token: string): { valid: boolean; payload?: JWTPayload; error?: string } {
+  public async verifyAccessToken(token: string): Promise<{ valid: boolean; payload?: JWTPayload; error?: string }> {
     try {
       const parts = token.split('.');
       if (parts.length !== 3) {
@@ -110,9 +98,9 @@ export class TokenService {
         return { valid: false, error: 'انتهت صلاحية الجلسة (15 دقيقة)' };
       }
 
-      // Check if family is invalidated
-      const family = this.tokenFamilies.get(payload.familyId);
-      if (family && family.isInvalidated) {
+      // Check if family is invalidated in persistent storage
+      const familyRes = await this.storage.getTokenFamily(payload.familyId);
+      if (familyRes.success && familyRes.data?.isInvalidated) {
         return { valid: false, error: 'تم إبطال سلسلة الجلسة بالكامل' };
       }
 
@@ -123,12 +111,13 @@ export class TokenService {
   }
 
   /**
-   * Creates a new Refresh Token Family upon login
+   * Creates a new Refresh Token Family upon login, persisted via StoragePort
    */
-  public static createRefreshTokenFamily(userId: string, tenantId: string, sessionId: string): {
-    familyId: string;
-    refreshToken: string;
-  } {
+  public async createRefreshTokenFamily(
+    userId: string,
+    tenantId: string,
+    sessionId: string
+  ): Promise<{ familyId: string; refreshToken: string }> {
     const familyId = `fam-${crypto.randomUUID()}`;
     const family: TokenFamily = {
       familyId,
@@ -137,24 +126,28 @@ export class TokenService {
       isInvalidated: false,
       createdAt: Date.now(),
     };
-    this.tokenFamilies.set(familyId, family);
 
-    const refreshToken = this.issueNewRefreshToken(familyId, 1, userId, tenantId, sessionId);
+    const saveFamRes = await this.storage.saveTokenFamily(family);
+    if (!saveFamRes.success) {
+      throw new Error(`فشل حفظ عائلة الجلسة: ${saveFamRes.error?.detail}`);
+    }
+
+    const refreshToken = await this.issueNewRefreshToken(familyId, 1, userId, tenantId, sessionId);
     return { familyId, refreshToken };
   }
 
   /**
-   * Issues a new Refresh Token inside a family
+   * Issues a new Refresh Token inside a family, persisted via StoragePort
    */
-  private static issueNewRefreshToken(
+  private async issueNewRefreshToken(
     familyId: string,
     sequence: number,
     userId: string,
     tenantId: string,
     sessionId: string
-  ): string {
+  ): Promise<string> {
     const randomHex = crypto.randomBytes(32).toString('hex');
-    const plainToken = `rt.${familyId}.${sequence}.${randomHex}`;
+    const plainToken = `rt.${tenantId}.${familyId}.${sequence}.${randomHex}`;
     const tokenHash = crypto.createHash('sha256').update(plainToken).digest('hex');
 
     const record: RefreshTokenRecord = {
@@ -164,102 +157,127 @@ export class TokenService {
       userId,
       tenantId,
       sessionId,
-      expiresAt: Date.now() + this.REFRESH_TOKEN_TTL_MS,
+      expiresAt: Date.now() + TokenService.REFRESH_TOKEN_TTL_MS,
       isUsed: false,
     };
 
-    this.refreshTokens.set(tokenHash, record);
+    const saveRes = await this.storage.saveRefreshToken(record);
+    if (!saveRes.success) {
+      throw new Error(`فشل حفظ رمز التحديث في المخزن: ${saveRes.error?.detail}`);
+    }
+
     return plainToken;
   }
 
   /**
    * Mandatory Refresh Token Rotation & Reuse Detection (Section 1A, Acceptance Criteria)
-   * If a previously used token is presented -> INVALIDATE ENTIRE FAMILY IMMEDIATELY!
+   * If a previously used token is presented -> INVALIDATE ENTIRE FAMILY IMMEDIATELY via StoragePort!
    */
-  public static rotateRefreshToken(oldPlainToken: string): {
+  public async rotateRefreshToken(oldPlainToken: string): Promise<{
     success: boolean;
     newAccessToken?: string;
     newRefreshToken?: string;
     error?: string;
     familyRevoked?: boolean;
-  } {
-    const tokenHash = crypto.createHash('sha256').update(oldPlainToken).digest('hex');
-    const record = this.refreshTokens.get(tokenHash);
-
-    if (!record) {
-      return { success: false, error: 'رمز التحديث غير معروف أو غير صالح' };
+    userId?: string;
+    tenantId?: string;
+    sessionId?: string;
+  }> {
+    let tenantId = 'tenant-main';
+    const parts = oldPlainToken.split('.');
+    if (parts.length >= 3 && parts[0] === 'rt') {
+      tenantId = parts[1];
     }
 
-    const family = this.tokenFamilies.get(record.familyId);
-    if (!family || family.isInvalidated) {
+    return this.storage.withTenantScope(tenantId, async () => {
+      const tokenHash = crypto.createHash('sha256').update(oldPlainToken).digest('hex');
+      const tokenRes = await this.storage.getRefreshToken(tokenHash);
+
+      if (!tokenRes.success || !tokenRes.data) {
+        return { success: false, error: 'رمز التحديث غير معروف أو غير صالح' };
+      }
+
+      const record = tokenRes.data;
+      const familyRes = await this.storage.getTokenFamily(record.familyId);
+
+      if (!familyRes.success || !familyRes.data || familyRes.data.isInvalidated) {
+        return {
+          success: false,
+          error: 'تم إبطال سلسلة الجلسة مسبقاً لدواعي أمنية',
+          familyRevoked: true,
+        };
+      }
+
+      const family = familyRes.data;
+
+      // CRITICAL: Token Reuse Detection!
+      if (record.isUsed) {
+        // Breached! An attacker or replay is trying to reuse an old token!
+        await this.storage.invalidateTokenFamily(
+          record.familyId,
+          `DETECTED_REUSE_OF_TOKEN_SEQ_${record.sequence}`
+        );
+        return {
+          success: false,
+          error: 'تم اكتشاف محاولة إعادة استخدام رمز جلسة قديم — تم إبطال سلسلة التوكن بالكامل فوراً',
+          familyRevoked: true,
+        };
+      }
+
+      // Check expiration
+      if (Date.now() > record.expiresAt) {
+        return { success: false, error: 'انتهت صلاحية رمز التحديث' };
+      }
+
+      // Mark current token as used
+      record.isUsed = true;
+      record.revokedAt = Date.now();
+      await this.storage.updateRefreshToken(record);
+
+      // Rotate: Issue new refresh token & access token in same family
+      const nextSeq = record.sequence + 1;
+      const newRefreshToken = await this.issueNewRefreshToken(
+        record.familyId,
+        nextSeq,
+        record.userId,
+        record.tenantId,
+        record.sessionId
+      );
+
+      // Fetch user for correct role
+      const userRes = await this.storage.getUser(record.tenantId, record.userId);
+      const role = userRes.success && userRes.data ? userRes.data.role : 'auditor';
+
+      const newAccessToken = this.generateAccessToken({
+        userId: record.userId,
+        tenantId: record.tenantId,
+        role,
+        sessionId: record.sessionId,
+        familyId: record.familyId,
+      });
+
       return {
-        success: false,
-        error: 'تم إبطال سلسلة الجلسة مسبقاً لدواعي أمنية',
-        familyRevoked: true,
+        success: true,
+        newAccessToken,
+        newRefreshToken,
+        userId: record.userId,
+        tenantId: record.tenantId,
+        sessionId: record.sessionId,
       };
-    }
-
-    // CRITICAL: Token Reuse Detection!
-    if (record.isUsed) {
-      // Breached! An attacker is trying to reuse an old token!
-      family.isInvalidated = true;
-      family.invalidationReason = `DETECTED_REUSE_OF_TOKEN_SEQ_${record.sequence}`;
-      return {
-        success: false,
-        error: 'تم اكتشاف محاولة إعادة استخدام رمز جلسة قديم — تم إبطال سلسلة التوكن بالكامل فوراً',
-        familyRevoked: true,
-      };
-    }
-
-    // Check expiration
-    if (Date.now() > record.expiresAt) {
-      return { success: false, error: 'انتهت صلاحية رمز التحديث' };
-    }
-
-    // Mark current token as used
-    record.isUsed = true;
-    record.revokedAt = Date.now();
-
-    // Rotate: Issue new refresh token & access token in same family
-    const nextSeq = record.sequence + 1;
-    const newRefreshToken = this.issueNewRefreshToken(
-      record.familyId,
-      nextSeq,
-      record.userId,
-      record.tenantId,
-      record.sessionId
-    );
-
-    const newAccessToken = this.generateAccessToken({
-      userId: record.userId,
-      tenantId: record.tenantId,
-      role: 'accountant', // Role is resolved from user record
-      sessionId: record.sessionId,
-      familyId: record.familyId,
     });
-
-    return {
-      success: true,
-      newAccessToken,
-      newRefreshToken,
-    };
   }
 
   /**
-   * Explicitly invalidates an entire token family (e.g. upon user logout or remote session termination)
+   * Explicitly invalidates an entire token family (e.g. user logout, remote session termination)
    */
-  public static revokeFamily(familyId: string, reason = 'EXPLICIT_REVOCATION'): void {
-    const family = this.tokenFamilies.get(familyId);
-    if (family) {
-      family.isInvalidated = true;
-      family.invalidationReason = reason;
-    }
+  public async revokeFamily(familyId: string, reason = 'EXPLICIT_REVOCATION'): Promise<void> {
+    await this.storage.invalidateTokenFamily(familyId, reason);
   }
 
   /**
    * Generates a time-limited signed invitation link (Section 1L)
    */
-  public static generateInvitationToken(tenantId: string, email: string, role: string): {
+  public generateInvitationToken(tenantId: string, email: string, role: string): {
     token: string;
     expiresAt: string;
   } {
@@ -268,7 +286,7 @@ export class TokenService {
       email,
       role,
       nonce: crypto.randomUUID(),
-      exp: Date.now() + this.INVITE_TOKEN_TTL_MS,
+      exp: Date.now() + TokenService.INVITE_TOKEN_TTL_MS,
     };
 
     const raw = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -284,7 +302,7 @@ export class TokenService {
   /**
    * Verifies an invitation token
    */
-  public static verifyInvitationToken(token: string): {
+  public verifyInvitationToken(token: string): {
     valid: boolean;
     data?: { tenantId: string; email: string; role: string };
     error?: string;

@@ -64,10 +64,10 @@ export class EncryptionService {
   }
 
   /**
-   * Encrypts a PII object (nationalId, phone, email) into JSON string
+   * Encrypts a PII object or string into JSON string
    */
-  public static encryptPII(pii: Record<string, any>): string {
-    const raw = JSON.stringify(pii);
+  public static encryptPII(pii: Record<string, any> | string): string {
+    const raw = typeof pii === 'string' ? JSON.stringify({ value: pii }) : JSON.stringify(pii);
     const enc = this.encrypt(raw);
     return JSON.stringify(enc);
   }
@@ -75,11 +75,15 @@ export class EncryptionService {
   /**
    * Decrypts a PII encrypted JSON string
    */
-  public static decryptPII<T = Record<string, any>>(encryptedJson: string): T {
+  public static decryptPII<T = any>(encryptedJson: string): T {
     try {
       const parsed: EncryptedData = JSON.parse(encryptedJson);
       const raw = this.decrypt(parsed);
-      return JSON.parse(raw) as T;
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === 'object' && 'value' in obj && Object.keys(obj).length === 1) {
+        return obj.value as T;
+      }
+      return obj as T;
     } catch {
       return {} as T;
     }

@@ -11,6 +11,9 @@ import express, { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import crypto from 'crypto';
+import argon2 from 'argon2';
+import { generateSecret, verify, generateURI } from 'otplib';
+import QRCode from 'qrcode';
 import { createServer as createViteServer } from 'vite';
 import { Phase0TestRunner } from './src/core/tests/Phase0TestRunner';
 import { executePrimaryBattery } from './src/core/tests/runPrimaryBattery';
@@ -57,11 +60,13 @@ interface ServerUser {
   encryptedPii: string;
   is2faEnabled: boolean;
   hashedBackupCodes: string[];
+  passwordHash?: string;
+  twoFactorSecret?: string;
 }
 
 const initialPii = {
   nationalId: '1098765432',
-  phone: '+966501234567',
+  phone: '+966509876543',
   email: 'a.mansour@company.sa',
 };
 const defaultBackup = EncryptionService.generateEmergencyBackupCodes();
@@ -110,7 +115,7 @@ const serverUsers: Map<string, ServerUser> = new Map([
       branchName: 'مستودع السلي - الرياض',
       encryptedPii: EncryptionService.encryptPII({
         nationalId: '1076543210',
-        phone: '+966551239876',
+        phone: '+966559876543',
         email: 's.alqahtani@company.sa',
       }),
       is2faEnabled: false,
@@ -194,7 +199,94 @@ const customFieldsStore: CustomFieldDef[] = [
 // Idempotency cache for login requests (Section 8)
 const loginIdempotencyCache = new Map<string, any>();
 
+// Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing
+async function initSeedUsers(storage: any) {
+  const seedAdminPass = process.env.SEED_ADMIN_PASSWORD || crypto.randomBytes(16).toString('base64url');
+  const adminHash = await argon2.hash(seedAdminPass, { type: argon2.argon2id });
+  const adminTotpSecret = generateSecret();
+  const encryptedAdminTotp = EncryptionService.encryptPII(adminTotpSecret);
+  const adminBackupCodes = EncryptionService.generateEmergencyBackupCodes();
+
+  serverUsers.set('admin', {
+    id: 'USR-ADMIN',
+    username: 'admin',
+    fullName: 'مدير النظام (Seed Administrator)',
+    role: 'super_admin',
+    roleTitleAr: 'مدير النظام الأعلى',
+    branchName: 'المركز الرئيسي',
+    encryptedPii: EncryptionService.encryptPII({ email: 'admin@company.sa', phone: '+966509876543' }),
+    is2faEnabled: false,
+    hashedBackupCodes: adminBackupCodes.hashedCodes,
+    passwordHash: adminHash,
+    twoFactorSecret: encryptedAdminTotp,
+  });
+
+  await storage.saveUser({
+    id: 'USR-ADMIN',
+    tenantId: 'tenant-main',
+    username: 'admin',
+    fullName: 'مدير النظام (Seed Administrator)',
+    email: 'admin@company.sa',
+    role: 'super_admin',
+    status: 'active',
+    passwordHash: adminHash,
+    twoFactorSecret: encryptedAdminTotp,
+    twoFactorEnabled: false,
+    backupCodes: adminBackupCodes.hashedCodes,
+  }, 'init-admin-seed');
+
+  console.log('\n============================================================');
+  console.log('[A.N ERP v7.1] Initial Setup — Seed Administrator Created');
+  console.log('Username: admin');
+  console.log(`Generated Password: ${seedAdminPass}`);
+  console.log('(This password is shown once. Stored in DB via Argon2id hash.)');
+  console.log('============================================================\n');
+
+  const standardPass = process.env.INITIAL_USER_PASSWORD || crypto.randomBytes(14).toString('base64url');
+  const standardHash = await argon2.hash(standardPass, { type: argon2.argon2id });
+
+  for (const [uname, u] of serverUsers.entries()) {
+    if (uname === 'admin') continue;
+    u.passwordHash = standardHash;
+    const totpSec = generateSecret();
+    u.twoFactorSecret = EncryptionService.encryptPII(totpSec);
+    await storage.saveUser({
+      id: u.id,
+      tenantId: 'tenant-main',
+      username: u.username,
+      fullName: u.fullName,
+      email: `${u.username}@company.sa`,
+      role: u.role,
+      status: 'active',
+      passwordHash: standardHash,
+      twoFactorSecret: u.twoFactorSecret,
+      twoFactorEnabled: u.is2faEnabled,
+      backupCodes: u.hashedBackupCodes,
+    }, `init-user-${u.id}`);
+  }
+}
+
 async function startServer() {
+  // Section B.4: Zero fallback secrets — throw immediately if secrets missing!
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
+  }
+  if (!process.env.PII_ENCRYPTION_SECRET) {
+    throw new Error('PII_ENCRYPTION_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
+  }
+
+  const primaryStorage = globalStorageRouter.getPrimaryAdapter();
+  const devStorage = globalStorageRouter.getDevInMemoryAdapter();
+
+  const getStorage = () => {
+    return process.env.DATABASE_URL ? primaryStorage : devStorage;
+  };
+
+  const activeStorage = getStorage();
+  const tokenService = new TokenService(activeStorage);
+
+  await initSeedUsers(activeStorage);
+
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
@@ -210,13 +302,6 @@ async function startServer() {
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     next();
   });
-
-  const primaryStorage = globalStorageRouter.getPrimaryAdapter();
-  const devStorage = globalStorageRouter.getDevInMemoryAdapter();
-
-  const getStorage = () => {
-    return process.env.DATABASE_URL ? primaryStorage : devStorage;
-  };
 
   // Helper to record operational audit log
   const recordAudit = (
@@ -290,10 +375,32 @@ async function startServer() {
     }
 
     const user = serverUsers.get(username);
-    // Simple password check for enterprise roles
-    const isValidPass = password === 'erp2026' || password === 'admin123' || password === '123456';
+    if (!user || !user.passwordHash) {
+      const failedState = AnomalyDetector.recordFailedAttempt(username);
+      recordAudit(
+        username,
+        username,
+        'FAILED_LOGIN_ATTEMPT',
+        'AUTH',
+        username,
+        { attemptsCount: failedState.failedAttempts },
+        req.ip || '127.0.0.1'
+      );
 
-    if (!user || !isValidPass) {
+      const problem: RFC7807Problem = {
+        type: 'https://api.an-erp.local/errors/invalid-credentials',
+        title: 'اسم المستخدم أو كلمة المرور غير صحيحة',
+        status: 401,
+        detail: failedState.isLocked
+          ? `تم قفل الحساب لمدة ${failedState.lockoutDurationMinutes} دقيقة بعد 5 محاولات فاشلة.`
+          : `بيانات الاعتماد غير مطابقة. المحاولة ${failedState.failedAttempts} من 5 محاولات مسموحة.`,
+      };
+      return res.status(401).json(problem);
+    }
+
+    // Real Argon2id verification — strictly zero plaintext fallback!
+    const isValidPass = await argon2.verify(user.passwordHash, password);
+    if (!isValidPass) {
       const failedState = AnomalyDetector.recordFailedAttempt(username);
       recordAudit(
         username,
@@ -350,7 +457,7 @@ async function startServer() {
       );
     }
 
-    // 1D: Verify 2FA or Emergency Backup Code
+    // 1D: Verify 2FA via real TOTP (otplib) or Emergency Backup Code
     if (mustEnforce2fa) {
       if (!twoFactorCode && !backupCode) {
         return res.status(200).json({
@@ -362,8 +469,11 @@ async function startServer() {
 
       let twoFactorValid = false;
       if (twoFactorCode) {
-        // Standard TOTP simulation (accepts '123456' or valid 6-digit)
-        twoFactorValid = twoFactorCode.length === 6;
+        if (user.twoFactorSecret) {
+          const plainSecret = EncryptionService.decryptPII<string>(user.twoFactorSecret);
+          const verifyResult = await verify({ token: twoFactorCode, secret: plainSecret });
+          twoFactorValid = !!verifyResult.valid;
+        }
       } else if (backupCode) {
         // Verify and consume 1 of 8 one-time emergency backup codes
         const consumeRes = EncryptionService.verifyAndConsumeBackupCode(
@@ -412,7 +522,7 @@ async function startServer() {
       // Terminate oldest session
       const oldSes = activeSessions.get(concurrent.oldestSessionId);
       if (oldSes) {
-        TokenService.revokeFamily(oldSes.familyId, 'CONCURRENT_LIMIT_TERMINATION');
+        await tokenService.revokeFamily(oldSes.familyId, 'CONCURRENT_LIMIT_TERMINATION');
         activeSessions.delete(concurrent.oldestSessionId);
       }
       AnomalyDetector.terminateSession(user.id, concurrent.oldestSessionId);
@@ -420,13 +530,13 @@ async function startServer() {
 
     // Create session & Token Family with Mandatory Rotation
     const sessionId = `ses-${crypto.randomUUID()}`;
-    const { familyId, refreshToken } = TokenService.createRefreshTokenFamily(
+    const { familyId, refreshToken } = await tokenService.createRefreshTokenFamily(
       user.id,
       'tenant-main',
       sessionId
     );
 
-    const accessToken = TokenService.generateAccessToken({
+    const accessToken = tokenService.generateAccessToken({
       userId: user.id,
       tenantId: 'tenant-main',
       role: user.role,
@@ -511,7 +621,7 @@ async function startServer() {
   });
 
   // 1A — Refresh Token Rotation Endpoint (HttpOnly Cookie based)
-  app.post('/api/auth/refresh', (req: Request, res: Response) => {
+  app.post('/api/auth/refresh', async (req: Request, res: Response) => {
     const rawRefreshToken = req.cookies['an_refresh_token'];
     if (!rawRefreshToken) {
       return res.status(401).json({
@@ -522,7 +632,7 @@ async function startServer() {
       });
     }
 
-    const rotation = TokenService.rotateRefreshToken(rawRefreshToken);
+    const rotation = await tokenService.rotateRefreshToken(rawRefreshToken);
     if (!rotation.success) {
       res.clearCookie('an_access_token', { path: '/' });
       res.clearCookie('an_refresh_token', { path: '/' });
@@ -556,12 +666,12 @@ async function startServer() {
   });
 
   // 1A — Logout Endpoint
-  app.post('/api/auth/logout', (req: Request, res: Response) => {
+  app.post('/api/auth/logout', async (req: Request, res: Response) => {
     const accessToken = req.cookies['an_access_token'];
     if (accessToken) {
-      const ver = TokenService.verifyAccessToken(accessToken);
+      const ver = await tokenService.verifyAccessToken(accessToken);
       if (ver.valid && ver.payload) {
-        TokenService.revokeFamily(ver.payload.familyId, 'USER_LOGOUT');
+        await tokenService.revokeFamily(ver.payload.familyId, 'USER_LOGOUT');
         activeSessions.delete(ver.payload.sessionId);
         AnomalyDetector.terminateSession(ver.payload.sub, ver.payload.sessionId);
         DomainEventBus.publish({
@@ -580,13 +690,13 @@ async function startServer() {
   });
 
   // 1A — Current User & Session Info (Reads from Cookie)
-  app.get('/api/auth/me', (req: Request, res: Response) => {
+  app.get('/api/auth/me', async (req: Request, res: Response) => {
     const accessToken = req.cookies['an_access_token'];
     if (!accessToken) {
       return res.status(401).json({ success: false, message: 'غير مسجل الدخول' });
     }
 
-    const ver = TokenService.verifyAccessToken(accessToken);
+    const ver = await tokenService.verifyAccessToken(accessToken);
     if (!ver.valid || !ver.payload) {
       return res.status(401).json({ success: false, message: ver.error || 'جلسة غير صالحة' });
     }
@@ -622,6 +732,50 @@ async function startServer() {
       tenant: companyProfile,
       calendar: dualDate,
     });
+  });
+
+  // Section B.2: 2FA Setup with Real TOTP & QR Code (otplib + qrcode)
+  app.post('/api/auth/2fa/setup', async (req: Request, res: Response) => {
+    const { username } = req.body;
+    const user = serverUsers.get(username);
+    if (!user) {
+      return res.status(404).json({ error: 'المستخدم غير موجود' });
+    }
+
+    const plainSecret = generateSecret();
+    const encryptedSecret = EncryptionService.encryptPII(plainSecret);
+    user.twoFactorSecret = encryptedSecret;
+
+    const otpauthUrl = generateURI({
+      label: `${username}@company.sa`,
+      issuer: 'A.N ERP',
+      secret: plainSecret,
+    });
+
+    const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl);
+    return res.json({
+      success: true,
+      secret: plainSecret,
+      qrCodeDataUrl,
+      otpauthUrl,
+    });
+  });
+
+  app.post('/api/auth/2fa/verify-setup', async (req: Request, res: Response) => {
+    const { username, token } = req.body;
+    const user = serverUsers.get(username);
+    if (!user || !user.twoFactorSecret) {
+      return res.status(400).json({ error: 'لم يتم تهيئة 2FA لهذا الحساب' });
+    }
+
+    const plainSecret = EncryptionService.decryptPII<string>(user.twoFactorSecret);
+    const verifyResult = await verify({ token, secret: plainSecret });
+    if (!verifyResult.valid) {
+      return res.status(400).json({ success: false, error: 'رمز TOTP غير صحيح أو منتهي الصلاحية' });
+    }
+
+    user.is2faEnabled = true;
+    return res.json({ success: true, message: 'تم تفعيل التحقق بخطوتين بنجاح' });
   });
 
   // 1B — Company Settings (Read and Update, with Read-Only backendConfig)
@@ -725,7 +879,7 @@ async function startServer() {
       return res.status(sodCheck.problem.status).json(sodCheck.problem);
     }
 
-    const invite = TokenService.generateInvitationToken('tenant-main', email, role);
+    const invite = tokenService.generateInvitationToken('tenant-main', email, role);
     const inviteUrl = `${req.protocol}://${req.get('host')}/join?token=${invite.token}`;
 
     DomainEventBus.publish({
@@ -756,7 +910,7 @@ async function startServer() {
     return res.json({ success: true, data: list });
   });
 
-  app.delete('/api/sessions/:sessionId', (req: Request, res: Response) => {
+  app.delete('/api/sessions/:sessionId', async (req: Request, res: Response) => {
     const { sessionId } = req.params;
     const session = activeSessions.get(sessionId);
     if (!session) {
@@ -764,7 +918,7 @@ async function startServer() {
     }
 
     // Instantly invalidate entire refresh token family (Section 1I)
-    TokenService.revokeFamily(session.familyId, 'REMOTE_TERMINATION');
+    await tokenService.revokeFamily(session.familyId, 'REMOTE_TERMINATION');
     activeSessions.delete(sessionId);
     AnomalyDetector.terminateSession(session.userId, sessionId);
 
