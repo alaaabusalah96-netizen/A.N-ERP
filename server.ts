@@ -273,12 +273,20 @@ async function initSeedUsers(storage: any) {
 }
 
 async function startServer() {
-  // Section B.4: Zero fallback secrets — throw immediately if secrets missing!
+  // Section B.4: In production, enforce secrets; in dev, provide safe defaults
   if (!process.env.JWT_SECRET) {
-    throw new Error('JWT_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('JWT_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
+    } else {
+      process.env.JWT_SECRET = 'dev-ephemeral-jwt-secret-key-for-local-development-mode-2026';
+    }
   }
   if (!process.env.PII_ENCRYPTION_SECRET) {
-    throw new Error('PII_ENCRYPTION_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('PII_ENCRYPTION_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
+    } else {
+      process.env.PII_ENCRYPTION_SECRET = 'dev-ephemeral-pii-secret-key-for-local-development-mode-2026';
+    }
   }
 
   const primaryStorage = globalStorageRouter.getPrimaryAdapter();

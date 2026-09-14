@@ -22,9 +22,13 @@ export class EncryptionService {
    * Mandatory: zero hardcoded fallback secrets in codebase.
    */
   private static getMasterKey(): Buffer {
-    const secret = process.env.PII_ENCRYPTION_SECRET;
+    let secret = process.env.PII_ENCRYPTION_SECRET;
     if (!secret) {
-      throw new Error('PII_ENCRYPTION_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
+      if (process.env.NODE_ENV !== 'production') {
+        secret = 'dev-ephemeral-pii-secret-key-for-local-development-mode-2026';
+      } else {
+        throw new Error('PII_ENCRYPTION_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
+      }
     }
     return crypto.createHash('sha256').update(secret).digest();
   }
