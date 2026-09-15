@@ -3,21 +3,13 @@
  * @description Deterministic Impossible Travel Engine & Progressive Account Lockout & Concurrent Session Limits
  * Complies with Section 1D, 1I, 1J, 1K.
  * Pure deterministic mathematics (Haversine formula + velocity threshold), zero ML or guessing.
+ * All state is persisted via StoragePort — zero in-memory static Maps.
  */
 
-export interface GeoLocation {
-  city: string;
-  country: string;
-  lat: number;
-  lon: number;
-}
+import type { StoragePort, GeoLocation, LoginAttemptRecord, ActiveSessionRecord } from '../storage/StoragePort';
+import { InMemoryAdapter } from '../storage/adapters/InMemoryAdapter';
 
-export interface LoginAttemptRecord {
-  userId: string;
-  location: GeoLocation;
-  ip: string;
-  timestamp: number;
-}
+export type { GeoLocation, LoginAttemptRecord, ActiveSessionRecord };
 
 export interface LockoutStatus {
   isLocked: boolean;
@@ -30,15 +22,6 @@ export class AnomalyDetector {
   // Threshold: Max realistic physical travel velocity (800 km/h)
   private static readonly MAX_VELOCITY_KM_PER_HOUR = 800;
 
-  // History of last successful logins by user
-  private static lastSuccessfulLogins: Map<string, LoginAttemptRecord> = new Map();
-
-  // Failed attempts tracker for progressive lockout
-  private static failedAttemptsMap: Map<string, { count: number; lockedUntil?: number }> = new Map();
-
-  // Concurrent active sessions tracking
-  private static activeSessionsByUser: Map<string, Array<{ sessionId: string; role: string; createdAt: number }>> = new Map();
-
   // Configurable concurrent sessions limit per role (Section 1K)
   private static readonly CONCURRENT_LIMIT_BY_ROLE: Record<string, number> = {
     financial_approver: 1, // Stricter security for approvers
@@ -48,6 +31,12 @@ export class AnomalyDetector {
     branch_manager: 2,
     fleet_supervisor: 2,
   };
+
+  private storage: StoragePort;
+
+  constructor(storage?: StoragePort) {
+    this.storage = storage || new InMemoryAdapter();
+  }
 
   /**
    * Calculates distance in kilometers between two geo-coordinates using the Haversine formula
@@ -70,23 +59,24 @@ export class AnomalyDetector {
    * Deterministic Impossible Travel Check (Section 1J)
    * Returns whether impossible travel occurred, forcing 2FA challenge and security alert.
    */
-  public static checkImpossibleTravel(
+  public async checkImpossibleTravel(
     userId: string,
     currentLocation: GeoLocation,
     currentTimestamp = Date.now()
-  ): {
+  ): Promise<{
     isAnomaly: boolean;
     distanceKm?: number;
     hoursElapsed?: number;
     velocityKmPerHour?: number;
     message?: string;
-  } {
-    const previous = this.lastSuccessfulLogins.get(userId);
+  }> {
+    const res = await this.storage.getLastSuccessfulLogin(userId);
+    const previous = res.success ? res.data : null;
     if (!previous) {
       return { isAnomaly: false };
     }
 
-    const distanceKm = this.calculateHaversineDistanceKm(
+    const distanceKm = AnomalyDetector.calculateHaversineDistanceKm(
       previous.location.lat,
       previous.location.lon,
       currentLocation.lat,
@@ -112,7 +102,7 @@ export class AnomalyDetector {
 
     const velocity = distanceKm / hoursElapsed;
 
-    if (velocity > this.MAX_VELOCITY_KM_PER_HOUR && distanceKm > 100) {
+    if (velocity > AnomalyDetector.MAX_VELOCITY_KM_PER_HOUR && distanceKm > 100) {
       return {
         isAnomaly: true,
         distanceKm: Math.round(distanceKm),
@@ -133,16 +123,19 @@ export class AnomalyDetector {
   /**
    * Records a successful login for future geo-velocity checks
    */
-  public static recordSuccessfulLogin(userId: string, location: GeoLocation, ip: string): void {
-    this.lastSuccessfulLogins.set(userId, {
+  public async recordSuccessfulLogin(
+    userId: string,
+    location: GeoLocation,
+    ip: string,
+    tenantId?: string
+  ): Promise<void> {
+    await this.storage.recordSuccessfulLogin({
       userId,
+      tenantId,
       location,
       ip,
       timestamp: Date.now(),
     });
-
-    // Reset failed attempts on success
-    this.failedAttemptsMap.delete(userId);
   }
 
   /**
@@ -151,33 +144,29 @@ export class AnomalyDetector {
    * 10 failed attempts -> 15 minutes
    * 15+ failed attempts -> 60 minutes
    */
-  public static recordFailedAttempt(userId: string): LockoutStatus {
-    const current = this.failedAttemptsMap.get(userId) || { count: 0 };
-    current.count += 1;
+  public async recordFailedAttempt(userId: string): Promise<LockoutStatus> {
+    const res = await this.storage.getFailedLoginAttempts(userId);
+    const count = (res.success && res.data ? res.data.count : 0) + 1;
 
     let durationMinutes = 0;
     let lockedUntil: number | undefined;
 
-    if (current.count >= 15) {
+    if (count >= 15) {
       durationMinutes = 60;
       lockedUntil = Date.now() + 60 * 60 * 1000;
-    } else if (current.count >= 10) {
+    } else if (count >= 10) {
       durationMinutes = 15;
       lockedUntil = Date.now() + 15 * 60 * 1000;
-    } else if (current.count >= 5) {
+    } else if (count >= 5) {
       durationMinutes = 5;
       lockedUntil = Date.now() + 5 * 60 * 1000;
     }
 
-    if (lockedUntil) {
-      current.lockedUntil = lockedUntil;
-    }
-
-    this.failedAttemptsMap.set(userId, current);
+    await this.storage.recordFailedLoginAttempt(userId, count, lockedUntil);
 
     return {
       isLocked: !!lockedUntil,
-      failedAttempts: current.count,
+      failedAttempts: count,
       lockedUntil,
       lockoutDurationMinutes: durationMinutes,
     };
@@ -186,12 +175,13 @@ export class AnomalyDetector {
   /**
    * Checks if user is currently locked out
    */
-  public static checkLockout(userId: string): LockoutStatus {
-    const record = this.failedAttemptsMap.get(userId);
-    if (!record) {
+  public async checkLockout(userId: string): Promise<LockoutStatus> {
+    const res = await this.storage.getFailedLoginAttempts(userId);
+    if (!res.success || !res.data) {
       return { isLocked: false, failedAttempts: 0, lockoutDurationMinutes: 0 };
     }
 
+    const record = res.data;
     if (record.lockedUntil && Date.now() < record.lockedUntil) {
       const remainingMinutes = Math.ceil((record.lockedUntil - Date.now()) / (60 * 1000));
       return {
@@ -200,11 +190,6 @@ export class AnomalyDetector {
         lockedUntil: record.lockedUntil,
         lockoutDurationMinutes: remainingMinutes,
       };
-    }
-
-    // If lock expired, remove lock but keep count
-    if (record.lockedUntil && Date.now() >= record.lockedUntil) {
-      record.lockedUntil = undefined;
     }
 
     return {
@@ -218,20 +203,21 @@ export class AnomalyDetector {
    * Concurrent Session Policy Enforcement (Section 1K)
    * When limit exceeded: prompt user to terminate oldest session or reject new.
    */
-  public static checkConcurrentSessionLimit(
+  public async checkConcurrentSessionLimit(
     userId: string,
     role: string
-  ): {
+  ): Promise<{
     limitExceeded: boolean;
     maxAllowed: number;
     currentActiveCount: number;
     oldestSessionId?: string;
-  } {
-    const limit = this.CONCURRENT_LIMIT_BY_ROLE[role] || 2;
-    const active = this.activeSessionsByUser.get(userId) || [];
+  }> {
+    const limit = AnomalyDetector.CONCURRENT_LIMIT_BY_ROLE[role] || 2;
+    const res = await this.storage.listActiveSessionsByUser(userId);
+    const active = res.success && res.data ? res.data : [];
 
     if (active.length >= limit) {
-      const oldest = active.sort((a, b) => a.createdAt - b.createdAt)[0];
+      const oldest = [...active].sort((a, b) => a.createdAt - b.createdAt)[0];
       return {
         limitExceeded: true,
         maxAllowed: limit,
@@ -250,18 +236,14 @@ export class AnomalyDetector {
   /**
    * Registers a session in active sessions tracker
    */
-  public static registerActiveSession(userId: string, sessionId: string, role: string): void {
-    const active = this.activeSessionsByUser.get(userId) || [];
-    active.push({ sessionId, role, createdAt: Date.now() });
-    this.activeSessionsByUser.set(userId, active);
+  public async registerActiveSession(session: ActiveSessionRecord): Promise<void> {
+    await this.storage.saveActiveSession(session);
   }
 
   /**
    * Removes a session upon logout or termination
    */
-  public static terminateSession(userId: string, sessionId: string): void {
-    const active = this.activeSessionsByUser.get(userId) || [];
-    const filtered = active.filter((s) => s.sessionId !== sessionId);
-    this.activeSessionsByUser.set(userId, filtered);
+  public async terminateSession(sessionId: string): Promise<void> {
+    await this.storage.deleteActiveSession(sessionId);
   }
 }

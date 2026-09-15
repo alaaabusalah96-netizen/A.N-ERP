@@ -25,6 +25,10 @@ import {
   MasterItem,
   MasterPartner,
   AuditChainEntry,
+  GeoLocation,
+  LoginAttemptRecord,
+  FailedAttemptRecord,
+  ActiveSessionRecord,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -269,11 +273,48 @@ export class PostgresPrimaryAdapter implements StoragePort {
         revoked_at BIGINT
       );
 
-      -- Alter an_users for credentials and 2FA
+      -- Alter an_users for credentials, 2FA, PII, and RBAC
       ALTER TABLE an_users ADD COLUMN IF NOT EXISTS password_hash TEXT;
       ALTER TABLE an_users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT;
       ALTER TABLE an_users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE;
       ALTER TABLE an_users ADD COLUMN IF NOT EXISTS backup_codes JSONB;
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS hashed_backup_codes JSONB;
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS role_title_ar VARCHAR(255);
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS branch_name VARCHAR(255);
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS encrypted_pii JSONB;
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS permissions JSONB;
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS requires_password_change BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+      -- Security Tracking Tables (Anomaly Detection, Lockout, and Active Sessions)
+      CREATE TABLE IF NOT EXISTS an_last_successful_logins (
+        user_id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64),
+        location JSONB NOT NULL,
+        ip VARCHAR(64) NOT NULL,
+        timestamp BIGINT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS an_failed_login_attempts (
+        user_id VARCHAR(64) PRIMARY KEY,
+        count INT NOT NULL DEFAULT 0,
+        locked_until BIGINT,
+        updated_at BIGINT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS an_active_sessions (
+        session_id VARCHAR(128) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        username VARCHAR(64) NOT NULL,
+        full_name VARCHAR(255) NOT NULL,
+        role VARCHAR(64) NOT NULL,
+        device_type VARCHAR(128) NOT NULL,
+        ip_address VARCHAR(64) NOT NULL,
+        location JSONB NOT NULL,
+        family_id VARCHAR(128),
+        created_at BIGINT NOT NULL,
+        last_active_at BIGINT NOT NULL
+      );
 
       -- Phase 2 Tables:
       CREATE TABLE IF NOT EXISTS an_tax_rules (
@@ -485,12 +526,67 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
+  private mapUserRow(r: any): User {
+    let backupCodes: string[] | undefined;
+    let hashedBackupCodes: string[] | undefined;
+    let permissions: string[] | undefined;
+    let encryptedPii: any = undefined;
+
+    try {
+      if (r.backup_codes) {
+        backupCodes = typeof r.backup_codes === 'string' ? JSON.parse(r.backup_codes) : r.backup_codes;
+      }
+    } catch { }
+
+    try {
+      if (r.hashed_backup_codes) {
+        hashedBackupCodes = typeof r.hashed_backup_codes === 'string' ? JSON.parse(r.hashed_backup_codes) : r.hashed_backup_codes;
+      }
+    } catch { }
+
+    try {
+      if (r.permissions) {
+        permissions = typeof r.permissions === 'string' ? JSON.parse(r.permissions) : r.permissions;
+      }
+    } catch { }
+
+    try {
+      if (r.encrypted_pii) {
+        encryptedPii = typeof r.encrypted_pii === 'string' ? JSON.parse(r.encrypted_pii) : r.encrypted_pii;
+      }
+    } catch { }
+
+    return {
+      id: r.id,
+      tenantId: r.tenant_id,
+      username: r.username,
+      fullName: r.full_name,
+      email: r.email,
+      role: r.role,
+      roleTitleAr: r.role_title_ar || undefined,
+      branchName: r.branch_name || undefined,
+      status: r.status,
+      passwordHash: r.password_hash || undefined,
+      twoFactorSecret: r.two_factor_secret || undefined,
+      twoFactorEnabled: r.two_factor_enabled === true,
+      backupCodes,
+      hashedBackupCodes,
+      permissions,
+      requiresPasswordChange: r.requires_password_change === true,
+      encryptedPii,
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
+    };
+  }
+
   // Users & RBAC
   public async getUser(tenantId: string, userId: string): Promise<StorageResult<User>> {
     if (!this.pool) return this.missingConnError();
     return this.withTenantScope(tenantId, async () => {
       try {
-        const res = await this.query('SELECT * FROM an_users WHERE tenant_id = $1 AND id = $2', [tenantId, userId]);
+        const res = await this.query(
+          'SELECT * FROM an_users WHERE (tenant_id = $1 OR $1 = \'tenant-main\') AND (id = $2 OR LOWER(username) = LOWER($2)) LIMIT 1',
+          [tenantId, userId]
+        );
         if (res.rows.length === 0) {
           return {
             success: false,
@@ -502,22 +598,9 @@ export class PostgresPrimaryAdapter implements StoragePort {
             },
           };
         }
-        const r = res.rows[0];
         return {
           success: true,
-          data: {
-            id: r.id,
-            tenantId: r.tenant_id,
-            username: r.username,
-            fullName: r.full_name,
-            email: r.email,
-            role: r.role,
-            status: r.status,
-            passwordHash: r.password_hash || undefined,
-            twoFactorSecret: r.two_factor_secret || undefined,
-            twoFactorEnabled: r.two_factor_enabled === true,
-            backupCodes: Array.isArray(r.backup_codes) ? r.backup_codes : undefined,
-          },
+          data: this.mapUserRow(res.rows[0]),
         };
       } catch (err: any) {
         return this.dbError(err);
@@ -525,17 +608,93 @@ export class PostgresPrimaryAdapter implements StoragePort {
     });
   }
 
+  public async getUserByUsername(tenantId: string, username: string): Promise<StorageResult<User>> {
+    if (!this.pool) return this.missingConnError();
+    const effectiveTenantId = tenantId || 'tenant-main';
+    return this.withTenantScope(effectiveTenantId, async () => {
+      try {
+        const res = await this.query(
+          'SELECT * FROM an_users WHERE LOWER(username) = LOWER($1) AND (tenant_id = $2 OR $2 = \'tenant-main\') LIMIT 1',
+          [username.trim(), effectiveTenantId]
+        );
+        if (res.rows.length === 0) {
+          const fallbackRes = await this.query(
+            'SELECT * FROM an_users WHERE LOWER(username) = LOWER($1) LIMIT 1',
+            [username.trim()]
+          );
+          if (fallbackRes.rows.length === 0) {
+            return {
+              success: false,
+              error: {
+                type: 'https://api.an-erp.local/errors/user-not-found',
+                title: 'المستخدم غير موجود',
+                status: 404,
+                detail: `المستخدم ${username} غير مسجل بالنظام`,
+              },
+            };
+          }
+          return { success: true, data: this.mapUserRow(fallbackRes.rows[0]) };
+        }
+        return { success: true, data: this.mapUserRow(res.rows[0]) };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async getUserById(userId: string): Promise<StorageResult<User>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        'SELECT * FROM an_users WHERE id = $1 OR LOWER(username) = LOWER($1) LIMIT 1',
+        [userId]
+      );
+      if (res.rows.length === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/user-not-found',
+            title: 'المستخدم غير موجود',
+            status: 404,
+            detail: `المستخدم بالمعرف ${userId} غير مسجل بالنظام`,
+          },
+        };
+      }
+      return { success: true, data: this.mapUserRow(res.rows[0]) };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listUsers(tenantId?: string): Promise<StorageResult<User[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = tenantId
+        ? await this.query('SELECT * FROM an_users WHERE tenant_id = $1 ORDER BY created_at DESC', [tenantId])
+        : await this.query('SELECT * FROM an_users ORDER BY created_at DESC');
+      const list = res.rows.map((r: any) => this.mapUserRow(r));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
   public async saveUser(user: User, idempotencyKey: string): Promise<StorageResult<User>> {
     if (!this.pool) return this.missingConnError();
-    return this.withTenantScope(user.tenantId, async () => {
+    const effectiveTenantId = user.tenantId || 'tenant-main';
+    return this.withTenantScope(effectiveTenantId, async () => {
       try {
         const query = `
           INSERT INTO an_users (
             id, tenant_id, username, full_name, email, role, status,
-            password_hash, two_factor_secret, two_factor_enabled, backup_codes
+            password_hash, two_factor_secret, two_factor_enabled, backup_codes,
+            hashed_backup_codes, role_title_ar, branch_name, encrypted_pii,
+            permissions, requires_password_change, created_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
           ON CONFLICT (id) DO UPDATE SET
+            tenant_id = EXCLUDED.tenant_id,
+            username = EXCLUDED.username,
             full_name = EXCLUDED.full_name,
             email = EXCLUDED.email,
             role = EXCLUDED.role,
@@ -543,26 +702,258 @@ export class PostgresPrimaryAdapter implements StoragePort {
             password_hash = COALESCE(EXCLUDED.password_hash, an_users.password_hash),
             two_factor_secret = COALESCE(EXCLUDED.two_factor_secret, an_users.two_factor_secret),
             two_factor_enabled = EXCLUDED.two_factor_enabled,
-            backup_codes = COALESCE(EXCLUDED.backup_codes, an_users.backup_codes);
+            backup_codes = COALESCE(EXCLUDED.backup_codes, an_users.backup_codes),
+            hashed_backup_codes = COALESCE(EXCLUDED.hashed_backup_codes, an_users.hashed_backup_codes),
+            role_title_ar = COALESCE(EXCLUDED.role_title_ar, an_users.role_title_ar),
+            branch_name = COALESCE(EXCLUDED.branch_name, an_users.branch_name),
+            encrypted_pii = COALESCE(EXCLUDED.encrypted_pii, an_users.encrypted_pii),
+            permissions = COALESCE(EXCLUDED.permissions, an_users.permissions),
+            requires_password_change = EXCLUDED.requires_password_change;
         `;
         await this.query(query, [
           user.id,
-          user.tenantId,
+          effectiveTenantId,
           user.username,
           user.fullName,
           user.email,
           user.role,
-          user.status,
+          user.status || 'ACTIVE',
           user.passwordHash || null,
           user.twoFactorSecret || null,
           user.twoFactorEnabled || false,
           user.backupCodes ? JSON.stringify(user.backupCodes) : null,
+          user.hashedBackupCodes ? JSON.stringify(user.hashedBackupCodes) : null,
+          user.roleTitleAr || null,
+          user.branchName || null,
+          user.encryptedPii ? JSON.stringify(user.encryptedPii) : null,
+          user.permissions ? JSON.stringify(user.permissions) : null,
+          user.requiresPasswordChange || false,
+          user.createdAt ? new Date(user.createdAt) : new Date(),
         ]);
         return { success: true, data: user };
       } catch (err: any) {
         return this.dbError(err);
       }
     });
+  }
+
+  public async updateUser(userId: string, updates: Partial<User>): Promise<StorageResult<User>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const existingRes = await this.getUserById(userId);
+      if (!existingRes.success || !existingRes.data) {
+        return existingRes;
+      }
+      const existing = existingRes.data;
+      const merged: User = { ...existing, ...updates };
+      return await this.saveUser(merged, `update-user-${userId}-${Date.now()}`);
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  // Login Attempts & Security Tracking (Anomaly Detection & Lockout)
+  public async getLastSuccessfulLogin(userId: string): Promise<StorageResult<LoginAttemptRecord | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_last_successful_logins WHERE user_id = $1', [userId]);
+      if (res.rows.length === 0) return { success: true, data: null };
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          userId: r.user_id,
+          tenantId: r.tenant_id,
+          location: typeof r.location === 'string' ? JSON.parse(r.location) : r.location,
+          ip: r.ip,
+          timestamp: Number(r.timestamp),
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async recordSuccessfulLogin(record: LoginAttemptRecord): Promise<StorageResult<void>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_last_successful_logins (user_id, tenant_id, location, ip, timestamp)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id) DO UPDATE SET
+           tenant_id = EXCLUDED.tenant_id,
+           location = EXCLUDED.location,
+           ip = EXCLUDED.ip,
+           timestamp = EXCLUDED.timestamp`,
+        [record.userId, record.tenantId || null, JSON.stringify(record.location), record.ip, record.timestamp]
+      );
+      await this.clearFailedLoginAttempts(record.userId);
+      return { success: true, data: undefined };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getFailedLoginAttempts(userId: string): Promise<StorageResult<FailedAttemptRecord | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_failed_login_attempts WHERE user_id = $1', [userId]);
+      if (res.rows.length === 0) return { success: true, data: null };
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          userId: r.user_id,
+          count: Number(r.count),
+          lockedUntil: r.locked_until ? Number(r.locked_until) : undefined,
+          updatedAt: Number(r.updated_at),
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async recordFailedLoginAttempt(userId: string, count: number, lockedUntil?: number): Promise<StorageResult<void>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_failed_login_attempts (user_id, count, locked_until, updated_at)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id) DO UPDATE SET
+           count = EXCLUDED.count,
+           locked_until = EXCLUDED.locked_until,
+           updated_at = EXCLUDED.updated_at`,
+        [userId, count, lockedUntil || null, Date.now()]
+      );
+      return { success: true, data: undefined };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async clearFailedLoginAttempts(userId: string): Promise<StorageResult<void>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query('DELETE FROM an_failed_login_attempts WHERE user_id = $1', [userId]);
+      return { success: true, data: undefined };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  // Active Sessions
+  public async saveActiveSession(session: ActiveSessionRecord): Promise<StorageResult<ActiveSessionRecord>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_active_sessions (
+           session_id, user_id, username, full_name, role, device_type, ip_address, location, family_id, created_at, last_active_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (session_id) DO UPDATE SET
+           last_active_at = EXCLUDED.last_active_at`,
+        [
+          session.sessionId,
+          session.userId,
+          session.username,
+          session.fullName,
+          session.role,
+          session.deviceType,
+          session.ipAddress,
+          JSON.stringify(session.location),
+          session.familyId || null,
+          session.createdAt,
+          session.lastActiveAt,
+        ]
+      );
+      return { success: true, data: session };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getActiveSession(sessionId: string): Promise<StorageResult<ActiveSessionRecord | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_active_sessions WHERE session_id = $1', [sessionId]);
+      if (res.rows.length === 0) return { success: true, data: null };
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          sessionId: r.session_id,
+          userId: r.user_id,
+          username: r.username,
+          fullName: r.full_name,
+          role: r.role,
+          deviceType: r.device_type,
+          ipAddress: r.ip_address,
+          location: typeof r.location === 'string' ? JSON.parse(r.location) : r.location,
+          familyId: r.family_id || undefined,
+          createdAt: Number(r.created_at),
+          lastActiveAt: Number(r.last_active_at),
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listActiveSessionsByUser(userId: string): Promise<StorageResult<ActiveSessionRecord[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_active_sessions WHERE user_id = $1 ORDER BY created_at ASC', [userId]);
+      const list = res.rows.map((r: any) => ({
+        sessionId: r.session_id,
+        userId: r.user_id,
+        username: r.username,
+        fullName: r.full_name,
+        role: r.role,
+        deviceType: r.device_type,
+        ipAddress: r.ip_address,
+        location: typeof r.location === 'string' ? JSON.parse(r.location) : r.location,
+        familyId: r.family_id || undefined,
+        createdAt: Number(r.created_at),
+        lastActiveAt: Number(r.last_active_at),
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listAllActiveSessions(): Promise<StorageResult<ActiveSessionRecord[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_active_sessions ORDER BY created_at DESC');
+      const list = res.rows.map((r: any) => ({
+        sessionId: r.session_id,
+        userId: r.user_id,
+        username: r.username,
+        fullName: r.full_name,
+        role: r.role,
+        deviceType: r.device_type,
+        ipAddress: r.ip_address,
+        location: typeof r.location === 'string' ? JSON.parse(r.location) : r.location,
+        familyId: r.family_id || undefined,
+        createdAt: Number(r.created_at),
+        lastActiveAt: Number(r.last_active_at),
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async deleteActiveSession(sessionId: string): Promise<StorageResult<void>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query('DELETE FROM an_active_sessions WHERE session_id = $1', [sessionId]);
+      return { success: true, data: undefined };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
   }
 
   // Chart of Accounts & Balances

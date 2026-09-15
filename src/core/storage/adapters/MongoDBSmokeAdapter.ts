@@ -24,6 +24,10 @@ import {
   MasterItem,
   MasterPartner,
   AuditChainEntry,
+  GeoLocation,
+  LoginAttemptRecord,
+  FailedAttemptRecord,
+  ActiveSessionRecord,
 } from '../StoragePort';
 
 export class MongoDBSmokeAdapter implements StoragePort {
@@ -48,7 +52,21 @@ export class MongoDBSmokeAdapter implements StoragePort {
   saveTenant(tenant: TenantCompany, idempotencyKey: string) { return this.smokeOnlyError<TenantCompany>('saveTenant'); }
   listTenants() { return this.smokeOnlyError<TenantCompany[]>('listTenants'); }
   getUser(tenantId: string, userId: string) { return this.smokeOnlyError<User>('getUser'); }
+  getUserByUsername(tenantId: string, username: string) { return this.smokeOnlyError<User>('getUserByUsername'); }
+  getUserById(userId: string) { return this.smokeOnlyError<User>('getUserById'); }
+  listUsers(tenantId?: string) { return this.smokeOnlyError<User[]>('listUsers'); }
   saveUser(user: User, idempotencyKey: string) { return this.smokeOnlyError<User>('saveUser'); }
+  updateUser(userId: string, updates: Partial<User>) { return this.smokeOnlyError<User>('updateUser'); }
+  getLastSuccessfulLogin(userId: string) { return this.smokeOnlyError<LoginAttemptRecord | null>('getLastSuccessfulLogin'); }
+  recordSuccessfulLogin(record: LoginAttemptRecord) { return this.smokeOnlyError<void>('recordSuccessfulLogin'); }
+  getFailedLoginAttempts(userId: string) { return this.smokeOnlyError<FailedAttemptRecord | null>('getFailedLoginAttempts'); }
+  recordFailedLoginAttempt(userId: string, count: number, lockedUntil?: number) { return this.smokeOnlyError<void>('recordFailedLoginAttempt'); }
+  clearFailedLoginAttempts(userId: string) { return this.smokeOnlyError<void>('clearFailedLoginAttempts'); }
+  saveActiveSession(session: ActiveSessionRecord) { return this.smokeOnlyError<ActiveSessionRecord>('saveActiveSession'); }
+  getActiveSession(sessionId: string) { return this.smokeOnlyError<ActiveSessionRecord | null>('getActiveSession'); }
+  listActiveSessionsByUser(userId: string) { return this.smokeOnlyError<ActiveSessionRecord[]>('listActiveSessionsByUser'); }
+  listAllActiveSessions() { return this.smokeOnlyError<ActiveSessionRecord[]>('listAllActiveSessions'); }
+  deleteActiveSession(sessionId: string) { return this.smokeOnlyError<void>('deleteActiveSession'); }
   getAccount(tenantId: string, accountCode: string) { return this.smokeOnlyError<Account>('getAccount'); }
   saveAccount(tenantId: string, account: Account, idempotencyKey: string) { return this.smokeOnlyError<Account>('saveAccount'); }
   getAccountBalance(tenantId: string, accountCode: string) { return this.smokeOnlyError<{ accountCode: string; debitTotal: number; creditTotal: number; balance: number }>('getAccountBalance'); }

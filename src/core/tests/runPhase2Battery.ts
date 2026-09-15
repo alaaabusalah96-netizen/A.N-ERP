@@ -14,6 +14,10 @@ import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../audit/AuditChainSer
 import { PostingEngine } from '../engines/PostingEngine';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES } from '../templates/ActivityTemplates';
 import { TenantCompany, JournalEntry } from '../storage/StoragePort';
+import { PostgresPrimaryAdapter } from '../storage/adapters/PostgresPrimaryAdapter';
+import { MySQLSmokeAdapter } from '../storage/adapters/MySQLSmokeAdapter';
+import { MongoDBSmokeAdapter } from '../storage/adapters/MongoDBSmokeAdapter';
+import { FirebaseSmokeAdapter } from '../storage/adapters/FirebaseSmokeAdapter';
 
 export interface Phase2BatteryTestResult {
   testId: string;
@@ -298,6 +302,73 @@ export async function runPhase2Battery(): Promise<Phase2BatterySuiteResult> {
       }
 
       return 'تم تأكيد العزل الفعلي للبيانات بنجاح: الحسابات والبيانات معزولة بنسبة 100% ولا يمكن لأي شركة الوصول لبيانات الأخرى.';
+    }
+  );
+
+  await runTest(
+    '2B-4',
+    'توجيه المستأجر المخصص (Dedicated Isolation) للـ Adapter الصحيح ديناميكياً بدلاً من Postgres الدائم',
+    '2B_ADAPTER_GOVERNANCE',
+    async () => {
+      // 1. Dedicated MySQL Company
+      const dedicatedMySQLCompany: TenantCompany = {
+        id: `comp-ded-mysql-${Date.now()}`,
+        code: 'CMP-DED-MYSQL',
+        nameAr: 'شركة تجريبية مخصصة ماي إس كيو إل',
+        backendConfig: {
+          adapterType: 'mysql',
+          connectionRef: 'MYSQL_URL_DEDICATED',
+          isolationLevel: 'Dedicated',
+        },
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString(),
+      };
+
+      // 2. Dedicated MongoDB Company
+      const dedicatedMongoCompany: TenantCompany = {
+        id: `comp-ded-mongo-${Date.now()}`,
+        code: 'CMP-DED-MONGO',
+        nameAr: 'شركة تجريبية مخصصة مونجو',
+        backendConfig: {
+          adapterType: 'mongodb',
+          connectionRef: 'MONGO_URL_DEDICATED',
+          isolationLevel: 'Dedicated',
+        },
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString(),
+      };
+
+      // 3. Dedicated Postgres Company
+      const dedicatedPostgresCompany: TenantCompany = {
+        id: `comp-ded-pg-${Date.now()}`,
+        code: 'CMP-DED-PG',
+        nameAr: 'شركة تجريبية مخصصة بوستجرس',
+        backendConfig: {
+          adapterType: 'postgresql',
+          connectionRef: 'DATABASE_URL',
+          isolationLevel: 'Dedicated',
+        },
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString(),
+      };
+
+      const resolvedMySQL = router.resolveAdapter(dedicatedMySQLCompany);
+      const resolvedMongo = router.resolveAdapter(dedicatedMongoCompany);
+      const resolvedPostgres = router.resolveAdapter(dedicatedPostgresCompany);
+
+      if (!(resolvedMySQL instanceof MySQLSmokeAdapter)) {
+        throw new Error(`فشل: المستأجر المخصص لـ MySQL أرجع ${resolvedMySQL.constructor.name} بدلاً من MySQLSmokeAdapter`);
+      }
+
+      if (!(resolvedMongo instanceof MongoDBSmokeAdapter)) {
+        throw new Error(`فشل: المستأجر المخصص لـ MongoDB أرجع ${resolvedMongo.constructor.name} بدلاً من MongoDBSmokeAdapter`);
+      }
+
+      if (!(resolvedPostgres instanceof PostgresPrimaryAdapter)) {
+        throw new Error(`فشل: المستأجر المخصص لـ Postgres أرجع ${resolvedPostgres.constructor.name} بدلاً من PostgresPrimaryAdapter`);
+      }
+
+      return `تم التحقق بنجاح: resolveAdapter يرجع نسخة من الكلاس الصحيح لكل نوع Adapter مخصص (MySQL -> MySQLSmokeAdapter, MongoDB -> MongoDBSmokeAdapter, Postgres -> PostgresPrimaryAdapter) ولا يفترض Postgres دايمًا.`;
     }
   );
 
@@ -801,4 +872,29 @@ export async function runPhase2Battery(): Promise<Phase2BatterySuiteResult> {
     durationMs,
     tests: results,
   };
+}
+
+if (process.argv[1] && (process.argv[1].endsWith('runPhase2Battery.ts') || process.argv[1].endsWith('runPhase2Battery.js'))) {
+  runPhase2Battery().then((report) => {
+    console.log('\n======================================================');
+    console.log('       A.N ERP v7.1 — PHASE 2 ACCEPTANCE BATTERY      ');
+    console.log('======================================================');
+    console.log(`Adapter Tested: ${report.adapterName}`);
+    console.log(`Total Tests:    ${report.totalTests}`);
+    console.log(`Passed:         ${report.passedCount}`);
+    console.log(`Failed:         ${report.failedCount}`);
+    console.log(`Overall Result: ${report.allPassed ? 'ALL PASSED (' + report.passedCount + '/' + report.totalTests + ')' : 'FAILED'}`);
+    console.log(`Duration:       ${report.durationMs}ms`);
+    console.log('------------------------------------------------------');
+    report.tests.forEach((r) => {
+      console.log(`[${r.passed ? 'PASS' : 'FAIL'}] [${r.category}] ${r.testId}: ${r.nameAr}`);
+      console.log(`       Evidence: ${r.evidence}`);
+      if (r.error) console.log(`       Error: ${r.error}`);
+    });
+    console.log('======================================================\n');
+    if (!report.allPassed) process.exit(1);
+  }).catch((err) => {
+    console.error('Fatal battery error:', err);
+    process.exit(1);
+  });
 }

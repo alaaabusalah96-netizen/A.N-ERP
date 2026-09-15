@@ -26,6 +26,9 @@ import {
 } from '../templates/ActivityTemplates';
 import { AuditChainService } from '../audit/AuditChainService';
 import crypto from 'crypto';
+import argon2 from 'argon2';
+import { EncryptionService } from '../crypto/EncryptionService';
+import { generateSecret } from 'otplib';
 
 export interface CreateCompanyPayload {
   countryCode: string;
@@ -254,8 +257,10 @@ export class CompanyWizardService {
 
     // STEP 6: Provision First Admin User
     const adminId = `usr-admin-${Date.now()}`;
-    const salt = crypto.randomBytes(16).toString('hex');
-    const passwordHash = crypto.scryptSync(payload.firstAdmin.password, salt, 64).toString('hex') + ':' + salt;
+    const passwordHash = await argon2.hash(payload.firstAdmin.password, { type: argon2.argon2id });
+    const totpSecret = generateSecret();
+    const encryptedTotp = EncryptionService.encryptPII(totpSecret);
+    const backupCodes = EncryptionService.generateEmergencyBackupCodes();
 
     const firstAdminUser: User = {
       id: adminId,
@@ -267,6 +272,10 @@ export class CompanyWizardService {
       permissions: ['*'],
       status: 'ACTIVE',
       passwordHash,
+      twoFactorSecret: encryptedTotp,
+      twoFactorEnabled: false,
+      backupCodes: backupCodes.hashedCodes,
+      hashedBackupCodes: backupCodes.hashedCodes,
       requiresPasswordChange: true,
       createdAt: new Date().toISOString(),
     };

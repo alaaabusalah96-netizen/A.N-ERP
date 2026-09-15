@@ -449,17 +449,18 @@ export async function runPhase1Battery(): Promise<Phase1BatteryResult> {
   // TEST 9: Progressive Account Lockout (5 Failed Attempts)
   // =========================================================================
   try {
+    const anomalyDetector = new AnomalyDetector(storage);
     const testUser = `lockout-user-${Date.now()}`;
 
     // Attempt 1 to 4: Not locked
     for (let i = 1; i <= 4; i++) {
-      AnomalyDetector.recordFailedAttempt(testUser);
+      await anomalyDetector.recordFailedAttempt(testUser);
     }
-    const checkBefore5 = AnomalyDetector.checkLockout(testUser);
+    const checkBefore5 = await anomalyDetector.checkLockout(testUser);
 
     // Attempt 5: Locked for 5 minutes
-    const attempt5 = AnomalyDetector.recordFailedAttempt(testUser);
-    const checkAt5 = AnomalyDetector.checkLockout(testUser);
+    const attempt5 = await anomalyDetector.recordFailedAttempt(testUser);
+    const checkAt5 = await anomalyDetector.checkLockout(testUser);
 
     const test9Passed =
       !checkBefore5.isLocked &&
@@ -490,9 +491,10 @@ export async function runPhase1Battery(): Promise<Phase1BatteryResult> {
   // TEST 10: Deterministic Impossible Travel Geo-Velocity Detection
   // =========================================================================
   try {
+    const anomalyDetector = new AnomalyDetector(storage);
     const userId = `travel-user-${Date.now()}`;
     // Login in Riyadh
-    AnomalyDetector.recordSuccessfulLogin(
+    await anomalyDetector.recordSuccessfulLogin(
       userId,
       { city: 'Riyadh', country: 'SA', lat: 24.7136, lon: 46.6753 },
       '192.168.1.1'
@@ -500,7 +502,7 @@ export async function runPhase1Battery(): Promise<Phase1BatteryResult> {
 
     // Impossible travel: 1 minute later in London (~4600 km away)
     const londonLocation = { city: 'London', country: 'GB', lat: 51.5074, lon: -0.1278 };
-    const travelCheck = AnomalyDetector.checkImpossibleTravel(
+    const travelCheck = await anomalyDetector.checkImpossibleTravel(
       userId,
       londonLocation,
       Date.now() + 60 * 1000 // 1 minute later

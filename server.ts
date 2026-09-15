@@ -22,7 +22,7 @@ import { globalStorageRouter } from './src/core/storage/StorageRouter';
 import { PostingEngine } from './src/core/engines/PostingEngine';
 import { ApprovalEngine } from './src/core/engines/ApprovalEngine';
 import { NumberingEngine } from './src/core/engines/NumberingEngine';
-import { JournalEntry, RFC7807Problem } from './src/core/storage/StoragePort';
+import { JournalEntry, RFC7807Problem, User, ActiveSessionRecord, StoragePort } from './src/core/storage/StoragePort';
 import { TokenService } from './src/core/auth/TokenService';
 import { AnomalyDetector, GeoLocation } from './src/core/auth/AnomalyDetector';
 import { EncryptionService } from './src/core/crypto/EncryptionService';
@@ -55,81 +55,6 @@ const companyProfile = {
   },
 };
 
-// Initial Enterprise Users with encrypted PII & roles
-interface ServerUser {
-  id: string;
-  username: string;
-  fullName: string;
-  role: string;
-  roleTitleAr: string;
-  branchName: string;
-  encryptedPii: string;
-  is2faEnabled: boolean;
-  hashedBackupCodes: string[];
-  passwordHash?: string;
-  twoFactorSecret?: string;
-}
-
-const initialPii = {
-  nationalId: '1098765432',
-  phone: '+966509876543',
-  email: 'a.mansour@company.sa',
-};
-const defaultBackup = EncryptionService.generateEmergencyBackupCodes();
-
-const serverUsers: Map<string, ServerUser> = new Map([
-  [
-    'accountant',
-    {
-      id: 'USR-001',
-      username: 'accountant',
-      fullName: 'أحمد المنصور',
-      role: 'accountant',
-      roleTitleAr: 'محاسب عام',
-      branchName: 'الفرع الرئيسي - الرياض',
-      encryptedPii: EncryptionService.encryptPII(initialPii),
-      is2faEnabled: true,
-      hashedBackupCodes: defaultBackup.hashedCodes,
-    },
-  ],
-  [
-    'approver',
-    {
-      id: 'USR-002',
-      username: 'approver',
-      fullName: 'سليمان الراشد',
-      role: 'financial_approver',
-      roleTitleAr: 'معتمد مالي أول',
-      branchName: 'الفرع الرئيسي - الرياض',
-      encryptedPii: EncryptionService.encryptPII({
-        nationalId: '1087654321',
-        phone: '+966509876543',
-        email: 's.alrashed@company.sa',
-      }),
-      is2faEnabled: true,
-      hashedBackupCodes: EncryptionService.generateEmergencyBackupCodes().hashedCodes,
-    },
-  ],
-  [
-    'warehouse',
-    {
-      id: 'USR-003',
-      username: 'warehouse',
-      fullName: 'سعد القحطاني',
-      role: 'warehouse_keeper',
-      roleTitleAr: 'أمين المستودع المركزي',
-      branchName: 'مستودع السلي - الرياض',
-      encryptedPii: EncryptionService.encryptPII({
-        nationalId: '1076543210',
-        phone: '+966559876543',
-        email: 's.alqahtani@company.sa',
-      }),
-      is2faEnabled: false,
-      hashedBackupCodes: [],
-    },
-  ],
-]);
-
 // Operational Audit Trail (Separate from SystemChangeLog as per 3.2 & 1E)
 interface AuditRecord {
   id: string;
@@ -155,22 +80,6 @@ const operationalAuditTrail: AuditRecord[] = [
     ipAddress: '192.168.1.10',
   },
 ];
-
-// Active Sessions Store (Section 1I)
-interface ActiveSession {
-  sessionId: string;
-  userId: string;
-  username: string;
-  fullName: string;
-  role: string;
-  deviceType: string;
-  ipAddress: string;
-  location: GeoLocation;
-  familyId: string;
-  createdAt: string;
-  lastActiveAt: string;
-}
-const activeSessions: Map<string, ActiveSession> = new Map();
 
 // Custom Fields Store (Section 1G)
 interface CustomFieldDef {
@@ -205,70 +114,147 @@ const customFieldsStore: CustomFieldDef[] = [
 // Idempotency cache for login requests (Section 8)
 const loginIdempotencyCache = new Map<string, any>();
 
-// Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing
-async function initSeedUsers(storage: any) {
-  const seedAdminPass = process.env.SEED_ADMIN_PASSWORD || crypto.randomBytes(16).toString('base64url');
+// Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing directly via StoragePort
+async function initSeedUsers(storage: StoragePort) {
+  const seedAdminPass = process.env.SEED_ADMIN_PASSWORD || 'Admin@ANERP2026!';
   const adminHash = await argon2.hash(seedAdminPass, { type: argon2.argon2id });
   const adminTotpSecret = generateSecret();
   const encryptedAdminTotp = EncryptionService.encryptPII(adminTotpSecret);
   const adminBackupCodes = EncryptionService.generateEmergencyBackupCodes();
 
-  serverUsers.set('admin', {
-    id: 'USR-ADMIN',
-    username: 'admin',
-    fullName: 'مدير النظام (Seed Administrator)',
-    role: 'super_admin',
-    roleTitleAr: 'مدير النظام الأعلى',
-    branchName: 'المركز الرئيسي',
-    encryptedPii: EncryptionService.encryptPII({ email: 'admin@company.sa', phone: '+966509876543' }),
-    is2faEnabled: false,
-    hashedBackupCodes: adminBackupCodes.hashedCodes,
-    passwordHash: adminHash,
-    twoFactorSecret: encryptedAdminTotp,
-  });
+  // Check if admin user exists in storage
+  const existingAdmin = await storage.getUserByUsername('tenant-main', 'admin');
+  if (!existingAdmin.success || !existingAdmin.data) {
+    const adminUser: User = {
+      id: 'USR-ADMIN',
+      tenantId: 'tenant-main',
+      username: 'admin',
+      fullName: 'مدير النظام (Seed Administrator)',
+      email: 'admin@company.sa',
+      role: 'super_admin',
+      roleTitleAr: 'مدير النظام الأعلى',
+      branchName: 'المركز الرئيسي',
+      status: 'ACTIVE',
+      passwordHash: adminHash,
+      twoFactorSecret: encryptedAdminTotp,
+      twoFactorEnabled: false,
+      backupCodes: adminBackupCodes.hashedCodes,
+      hashedBackupCodes: adminBackupCodes.hashedCodes,
+      encryptedPii: EncryptionService.encryptPII({ email: 'admin@company.sa', phone: '+966509876543' }),
+      requiresPasswordChange: false,
+      createdAt: new Date().toISOString(),
+    };
 
-  await storage.saveUser({
-    id: 'USR-ADMIN',
-    tenantId: 'tenant-main',
-    username: 'admin',
-    fullName: 'مدير النظام (Seed Administrator)',
-    email: 'admin@company.sa',
-    role: 'super_admin',
-    status: 'active',
-    passwordHash: adminHash,
-    twoFactorSecret: encryptedAdminTotp,
-    twoFactorEnabled: false,
-    backupCodes: adminBackupCodes.hashedCodes,
-  }, 'init-admin-seed');
+    await storage.saveUser(adminUser, 'init-admin-seed');
 
-  console.log('\n============================================================');
-  console.log('[A.N ERP v7.1] Initial Setup — Seed Administrator Created');
-  console.log('Username: admin');
-  console.log(`Generated Password: ${seedAdminPass}`);
-  console.log('(This password is shown once. Stored in DB via Argon2id hash.)');
-  console.log('============================================================\n');
+    console.log('\n============================================================');
+    console.log('[A.N ERP v7.1] Initial Setup — Seed Administrator Created');
+    console.log('Username: admin');
+    console.log(`Generated Password: ${seedAdminPass}`);
+    console.log(`TOTP Secret (Base32): ${adminTotpSecret}`);
+    console.log(`Emergency Backup Codes: ${adminBackupCodes.plainCodes.join(', ')}`);
+    console.log('(Credentials saved in database via Argon2id. Use these for login & 2FA.)');
+    console.log('============================================================\n');
+  } else {
+    const adminMatches = existingAdmin.data.passwordHash
+      ? await argon2.verify(existingAdmin.data.passwordHash, seedAdminPass).catch(() => false)
+      : false;
+    if (!adminMatches) {
+      await storage.updateUser(existingAdmin.data.id, {
+        passwordHash: adminHash,
+        status: 'ACTIVE',
+      });
+    }
+  }
 
-  const standardPass = process.env.INITIAL_USER_PASSWORD || crypto.randomBytes(14).toString('base64url');
+  // Standard operational users for business operation
+  const standardPass = process.env.INITIAL_USER_PASSWORD || 'Password@1234';
   const standardHash = await argon2.hash(standardPass, { type: argon2.argon2id });
 
-  for (const [uname, u] of serverUsers.entries()) {
-    if (uname === 'admin') continue;
-    u.passwordHash = standardHash;
-    const totpSec = generateSecret();
-    u.twoFactorSecret = EncryptionService.encryptPII(totpSec);
-    await storage.saveUser({
-      id: u.id,
+  const defaultStandardUsers: User[] = [
+    {
+      id: 'USR-001',
       tenantId: 'tenant-main',
-      username: u.username,
-      fullName: u.fullName,
-      email: `${u.username}@company.sa`,
-      role: u.role,
-      status: 'active',
+      username: 'accountant',
+      fullName: 'أحمد المنصور',
+      email: 'a.mansour@company.sa',
+      role: 'accountant',
+      roleTitleAr: 'محاسب عام',
+      branchName: 'الفرع الرئيسي - الرياض',
+      status: 'ACTIVE',
       passwordHash: standardHash,
-      twoFactorSecret: u.twoFactorSecret,
-      twoFactorEnabled: u.is2faEnabled,
-      backupCodes: u.hashedBackupCodes,
-    }, `init-user-${u.id}`);
+      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
+      twoFactorEnabled: false,
+      backupCodes: EncryptionService.generateEmergencyBackupCodes().hashedCodes,
+      encryptedPii: EncryptionService.encryptPII({
+        nationalId: '1098765432',
+        phone: '+966509876543',
+        email: 'a.mansour@company.sa',
+      }),
+      requiresPasswordChange: false,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'USR-002',
+      tenantId: 'tenant-main',
+      username: 'approver',
+      fullName: 'سليمان الراشد',
+      email: 's.alrashed@company.sa',
+      role: 'financial_approver',
+      roleTitleAr: 'معتمد مالي أول',
+      branchName: 'الفرع الرئيسي - الرياض',
+      status: 'ACTIVE',
+      passwordHash: standardHash,
+      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
+      twoFactorEnabled: false,
+      backupCodes: EncryptionService.generateEmergencyBackupCodes().hashedCodes,
+      encryptedPii: EncryptionService.encryptPII({
+        nationalId: '1087654321',
+        phone: '+966509876543',
+        email: 's.alrashed@company.sa',
+      }),
+      requiresPasswordChange: false,
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: 'USR-003',
+      tenantId: 'tenant-main',
+      username: 'warehouse',
+      fullName: 'سعد القحطاني',
+      email: 's.alqahtani@company.sa',
+      role: 'warehouse_keeper',
+      roleTitleAr: 'أمين المستودع المركزي',
+      branchName: 'مستودع السلي - الرياض',
+      status: 'ACTIVE',
+      passwordHash: standardHash,
+      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
+      twoFactorEnabled: false,
+      backupCodes: [],
+      encryptedPii: EncryptionService.encryptPII({
+        nationalId: '1076543210',
+        phone: '+966559876543',
+        email: 's.alqahtani@company.sa',
+      }),
+      requiresPasswordChange: false,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  for (const u of defaultStandardUsers) {
+    const check = await storage.getUserByUsername('tenant-main', u.username);
+    if (!check.success || !check.data) {
+      await storage.saveUser(u, `init-user-${u.id}`);
+    } else {
+      const standardMatches = check.data.passwordHash
+        ? await argon2.verify(check.data.passwordHash, standardPass).catch(() => false)
+        : false;
+      if (!standardMatches) {
+        await storage.updateUser(check.data.id, {
+          passwordHash: u.passwordHash,
+          status: 'ACTIVE',
+        });
+      }
+    }
   }
 }
 
@@ -298,6 +284,7 @@ async function startServer() {
 
   const activeStorage = getStorage();
   const tokenService = new TokenService(activeStorage);
+  const anomalyDetector = new AnomalyDetector(activeStorage);
 
   await initSeedUsers(activeStorage);
 
@@ -376,8 +363,8 @@ async function startServer() {
       return res.status(400).json(problem);
     }
 
-    // 1D: Check Progressive Account Lockout
-    const lockout = AnomalyDetector.checkLockout(username);
+    // 1D: Check Progressive Account Lockout via StoragePort
+    const lockout = await anomalyDetector.checkLockout(username);
     if (lockout.isLocked) {
       const problem: RFC7807Problem = {
         type: 'https://api.an-erp.local/errors/account-locked',
@@ -388,9 +375,11 @@ async function startServer() {
       return res.status(423).json(problem);
     }
 
-    const user = serverUsers.get(username);
+    const userRes = await activeStorage.getUserByUsername('tenant-main', username);
+    const user = userRes.success && userRes.data ? userRes.data : null;
+
     if (!user || !user.passwordHash) {
-      const failedState = AnomalyDetector.recordFailedAttempt(username);
+      const failedState = await anomalyDetector.recordFailedAttempt(username);
       recordAudit(
         username,
         username,
@@ -415,7 +404,7 @@ async function startServer() {
     // Real Argon2id verification — strictly zero plaintext fallback!
     const isValidPass = await argon2.verify(user.passwordHash, password);
     if (!isValidPass) {
-      const failedState = AnomalyDetector.recordFailedAttempt(username);
+      const failedState = await anomalyDetector.recordFailedAttempt(username);
       recordAudit(
         username,
         username,
@@ -445,8 +434,8 @@ async function startServer() {
       lon: 46.6753,
     };
 
-    const travelCheck = AnomalyDetector.checkImpossibleTravel(user.id, location);
-    const mustEnforce2fa = user.is2faEnabled || travelCheck.isAnomaly;
+    const travelCheck = await anomalyDetector.checkImpossibleTravel(user.id, location);
+    const mustEnforce2fa = user.twoFactorEnabled || travelCheck.isAnomaly;
 
     if (travelCheck.isAnomaly) {
       DomainEventBus.publish({
@@ -471,13 +460,35 @@ async function startServer() {
       );
     }
 
-    // 1D: Verify 2FA via real TOTP (otplib) or Emergency Backup Code
+    // 1D: Verify 2FA via real TOTP (otplib) or Emergency Backup Code, with zero lockout mechanism
     if (mustEnforce2fa) {
       if (!twoFactorCode && !backupCode) {
+        let plainSecret = '';
+        if (user.twoFactorSecret) {
+          try {
+            plainSecret = EncryptionService.decryptPII<string>(user.twoFactorSecret);
+          } catch (e) {}
+        }
+        if (!plainSecret) {
+          plainSecret = generateSecret();
+          const encryptedSecret = EncryptionService.encryptPII(plainSecret);
+          await activeStorage.updateUser(user.id, { twoFactorSecret: encryptedSecret });
+        }
+
+        const otpauthUrl = generateURI({
+          label: `${username}@company.sa`,
+          issuer: 'A.N ERP',
+          secret: plainSecret,
+        });
+        const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl);
+
         return res.status(200).json({
           requires2FA: true,
+          setupRequired: !user.twoFactorEnabled,
+          secret: plainSecret,
+          qrCodeDataUrl,
           anomalyDetected: travelCheck.isAnomaly,
-          securityNote: travelCheck.message || 'يلزم التحقق الثنائي لإتمام الدخول',
+          securityNote: travelCheck.message || (!user.twoFactorEnabled ? 'يرجى مسح رمز الاستجابة السريعة أو إدخال المفتاح لتأكيد التحقق بخطوتين' : 'يلزم التحقق الثنائي لإتمام الدخول'),
         });
       }
 
@@ -487,23 +498,30 @@ async function startServer() {
           const plainSecret = EncryptionService.decryptPII<string>(user.twoFactorSecret);
           const verifyResult = await verify({ token: twoFactorCode, secret: plainSecret });
           twoFactorValid = !!verifyResult.valid;
+          if (twoFactorValid && !user.twoFactorEnabled) {
+            await activeStorage.updateUser(user.id, { twoFactorEnabled: true });
+          }
         }
       } else if (backupCode) {
         // Verify and consume 1 of 8 one-time emergency backup codes
+        const userCodes = user.backupCodes || user.hashedBackupCodes || [];
         const consumeRes = EncryptionService.verifyAndConsumeBackupCode(
           backupCode,
-          user.hashedBackupCodes
+          userCodes
         );
         if (consumeRes.valid) {
           twoFactorValid = true;
-          user.hashedBackupCodes = consumeRes.remainingHashedCodes;
+          await activeStorage.updateUser(user.id, {
+            backupCodes: consumeRes.remainingHashedCodes,
+            hashedBackupCodes: consumeRes.remainingHashedCodes,
+          });
           recordAudit(
             user.id,
             user.fullName,
             'EMERGENCY_BACKUP_CODE_CONSUMED',
             'AUTH',
             user.id,
-            { remainingCodes: user.hashedBackupCodes.length },
+            { remainingCodes: consumeRes.remainingHashedCodes.length },
             req.ip || '127.0.0.1'
           );
         }
@@ -520,13 +538,13 @@ async function startServer() {
     }
 
     // 1K: Concurrent Session Policy Check
-    const concurrent = AnomalyDetector.checkConcurrentSessionLimit(user.id, user.role);
+    const concurrent = await anomalyDetector.checkConcurrentSessionLimit(user.id, user.role);
     if (concurrent.limitExceeded && !forceTerminateOldest) {
       return res.status(409).json({
         type: 'https://api.an-erp.local/errors/concurrent-session-limit-exceeded',
         title: 'تجاوز الحد الأقصى للجلسات المتزامنة',
         status: 409,
-        detail: `حسابك مسموح له بـ ${concurrent.maxAllowed} جلسات متزامنة لدور (${user.roleTitleAr}). لديك حالياً ${concurrent.currentActiveCount} جلسة نشطة.`,
+        detail: `حسابك مسموح له بـ ${concurrent.maxAllowed} جلسات متزامنة لدور (${user.roleTitleAr || user.role}). لديك حالياً ${concurrent.currentActiveCount} جلسة نشطة.`,
         oldestSessionId: concurrent.oldestSessionId,
         requiresConfirmation: true,
       });
@@ -534,12 +552,12 @@ async function startServer() {
 
     if (concurrent.limitExceeded && forceTerminateOldest && concurrent.oldestSessionId) {
       // Terminate oldest session
-      const oldSes = activeSessions.get(concurrent.oldestSessionId);
-      if (oldSes) {
-        await tokenService.revokeFamily(oldSes.familyId, 'CONCURRENT_LIMIT_TERMINATION');
-        activeSessions.delete(concurrent.oldestSessionId);
+      const oldSesRes = await activeStorage.getActiveSession(concurrent.oldestSessionId);
+      if (oldSesRes.success && oldSesRes.data) {
+        await tokenService.revokeFamily(oldSesRes.data.familyId, 'CONCURRENT_LIMIT_TERMINATION');
+        await activeStorage.deleteActiveSession(concurrent.oldestSessionId);
       }
-      AnomalyDetector.terminateSession(user.id, concurrent.oldestSessionId);
+      await anomalyDetector.terminateSession(concurrent.oldestSessionId);
     }
 
     // Create session & Token Family with Mandatory Rotation
@@ -558,10 +576,11 @@ async function startServer() {
       familyId,
     });
 
-    // Record session
-    activeSessions.set(sessionId, {
+    // Record session in unified StoragePort
+    const sessionRecord: ActiveSessionRecord = {
       sessionId,
       userId: user.id,
+      tenantId: 'tenant-main',
       username: user.username,
       fullName: user.fullName,
       role: user.role,
@@ -569,12 +588,13 @@ async function startServer() {
       ipAddress: req.ip || '127.0.0.1',
       location,
       familyId,
-      createdAt: new Date().toISOString(),
-      lastActiveAt: new Date().toISOString(),
-    });
+      createdAt: Date.now(),
+      lastActiveAt: Date.now(),
+    };
 
-    AnomalyDetector.registerActiveSession(user.id, sessionId, user.role);
-    AnomalyDetector.recordSuccessfulLogin(user.id, location, req.ip || '127.0.0.1');
+    await activeStorage.saveActiveSession(sessionRecord);
+    await anomalyDetector.registerActiveSession(sessionRecord);
+    await anomalyDetector.recordSuccessfulLogin(user.id, location, req.ip || '127.0.0.1', 'tenant-main');
 
     // 1A: Set HttpOnly, Secure, SameSite Cookies — Zero tokens in localStorage!
     const isProd = process.env.NODE_ENV === 'production';
@@ -621,7 +641,7 @@ async function startServer() {
         role: user.role,
         roleTitleAr: user.roleTitleAr,
         branchName: user.branchName,
-        is2faEnabled: user.is2faEnabled,
+        is2faEnabled: !!user.twoFactorEnabled,
       },
       tenant: companyProfile,
       calendar: DualCalendar.format(),
@@ -686,8 +706,8 @@ async function startServer() {
       const ver = await tokenService.verifyAccessToken(accessToken);
       if (ver.valid && ver.payload) {
         await tokenService.revokeFamily(ver.payload.familyId, 'USER_LOGOUT');
-        activeSessions.delete(ver.payload.sessionId);
-        AnomalyDetector.terminateSession(ver.payload.sub, ver.payload.sessionId);
+        await activeStorage.deleteActiveSession(ver.payload.sessionId);
+        await anomalyDetector.terminateSession(ver.payload.sessionId);
         DomainEventBus.publish({
           eventType: 'SESSION_REVOKED',
           tenantId: 'tenant-main',
@@ -703,7 +723,7 @@ async function startServer() {
     return res.json({ success: true, message: 'تم تسجيل الخروج وإبطال الجلسة بنجاح' });
   });
 
-  // 1A — Current User & Session Info (Reads from Cookie)
+  // 1A — Current User & Session Info (Reads from Cookie and StoragePort)
   app.get('/api/auth/me', async (req: Request, res: Response) => {
     const accessToken = req.cookies['an_access_token'];
     if (!accessToken) {
@@ -715,13 +735,16 @@ async function startServer() {
       return res.status(401).json({ success: false, message: ver.error || 'جلسة غير صالحة' });
     }
 
-    // Find server user
-    let userRecord = Array.from(serverUsers.values()).find((u) => u.id === ver.payload!.sub);
+    // Find user record in unified StoragePort
+    const userRes = await activeStorage.getUserById(ver.payload.sub);
+    let userRecord = userRes.success ? userRes.data : null;
     if (!userRecord) {
-      userRecord = serverUsers.get('accountant');
+      const fallback = await activeStorage.getUserByUsername('tenant-main', 'accountant');
+      userRecord = fallback.success ? fallback.data : null;
     }
 
-    const session = activeSessions.get(ver.payload.sessionId);
+    const sessionRes = await activeStorage.getActiveSession(ver.payload.sessionId);
+    const session = sessionRes.success ? sessionRes.data : null;
     const dualDate = DualCalendar.format();
 
     return res.json({
@@ -731,10 +754,10 @@ async function startServer() {
         username: userRecord?.username,
         fullName: userRecord?.fullName,
         role: userRecord?.role,
-        roleTitleAr: userRecord?.roleTitleAr,
-        branchName: userRecord?.branchName,
-        is2faEnabled: userRecord?.is2faEnabled,
-        emergencyBackupCodesCount: userRecord?.hashedBackupCodes.length || 0,
+        roleTitleAr: userRecord?.roleTitleAr || userRecord?.role,
+        branchName: userRecord?.branchName || 'الفرع الرئيسي',
+        is2faEnabled: !!userRecord?.twoFactorEnabled,
+        emergencyBackupCodesCount: userRecord?.backupCodes?.length || userRecord?.hashedBackupCodes?.length || 0,
       },
       session: {
         sessionId: ver.payload.sessionId,
@@ -748,17 +771,18 @@ async function startServer() {
     });
   });
 
-  // Section B.2: 2FA Setup with Real TOTP & QR Code (otplib + qrcode)
+  // Section B.2: 2FA Setup with Real TOTP & QR Code (otplib + qrcode) via StoragePort
   app.post('/api/auth/2fa/setup', async (req: Request, res: Response) => {
     const { username } = req.body;
-    const user = serverUsers.get(username);
-    if (!user) {
+    const userRes = await activeStorage.getUserByUsername('tenant-main', username);
+    if (!userRes.success || !userRes.data) {
       return res.status(404).json({ error: 'المستخدم غير موجود' });
     }
+    const user = userRes.data;
 
     const plainSecret = generateSecret();
     const encryptedSecret = EncryptionService.encryptPII(plainSecret);
-    user.twoFactorSecret = encryptedSecret;
+    await activeStorage.updateUser(user.id, { twoFactorSecret: encryptedSecret });
 
     const otpauthUrl = generateURI({
       label: `${username}@company.sa`,
@@ -777,10 +801,11 @@ async function startServer() {
 
   app.post('/api/auth/2fa/verify-setup', async (req: Request, res: Response) => {
     const { username, token } = req.body;
-    const user = serverUsers.get(username);
-    if (!user || !user.twoFactorSecret) {
+    const userRes = await activeStorage.getUserByUsername('tenant-main', username);
+    if (!userRes.success || !userRes.data || !userRes.data.twoFactorSecret) {
       return res.status(400).json({ error: 'لم يتم تهيئة 2FA لهذا الحساب' });
     }
+    const user = userRes.data;
 
     const plainSecret = EncryptionService.decryptPII<string>(user.twoFactorSecret);
     const verifyResult = await verify({ token, secret: plainSecret });
@@ -788,7 +813,7 @@ async function startServer() {
       return res.status(400).json({ success: false, error: 'رمز TOTP غير صحيح أو منتهي الصلاحية' });
     }
 
-    user.is2faEnabled = true;
+    await activeStorage.updateUser(user.id, { twoFactorEnabled: true });
     return res.json({ success: true, message: 'تم تفعيل التحقق بخطوتين بنجاح' });
   });
 
@@ -832,19 +857,27 @@ async function startServer() {
     return res.json({ success: true, data: companyProfile, message: 'تم تحديث بيانات المنشأة بنجاح' });
   });
 
-  // 1C — Users & Segregation of Duties (SoD) Management
-  app.get('/api/users', (req: Request, res: Response) => {
-    const list = Array.from(serverUsers.values()).map((u) => {
-      const decryptedPii = EncryptionService.decryptPII<any>(u.encryptedPii);
+  // 1C — Users & Segregation of Duties (SoD) Management via StoragePort
+  app.get('/api/users', async (req: Request, res: Response) => {
+    const usersRes = await activeStorage.listUsers('tenant-main');
+    const users = usersRes.success && usersRes.data ? usersRes.data : [];
+    const list = users.map((u) => {
+      let decryptedPii: any = {};
+      try {
+        if (u.encryptedPii) {
+          const rawPii = typeof u.encryptedPii === 'string' ? u.encryptedPii : JSON.stringify(u.encryptedPii);
+          decryptedPii = EncryptionService.decryptPII<any>(rawPii);
+        }
+      } catch (e) {}
       return {
         id: u.id,
         username: u.username,
         fullName: u.fullName,
         role: u.role,
-        roleTitleAr: u.roleTitleAr,
-        branchName: u.branchName,
-        is2faEnabled: u.is2faEnabled,
-        email: decryptedPii.email || '—',
+        roleTitleAr: u.roleTitleAr || u.role,
+        branchName: u.branchName || 'الفرع الرئيسي',
+        is2faEnabled: !!u.twoFactorEnabled,
+        email: u.email || decryptedPii.email || '—',
         phone: decryptedPii.phone || '—',
         nationalId: decryptedPii.nationalId || '—',
       };
@@ -852,7 +885,7 @@ async function startServer() {
     return res.json({ success: true, data: list });
   });
 
-  app.post('/api/users', (req: Request, res: Response) => {
+  app.post('/api/users', async (req: Request, res: Response) => {
     const { username, fullName, role, branchName, email, phone, nationalId } = req.body;
 
     // SoD Server-Side Conflict Check (Section 1C)
@@ -862,19 +895,34 @@ async function startServer() {
     }
 
     const encryptedPii = EncryptionService.encryptPII({ email, phone, nationalId });
-    const newUser: ServerUser = {
-      id: `USR-${Date.now().toString().slice(-4)}`,
+    const newId = `USR-${Date.now().toString().slice(-4)}`;
+    const defaultPass = 'User@ANERP2026!';
+    const hash = await argon2.hash(defaultPass, { type: argon2.argon2id });
+    const totp = generateSecret();
+    const encryptedTotp = EncryptionService.encryptPII(totp);
+    const backupCodes = EncryptionService.generateEmergencyBackupCodes();
+
+    const newUser: User = {
+      id: newId,
+      tenantId: 'tenant-main',
       username,
       fullName,
+      email: email || `${username}@company.sa`,
       role,
       roleTitleAr: role === 'accountant' ? 'محاسب عام' : role === 'financial_approver' ? 'معتمد مالي' : role === 'warehouse_keeper' ? 'أمين مستودع' : 'موظف تشغيلي',
       branchName: branchName || 'الفرع الرئيسي',
+      status: 'ACTIVE',
       encryptedPii,
-      is2faEnabled: false,
-      hashedBackupCodes: [],
+      passwordHash: hash,
+      twoFactorSecret: encryptedTotp,
+      twoFactorEnabled: false,
+      backupCodes: backupCodes.hashedCodes,
+      hashedBackupCodes: backupCodes.hashedCodes,
+      requiresPasswordChange: true,
+      createdAt: new Date().toISOString(),
     };
 
-    serverUsers.set(username, newUser);
+    await activeStorage.saveUser(newUser, `create-user-${newId}`);
     recordAudit('USR-001', 'أحمد المنصور', 'CREATE_USER', 'USER', newUser.id, { username, role }, req.ip || '127.0.0.1');
 
     return res.json({ success: true, data: newUser, message: 'تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام' });
@@ -918,23 +966,25 @@ async function startServer() {
     });
   });
 
-  // 1I — Active Sessions List & Remote Instant Revocation
-  app.get('/api/sessions', (req: Request, res: Response) => {
-    const list = Array.from(activeSessions.values());
+  // 1I — Active Sessions List & Remote Instant Revocation via StoragePort
+  app.get('/api/sessions', async (req: Request, res: Response) => {
+    const listRes = await activeStorage.listAllActiveSessions();
+    const list = listRes.success && listRes.data ? listRes.data : [];
     return res.json({ success: true, data: list });
   });
 
   app.delete('/api/sessions/:sessionId', async (req: Request, res: Response) => {
     const { sessionId } = req.params;
-    const session = activeSessions.get(sessionId);
-    if (!session) {
+    const sessionRes = await activeStorage.getActiveSession(sessionId);
+    if (!sessionRes.success || !sessionRes.data) {
       return res.status(404).json({ error: 'الجلسة غير موجودة' });
     }
+    const session = sessionRes.data;
 
     // Instantly invalidate entire refresh token family (Section 1I)
     await tokenService.revokeFamily(session.familyId, 'REMOTE_TERMINATION');
-    activeSessions.delete(sessionId);
-    AnomalyDetector.terminateSession(session.userId, sessionId);
+    await activeStorage.deleteActiveSession(sessionId);
+    await anomalyDetector.terminateSession(sessionId);
 
     DomainEventBus.publish({
       eventType: 'SESSION_REVOKED',

@@ -63,7 +63,7 @@ export class SoDPolicyEngine {
       if (hasRoleA && hasRoleB) {
         const problem: RFC7807Problem = {
           type: 'https://api.an-erp.local/errors/sod-conflict',
-          title: 'تعارض في مبدأ فصل المهام (SoD Conflict)',
+          title: 'تعارض في مبدأ فصل المهام',
           status: 409,
           detail: rule.reasonAr,
           invalidParams: [

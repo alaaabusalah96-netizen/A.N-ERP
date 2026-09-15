@@ -21,6 +21,10 @@ import {
   MasterItem,
   MasterPartner,
   AuditChainEntry,
+  GeoLocation,
+  LoginAttemptRecord,
+  FailedAttemptRecord,
+  ActiveSessionRecord,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -29,6 +33,9 @@ export class InMemoryAdapter implements StoragePort {
 
   private tenants = new Map<string, TenantCompany>();
   private users = new Map<string, User>();
+  private lastLogins = new Map<string, LoginAttemptRecord>();
+  private failedAttempts = new Map<string, FailedAttemptRecord>();
+  private activeSessions = new Map<string, ActiveSessionRecord>();
   private accounts = new Map<string, Account>();
   private journalEntries = new Map<string, JournalEntry>();
   private sequences = new Map<string, number>();
@@ -137,24 +144,133 @@ export class InMemoryAdapter implements StoragePort {
   }
 
   public async getUser(tenantId: string, userId: string): Promise<StorageResult<User>> {
-    const u = this.users.get(`${tenantId}:${userId}`);
-    if (!u) {
-      return {
-        success: false,
-        error: {
-          type: 'https://api.an-erp.local/errors/user-not-found',
-          title: 'المستخدم غير موجود',
-          status: 404,
-          detail: `المستخدم ${userId} غير مسجل للشركة ${tenantId}`,
-        },
-      };
+    for (const u of this.users.values()) {
+      if ((u.tenantId === tenantId || tenantId === 'tenant-main') && (u.id === userId || u.username.toLowerCase() === userId.toLowerCase())) {
+        return { success: true, data: u };
+      }
     }
-    return { success: true, data: u };
+    return {
+      success: false,
+      error: {
+        type: 'https://api.an-erp.local/errors/user-not-found',
+        title: 'المستخدم غير موجود',
+        status: 404,
+        detail: `المستخدم ${userId} غير مسجل للشركة ${tenantId}`,
+      },
+    };
+  }
+
+  public async getUserByUsername(tenantId: string, username: string): Promise<StorageResult<User>> {
+    for (const u of this.users.values()) {
+      if ((!tenantId || u.tenantId === tenantId || tenantId === 'tenant-main') && u.username.toLowerCase() === username.trim().toLowerCase()) {
+        return { success: true, data: u };
+      }
+    }
+    // Fallback across any tenant
+    for (const u of this.users.values()) {
+      if (u.username.toLowerCase() === username.trim().toLowerCase()) {
+        return { success: true, data: u };
+      }
+    }
+    return {
+      success: false,
+      error: {
+        type: 'https://api.an-erp.local/errors/user-not-found',
+        title: 'المستخدم غير موجود',
+        status: 404,
+        detail: `المستخدم ${username} غير مسجل بالنظام`,
+      },
+    };
+  }
+
+  public async getUserById(userId: string): Promise<StorageResult<User>> {
+    for (const u of this.users.values()) {
+      if (u.id === userId || u.username.toLowerCase() === userId.toLowerCase()) {
+        return { success: true, data: u };
+      }
+    }
+    return {
+      success: false,
+      error: {
+        type: 'https://api.an-erp.local/errors/user-not-found',
+        title: 'المستخدم غير موجود',
+        status: 404,
+        detail: `المستخدم بالمعرف ${userId} غير مسجل بالنظام`,
+      },
+    };
+  }
+
+  public async listUsers(tenantId?: string): Promise<StorageResult<User[]>> {
+    const list = Array.from(this.users.values()).filter(u => !tenantId || u.tenantId === tenantId);
+    return { success: true, data: list };
   }
 
   public async saveUser(user: User, idempotencyKey: string): Promise<StorageResult<User>> {
+    this.users.set(user.id, user);
     this.users.set(`${user.tenantId}:${user.id}`, user);
     return { success: true, data: user };
+  }
+
+  public async updateUser(userId: string, updates: Partial<User>): Promise<StorageResult<User>> {
+    const existingRes = await this.getUserById(userId);
+    if (!existingRes.success || !existingRes.data) return existingRes;
+    const merged: User = { ...existingRes.data, ...updates };
+    return this.saveUser(merged, `inmem-upd-${userId}-${Date.now()}`);
+  }
+
+  // Login Attempts & Security Tracking (Anomaly Detection & Lockout)
+  public async getLastSuccessfulLogin(userId: string): Promise<StorageResult<LoginAttemptRecord | null>> {
+    return { success: true, data: this.lastLogins.get(userId) || null };
+  }
+
+  public async recordSuccessfulLogin(record: LoginAttemptRecord): Promise<StorageResult<void>> {
+    this.lastLogins.set(record.userId, record);
+    this.failedAttempts.delete(record.userId);
+    return { success: true, data: undefined };
+  }
+
+  public async getFailedLoginAttempts(userId: string): Promise<StorageResult<FailedAttemptRecord | null>> {
+    return { success: true, data: this.failedAttempts.get(userId) || null };
+  }
+
+  public async recordFailedLoginAttempt(userId: string, count: number, lockedUntil?: number): Promise<StorageResult<void>> {
+    this.failedAttempts.set(userId, {
+      userId,
+      count,
+      lockedUntil,
+      updatedAt: Date.now(),
+    });
+    return { success: true, data: undefined };
+  }
+
+  public async clearFailedLoginAttempts(userId: string): Promise<StorageResult<void>> {
+    this.failedAttempts.delete(userId);
+    return { success: true, data: undefined };
+  }
+
+  // Active Sessions
+  public async saveActiveSession(session: ActiveSessionRecord): Promise<StorageResult<ActiveSessionRecord>> {
+    this.activeSessions.set(session.sessionId, session);
+    return { success: true, data: session };
+  }
+
+  public async getActiveSession(sessionId: string): Promise<StorageResult<ActiveSessionRecord | null>> {
+    return { success: true, data: this.activeSessions.get(sessionId) || null };
+  }
+
+  public async listActiveSessionsByUser(userId: string): Promise<StorageResult<ActiveSessionRecord[]>> {
+    const list = Array.from(this.activeSessions.values()).filter(s => s.userId === userId);
+    return { success: true, data: list };
+  }
+
+  public async listAllActiveSessions(): Promise<StorageResult<ActiveSessionRecord[]>> {
+    const list = Array.from(this.activeSessions.values());
+    return { success: true, data: list };
+  }
+
+  public async deleteActiveSession(sessionId: string): Promise<StorageResult<void>> {
+    this.activeSessions.delete(sessionId);
+    return { success: true, data: undefined };
   }
 
   public async getAccount(tenantId: string, accountCode: string): Promise<StorageResult<Account>> {

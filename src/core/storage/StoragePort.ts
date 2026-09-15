@@ -42,6 +42,43 @@ export interface TenantCompany {
   createdAt?: string;
 }
 
+export interface GeoLocation {
+  city: string;
+  country: string;
+  lat: number;
+  lon: number;
+}
+
+export interface LoginAttemptRecord {
+  userId: string;
+  tenantId?: string;
+  location: GeoLocation;
+  ip: string;
+  timestamp: number;
+}
+
+export interface FailedAttemptRecord {
+  userId: string;
+  count: number;
+  lockedUntil?: number;
+  updatedAt: number;
+}
+
+export interface ActiveSessionRecord {
+  sessionId: string;
+  userId: string;
+  tenantId?: string;
+  username: string;
+  fullName: string;
+  role: string;
+  deviceType: string;
+  ipAddress: string;
+  location: GeoLocation;
+  familyId?: string;
+  createdAt: number;
+  lastActiveAt: number;
+}
+
 export interface User {
   id: string;
   tenantId: string;
@@ -49,13 +86,17 @@ export interface User {
   fullName: string;
   email: string;
   role: string;
+  roleTitleAr?: string;
+  branchName?: string;
   status: 'ACTIVE' | 'INACTIVE';
   passwordHash?: string;
   twoFactorSecret?: string;
   twoFactorEnabled?: boolean;
   backupCodes?: string[];
+  hashedBackupCodes?: string[];
   permissions?: string[];
   requiresPasswordChange?: boolean;
+  encryptedPii?: { iv: string; tag: string; data: string } | string;
   createdAt?: string;
 }
 
@@ -244,7 +285,25 @@ export interface StoragePort {
 
   // Users & RBAC
   getUser(tenantId: string, userId: string): Promise<StorageResult<User>>;
+  getUserByUsername(tenantId: string, username: string): Promise<StorageResult<User>>;
+  getUserById(userId: string): Promise<StorageResult<User>>;
+  listUsers(tenantId?: string): Promise<StorageResult<User[]>>;
   saveUser(user: User, idempotencyKey: string): Promise<StorageResult<User>>;
+  updateUser(userId: string, updates: Partial<User>): Promise<StorageResult<User>>;
+
+  // Login Attempts & Security Tracking (Anomaly Detection & Lockout)
+  getLastSuccessfulLogin(userId: string): Promise<StorageResult<LoginAttemptRecord | null>>;
+  recordSuccessfulLogin(record: LoginAttemptRecord): Promise<StorageResult<void>>;
+  getFailedLoginAttempts(userId: string): Promise<StorageResult<FailedAttemptRecord | null>>;
+  recordFailedLoginAttempt(userId: string, count: number, lockedUntil?: number): Promise<StorageResult<void>>;
+  clearFailedLoginAttempts(userId: string): Promise<StorageResult<void>>;
+
+  // Active Sessions
+  saveActiveSession(session: ActiveSessionRecord): Promise<StorageResult<ActiveSessionRecord>>;
+  getActiveSession(sessionId: string): Promise<StorageResult<ActiveSessionRecord | null>>;
+  listActiveSessionsByUser(userId: string): Promise<StorageResult<ActiveSessionRecord[]>>;
+  listAllActiveSessions(): Promise<StorageResult<ActiveSessionRecord[]>>;
+  deleteActiveSession(sessionId: string): Promise<StorageResult<void>>;
 
   // Chart of Accounts & Balances
   getAccount(tenantId: string, accountCode: string): Promise<StorageResult<Account>>;
