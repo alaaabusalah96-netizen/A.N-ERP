@@ -43,10 +43,10 @@ export const OperationalWorkspace: React.FC<OperationalWorkspaceProps> = ({
     if (searchQuery.trim() !== '') {
       const q = searchQuery.toLowerCase();
       return (
-        tx.code.toLowerCase().includes(q) ||
-        tx.description.toLowerCase().includes(q) ||
-        tx.party.toLowerCase().includes(q) ||
-        tx.type.toLowerCase().includes(q)
+        (tx.code ?? '').toLowerCase().includes(q) ||
+        (tx.description ?? '').toLowerCase().includes(q) ||
+        (tx.party ?? '').toLowerCase().includes(q) ||
+        (tx.type ?? '').toLowerCase().includes(q)
       );
     }
     return true;
@@ -54,7 +54,7 @@ export const OperationalWorkspace: React.FC<OperationalWorkspaceProps> = ({
 
   const totalApproved = transactions
     .filter((t) => t.status === 'معتمد')
-    .reduce((acc, cur) => acc + cur.amount, 0);
+    .reduce((acc, cur) => acc + (cur.amount ?? 0), 0);
 
   const pendingCount = transactions.filter((t) => t.status === 'بانتظار الاعتماد').length;
   const hasTransactions = transactions.length > 0;
@@ -213,7 +213,7 @@ export const OperationalWorkspace: React.FC<OperationalWorkspaceProps> = ({
                       </td>
                       <td className="p-3.5 font-semibold text-slate-800">{tx.party}</td>
                       <td className="p-3.5 text-left font-bold text-slate-900">
-                        {tx.amount.toLocaleString()}
+                        {(tx.amount ?? 0).toLocaleString()}
                       </td>
                       <td className="p-3.5 text-center">
                         <span

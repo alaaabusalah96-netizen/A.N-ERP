@@ -9,6 +9,7 @@ import {
   FileText,
   CheckSquare,
   BarChart3,
+  X,
 } from 'lucide-react';
 
 export type ActiveSection =
@@ -26,12 +27,16 @@ interface SidebarProps {
   activeSection: ActiveSection;
   onSelectSection: (section: ActiveSection) => void;
   pendingApprovalsCount: number;
+  isOpenOnMobile?: boolean;
+  onCloseMobile?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeSection,
   onSelectSection,
   pendingApprovalsCount,
+  isOpenOnMobile = false,
+  onCloseMobile,
 }) => {
   const primaryMenuItems = [
     { id: 'overview' as ActiveSection, label: 'لوحة العمليات التشغيلية', icon: Layers },
@@ -54,8 +59,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   return (
-    <aside className="w-64 bg-white border-l border-slate-200 min-h-[calc(100vh-4rem)] flex flex-col justify-between p-4 shrink-0">
+    <aside
+      className={`
+        ${isOpenOnMobile ? 'fixed inset-0 z-40 bg-white flex flex-col justify-between p-6 overflow-y-auto' : 'hidden'}
+        md:flex md:static md:w-64 md:border-l md:border-slate-200 md:min-h-[calc(100vh-4rem)] md:p-4 md:shrink-0 md:z-auto md:overflow-y-visible
+      `}
+    >
       <div className="space-y-6">
+        {/* Mobile-only header with title and close button */}
+        {isOpenOnMobile && (
+          <div className="flex items-center justify-between pb-3 border-b border-slate-200 md:hidden">
+            <span className="text-sm font-bold text-slate-800">قائمة التنقل</span>
+            <button
+              type="button"
+              onClick={onCloseMobile}
+              className="p-1 text-slate-500 hover:text-slate-800 rounded-lg transition-colors"
+              aria-label="إغلاق القائمة"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        )}
+
         {/* Core Operations */}
         <div>
           <p className="text-[11px] font-bold tracking-wider text-slate-400 uppercase mb-2 px-3">

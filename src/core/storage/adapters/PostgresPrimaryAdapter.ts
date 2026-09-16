@@ -29,6 +29,8 @@ import {
   LoginAttemptRecord,
   FailedAttemptRecord,
   ActiveSessionRecord,
+  OrgNode,
+  BreakGlassDetails,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 

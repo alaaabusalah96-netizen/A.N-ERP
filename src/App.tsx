@@ -22,6 +22,7 @@ export default function App() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedTxForPrint, setSelectedTxForPrint] = useState<OperationalTransaction | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   const showNotification = (msg: string) => {
     setNotification(msg);
@@ -41,7 +42,7 @@ export default function App() {
       const res = await fetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json();
-        if (data.authenticated && data.user) {
+        if ((data.authenticated || data.success) && data.user) {
           setCurrentUser(data.user);
           setIsLoggedIn(true);
           fetchTransactions();
@@ -64,13 +65,40 @@ export default function App() {
     }
   };
 
+  function mapJournalStatusToArabic(status: string): OperationalTransaction['status'] {
+    switch (status) {
+      case 'PENDING_APPROVAL':
+        return 'بانتظار الاعتماد';
+      case 'APPROVED':
+      case 'POSTED':
+        return 'معتمد';
+      case 'REVERSED':
+        return 'مرفوض';
+      case 'DRAFT':
+      default:
+        return 'مسودة'; // قيمة افتراضية آمنة لأي حالة غير متوقعة مستقبلًا
+    }
+  }
+
   const fetchTransactions = async () => {
     setIsLoadingTransactions(true);
     try {
       const res = await fetch('/api/transactions');
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
-        setTransactions(data.data);
+        const mapped: OperationalTransaction[] = data.data.map((entry: any) => ({
+          id: entry.id,
+          code: entry.code ?? '—',
+          date: entry.date ?? '',
+          type: entry.type ?? 'قيد',
+          description: entry.description ?? '',
+          amount: typeof entry.totalAmount === 'number' ? entry.totalAmount : 0,
+          currency: entry.currency ?? 'ر.س',
+          party: entry.party ?? '—',
+          initiator: entry.createdBy ?? '—',
+          status: mapJournalStatusToArabic(entry.status),
+        }));
+        setTransactions(mapped);
       }
     } catch {
       // ignore
@@ -80,9 +108,12 @@ export default function App() {
   };
 
   const handleLoginSuccess = (loginData: any) => {
-    setCurrentUser(loginData.user);
+    setCurrentUser(loginData?.user ?? null);
     setIsLoggedIn(true);
-    showNotification(`مرحباً بك ${loginData.user.fullName}، تم تسجيل الدخول بنجاح.`);
+    if (loginData?.calendar) {
+      setCalendar(loginData.calendar);
+    }
+    showNotification(`مرحباً بك ${loginData?.user?.fullName ?? ''}، تم تسجيل الدخول بنجاح.`);
     fetchTransactions();
   };
 
@@ -161,6 +192,12 @@ export default function App() {
     avatarInitials: currentUser?.fullName ? currentUser.fullName.slice(0, 2) : 'أم',
   };
 
+  const handleSelectSection = (section: ActiveSection) => {
+    setActiveSection(section);
+    setIsMobileNavOpen(false); // إغلاق فوري = استبدال كامل، لا تراكم
+    window.scrollTo({ top: 0, behavior: 'smooth' }); // بعد القفل، رجّع لأعلى منطقة العرض حتى لا تفضل وسط شاشة فاضية
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-blue-600 selection:text-white" dir="rtl">
       {/* Enterprise Header */}
@@ -172,6 +209,7 @@ export default function App() {
         }}
         pendingApprovalsCount={pendingApprovalsCount}
         onLogout={handleLogout}
+        onToggleMobileNav={() => setIsMobileNavOpen((v) => !v)}
       />
 
       {/* Main Workspace Layout */}
@@ -179,8 +217,10 @@ export default function App() {
         {/* Sidebar Navigation */}
         <Sidebar
           activeSection={activeSection}
-          onSelectSection={setActiveSection}
+          onSelectSection={handleSelectSection}
           pendingApprovalsCount={pendingApprovalsCount}
+          isOpenOnMobile={isMobileNavOpen}
+          onCloseMobile={() => setIsMobileNavOpen(false)}
         />
 
         {/* Dynamic Section View */}

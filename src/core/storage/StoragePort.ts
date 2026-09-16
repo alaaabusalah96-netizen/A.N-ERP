@@ -95,6 +95,7 @@ export interface User {
   backupCodes?: string[];
   hashedBackupCodes?: string[];
   permissions?: string[];
+  assignedNodeId?: string;
   requiresPasswordChange?: boolean;
   encryptedPii?: { iv: string; tag: string; data: string } | string;
   createdAt?: string;
@@ -178,6 +179,17 @@ export interface ApprovalStep {
   comment?: string;
 }
 
+export interface BreakGlassDetails {
+  executed: boolean;
+  actor1Id: string;
+  actor1Role: string;
+  actor2Id: string;
+  actor2Role: string;
+  reasonAr: string;
+  ticketRef: string;
+  executedAt: string;
+}
+
 export interface ApprovalRequest {
   id: string;
   tenantId: string;
@@ -189,13 +201,14 @@ export interface ApprovalRequest {
   steps: ApprovalStep[];
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   createdAt: string;
+  breakGlass?: BreakGlassDetails;
 }
 
 export interface SystemChangeLogEntry {
   id: string;
   timestamp: string;
   actor: string;
-  changeType: 'SCHEMA_MIGRATION' | 'PHASE_CLOSURE' | 'STORAGE_CONFIG' | 'ENGINE_POST' | 'SOD_ENFORCEMENT' | 'MIGRATION' | 'NUMBERING_OVERRIDE';
+  changeType: 'SCHEMA_MIGRATION' | 'PHASE_CLOSURE' | 'STORAGE_CONFIG' | 'ENGINE_POST' | 'SOD_ENFORCEMENT' | 'MIGRATION' | 'NUMBERING_OVERRIDE' | 'SECURITY' | 'Security' | 'ANONYMIZATION' | 'CANARY_ALERT' | 'BREAK_GLASS';
   module: string;
   entitiesAffected: string[];
   summaryAr: string;
@@ -273,6 +286,22 @@ export interface AuditChainEntry {
   ipAddress?: string;
   previousHash: string;
   entryHash: string;
+}
+
+// Phase 3A: Organizational Hierarchy Types
+export type OrgNodeType = 'REGION' | 'SITE' | 'BRANCH' | 'DEPARTMENT';
+
+export interface OrgNode {
+  id: string;
+  tenantId: string;
+  type: OrgNodeType;
+  code: string;
+  nameAr: string;
+  nameEn?: string;
+  parentId?: string | null;
+  managerUserId?: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  createdAt?: string;
 }
 
 export interface StoragePort {
@@ -410,6 +439,18 @@ export interface StoragePort {
   getCountryTaxRule(countryCode: string): Promise<StorageResult<CountryTaxRule>>;
   listCountryTaxRules(): Promise<StorageResult<CountryTaxRule[]>>;
   upsertCountryTaxRule(rule: CountryTaxRule): Promise<StorageResult<CountryTaxRule>>;
+
+  // Phase 3A: Organizational Hierarchy
+  saveOrgNode(tenantId: string, node: OrgNode, idempotencyKey: string): Promise<StorageResult<OrgNode>>;
+  getOrgNode(tenantId: string, nodeId: string): Promise<StorageResult<OrgNode>>;
+  listOrgHierarchy(tenantId: string, rootNodeId?: string): Promise<StorageResult<OrgNode[]>>;
+  getUserVisibleNodes(tenantId: string, userAssignedNodeId: string): Promise<StorageResult<OrgNode[]>>;
+
+  // Phase 3C: Break-Glass Approval Workflow
+  approveBreakGlass(tenantId: string, requestId: string, breakGlass: BreakGlassDetails, idempotencyKey: string): Promise<StorageResult<ApprovalRequest>>;
+
+  // Phase 3E: Privacy & Right to be Forgotten
+  anonymizeUserPii(tenantId: string, userId: string, actorId: string, idempotencyKey: string): Promise<StorageResult<{ userId: string; anonymizedAt: string }>>;
 
   // Tenant Scoping & Isolation
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T>;
