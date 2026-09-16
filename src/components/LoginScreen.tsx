@@ -33,6 +33,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   }) => {
     setIsLoading(true);
     setError(null);
+    setShowConcurrentPrompt(false);
 
     const idempotencyKey = `idemp-login-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
@@ -154,7 +155,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => executeLogin({ forceTerminateOldest: true })}
+                  onClick={() =>
+                    executeLogin({
+                      forceTerminateOldest: true,
+                      twoFactor: useBackupCode ? undefined : twoFactorCode,
+                      backup: useBackupCode ? backupCode : undefined,
+                    })
+                  }
                   className="flex-1 py-2 px-3 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-lg text-xs transition-colors"
                 >
                   إنهاء الجلسة الأقدم والمتابعة

@@ -22,6 +22,10 @@ export class AnomalyDetector {
   // Threshold: Max realistic physical travel velocity (800 km/h)
   private static readonly MAX_VELOCITY_KM_PER_HOUR = 800;
 
+  // جلسة بلا أي نشاط لهذه المدة تُعتبر مهجورة (انقطاع/إغلاق بدون تسجيل خروج)
+  // ويتم حذفها بدل أن تحتل مكانًا دائمًا من حد الجلسات المتزامنة.
+  private static readonly STALE_SESSION_MS = 24 * 60 * 60 * 1000; // 24 ساعة
+
   // Configurable concurrent sessions limit per role (Section 1K)
   private static readonly CONCURRENT_LIMIT_BY_ROLE: Record<string, number> = {
     financial_approver: 1, // Stricter security for approvers
@@ -214,7 +218,18 @@ export class AnomalyDetector {
   }> {
     const limit = AnomalyDetector.CONCURRENT_LIMIT_BY_ROLE[role] || 2;
     const res = await this.storage.listActiveSessionsByUser(userId);
-    const active = res.success && res.data ? res.data : [];
+    const allSessions = res.success && res.data ? res.data : [];
+
+    // تنظيف الجلسات المهجورة قبل العدّ، بحيث لا تحتل مكانًا دائمًا من الحد
+    const now = Date.now();
+    const active: ActiveSessionRecord[] = [];
+    for (const session of allSessions) {
+      if (now - session.lastActiveAt > AnomalyDetector.STALE_SESSION_MS) {
+        await this.storage.deleteActiveSession(session.sessionId);
+      } else {
+        active.push(session);
+      }
+    }
 
     if (active.length >= limit) {
       const oldest = [...active].sort((a, b) => a.createdAt - b.createdAt)[0];
