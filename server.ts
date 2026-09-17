@@ -34,6 +34,7 @@ import { HistoricalQueryService } from './src/core/reports/HistoricalQueryServic
 import { DualControlService } from './src/core/governance/DualControlService';
 import { AuditChainService } from './src/core/audit/AuditChainService';
 import { runPhase2Battery } from './src/core/tests/runPhase2Battery';
+import { runPhase3Battery } from './src/core/tests/runPhase3Battery';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
 
 const PORT = 3000;
@@ -1374,6 +1375,12 @@ async function startServer() {
   // Phase 2 Comprehensive Acceptance Battery Endpoint
   app.get('/api/internal/phase2-battery', async (req: Request, res: Response) => {
     const result = await runPhase2Battery();
+    return res.json(result);
+  });
+
+  // Phase 3 Comprehensive Acceptance Battery Endpoint
+  app.get('/api/internal/phase3-battery', async (req: Request, res: Response) => {
+    const result = await runPhase3Battery();
     return res.json(result);
   });
 

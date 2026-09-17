@@ -29,6 +29,8 @@ import {
   LoginAttemptRecord,
   FailedAttemptRecord,
   ActiveSessionRecord,
+  OrgNode,
+  BreakGlassDetails,
 } from '../StoragePort';
 
 export class FirebaseSmokeAdapter implements StoragePort {
@@ -106,6 +108,12 @@ export class FirebaseSmokeAdapter implements StoragePort {
   getCountryTaxRule(countryCode: string) { return this.smokeOnlyError<CountryTaxRule>('getCountryTaxRule'); }
   listCountryTaxRules() { return this.smokeOnlyError<CountryTaxRule[]>('listCountryTaxRules'); }
   upsertCountryTaxRule(rule: CountryTaxRule) { return this.smokeOnlyError<CountryTaxRule>('upsertCountryTaxRule'); }
+  saveOrgNode(tenantId: string, node: OrgNode, idempotencyKey: string) { return this.smokeOnlyError<OrgNode>('saveOrgNode'); }
+  getOrgNode(tenantId: string, nodeId: string) { return this.smokeOnlyError<OrgNode>('getOrgNode'); }
+  listOrgHierarchy(tenantId: string, rootNodeId?: string) { return this.smokeOnlyError<OrgNode[]>('listOrgHierarchy'); }
+  getUserVisibleNodes(tenantId: string, userAssignedNodeId: string) { return this.smokeOnlyError<OrgNode[]>('getUserVisibleNodes'); }
+  approveBreakGlass(tenantId: string, requestId: string, breakGlass: BreakGlassDetails, idempotencyKey: string) { return this.smokeOnlyError<ApprovalRequest>('approveBreakGlass'); }
+  anonymizeUserPii(tenantId: string, userId: string, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<{ userId: string; anonymizedAt: string }>('anonymizeUserPii'); }
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T> { return fn(); }
 
   /**

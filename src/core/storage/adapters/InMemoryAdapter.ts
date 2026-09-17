@@ -25,6 +25,8 @@ import {
   LoginAttemptRecord,
   FailedAttemptRecord,
   ActiveSessionRecord,
+  OrgNode,
+  BreakGlassDetails,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -33,6 +35,7 @@ export class InMemoryAdapter implements StoragePort {
 
   private tenants = new Map<string, TenantCompany>();
   private users = new Map<string, User>();
+  private orgNodes = new Map<string, OrgNode>();
   private lastLogins = new Map<string, LoginAttemptRecord>();
   private failedAttempts = new Map<string, FailedAttemptRecord>();
   private activeSessions = new Map<string, ActiveSessionRecord>();
@@ -896,5 +899,126 @@ export class InMemoryAdapter implements StoragePort {
         messageAr: 'تم التحقق المشفر من سلامة سلسلة سجلات التدقيق بالكامل (100% مطابقة وخالية من التلاعب).',
       },
     };
+  }
+
+  // Phase 3A: Organizational Hierarchy
+  public async saveOrgNode(tenantId: string, node: OrgNode, idempotencyKey: string): Promise<StorageResult<OrgNode>> {
+    const key = `${tenantId}:${node.id}`;
+    this.orgNodes.set(key, { ...node, tenantId });
+    return { success: true, data: this.orgNodes.get(key)! };
+  }
+
+  public async getOrgNode(tenantId: string, nodeId: string): Promise<StorageResult<OrgNode>> {
+    const key = `${tenantId}:${nodeId}`;
+    const node = this.orgNodes.get(key);
+    if (!node) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/node-not-found',
+          title: 'العقدة التنظيمية غير موجودة',
+          status: 404,
+          detail: `العقدة ${nodeId} غير مسجلة في هيكل المنشأة`,
+        },
+      };
+    }
+    return { success: true, data: node };
+  }
+
+  public async listOrgHierarchy(tenantId: string, rootNodeId?: string): Promise<StorageResult<OrgNode[]>> {
+    const allForTenant = Array.from(this.orgNodes.values()).filter((n) => n.tenantId === tenantId);
+    if (!rootNodeId) {
+      return { success: true, data: allForTenant };
+    }
+
+    // Traverse recursively
+    const result: OrgNode[] = [];
+    const queue: string[] = [rootNodeId];
+    const visited = new Set<string>();
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      if (visited.has(currentId)) continue;
+      visited.add(currentId);
+
+      const found = allForTenant.find((n) => n.id === currentId);
+      if (found) {
+        result.push(found);
+        const children = allForTenant.filter((n) => n.parentId === currentId);
+        for (const child of children) {
+          queue.push(child.id);
+        }
+      }
+    }
+
+    return { success: true, data: result };
+  }
+
+  public async getUserVisibleNodes(tenantId: string, userAssignedNodeId: string): Promise<StorageResult<OrgNode[]>> {
+    return this.listOrgHierarchy(tenantId, userAssignedNodeId);
+  }
+
+  // Phase 3C: Break-Glass
+  public async approveBreakGlass(
+    tenantId: string,
+    requestId: string,
+    breakGlass: BreakGlassDetails,
+    idempotencyKey: string
+  ): Promise<StorageResult<ApprovalRequest>> {
+    const req = this.approvalRequests.get(requestId);
+    if (!req || req.tenantId !== tenantId) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/request-not-found',
+          title: 'طلب الاعتماد غير موجود',
+          status: 404,
+          detail: `طلب الاعتماد ${requestId} غير مسجل`,
+        },
+      };
+    }
+
+    const updatedSteps = req.steps.map((s) => ({
+      ...s,
+      status: 'APPROVED' as const,
+      approverId: `${breakGlass.actor1Id}+${breakGlass.actor2Id}`,
+      comment: `تجاوز طارئ Break-Glass: ${breakGlass.reasonAr}`,
+      actionTimestamp: breakGlass.executedAt,
+    }));
+
+    const updatedReq: ApprovalRequest = {
+      ...req,
+      status: 'APPROVED',
+      steps: updatedSteps,
+      breakGlass,
+    };
+    this.approvalRequests.set(requestId, updatedReq);
+    return { success: true, data: updatedReq };
+  }
+
+  // Phase 3E: Privacy & Anonymization
+  public async anonymizeUserPii(
+    tenantId: string,
+    userId: string,
+    actorId: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<{ userId: string; anonymizedAt: string }>> {
+    const user = this.users.get(userId);
+    if (user && (user.tenantId === tenantId || tenantId === 'tenant-main')) {
+      const scrubbed: User = {
+        ...user,
+        fullName: 'مستخدم مجهول (حق النسيان - GDPR/PDPL)',
+        email: `anonymized_${userId.slice(-6)}@privacy.an-erp.local`,
+        username: `anon_${userId.slice(-6)}`,
+        encryptedPii: undefined,
+        twoFactorSecret: undefined,
+        twoFactorEnabled: false,
+        backupCodes: undefined,
+        hashedBackupCodes: undefined,
+        status: 'INACTIVE',
+      };
+      this.users.set(userId, scrubbed);
+    }
+    return { success: true, data: { userId, anonymizedAt: new Date().toISOString() } };
   }
 }

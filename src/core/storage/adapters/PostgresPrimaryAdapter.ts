@@ -241,7 +241,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
       CREATE TABLE IF NOT EXISTS an_system_changelog (
         id VARCHAR(64) PRIMARY KEY,
         timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        actor VARCHAR(64) NOT NULL,
+        actor VARCHAR(255) NOT NULL,
         change_type VARCHAR(64) NOT NULL,
         module VARCHAR(64) NOT NULL,
         entities_affected TEXT[] NOT NULL,
@@ -388,6 +388,27 @@ export class PostgresPrimaryAdapter implements StoragePort {
         entry_hash VARCHAR(64) NOT NULL
       );
 
+      -- Phase 3A: Enterprise Organizational Hierarchy Table
+      CREATE TABLE IF NOT EXISTS an_org_nodes (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        type VARCHAR(32) NOT NULL,
+        code VARCHAR(64) NOT NULL,
+        name_ar VARCHAR(255) NOT NULL,
+        name_en VARCHAR(255),
+        parent_id VARCHAR(64) REFERENCES an_org_nodes(id),
+        manager_user_id VARCHAR(64),
+        status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_an_org_nodes_tenant ON an_org_nodes(tenant_id);
+      CREATE INDEX IF NOT EXISTS idx_an_org_nodes_parent ON an_org_nodes(parent_id);
+
+      -- Schema migrations for Phase 3 fields
+      ALTER TABLE an_users ADD COLUMN IF NOT EXISTS assigned_node_id VARCHAR(64);
+      ALTER TABLE an_approval_requests ADD COLUMN IF NOT EXISTS break_glass JSONB;
+      ALTER TABLE an_system_changelog ALTER COLUMN actor TYPE VARCHAR(255);
+
       -- Seed country tax rules if not exist
       INSERT INTO an_tax_rules (country_code, country_name_ar, standard_vat_rate, currency_code, tax_authority_name, tax_id_format_regex)
       VALUES 
@@ -427,7 +448,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_tenant_modules',
           'an_master_items',
           'an_master_partners',
-          'an_audit_chain'
+          'an_audit_chain',
+          'an_org_nodes'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -575,6 +597,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
       hashedBackupCodes,
       permissions,
       requiresPasswordChange: r.requires_password_change === true,
+      assignedNodeId: r.assigned_node_id || undefined,
       encryptedPii,
       createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
     };
@@ -691,9 +714,9 @@ export class PostgresPrimaryAdapter implements StoragePort {
             id, tenant_id, username, full_name, email, role, status,
             password_hash, two_factor_secret, two_factor_enabled, backup_codes,
             hashed_backup_codes, role_title_ar, branch_name, encrypted_pii,
-            permissions, requires_password_change, created_at
+            permissions, requires_password_change, assigned_node_id, created_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
           ON CONFLICT (id) DO UPDATE SET
             tenant_id = EXCLUDED.tenant_id,
             username = EXCLUDED.username,
@@ -710,7 +733,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
             branch_name = COALESCE(EXCLUDED.branch_name, an_users.branch_name),
             encrypted_pii = COALESCE(EXCLUDED.encrypted_pii, an_users.encrypted_pii),
             permissions = COALESCE(EXCLUDED.permissions, an_users.permissions),
-            requires_password_change = EXCLUDED.requires_password_change;
+            requires_password_change = EXCLUDED.requires_password_change,
+            assigned_node_id = COALESCE(EXCLUDED.assigned_node_id, an_users.assigned_node_id);
         `;
         await this.query(query, [
           user.id,
@@ -730,6 +754,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
           user.encryptedPii ? JSON.stringify(user.encryptedPii) : null,
           user.permissions ? JSON.stringify(user.permissions) : null,
           user.requiresPasswordChange || false,
+          user.assignedNodeId || null,
           user.createdAt ? new Date(user.createdAt) : new Date(),
         ]);
         return { success: true, data: user };
@@ -2537,5 +2562,236 @@ export class PostgresPrimaryAdapter implements StoragePort {
         detail: err.message || 'حدث خطأ أثناء تنفيذ عملية التخزين.',
       },
     };
+  }
+
+  // Phase 3A: Organizational Hierarchy
+  public async saveOrgNode(tenantId: string, node: OrgNode, idempotencyKey: string): Promise<StorageResult<OrgNode>> {
+    if (!this.pool) return this.missingConnError();
+    const existingKey = await this.checkIdempotency(tenantId, idempotencyKey, 'saveOrgNode');
+    if (existingKey) return { success: true, data: existingKey };
+
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const query = `
+          INSERT INTO an_org_nodes (id, tenant_id, type, code, name_ar, name_en, parent_id, manager_user_id, status, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          ON CONFLICT (id) DO UPDATE SET
+            type = EXCLUDED.type,
+            code = EXCLUDED.code,
+            name_ar = EXCLUDED.name_ar,
+            name_en = EXCLUDED.name_en,
+            parent_id = EXCLUDED.parent_id,
+            manager_user_id = EXCLUDED.manager_user_id,
+            status = EXCLUDED.status
+          RETURNING *;
+        `;
+        await this.query(query, [
+          node.id,
+          tenantId,
+          node.type,
+          node.code,
+          node.nameAr,
+          node.nameEn || null,
+          node.parentId || null,
+          node.managerUserId || null,
+          node.status || 'ACTIVE',
+          node.createdAt ? new Date(node.createdAt) : new Date(),
+        ]);
+        await this.recordIdempotency(tenantId, idempotencyKey, 'saveOrgNode', node);
+        return { success: true, data: node };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async getOrgNode(tenantId: string, nodeId: string): Promise<StorageResult<OrgNode>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const res = await this.query('SELECT * FROM an_org_nodes WHERE tenant_id = $1 AND id = $2 LIMIT 1', [tenantId, nodeId]);
+        if (res.rows.length === 0) {
+          return {
+            success: false,
+            error: {
+              type: 'https://api.an-erp.local/errors/node-not-found',
+              title: 'العقدة التنظيمية غير موجودة',
+              status: 404,
+              detail: `العقدة ${nodeId} غير مسجلة في هيكل المنشأة`,
+            },
+          };
+        }
+        const r = res.rows[0];
+        return {
+          success: true,
+          data: {
+            id: r.id,
+            tenantId: r.tenant_id,
+            type: r.type,
+            code: r.code,
+            nameAr: r.name_ar,
+            nameEn: r.name_en || undefined,
+            parentId: r.parent_id || null,
+            managerUserId: r.manager_user_id || undefined,
+            status: r.status,
+            createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
+          },
+        };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async listOrgHierarchy(tenantId: string, rootNodeId?: string): Promise<StorageResult<OrgNode[]>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        let query: string;
+        let params: any[];
+        if (rootNodeId) {
+          query = `
+            WITH RECURSIVE org_tree AS (
+              SELECT * FROM an_org_nodes WHERE tenant_id = $1 AND id = $2
+              UNION ALL
+              SELECT c.* FROM an_org_nodes c
+              INNER JOIN org_tree p ON c.parent_id = p.id
+              WHERE c.tenant_id = $1
+            )
+            SELECT * FROM org_tree ORDER BY type, code;
+          `;
+          params = [tenantId, rootNodeId];
+        } else {
+          query = 'SELECT * FROM an_org_nodes WHERE tenant_id = $1 ORDER BY type, code';
+          params = [tenantId];
+        }
+        const res = await this.query(query, params);
+        const nodes: OrgNode[] = res.rows.map((r: any) => ({
+          id: r.id,
+          tenantId: r.tenant_id,
+          type: r.type,
+          code: r.code,
+          nameAr: r.name_ar,
+          nameEn: r.name_en || undefined,
+          parentId: r.parent_id || null,
+          managerUserId: r.manager_user_id || undefined,
+          status: r.status,
+          createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
+        }));
+        return { success: true, data: nodes };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async getUserVisibleNodes(tenantId: string, userAssignedNodeId: string): Promise<StorageResult<OrgNode[]>> {
+    return this.listOrgHierarchy(tenantId, userAssignedNodeId);
+  }
+
+  // Phase 3C: Break-Glass Approval Workflow
+  public async approveBreakGlass(
+    tenantId: string,
+    requestId: string,
+    breakGlass: BreakGlassDetails,
+    idempotencyKey: string
+  ): Promise<StorageResult<ApprovalRequest>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const getRes = await this.query(
+          'SELECT * FROM an_approval_requests WHERE tenant_id = $1 AND id = $2 LIMIT 1',
+          [tenantId, requestId]
+        );
+        if (getRes.rows.length === 0) {
+          return {
+            success: false,
+            error: {
+              type: 'https://api.an-erp.local/errors/request-not-found',
+              title: 'طلب الاعتماد غير موجود',
+              status: 404,
+              detail: `طلب الاعتماد ${requestId} غير مسجل`,
+            },
+          };
+        }
+        const req = getRes.rows[0];
+        const steps = typeof req.steps === 'string' ? JSON.parse(req.steps) : req.steps;
+        for (const s of steps) {
+          s.status = 'APPROVED';
+          s.approverId = `${breakGlass.actor1Id}+${breakGlass.actor2Id}`;
+          s.comment = `تجاوز طارئ Break-Glass: ${breakGlass.reasonAr}`;
+          s.actionTimestamp = breakGlass.executedAt;
+        }
+
+        await this.query(
+          "UPDATE an_approval_requests SET status = 'APPROVED', steps = $1, break_glass = $2 WHERE tenant_id = $3 AND id = $4",
+          [JSON.stringify(steps), JSON.stringify(breakGlass), tenantId, requestId]
+        );
+
+        return {
+          success: true,
+          data: {
+            id: req.id,
+            tenantId: req.tenant_id,
+            documentType: req.document_type,
+            documentId: req.document_id,
+            documentCode: req.document_code,
+            initiatorId: req.initiator_id,
+            currentStep: req.current_step,
+            steps,
+            status: 'APPROVED',
+            breakGlass,
+            createdAt: req.created_at ? new Date(req.created_at).toISOString() : new Date().toISOString(),
+          },
+        };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  // Phase 3E: Privacy & Right to be Forgotten
+  public async anonymizeUserPii(
+    tenantId: string,
+    userId: string,
+    actorId: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<{ userId: string; anonymizedAt: string }>> {
+    if (!this.pool) return this.missingConnError();
+    const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'anonymizeUserPii');
+    if (existing) return { success: true, data: existing };
+
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const timestamp = new Date().toISOString();
+        const scrubbedName = 'مستخدم مجهول (حق النسيان - GDPR/PDPL)';
+        const scrubbedEmail = `anonymized_${userId.slice(-6)}@privacy.an-erp.local`;
+        const scrubbedUsername = `anon_${userId.slice(-6)}`;
+
+        await this.query(
+          `UPDATE an_users
+           SET full_name = $1,
+               email = $2,
+               username = $3,
+               encrypted_pii = NULL,
+               two_factor_secret = NULL,
+               two_factor_enabled = false,
+               backup_codes = NULL,
+               hashed_backup_codes = NULL,
+               status = 'INACTIVE'
+           WHERE (tenant_id = $4 OR $4 = 'tenant-main') AND id = $5`,
+          [scrubbedName, scrubbedEmail, scrubbedUsername, tenantId, userId]
+        );
+
+        // Delete active sessions
+        await this.query('DELETE FROM an_active_sessions WHERE user_id = $1', [userId]);
+
+        const resData = { userId, anonymizedAt: timestamp };
+        await this.recordIdempotency(tenantId, idempotencyKey, 'anonymizeUserPii', resData);
+        return { success: true, data: resData };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
   }
 }

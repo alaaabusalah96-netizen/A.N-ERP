@@ -20,7 +20,7 @@ export interface SandboxStatus {
 }
 
 export class SandboxEnvironmentService {
-  private readonly sandboxAdapter: InMemoryAdapter;
+  private sandboxAdapter: InMemoryAdapter;
   private readonly sandboxTenantId = 'tenant_sandbox_isolated';
   private lastResetTimestamp: string;
 
@@ -119,7 +119,8 @@ export class SandboxEnvironmentService {
    * Guarantees zero writes or calls to production storage.
    */
   public async resetSandbox(): Promise<StorageResult<{ resetCompleted: boolean; messageAr: string; status: SandboxStatus }>> {
-    // Re-instantiate in-memory state
+    // Re-instantiate in-memory state to ensure zero lingering transactions
+    this.sandboxAdapter = new InMemoryAdapter();
     this.lastResetTimestamp = new Date().toISOString();
     await this.initializeSandbox();
 
