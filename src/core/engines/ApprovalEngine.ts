@@ -44,24 +44,11 @@ export class ApprovalEngine {
    */
   public async executeApproval(
     tenantId: string,
-    request: ApprovalRequest,
+    requestId: string,
     approverId: string,
     idempotencyKey: string
   ): Promise<StorageResult<ApprovalRequest>> {
-    // Strict SoD validation: initiator cannot approve
-    if (request.initiatorId === approverId) {
-      return {
-        success: false,
-        error: {
-          type: 'https://api.an-erp.local/errors/sod-violation',
-          title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
-          status: 403,
-          detail: 'ممنوع نظامياً: لا يجوز لمنشئ المستند اعتماده بنفسه (قاعدة فصل المهام والرقابة الثنائية).',
-        },
-      };
-    }
-
-    return this.port.approveStep(tenantId, request.id, approverId, idempotencyKey);
+    return this.port.approveStep(tenantId, requestId, approverId, idempotencyKey);
   }
 
   /**

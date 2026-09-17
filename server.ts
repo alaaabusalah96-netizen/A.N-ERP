@@ -562,16 +562,17 @@ async function startServer() {
     }
 
     // Create session & Token Family with Mandatory Rotation
+    const userTenantId = user.tenantId || 'tenant-main';
     const sessionId = `ses-${crypto.randomUUID()}`;
     const { familyId, refreshToken } = await tokenService.createRefreshTokenFamily(
       user.id,
-      'tenant-main',
+      userTenantId,
       sessionId
     );
 
     const accessToken = tokenService.generateAccessToken({
       userId: user.id,
-      tenantId: 'tenant-main',
+      tenantId: userTenantId,
       role: user.role,
       sessionId,
       familyId,
@@ -581,7 +582,7 @@ async function startServer() {
     const sessionRecord: ActiveSessionRecord = {
       sessionId,
       userId: user.id,
-      tenantId: 'tenant-main',
+      tenantId: userTenantId,
       username: user.username,
       fullName: user.fullName,
       role: user.role,
@@ -595,7 +596,7 @@ async function startServer() {
 
     await activeStorage.saveActiveSession(sessionRecord);
     await anomalyDetector.registerActiveSession(sessionRecord);
-    await anomalyDetector.recordSuccessfulLogin(user.id, location, req.ip || '127.0.0.1', 'tenant-main');
+    await anomalyDetector.recordSuccessfulLogin(user.id, location, req.ip || '127.0.0.1', userTenantId);
 
     // 1A: Set HttpOnly, Secure, SameSite Cookies — Zero tokens in localStorage!
     const isProd = process.env.NODE_ENV === 'production';
@@ -617,7 +618,7 @@ async function startServer() {
 
     DomainEventBus.publish({
       eventType: 'USER_LOGGED_IN',
-      tenantId: 'tenant-main',
+      tenantId: userTenantId,
       actorId: user.id,
       actorName: user.fullName,
       payload: { sessionId, role: user.role, ip: req.ip },
@@ -740,7 +741,7 @@ async function startServer() {
     const userRes = await activeStorage.getUserById(ver.payload.sub);
     let userRecord = userRes.success ? userRes.data : null;
     if (!userRecord) {
-      const fallback = await activeStorage.getUserByUsername('tenant-main', 'accountant');
+      const fallback = await activeStorage.getUserByUsername(ver.payload.tenantId || 'tenant-main', 'accountant');
       userRecord = fallback.success ? fallback.data : null;
     }
 
@@ -772,10 +773,39 @@ async function startServer() {
     });
   });
 
+  // ============================================================================
+  // AUTHENTICATION CONTEXT & MIDDLEWARE (Multi-Tenant Isolation via JWT)
+  // ============================================================================
+  interface AuthContext {
+    tenantId: string;
+    userId: string;
+    sessionId: string;
+    role?: string;
+  }
+
+  async function requireAuth(req: Request, res: Response, next: NextFunction) {
+    const accessToken = req.cookies['an_access_token'];
+    if (!accessToken) {
+      return res.status(401).json({ success: false, message: 'غير مسجل الدخول' });
+    }
+    const ver = await tokenService.verifyAccessToken(accessToken);
+    if (!ver.valid || !ver.payload) {
+      return res.status(401).json({ success: false, message: ver.error || 'جلسة غير صالحة' });
+    }
+    (req as any).authContext = {
+      tenantId: ver.payload.tenantId,
+      userId: ver.payload.sub,
+      sessionId: ver.payload.sessionId,
+      role: ver.payload.role,
+    } as AuthContext;
+    next();
+  }
+
   // Section B.2: 2FA Setup with Real TOTP & QR Code (otplib + qrcode) via StoragePort
-  app.post('/api/auth/2fa/setup', async (req: Request, res: Response) => {
+  app.post('/api/auth/2fa/setup', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
     const { username } = req.body;
-    const userRes = await activeStorage.getUserByUsername('tenant-main', username);
+    const userRes = await activeStorage.getUserByUsername(tenantId, username);
     if (!userRes.success || !userRes.data) {
       return res.status(404).json({ error: 'المستخدم غير موجود' });
     }
@@ -800,9 +830,10 @@ async function startServer() {
     });
   });
 
-  app.post('/api/auth/2fa/verify-setup', async (req: Request, res: Response) => {
+  app.post('/api/auth/2fa/verify-setup', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
     const { username, token } = req.body;
-    const userRes = await activeStorage.getUserByUsername('tenant-main', username);
+    const userRes = await activeStorage.getUserByUsername(tenantId, username);
     if (!userRes.success || !userRes.data || !userRes.data.twoFactorSecret) {
       return res.status(400).json({ error: 'لم يتم تهيئة 2FA لهذا الحساب' });
     }
@@ -819,11 +850,11 @@ async function startServer() {
   });
 
   // 1B — Company Settings (Read and Update, with Read-Only backendConfig)
-  app.get('/api/company', (req: Request, res: Response) => {
+  app.get('/api/company', requireAuth, (req: Request, res: Response) => {
     return res.json({ success: true, data: companyProfile });
   });
 
-  app.put('/api/company', (req: Request, res: Response) => {
+  app.put('/api/company', requireAuth, (req: Request, res: Response) => {
     const { nameAr, nameEn, crNumber, taxNumber, baseCurrency, auditRetentionPolicyYears } = req.body;
 
     // Validate 15-digit tax number
@@ -846,8 +877,8 @@ async function startServer() {
     if (auditRetentionPolicyYears) companyProfile.auditRetentionPolicyYears = Number(auditRetentionPolicyYears);
 
     recordAudit(
-      'USR-001',
-      'أحمد المنصور',
+      (req as any).authContext.userId || 'USR-001',
+      'المستخدم الحالي',
       'UPDATE_COMPANY_PROFILE',
       'COMPANY',
       companyProfile.id,
@@ -859,8 +890,9 @@ async function startServer() {
   });
 
   // 1C — Users & Segregation of Duties (SoD) Management via StoragePort
-  app.get('/api/users', async (req: Request, res: Response) => {
-    const usersRes = await activeStorage.listUsers('tenant-main');
+  app.get('/api/users', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const usersRes = await activeStorage.listUsers(tenantId);
     const users = usersRes.success && usersRes.data ? usersRes.data : [];
     const list = users.map((u) => {
       let decryptedPii: any = {};
@@ -886,7 +918,8 @@ async function startServer() {
     return res.json({ success: true, data: list });
   });
 
-  app.post('/api/users', async (req: Request, res: Response) => {
+  app.post('/api/users', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
     const { username, fullName, role, branchName, email, phone, nationalId } = req.body;
 
     // SoD Server-Side Conflict Check (Section 1C)
@@ -905,7 +938,7 @@ async function startServer() {
 
     const newUser: User = {
       id: newId,
-      tenantId: 'tenant-main',
+      tenantId,
       username,
       fullName,
       email: email || `${username}@company.sa`,
@@ -924,13 +957,14 @@ async function startServer() {
     };
 
     await activeStorage.saveUser(newUser, `create-user-${newId}`);
-    recordAudit('USR-001', 'أحمد المنصور', 'CREATE_USER', 'USER', newUser.id, { username, role }, req.ip || '127.0.0.1');
+    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'CREATE_USER', 'USER', newUser.id, { username, role }, req.ip || '127.0.0.1');
 
     return res.json({ success: true, data: newUser, message: 'تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام' });
   });
 
   // 1L — Invitation Signed Link Generation
-  app.post('/api/invitations', (req: Request, res: Response) => {
+  app.post('/api/invitations', requireAuth, (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
     const { email, role } = req.body;
     if (!email || !role) {
       return res.status(400).json({ error: 'البريد الإلكتروني والدور مطلوبان لإنشاء الدعوة' });
@@ -942,18 +976,18 @@ async function startServer() {
       return res.status(sodCheck.problem.status).json(sodCheck.problem);
     }
 
-    const invite = tokenService.generateInvitationToken('tenant-main', email, role);
+    const invite = tokenService.generateInvitationToken(tenantId, email, role);
     const inviteUrl = `${req.protocol}://${req.get('host')}/join?token=${invite.token}`;
 
     DomainEventBus.publish({
       eventType: 'USER_INVITED',
-      tenantId: 'tenant-main',
-      actorId: 'USR-001',
-      actorName: 'أحمد المنصور',
+      tenantId,
+      actorId: (req as any).authContext.userId || 'USR-001',
+      actorName: 'المستخدم الحالي',
       payload: { email, role, expiresAt: invite.expiresAt },
     });
 
-    recordAudit('USR-001', 'أحمد المنصور', 'INVITE_USER', 'INVITATION', email, { role, expiresAt: invite.expiresAt }, req.ip || '127.0.0.1');
+    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'INVITE_USER', 'INVITATION', email, { role, expiresAt: invite.expiresAt }, req.ip || '127.0.0.1');
 
     return res.json({
       success: true,
@@ -968,13 +1002,14 @@ async function startServer() {
   });
 
   // 1I — Active Sessions List & Remote Instant Revocation via StoragePort
-  app.get('/api/sessions', async (req: Request, res: Response) => {
+  app.get('/api/sessions', requireAuth, async (req: Request, res: Response) => {
     const listRes = await activeStorage.listAllActiveSessions();
     const list = listRes.success && listRes.data ? listRes.data : [];
     return res.json({ success: true, data: list });
   });
 
-  app.delete('/api/sessions/:sessionId', async (req: Request, res: Response) => {
+  app.delete('/api/sessions/:sessionId', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
     const { sessionId } = req.params;
     const sessionRes = await activeStorage.getActiveSession(sessionId);
     if (!sessionRes.success || !sessionRes.data) {
@@ -989,23 +1024,23 @@ async function startServer() {
 
     DomainEventBus.publish({
       eventType: 'SESSION_REVOKED',
-      tenantId: 'tenant-main',
-      actorId: 'USR-001',
-      actorName: 'أحمد المنصور',
+      tenantId,
+      actorId: (req as any).authContext.userId || 'USR-001',
+      actorName: 'المستخدم الحالي',
       payload: { sessionId, reason: 'REMOTE_INSTANT_TERMINATION' },
     });
 
-    recordAudit('USR-001', 'أحمد المنصور', 'TERMINATE_SESSION', 'SESSION', sessionId, { targetUser: session.username }, req.ip || '127.0.0.1');
+    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'TERMINATE_SESSION', 'SESSION', sessionId, { targetUser: session.username }, req.ip || '127.0.0.1');
 
     return res.json({ success: true, message: 'تم إنهاء الجلسة عن بُعد وإبطال سلسلة التوكن بالكامل فوراً' });
   });
 
   // 1G — No-Code Custom Fields Management (JSONB)
-  app.get('/api/custom-fields', (req: Request, res: Response) => {
+  app.get('/api/custom-fields', requireAuth, (req: Request, res: Response) => {
     return res.json({ success: true, data: customFieldsStore });
   });
 
-  app.post('/api/custom-fields', (req: Request, res: Response) => {
+  app.post('/api/custom-fields', requireAuth, (req: Request, res: Response) => {
     const { targetEntity, fieldName, fieldLabelAr, fieldType, isRequired, options } = req.body;
     if (!fieldName || !fieldLabelAr || !fieldType) {
       return res.status(400).json({ error: 'الاسم التقني والاسم العربي ونوع الحقل مطلوبة' });
@@ -1022,26 +1057,28 @@ async function startServer() {
     };
 
     customFieldsStore.push(newField);
-    recordAudit('USR-001', 'أحمد المنصور', 'ADD_CUSTOM_FIELD', 'SCHEMA', newField.id, newField, req.ip || '127.0.0.1');
+    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'ADD_CUSTOM_FIELD', 'SCHEMA', newField.id, newField, req.ip || '127.0.0.1');
 
     return res.json({ success: true, data: newField, message: 'تم إضافة الحقل المخصص بنجاح' });
   });
 
   // 1E — Operational Audit Trail
-  app.get('/api/audit-trail', (req: Request, res: Response) => {
+  app.get('/api/audit-trail', requireAuth, (req: Request, res: Response) => {
     return res.json({ success: true, data: operationalAuditTrail });
   });
 
   // 1F — Domain Events Stream
-  app.get('/api/domain-events', (req: Request, res: Response) => {
-    const events = DomainEventBus.getRecentEvents('tenant-main');
+  app.get('/api/domain-events', requireAuth, (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const events = DomainEventBus.getRecentEvents(tenantId);
     return res.json({ success: true, data: events });
   });
 
   // 3. Transactions List (Read via StoragePort)
-  app.get('/api/transactions', async (req: Request, res: Response) => {
+  app.get('/api/transactions', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
     const storage = getStorage();
-    const result = await storage.listJournalEntries('tenant-main');
+    const result = await storage.listJournalEntries(tenantId);
     if (!result.success) {
       return res.status(result.error?.status || 500).json(result.error);
     }
@@ -1049,7 +1086,9 @@ async function startServer() {
   });
 
   // 4. Create and Post Transaction
-  app.post('/api/transactions/post', async (req: Request, res: Response) => {
+  app.post('/api/transactions/post', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
     const { entry, idempotencyKey } = req.body;
     if (!idempotencyKey) {
       const problem: RFC7807Problem = {
@@ -1066,34 +1105,34 @@ async function startServer() {
     const numberingEngine = new NumberingEngine(storage);
 
     if (!entry.code) {
-      const seqRes = await numberingEngine.generateNumber('tenant-main', 'JV_SEQ', 'JV-2026', `${idempotencyKey}-seq`);
+      const seqRes = await numberingEngine.generateNumber(tenantId, 'JV_SEQ', 'JV-2026', `${idempotencyKey}-seq`);
       if (seqRes.success && seqRes.data) {
         entry.code = seqRes.data.formattedCode;
       }
     }
 
-    const draftRes = await postingEngine.draftEntry('tenant-main', entry, `${idempotencyKey}-draft`);
+    const draftRes = await postingEngine.draftEntry(tenantId, entry, `${idempotencyKey}-draft`);
     if (!draftRes.success) {
       return res.status(draftRes.error?.status || 422).json(draftRes.error);
     }
 
-    const postRes = await postingEngine.postEntry('tenant-main', entry.id, idempotencyKey);
+    const postRes = await postingEngine.postEntry(tenantId, entry.id, idempotencyKey);
     if (!postRes.success) {
       return res.status(postRes.error?.status || 422).json(postRes.error);
     }
 
     DomainEventBus.publish({
       eventType: 'DOCUMENT_POSTED',
-      tenantId: 'tenant-main',
-      actorId: entry.createdBy || 'USR-001',
-      actorName: 'أحمد المنصور',
+      tenantId,
+      actorId: entry.createdBy || userId || 'USR-001',
+      actorName: 'المستخدم الحالي',
       payload: postRes.data,
       idempotencyKey,
     });
 
     recordAudit(
-      entry.createdBy || 'USR-001',
-      'أحمد المنصور',
+      entry.createdBy || userId || 'USR-001',
+      'المستخدم الحالي',
       'POST_JOURNAL_ENTRY',
       'JOURNAL_ENTRY',
       entry.id,
@@ -1105,8 +1144,10 @@ async function startServer() {
   });
 
   // 5. Approve Transaction with Segregation of Duties (SoD)
-  app.post('/api/transactions/approve', async (req: Request, res: Response) => {
-    const { requestId, approverId, initiatorId, idempotencyKey } = req.body;
+  app.post('/api/transactions/approve', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
+    const { requestId, approverId, idempotencyKey } = req.body;
 
     if (!idempotencyKey) {
       return res.status(400).json({
@@ -1117,40 +1158,22 @@ async function startServer() {
       });
     }
 
-    // SoD Check: Initiator cannot approve own document!
-    const sodCheck = SoDPolicyEngine.validateDocumentApproval(initiatorId || 'USR-001', approverId);
-    if (!sodCheck.allowed && sodCheck.problem) {
-      return res.status(sodCheck.problem.status).json(sodCheck.problem);
-    }
-
+    const effectiveApproverId = approverId || userId;
     const storage = getStorage();
     const approvalEngine = new ApprovalEngine(storage);
 
-    const dummyRequest = {
-      id: requestId,
-      tenantId: 'tenant-main',
-      documentType: 'JOURNAL_VOUCHER',
-      documentId: requestId,
-      documentCode: `JV-${requestId}`,
-      initiatorId: initiatorId || 'USR-001',
-      currentStep: 1,
-      steps: [{ stepNumber: 1, roleRequired: 'financial_approver', status: 'PENDING' as const }],
-      status: 'PENDING' as const,
-      createdAt: new Date().toISOString(),
-    };
-
-    const approveRes = await approvalEngine.executeApproval('tenant-main', dummyRequest, approverId, idempotencyKey);
+    const approveRes = await approvalEngine.executeApproval(tenantId, requestId, effectiveApproverId, idempotencyKey);
     if (!approveRes.success) {
       return res.status(approveRes.error?.status || 403).json(approveRes.error);
     }
 
     recordAudit(
-      approverId,
-      'سليمان الراشد',
+      effectiveApproverId,
+      effectiveApproverId,
       'APPROVE_DOCUMENT',
       'JOURNAL_ENTRY',
       requestId,
-      { initiatorId },
+      { approverId: effectiveApproverId },
       req.ip || '127.0.0.1'
     );
 
@@ -1207,16 +1230,18 @@ async function startServer() {
   });
 
   // 2C: Numbering Sequence Manual Override with Mandatory Audit Justification
-  app.post('/api/numbering/override', async (req: Request, res: Response) => {
-    const { tenantId, sequenceKey, targetSequence, justificationAr, authorizedBy, idempotencyKey } = req.body;
+  app.post('/api/numbering/override', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
+    const { sequenceKey, targetSequence, justificationAr, authorizedBy, idempotencyKey } = req.body;
     const storage = getStorage();
     const numbering = new NumberingEngine(storage);
     const result = await numbering.overrideSequence(
-      tenantId || 'tenant-main',
+      tenantId,
       sequenceKey,
       Number(targetSequence),
       justificationAr,
-      authorizedBy || 'USR-001',
+      authorizedBy || userId || 'USR-001',
       idempotencyKey
     );
     if (!result.success) {
@@ -1226,8 +1251,9 @@ async function startServer() {
   });
 
   // 2D: As-Of Historical Balance Query
-  app.get('/api/reports/balance-as-of', async (req: Request, res: Response) => {
-    const { tenantId, accountCode, asOfDate } = req.query;
+  app.get('/api/reports/balance-as-of', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const { accountCode, asOfDate } = req.query;
     if (!accountCode || !asOfDate) {
       return res.status(400).json({
         type: 'https://api.an-erp.local/errors/missing-as-of-params',
@@ -1239,7 +1265,7 @@ async function startServer() {
     const storage = getStorage();
     const historyService = new HistoricalQueryService(storage);
     const result = await historyService.getAccountBalanceAsOf(
-      String(tenantId || 'tenant-main'),
+      tenantId,
       String(accountCode),
       String(asOfDate)
     );
@@ -1250,8 +1276,9 @@ async function startServer() {
   });
 
   // 2D: As-Of Historical Account Statement
-  app.get('/api/reports/statement-as-of', async (req: Request, res: Response) => {
-    const { tenantId, accountCode, asOfDate } = req.query;
+  app.get('/api/reports/statement-as-of', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const { accountCode, asOfDate } = req.query;
     if (!accountCode || !asOfDate) {
       return res.status(400).json({
         type: 'https://api.an-erp.local/errors/missing-statement-params',
@@ -1263,7 +1290,7 @@ async function startServer() {
     const storage = getStorage();
     const historyService = new HistoricalQueryService(storage);
     const result = await historyService.getStatementAsOf(
-      String(tenantId || 'tenant-main'),
+      tenantId,
       String(accountCode),
       String(asOfDate)
     );
@@ -1274,14 +1301,16 @@ async function startServer() {
   });
 
   // 2F: Dual-Control Master Items
-  app.post('/api/master-data/items', async (req: Request, res: Response) => {
-    const { tenantId, item, createdBy, idempotencyKey } = req.body;
+  app.post('/api/master-data/items', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
+    const { item, createdBy, idempotencyKey } = req.body;
     const storage = getStorage();
     const dualControl = new DualControlService(storage);
     const result = await dualControl.createMasterItem(
-      tenantId || 'tenant-main',
+      tenantId,
       item,
-      createdBy || { id: 'USR-001', fullName: 'المستخدم الحالي', role: 'accountant' },
+      createdBy || { id: userId || 'USR-001', fullName: 'المستخدم الحالي', role: 'accountant' },
       idempotencyKey
     );
     if (!result.success) {
@@ -1290,14 +1319,16 @@ async function startServer() {
     return res.status(201).json(result);
   });
 
-  app.post('/api/master-data/items/:id/approve', async (req: Request, res: Response) => {
-    const { tenantId, approvedBy, idempotencyKey } = req.body;
+  app.post('/api/master-data/items/:id/approve', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
+    const { approvedBy, idempotencyKey } = req.body;
     const storage = getStorage();
     const dualControl = new DualControlService(storage);
     const result = await dualControl.approveMasterItem(
-      tenantId || 'tenant-main',
+      tenantId,
       req.params.id,
-      approvedBy || { id: 'USR-002', fullName: 'المدير المالي', role: 'financial_approver' },
+      approvedBy || { id: userId || 'USR-002', fullName: 'المدير المالي', role: 'financial_approver' },
       idempotencyKey
     );
     if (!result.success) {
@@ -1307,14 +1338,16 @@ async function startServer() {
   });
 
   // 2F: Dual-Control Master Partners (Customer/Vendor)
-  app.post('/api/master-data/partners', async (req: Request, res: Response) => {
-    const { tenantId, partner, createdBy, idempotencyKey } = req.body;
+  app.post('/api/master-data/partners', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
+    const { partner, createdBy, idempotencyKey } = req.body;
     const storage = getStorage();
     const dualControl = new DualControlService(storage);
     const result = await dualControl.createMasterPartner(
-      tenantId || 'tenant-main',
+      tenantId,
       partner,
-      createdBy || { id: 'USR-001', fullName: 'المستخدم الحالي', role: 'accountant' },
+      createdBy || { id: userId || 'USR-001', fullName: 'المستخدم الحالي', role: 'accountant' },
       idempotencyKey
     );
     if (!result.success) {
@@ -1323,14 +1356,16 @@ async function startServer() {
     return res.status(201).json(result);
   });
 
-  app.post('/api/master-data/partners/:id/approve', async (req: Request, res: Response) => {
-    const { tenantId, approvedBy, idempotencyKey } = req.body;
+  app.post('/api/master-data/partners/:id/approve', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
+    const { approvedBy, idempotencyKey } = req.body;
     const storage = getStorage();
     const dualControl = new DualControlService(storage);
     const result = await dualControl.approveMasterPartner(
-      tenantId || 'tenant-main',
+      tenantId,
       req.params.id,
-      approvedBy || { id: 'USR-002', fullName: 'المدير المالي', role: 'financial_approver' },
+      approvedBy || { id: userId || 'USR-002', fullName: 'المدير المالي', role: 'financial_approver' },
       idempotencyKey
     );
     if (!result.success) {
@@ -1340,8 +1375,8 @@ async function startServer() {
   });
 
   // 2E & 2G: SHA-256 Tamper-Evident Hash Chain Audit
-  app.get('/api/audit-chain', async (req: Request, res: Response) => {
-    const tenantId = String(req.query.tenantId || 'tenant-main');
+  app.get('/api/audit-chain', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
     const storage = getStorage();
     const result = await storage.getAuditChain(tenantId);
     if (!result.success) {
@@ -1350,8 +1385,8 @@ async function startServer() {
     return res.json(result);
   });
 
-  app.post('/api/audit-chain/verify', async (req: Request, res: Response) => {
-    const tenantId = String(req.body.tenantId || 'tenant-main');
+  app.post('/api/audit-chain/verify', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
     const storage = getStorage();
     const auditService = new AuditChainService(storage);
     const result = await auditService.verifyIntegrity(tenantId);
@@ -1362,8 +1397,8 @@ async function startServer() {
   });
 
   // 2H: Tenant Active Module Manifests
-  app.get('/api/tenant-modules', async (req: Request, res: Response) => {
-    const tenantId = String(req.query.tenantId || 'tenant-main');
+  app.get('/api/tenant-modules', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
     const storage = getStorage();
     const result = await storage.getTenantModules(tenantId);
     if (!result.success) {

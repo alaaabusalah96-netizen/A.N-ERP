@@ -1403,6 +1403,18 @@ export class PostgresPrimaryAdapter implements StoragePort {
         };
       }
       const req = res.rows[0];
+      const initiatorId = req.initiator_id;
+      if (initiatorId === approverId) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/sod-violation',
+            title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
+            status: 403,
+            detail: 'ممنوع نظامياً: لا يجوز لمنشئ المستند اعتماده بنفسه (قاعدة فصل المهام والرقابة الثنائية).',
+          },
+        };
+      }
       const steps = req.steps;
       if (steps[0]) {
         steps[0].status = 'APPROVED';
@@ -2715,6 +2727,30 @@ export class PostgresPrimaryAdapter implements StoragePort {
           };
         }
         const req = getRes.rows[0];
+        if (breakGlass.actor1Id === breakGlass.actor2Id) {
+          return {
+            success: false,
+            error: {
+              type: 'https://api.an-erp.local/errors/break-glass-single-actor',
+              title: 'رفض: التجاوز الطارئ يتطلب شخصين مختلفين',
+              status: 403,
+              detail: 'لا يجوز أن يكون الشخص الأول والثاني في التحكم المزدوج نفس الشخص.',
+            },
+          };
+        }
+
+        if (req.initiator_id === breakGlass.actor1Id || req.initiator_id === breakGlass.actor2Id) {
+          return {
+            success: false,
+            error: {
+              type: 'https://api.an-erp.local/errors/break-glass-initiator-conflict',
+              title: 'رفض: منشئ المستند لا يجوز أن يكون أحد أطراف التجاوز الطارئ',
+              status: 403,
+              detail: 'لا يجوز لمنشئ المستند أن يكون أحد الشخصين المنفّذين للتجاوز الطارئ على مستنده هو نفسه.',
+            },
+          };
+        }
+
         const steps = typeof req.steps === 'string' ? JSON.parse(req.steps) : req.steps;
         for (const s of steps) {
           s.status = 'APPROVED';
@@ -2763,6 +2799,22 @@ export class PostgresPrimaryAdapter implements StoragePort {
 
     return this.withTenantScope(tenantId, async () => {
       try {
+        const checkUser = await this.query(
+          'SELECT id FROM an_users WHERE tenant_id = $1 AND id = $2',
+          [tenantId, userId]
+        );
+        if (checkUser.rows.length === 0) {
+          return {
+            success: false,
+            error: {
+              type: 'https://api.an-erp.local/errors/user-not-found',
+              title: 'المستخدم غير موجود',
+              status: 404,
+              detail: `تعذر العثور على المستخدم ${userId} ضمن مستأجر ${tenantId}`,
+            },
+          };
+        }
+
         const timestamp = new Date().toISOString();
         const scrubbedName = 'مستخدم مجهول (حق النسيان - GDPR/PDPL)';
         const scrubbedEmail = `anonymized_${userId.slice(-6)}@privacy.an-erp.local`;
@@ -2779,7 +2831,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
                backup_codes = NULL,
                hashed_backup_codes = NULL,
                status = 'INACTIVE'
-           WHERE (tenant_id = $4 OR $4 = 'tenant-main') AND id = $5`,
+           WHERE tenant_id = $4 AND id = $5`,
           [scrubbedName, scrubbedEmail, scrubbedUsername, tenantId, userId]
         );
 

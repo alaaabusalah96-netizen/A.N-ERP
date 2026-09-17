@@ -476,7 +476,7 @@ export class InMemoryAdapter implements StoragePort {
     approverId: string,
     idempotencyKey: string
   ): Promise<StorageResult<ApprovalRequest>> {
-    const req = this.approvalRequests.get(`${tenantId}:${requestId}`);
+    const req = this.approvalRequests.get(`${tenantId}:${requestId}`) || this.approvalRequests.get(requestId);
     if (!req) {
       return {
         success: false,
@@ -488,12 +488,25 @@ export class InMemoryAdapter implements StoragePort {
         },
       };
     }
+    if (req.initiatorId === approverId) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/sod-violation',
+          title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
+          status: 403,
+          detail: 'ممنوع نظامياً: لا يجوز لمنشئ المستند اعتماده بنفسه (قاعدة فصل المهام والرقابة الثنائية).',
+        },
+      };
+    }
     req.status = 'APPROVED';
     if (req.steps[0]) {
       req.steps[0].status = 'APPROVED';
       req.steps[0].approverId = approverId;
       req.steps[0].actionTimestamp = new Date().toISOString();
     }
+    this.approvalRequests.set(`${tenantId}:${requestId}`, req);
+    this.approvalRequests.set(requestId, req);
     return { success: true, data: req };
   }
 
@@ -965,7 +978,7 @@ export class InMemoryAdapter implements StoragePort {
     breakGlass: BreakGlassDetails,
     idempotencyKey: string
   ): Promise<StorageResult<ApprovalRequest>> {
-    const req = this.approvalRequests.get(requestId);
+    const req = this.approvalRequests.get(`${tenantId}:${requestId}`) || this.approvalRequests.get(requestId);
     if (!req || req.tenantId !== tenantId) {
       return {
         success: false,
@@ -974,6 +987,30 @@ export class InMemoryAdapter implements StoragePort {
           title: 'طلب الاعتماد غير موجود',
           status: 404,
           detail: `طلب الاعتماد ${requestId} غير مسجل`,
+        },
+      };
+    }
+
+    if (breakGlass.actor1Id === breakGlass.actor2Id) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/break-glass-single-actor',
+          title: 'رفض: التجاوز الطارئ يتطلب شخصين مختلفين',
+          status: 403,
+          detail: 'لا يجوز أن يكون الشخص الأول والثاني في التحكم المزدوج نفس الشخص.',
+        },
+      };
+    }
+
+    if (req.initiatorId === breakGlass.actor1Id || req.initiatorId === breakGlass.actor2Id) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/break-glass-initiator-conflict',
+          title: 'رفض: منشئ المستند لا يجوز أن يكون أحد أطراف التجاوز الطارئ',
+          status: 403,
+          detail: 'لا يجوز لمنشئ المستند أن يكون أحد الشخصين المنفّذين للتجاوز الطارئ على مستنده هو نفسه.',
         },
       };
     }
@@ -992,6 +1029,7 @@ export class InMemoryAdapter implements StoragePort {
       steps: updatedSteps,
       breakGlass,
     };
+    this.approvalRequests.set(`${tenantId}:${requestId}`, updatedReq);
     this.approvalRequests.set(requestId, updatedReq);
     return { success: true, data: updatedReq };
   }
@@ -1004,21 +1042,31 @@ export class InMemoryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<{ userId: string; anonymizedAt: string }>> {
     const user = this.users.get(userId);
-    if (user && (user.tenantId === tenantId || tenantId === 'tenant-main')) {
-      const scrubbed: User = {
-        ...user,
-        fullName: 'مستخدم مجهول (حق النسيان - GDPR/PDPL)',
-        email: `anonymized_${userId.slice(-6)}@privacy.an-erp.local`,
-        username: `anon_${userId.slice(-6)}`,
-        encryptedPii: undefined,
-        twoFactorSecret: undefined,
-        twoFactorEnabled: false,
-        backupCodes: undefined,
-        hashedBackupCodes: undefined,
-        status: 'INACTIVE',
+    if (!user || user.tenantId !== tenantId) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/user-not-found',
+          title: 'المستخدم غير موجود',
+          status: 404,
+          detail: `تعذر العثور على المستخدم ${userId} ضمن مستأجر ${tenantId}`,
+        },
       };
-      this.users.set(userId, scrubbed);
     }
+
+    const scrubbed: User = {
+      ...user,
+      fullName: 'مستخدم مجهول (حق النسيان - GDPR/PDPL)',
+      email: `anonymized_${userId.slice(-6)}@privacy.an-erp.local`,
+      username: `anon_${userId.slice(-6)}`,
+      encryptedPii: undefined,
+      twoFactorSecret: undefined,
+      twoFactorEnabled: false,
+      backupCodes: undefined,
+      hashedBackupCodes: undefined,
+      status: 'INACTIVE',
+    };
+    this.users.set(userId, scrubbed);
     return { success: true, data: { userId, anonymizedAt: new Date().toISOString() } };
   }
 }
