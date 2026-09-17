@@ -148,7 +148,7 @@ export class InMemoryAdapter implements StoragePort {
 
   public async getUser(tenantId: string, userId: string): Promise<StorageResult<User>> {
     for (const u of this.users.values()) {
-      if ((u.tenantId === tenantId || tenantId === 'tenant-main') && (u.id === userId || u.username.toLowerCase() === userId.toLowerCase())) {
+      if (u.tenantId === tenantId && (u.id === userId || u.username.toLowerCase() === userId.toLowerCase())) {
         return { success: true, data: u };
       }
     }
@@ -164,14 +164,19 @@ export class InMemoryAdapter implements StoragePort {
   }
 
   public async getUserByUsername(tenantId: string, username: string): Promise<StorageResult<User>> {
-    for (const u of this.users.values()) {
-      if ((!tenantId || u.tenantId === tenantId || tenantId === 'tenant-main') && u.username.toLowerCase() === username.trim().toLowerCase()) {
-        return { success: true, data: u };
-      }
+    if (!tenantId) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/tenant-required',
+          title: 'مستأجر غير محدد',
+          status: 400,
+          detail: 'يجب تحديد المستأجر عند البحث عن مستخدم بالاسم.',
+        },
+      };
     }
-    // Fallback across any tenant
     for (const u of this.users.values()) {
-      if (u.username.toLowerCase() === username.trim().toLowerCase()) {
+      if (tenantId && u.tenantId === tenantId && u.username.toLowerCase() === username.trim().toLowerCase()) {
         return { success: true, data: u };
       }
     }
@@ -181,7 +186,7 @@ export class InMemoryAdapter implements StoragePort {
         type: 'https://api.an-erp.local/errors/user-not-found',
         title: 'المستخدم غير موجود',
         status: 404,
-        detail: `المستخدم ${username} غير مسجل بالنظام`,
+        detail: `المستخدم ${username} غير مسجل للشركة ${tenantId}`,
       },
     };
   }

@@ -409,6 +409,108 @@ export class PostgresPrimaryAdapter implements StoragePort {
       ALTER TABLE an_approval_requests ADD COLUMN IF NOT EXISTS break_glass JSONB;
       ALTER TABLE an_system_changelog ALTER COLUMN actor TYPE VARCHAR(255);
 
+      -- Schema migrations for Phase 4 (Accounting Core)
+      ALTER TABLE an_accounts ADD COLUMN IF NOT EXISTS parent_code VARCHAR(64);
+      ALTER TABLE an_accounts ADD COLUMN IF NOT EXISTS nature VARCHAR(16) DEFAULT 'DEBIT';
+      ALTER TABLE an_accounts ADD COLUMN IF NOT EXISTS is_parent BOOLEAN DEFAULT FALSE;
+      ALTER TABLE an_accounts ADD COLUMN IF NOT EXISTS level INT DEFAULT 1;
+
+      CREATE TABLE IF NOT EXISTS an_fiscal_periods (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        code VARCHAR(64) NOT NULL,
+        name_ar VARCHAR(255) NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        is_closed BOOLEAN NOT NULL DEFAULT FALSE,
+        closed_at TIMESTAMPTZ,
+        closed_by VARCHAR(64),
+        closing_entry_id VARCHAR(64),
+        reopen_reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_dimensions (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        type VARCHAR(32) NOT NULL,
+        code VARCHAR(64) NOT NULL,
+        name_ar VARCHAR(255) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, type, code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_units (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        code VARCHAR(64) NOT NULL,
+        name_ar VARCHAR(255) NOT NULL,
+        symbol VARCHAR(32) NOT NULL,
+        conversion_factor NUMERIC(14, 4) NOT NULL DEFAULT 1.0,
+        base_unit_id VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_accounting_items (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        code VARCHAR(64) NOT NULL,
+        name_ar VARCHAR(255) NOT NULL,
+        type VARCHAR(32) NOT NULL,
+        unit_id VARCHAR(64),
+        unit_name_ar VARCHAR(64),
+        average_cost NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        sale_price NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        income_account_code VARCHAR(64),
+        expense_account_code VARCHAR(64),
+        asset_account_code VARCHAR(64),
+        status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_budgets (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        fiscal_year INT NOT NULL,
+        account_code VARCHAR(64) NOT NULL,
+        monthly_allocations JSONB NOT NULL DEFAULT '{}',
+        total_budget NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        policy VARCHAR(32) NOT NULL DEFAULT 'WARN',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, fiscal_year, account_code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_recurring_entries (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        code VARCHAR(64) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        frequency VARCHAR(32) NOT NULL,
+        next_run_date DATE NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        auto_post BOOLEAN NOT NULL DEFAULT TRUE,
+        entry_payload JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_balance_check_logs (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        is_balanced BOOLEAN NOT NULL,
+        total_debit NUMERIC(18, 4) NOT NULL,
+        total_credit NUMERIC(18, 4) NOT NULL,
+        discrepancy NUMERIC(18, 4) NOT NULL,
+        checked_accounts_count INT NOT NULL,
+        status VARCHAR(32) NOT NULL,
+        details JSONB
+      );
+
       -- Seed country tax rules if not exist
       INSERT INTO an_tax_rules (country_code, country_name_ar, standard_vat_rate, currency_code, tax_authority_name, tax_id_format_regex)
       VALUES 
@@ -449,7 +551,14 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_master_items',
           'an_master_partners',
           'an_audit_chain',
-          'an_org_nodes'
+          'an_org_nodes',
+          'an_fiscal_periods',
+          'an_dimensions',
+          'an_units',
+          'an_accounting_items',
+          'an_budgets',
+          'an_recurring_entries',
+          'an_balance_check_logs'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -609,7 +718,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     return this.withTenantScope(tenantId, async () => {
       try {
         const res = await this.query(
-          'SELECT * FROM an_users WHERE (tenant_id = $1 OR $1 = \'tenant-main\') AND (id = $2 OR LOWER(username) = LOWER($2)) LIMIT 1',
+          'SELECT * FROM an_users WHERE tenant_id = $1 AND (id = $2 OR LOWER(username) = LOWER($2)) LIMIT 1',
           [tenantId, userId]
         );
         if (res.rows.length === 0) {
@@ -635,30 +744,33 @@ export class PostgresPrimaryAdapter implements StoragePort {
 
   public async getUserByUsername(tenantId: string, username: string): Promise<StorageResult<User>> {
     if (!this.pool) return this.missingConnError();
-    const effectiveTenantId = tenantId || 'tenant-main';
-    return this.withTenantScope(effectiveTenantId, async () => {
+    if (!tenantId) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/tenant-required',
+          title: 'مستأجر غير محدد',
+          status: 400,
+          detail: 'يجب تحديد المستأجر عند البحث عن مستخدم بالاسم.',
+        },
+      };
+    }
+    return this.withTenantScope(tenantId, async () => {
       try {
         const res = await this.query(
-          'SELECT * FROM an_users WHERE LOWER(username) = LOWER($1) AND (tenant_id = $2 OR $2 = \'tenant-main\') LIMIT 1',
-          [username.trim(), effectiveTenantId]
+          'SELECT * FROM an_users WHERE LOWER(username) = LOWER($1) AND tenant_id = $2 LIMIT 1',
+          [username.trim(), tenantId]
         );
         if (res.rows.length === 0) {
-          const fallbackRes = await this.query(
-            'SELECT * FROM an_users WHERE LOWER(username) = LOWER($1) LIMIT 1',
-            [username.trim()]
-          );
-          if (fallbackRes.rows.length === 0) {
-            return {
-              success: false,
-              error: {
-                type: 'https://api.an-erp.local/errors/user-not-found',
-                title: 'المستخدم غير موجود',
-                status: 404,
-                detail: `المستخدم ${username} غير مسجل بالنظام`,
-              },
-            };
-          }
-          return { success: true, data: this.mapUserRow(fallbackRes.rows[0]) };
+          return {
+            success: false,
+            error: {
+              type: 'https://api.an-erp.local/errors/user-not-found',
+              title: 'المستخدم غير موجود',
+              status: 404,
+              detail: `المستخدم ${username} غير مسجل للشركة ${tenantId}`,
+            },
+          };
         }
         return { success: true, data: this.mapUserRow(res.rows[0]) };
       } catch (err: any) {

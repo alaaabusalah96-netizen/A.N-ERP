@@ -10,6 +10,7 @@ import { CompanySettingsView } from './components/CompanySettingsView';
 import { UsersAndSodView } from './components/UsersAndSodView';
 import { CustomFieldsView } from './components/CustomFieldsView';
 import { AuditTrailView } from './components/AuditTrailView';
+import { AccountingWorkspaceView } from './components/AccountingWorkspaceView';
 import { OperationalTransaction, UserProfile, UserRole } from './types/erp';
 
 export default function App() {
@@ -263,10 +264,23 @@ export default function App() {
             <AuditTrailView onNotification={showNotification} />
           )}
 
-          {(activeSection === 'overview' ||
-            activeSection === 'accounting' ||
-            activeSection === 'approvals' ||
-            activeSection === 'reports') && (
+          {activeSection === 'accounting' && (
+            <AccountingWorkspaceView
+              currentUser={userProfile}
+              initialTab="coa"
+              onNotification={showNotification}
+            />
+          )}
+
+          {activeSection === 'reports' && (
+            <AccountingWorkspaceView
+              currentUser={userProfile}
+              initialTab="statements"
+              onNotification={showNotification}
+            />
+          )}
+
+          {(activeSection === 'overview' || activeSection === 'approvals') && (
             <OperationalWorkspace
               currentUser={userProfile}
               activeSection={activeSection}
