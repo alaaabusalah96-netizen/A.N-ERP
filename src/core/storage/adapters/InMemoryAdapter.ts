@@ -27,6 +27,8 @@ import {
   ActiveSessionRecord,
   OrgNode,
   BreakGlassDetails,
+  CustomFieldDefinition,
+  OperationalAuditRecord,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -47,6 +49,8 @@ export class InMemoryAdapter implements StoragePort {
   private idempotencyRecords = new Map<string, any>();
   private tokenFamilies = new Map<string, TokenFamily>();
   private refreshTokens = new Map<string, RefreshTokenRecord>();
+  private auditRecords: OperationalAuditRecord[] = [];
+  private customFields = new Map<string, CustomFieldDefinition>();
 
   // Phase 2 state collections
   private taxRules = new Map<string, CountryTaxRule>();
@@ -271,8 +275,8 @@ export class InMemoryAdapter implements StoragePort {
     return { success: true, data: list };
   }
 
-  public async listAllActiveSessions(): Promise<StorageResult<ActiveSessionRecord[]>> {
-    const list = Array.from(this.activeSessions.values());
+  public async listActiveSessions(tenantId: string): Promise<StorageResult<ActiveSessionRecord[]>> {
+    const list = Array.from(this.activeSessions.values()).filter(s => s.tenantId === tenantId);
     return { success: true, data: list };
   }
 
@@ -1073,5 +1077,40 @@ export class InMemoryAdapter implements StoragePort {
     };
     this.users.set(userId, scrubbed);
     return { success: true, data: { userId, anonymizedAt: new Date().toISOString() } };
+  }
+
+  // Phase 4.5: Operational Audit & Custom Fields Persistence (4.5E)
+  public async saveAuditRecord(record: OperationalAuditRecord): Promise<StorageResult<OperationalAuditRecord>> {
+    this.auditRecords.unshift(record);
+    if (this.auditRecords.length > 500) this.auditRecords.pop();
+    return { success: true, data: record };
+  }
+
+  public async getAuditRecords(tenantId: string, limit: number = 100): Promise<StorageResult<OperationalAuditRecord[]>> {
+    const list = this.auditRecords.filter(r => r.tenantId === tenantId).slice(0, limit);
+    return { success: true, data: list };
+  }
+
+  public async saveCustomField(tenantId: string, field: CustomFieldDefinition): Promise<StorageResult<CustomFieldDefinition>> {
+    this.customFields.set(`${tenantId}:${field.id}`, field);
+    return { success: true, data: field };
+  }
+
+  public async getCustomFields(tenantId: string, module?: string): Promise<StorageResult<CustomFieldDefinition[]>> {
+    let list = Array.from(this.customFields.values()).filter(f => f.tenantId === tenantId);
+    if (module) list = list.filter(f => f.module === module);
+    return { success: true, data: list };
+  }
+
+  public async checkIdempotencyRecord(tenantId: string, key: string, operation: string): Promise<StorageResult<any | null>> {
+    const cacheKey = `${tenantId}:${operation}:${key}`;
+    const cached = this.idempotencyRecords.get(cacheKey) || null;
+    return { success: true, data: cached };
+  }
+
+  public async saveIdempotencyRecord(tenantId: string, key: string, operation: string, payload: any): Promise<StorageResult<void>> {
+    const cacheKey = `${tenantId}:${operation}:${key}`;
+    this.idempotencyRecords.set(cacheKey, payload);
+    return { success: true, data: undefined };
   }
 }

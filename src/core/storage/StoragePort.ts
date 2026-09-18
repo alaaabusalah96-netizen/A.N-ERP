@@ -304,6 +304,31 @@ export interface OrgNode {
   createdAt?: string;
 }
 
+// Phase 4.5: Operational Audit & Custom Fields Persistence (4.5E)
+export interface CustomFieldDefinition {
+  id: string;
+  tenantId: string;
+  module: string;
+  fieldKey: string;
+  fieldLabelAr: string;
+  fieldType: string;
+  isRequired: boolean;
+  options?: string[];
+}
+
+export interface OperationalAuditRecord {
+  id: string;
+  tenantId: string;
+  actorId: string;
+  actorName: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  details?: any;
+  ipAddress?: string;
+  timestamp: string;
+}
+
 export interface StoragePort {
   readonly adapterName: string;
 
@@ -331,7 +356,7 @@ export interface StoragePort {
   saveActiveSession(session: ActiveSessionRecord): Promise<StorageResult<ActiveSessionRecord>>;
   getActiveSession(sessionId: string): Promise<StorageResult<ActiveSessionRecord | null>>;
   listActiveSessionsByUser(userId: string): Promise<StorageResult<ActiveSessionRecord[]>>;
-  listAllActiveSessions(): Promise<StorageResult<ActiveSessionRecord[]>>;
+  listActiveSessions(tenantId: string): Promise<StorageResult<ActiveSessionRecord[]>>;
   deleteActiveSession(sessionId: string): Promise<StorageResult<void>>;
 
   // Chart of Accounts & Balances
@@ -451,6 +476,14 @@ export interface StoragePort {
 
   // Phase 3E: Privacy & Right to be Forgotten
   anonymizeUserPii(tenantId: string, userId: string, actorId: string, idempotencyKey: string): Promise<StorageResult<{ userId: string; anonymizedAt: string }>>;
+
+  // Phase 4.5: Operational Audit & Custom Fields Persistence (4.5E)
+  saveAuditRecord(record: OperationalAuditRecord): Promise<StorageResult<OperationalAuditRecord>>;
+  getAuditRecords(tenantId: string, limit?: number): Promise<StorageResult<OperationalAuditRecord[]>>;
+  saveCustomField(tenantId: string, field: CustomFieldDefinition): Promise<StorageResult<CustomFieldDefinition>>;
+  getCustomFields(tenantId: string, module?: string): Promise<StorageResult<CustomFieldDefinition[]>>;
+  checkIdempotencyRecord(tenantId: string, key: string, operation: string): Promise<StorageResult<any | null>>;
+  saveIdempotencyRecord(tenantId: string, key: string, operation: string, payload: any): Promise<StorageResult<void>>;
 
   // Tenant Scoping & Isolation
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T>;

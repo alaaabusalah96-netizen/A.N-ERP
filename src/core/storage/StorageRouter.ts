@@ -94,7 +94,7 @@ export class StorageRouter {
     ) {
       return {
         valid: false,
-        errorDetailAr: 'ممنوع إدراج نص اتصال صريح (Connection String) في backendConfig.connectionRef منعاً لتسريب الأسرار. يجب تمرير اسم المتغير فقط (مثل: DATABASE_URL أو DATABASE_URL_DEDICATED).',
+        errorDetailAr: 'ممنوع إدراج نص اتصال صريح (Connection String) في backendConfig.connectionRef منعاً لتسريب الأسرار. يجب تمرير اسم المتغير فقط (مثل: DATABASE_URL أو DATABASE_URL_CUSTOM).',
       };
     }
 
@@ -169,11 +169,15 @@ export class StorageRouter {
    * Retrieves or creates a dedicated adapter instance for Dedicated isolation tenants.
    */
   private getOrCreateDedicatedAdapter(tenantId: string, adapterType: string, connectionRef: string): StoragePort {
+    if (!connectionRef || !process.env[connectionRef]) {
+      throw new Error(
+        `مرجع اتصال المخزن المخصص لهذه الشركة (${connectionRef || 'غير محدد'}) غير مُهيأ في متغيرات البيئة — تعذّر تنفيذ العملية.`
+      );
+    }
     const key = `${tenantId}:${connectionRef}`;
     let adapter = this.dedicatedAdapters.get(key);
     if (!adapter) {
-      // Resolve secret from process.env via connectionRef
-      const connectionString = process.env[connectionRef] || process.env.DATABASE_URL_DEDICATED || process.env.DATABASE_URL;
+      const connectionString = process.env[connectionRef];
       adapter = this.createAdapterByType(adapterType, connectionString);
       this.dedicatedAdapters.set(key, adapter);
     }

@@ -10,6 +10,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import crypto from 'crypto';
 import argon2 from 'argon2';
@@ -23,7 +24,7 @@ import { globalStorageRouter } from './src/core/storage/StorageRouter';
 import { PostingEngine } from './src/core/engines/PostingEngine';
 import { ApprovalEngine } from './src/core/engines/ApprovalEngine';
 import { NumberingEngine } from './src/core/engines/NumberingEngine';
-import { JournalEntry, RFC7807Problem, User, ActiveSessionRecord, StoragePort } from './src/core/storage/StoragePort';
+import { JournalEntry, RFC7807Problem, User, ActiveSessionRecord, StoragePort, CompanyProfile } from './src/core/storage/StoragePort';
 import { TokenService } from './src/core/auth/TokenService';
 import { AnomalyDetector, GeoLocation } from './src/core/auth/AnomalyDetector';
 import { EncryptionService } from './src/core/crypto/EncryptionService';
@@ -119,7 +120,7 @@ const customFieldsStore: CustomFieldDef[] = [
 const loginIdempotencyCache = new Map<string, any>();
 
 // Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing directly via StoragePort
-async function initSeedUsers(storage: StoragePort) {
+async function initSeedUsers(storage: StoragePort, tenantId: string = companyProfile.id) {
   const seedAdminPass = process.env.SEED_ADMIN_PASSWORD || 'Admin@ANERP2026!';
   const adminHash = await argon2.hash(seedAdminPass, { type: argon2.argon2id });
   const adminTotpSecret = generateSecret();
@@ -127,11 +128,11 @@ async function initSeedUsers(storage: StoragePort) {
   const adminBackupCodes = EncryptionService.generateEmergencyBackupCodes();
 
   // Check if admin user exists in storage
-  const existingAdmin = await storage.getUserByUsername('tenant-main', 'admin');
+  const existingAdmin = await storage.getUserByUsername(tenantId, 'admin');
   if (!existingAdmin.success || !existingAdmin.data) {
     const adminUser: User = {
       id: 'USR-ADMIN',
-      tenantId: 'tenant-main',
+      tenantId,
       username: 'admin',
       fullName: 'مدير النظام (Seed Administrator)',
       email: 'admin@company.sa',
@@ -178,7 +179,7 @@ async function initSeedUsers(storage: StoragePort) {
   const defaultStandardUsers: User[] = [
     {
       id: 'USR-001',
-      tenantId: 'tenant-main',
+      tenantId,
       username: 'accountant',
       fullName: 'أحمد المنصور',
       email: 'a.mansour@company.sa',
@@ -200,7 +201,7 @@ async function initSeedUsers(storage: StoragePort) {
     },
     {
       id: 'USR-002',
-      tenantId: 'tenant-main',
+      tenantId,
       username: 'approver',
       fullName: 'سليمان الراشد',
       email: 's.alrashed@company.sa',
@@ -222,7 +223,7 @@ async function initSeedUsers(storage: StoragePort) {
     },
     {
       id: 'USR-003',
-      tenantId: 'tenant-main',
+      tenantId,
       username: 'warehouse',
       fullName: 'سعد القحطاني',
       email: 's.alqahtani@company.sa',
@@ -245,7 +246,7 @@ async function initSeedUsers(storage: StoragePort) {
   ];
 
   for (const u of defaultStandardUsers) {
-    const check = await storage.getUserByUsername('tenant-main', u.username);
+    const check = await storage.getUserByUsername(tenantId, u.username);
     if (!check.success || !check.data) {
       await storage.saveUser(u, `init-user-${u.id}`);
     } else {
@@ -286,16 +287,18 @@ async function startServer() {
     return process.env.DATABASE_URL ? primaryStorage : devStorage;
   };
 
-  const activeStorage = getStorage();
-  const tokenService = new TokenService(activeStorage);
-  const anomalyDetector = new AnomalyDetector(activeStorage);
-  const accountingService = new AccountingService(activeStorage);
+  const masterStorage = getStorage();
   const sodMatrixService = new SoDMatrixService();
 
   // Validate SoD consistency at server boot
   SoDPolicyEngine.assertConsistencyWithMatrix(sodMatrixService);
 
-  await initSeedUsers(activeStorage);
+  // Ensure initial company profile exists in storage
+  const existingTenant = await masterStorage.getTenant(companyProfile.id);
+  if (!existingTenant.success || !existingTenant.data) {
+    await masterStorage.saveTenant(companyProfile);
+  }
+  await initSeedUsers(masterStorage, companyProfile.id);
 
   const app = express();
 
@@ -317,6 +320,35 @@ async function startServer() {
   app.use(express.json());
   app.use(cookieParser());
 
+  // 4.5G — Rate Limiting Configuration
+  const apiRateLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 300, // 300 requests per minute
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      type: 'https://api.an-erp.local/errors/rate-limit-exceeded',
+      title: 'تجاوز حد الطلبات المسموح',
+      status: 429,
+      detail: 'تم تجاوز الحد الأقصى للطلبات المسموحة في الدقيقة، يرجى المحاولة لاحقاً.',
+    },
+  });
+
+  const authRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 30, // 30 attempts per 15 min
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      type: 'https://api.an-erp.local/errors/login-rate-limit-exceeded',
+      title: 'تجاوز عدد محاولات الدخول المسموح بها',
+      status: 429,
+      detail: 'تم تجاوز عدد محاولات تسجيل الدخول المسموحة. يرجى الانتظار قبل المحاولة مرة أخرى.',
+    },
+  });
+
+  app.use('/api', apiRateLimiter);
+
   // 1E — Security Headers (CSP, HSTS, X-Content-Type-Options, etc.)
   app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -330,17 +362,19 @@ async function startServer() {
   });
 
   // Helper to record operational audit log
-  const recordAudit = (
+  const recordAudit = async (
     actorId: string,
     actorName: string,
     action: string,
     entityType: string,
     entityId: string,
     details: any,
-    ip: string
+    ip: string,
+    tenantId: string = companyProfile.id,
+    storage?: StoragePort
   ) => {
-    operationalAuditTrail.unshift({
-      id: `AUD-${Date.now()}`,
+    const record: AuditRecord = {
+      id: `AUD-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       timestamp: new Date().toISOString(),
       actorId,
       actorName,
@@ -349,9 +383,27 @@ async function startServer() {
       entityId,
       details,
       ipAddress: ip,
-    });
+    };
+    operationalAuditTrail.unshift(record);
     if (operationalAuditTrail.length > 500) {
       operationalAuditTrail.pop();
+    }
+    try {
+      const activePort = storage || masterStorage;
+      await activePort.saveAuditRecord({
+        id: record.id,
+        tenantId,
+        actorId,
+        actorName,
+        action,
+        entityType,
+        entityId,
+        details,
+        ipAddress: ip,
+        timestamp: record.timestamp,
+      });
+    } catch (e) {
+      // Audit non-blocking
     }
   };
 
@@ -368,8 +420,89 @@ async function startServer() {
     });
   });
 
+  // ============================================================================
+  // AUTHENTICATION CONTEXT & MIDDLEWARE (Multi-Tenant Isolation via StorageRouter)
+  // ============================================================================
+  interface AuthContext {
+    tenantId: string;
+    userId: string;
+    sessionId: string;
+    role?: string;
+  }
+
+  async function requireAuth(req: Request, res: Response, next: NextFunction) {
+    let accessToken = req.cookies['an_access_token'];
+    if (!accessToken && req.headers.authorization?.startsWith('Bearer ')) {
+      accessToken = req.headers.authorization.split(' ')[1];
+    }
+    if (!accessToken) {
+      if (process.env.NODE_ENV !== 'production' && req.headers['x-bypass-auth'] === 'true') {
+        const devTenantId = (req.headers['x-tenant-id'] as string) || companyProfile.id;
+        const tenantRes = await masterStorage.getTenant(devTenantId);
+        const devTenant = tenantRes.success && tenantRes.data ? tenantRes.data : companyProfile;
+        const devStorage = globalStorageRouter.resolveAdapter(devTenant);
+        (req as any).authContext = {
+          tenantId: devTenantId,
+          userId: 'USR-ADMIN',
+          sessionId: 'ses-dev',
+          role: 'super_admin',
+        } as AuthContext;
+        (req as any).storage = devStorage;
+        (req as any).tenant = devTenant;
+        return next();
+      }
+      return res.status(401).json({ success: false, message: 'غير مسجل الدخول' });
+    }
+
+    try {
+      const parts = accessToken.split('.');
+      if (parts.length !== 3) {
+        return res.status(401).json({ success: false, message: 'صيغة التوكن غير صحيحة' });
+      }
+
+      const b64Payload = parts[1];
+      const payload = JSON.parse(Buffer.from(b64Payload, 'base64url').toString('utf8'));
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (payload.exp && payload.exp < nowSec) {
+        return res.status(401).json({ success: false, message: 'انتهت صلاحية الجلسة (15 دقيقة)' });
+      }
+
+      const tenantId = payload.tenantId || (req.headers['x-tenant-id'] as string);
+      if (!tenantId) {
+        return res.status(401).json({
+          type: 'https://api.an-erp.local/errors/unauthorized',
+          title: 'سياق المنشأة مفقود',
+          status: 401,
+          detail: 'رمز الدخول يفتقر إلى معرف المنشأة القانوني.',
+        });
+      }
+
+      const tenantRes = await masterStorage.getTenant(tenantId);
+      const tenant = tenantRes.success && tenantRes.data ? tenantRes.data : companyProfile;
+      const tenantStorage = globalStorageRouter.resolveAdapter(tenant);
+      const tokenService = new TokenService(tenantStorage);
+
+      const ver = await tokenService.verifyAccessToken(accessToken);
+      if (!ver.valid || !ver.payload) {
+        return res.status(401).json({ success: false, message: ver.error || 'جلسة غير صالحة' });
+      }
+
+      (req as any).authContext = {
+        tenantId: ver.payload.tenantId,
+        userId: ver.payload.sub,
+        sessionId: ver.payload.sessionId,
+        role: ver.payload.role,
+      } as AuthContext;
+      (req as any).storage = tenantStorage;
+      (req as any).tenant = tenant;
+      next();
+    } catch (err: any) {
+      return res.status(401).json({ success: false, message: err.message || 'فشل التحقق من الجلسة' });
+    }
+  }
+
   // 1A & 1D & 1I & 1J & 1K — Enterprise Authentication (Login)
-  app.post('/api/auth/login', async (req: Request, res: Response) => {
+  app.post('/api/auth/login', authRateLimiter, async (req: Request, res: Response) => {
     const idempotencyKey = req.headers['idempotency-key'] as string;
     if (idempotencyKey && loginIdempotencyCache.has(idempotencyKey)) {
       const cached = loginIdempotencyCache.get(idempotencyKey);
@@ -388,6 +521,40 @@ async function startServer() {
       return res.status(400).json(problem);
     }
 
+    // Determine target tenant and storage
+    const requestedTenantId = (req.headers['x-tenant-id'] as string)?.trim() || (req.body.tenantId as string)?.trim();
+    let targetTenant: CompanyProfile = companyProfile;
+    let targetStorage: StoragePort = masterStorage;
+    let user: User | null = null;
+
+    if (requestedTenantId) {
+      const tenantRes = await masterStorage.getTenant(requestedTenantId);
+      if (tenantRes.success && tenantRes.data) {
+        targetTenant = tenantRes.data;
+        targetStorage = globalStorageRouter.resolveAdapter(targetTenant);
+      }
+      const uRes = await targetStorage.getUserByUsername(targetTenant.id, username);
+      if (uRes.success && uRes.data) {
+        user = uRes.data;
+      }
+    } else {
+      const tenantsRes = await masterStorage.listTenants();
+      const allTenants = tenantsRes.success && tenantsRes.data ? tenantsRes.data : [companyProfile];
+      for (const t of allTenants) {
+        const adp = globalStorageRouter.resolveAdapter(t);
+        const uRes = await adp.getUserByUsername(t.id, username);
+        if (uRes.success && uRes.data) {
+          user = uRes.data;
+          targetTenant = t;
+          targetStorage = adp;
+          break;
+        }
+      }
+    }
+
+    const anomalyDetector = new AnomalyDetector(targetStorage);
+    const tokenService = new TokenService(targetStorage);
+
     // 1D: Check Progressive Account Lockout via StoragePort
     const lockout = await anomalyDetector.checkLockout(username);
     if (lockout.isLocked) {
@@ -400,19 +567,18 @@ async function startServer() {
       return res.status(423).json(problem);
     }
 
-    const userRes = await activeStorage.getUserByUsername('tenant-main', username);
-    const user = userRes.success && userRes.data ? userRes.data : null;
-
     if (!user || !user.passwordHash) {
       const failedState = await anomalyDetector.recordFailedAttempt(username);
-      recordAudit(
+      await recordAudit(
         username,
         username,
         'FAILED_LOGIN_ATTEMPT',
         'AUTH',
         username,
         { attemptsCount: failedState.failedAttempts },
-        req.ip || '127.0.0.1'
+        req.ip || '127.0.0.1',
+        targetTenant.id,
+        targetStorage
       );
 
       const problem: RFC7807Problem = {
@@ -430,14 +596,16 @@ async function startServer() {
     const isValidPass = await argon2.verify(user.passwordHash, password);
     if (!isValidPass) {
       const failedState = await anomalyDetector.recordFailedAttempt(username);
-      recordAudit(
+      await recordAudit(
         username,
         username,
         'FAILED_LOGIN_ATTEMPT',
         'AUTH',
         username,
         { attemptsCount: failedState.failedAttempts },
-        req.ip || '127.0.0.1'
+        req.ip || '127.0.0.1',
+        targetTenant.id,
+        targetStorage
       );
 
       const problem: RFC7807Problem = {
@@ -465,7 +633,7 @@ async function startServer() {
     if (travelCheck.isAnomaly) {
       DomainEventBus.publish({
         eventType: 'SECURITY_ALERT_TRIGGERED',
-        tenantId: 'tenant-main',
+        tenantId: user.tenantId,
         actorId: user.id,
         actorName: user.fullName,
         payload: {
@@ -474,14 +642,16 @@ async function startServer() {
           location,
         },
       });
-      recordAudit(
+      await recordAudit(
         user.id,
         user.fullName,
         'IMPOSSIBLE_TRAVEL_DETECTED',
         'SECURITY',
         user.id,
         travelCheck,
-        req.ip || '127.0.0.1'
+        req.ip || '127.0.0.1',
+        user.tenantId,
+        targetStorage
       );
     }
 
@@ -497,7 +667,7 @@ async function startServer() {
         if (!plainSecret) {
           plainSecret = generateSecret();
           const encryptedSecret = EncryptionService.encryptPII(plainSecret);
-          await activeStorage.updateUser(user.id, { twoFactorSecret: encryptedSecret });
+          await targetStorage.updateUser(user.id, { twoFactorSecret: encryptedSecret });
         }
 
         const otpauthUrl = generateURI({
@@ -524,7 +694,7 @@ async function startServer() {
           const verifyResult = await verify({ token: twoFactorCode, secret: plainSecret });
           twoFactorValid = !!verifyResult.valid;
           if (twoFactorValid && !user.twoFactorEnabled) {
-            await activeStorage.updateUser(user.id, { twoFactorEnabled: true });
+            await targetStorage.updateUser(user.id, { twoFactorEnabled: true });
           }
         }
       } else if (backupCode) {
@@ -536,18 +706,20 @@ async function startServer() {
         );
         if (consumeRes.valid) {
           twoFactorValid = true;
-          await activeStorage.updateUser(user.id, {
+          await targetStorage.updateUser(user.id, {
             backupCodes: consumeRes.remainingHashedCodes,
             hashedBackupCodes: consumeRes.remainingHashedCodes,
           });
-          recordAudit(
+          await recordAudit(
             user.id,
             user.fullName,
             'EMERGENCY_BACKUP_CODE_CONSUMED',
             'AUTH',
             user.id,
             { remainingCodes: consumeRes.remainingHashedCodes.length },
-            req.ip || '127.0.0.1'
+            req.ip || '127.0.0.1',
+            user.tenantId,
+            targetStorage
           );
         }
       }
@@ -577,16 +749,16 @@ async function startServer() {
 
     if (concurrent.limitExceeded && forceTerminateOldest && concurrent.oldestSessionId) {
       // Terminate oldest session
-      const oldSesRes = await activeStorage.getActiveSession(concurrent.oldestSessionId);
+      const oldSesRes = await targetStorage.getActiveSession(concurrent.oldestSessionId);
       if (oldSesRes.success && oldSesRes.data) {
         await tokenService.revokeFamily(oldSesRes.data.familyId, 'CONCURRENT_LIMIT_TERMINATION');
-        await activeStorage.deleteActiveSession(concurrent.oldestSessionId);
+        await targetStorage.deleteActiveSession(concurrent.oldestSessionId);
       }
       await anomalyDetector.terminateSession(concurrent.oldestSessionId);
     }
 
     // Create session & Token Family with Mandatory Rotation
-    const userTenantId = user.tenantId || 'tenant-main';
+    const userTenantId = user.tenantId;
     const sessionId = `ses-${crypto.randomUUID()}`;
     const { familyId, refreshToken } = await tokenService.createRefreshTokenFamily(
       user.id,
@@ -618,7 +790,7 @@ async function startServer() {
       lastActiveAt: Date.now(),
     };
 
-    await activeStorage.saveActiveSession(sessionRecord);
+    await targetStorage.saveActiveSession(sessionRecord);
     await anomalyDetector.registerActiveSession(sessionRecord);
     await anomalyDetector.recordSuccessfulLogin(user.id, location, req.ip || '127.0.0.1', userTenantId);
 
@@ -648,14 +820,16 @@ async function startServer() {
       payload: { sessionId, role: user.role, ip: req.ip },
     });
 
-    recordAudit(
+    await recordAudit(
       user.id,
       user.fullName,
       'USER_LOGIN',
       'SESSION',
       sessionId,
       { role: user.role, ip: req.ip },
-      req.ip || '127.0.0.1'
+      req.ip || '127.0.0.1',
+      userTenantId,
+      targetStorage
     );
 
     const responsePayload = {
@@ -669,12 +843,13 @@ async function startServer() {
         branchName: user.branchName,
         is2faEnabled: !!user.twoFactorEnabled,
       },
-      tenant: companyProfile,
+      tenant: targetTenant,
       calendar: DualCalendar.format(),
     };
 
     if (idempotencyKey) {
       loginIdempotencyCache.set(idempotencyKey, responsePayload);
+      await targetStorage.saveIdempotencyRecord(userTenantId, idempotencyKey, 'LOGIN', responsePayload);
     }
 
     return res.json(responsePayload);
@@ -692,6 +867,21 @@ async function startServer() {
       });
     }
 
+    let targetStorage = masterStorage;
+    try {
+      const parts = rawRefreshToken.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+        if (payload.tenantId) {
+          const tRes = await masterStorage.getTenant(payload.tenantId);
+          if (tRes.success && tRes.data) {
+            targetStorage = globalStorageRouter.resolveAdapter(tRes.data);
+          }
+        }
+      }
+    } catch (e) {}
+
+    const tokenService = new TokenService(targetStorage);
     const rotation = await tokenService.rotateRefreshToken(rawRefreshToken);
     if (!rotation.success) {
       res.clearCookie('an_access_token', { path: '/' });
@@ -729,19 +919,34 @@ async function startServer() {
   app.post('/api/auth/logout', async (req: Request, res: Response) => {
     const accessToken = req.cookies['an_access_token'];
     if (accessToken) {
-      const ver = await tokenService.verifyAccessToken(accessToken);
-      if (ver.valid && ver.payload) {
-        await tokenService.revokeFamily(ver.payload.familyId, 'USER_LOGOUT');
-        await activeStorage.deleteActiveSession(ver.payload.sessionId);
-        await anomalyDetector.terminateSession(ver.payload.sessionId);
-        DomainEventBus.publish({
-          eventType: 'SESSION_REVOKED',
-          tenantId: 'tenant-main',
-          actorId: ver.payload.sub,
-          actorName: 'User',
-          payload: { sessionId: ver.payload.sessionId, reason: 'USER_LOGOUT' },
-        });
-      }
+      try {
+        const parts = accessToken.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+          let targetStorage = masterStorage;
+          if (payload.tenantId) {
+            const tRes = await masterStorage.getTenant(payload.tenantId);
+            if (tRes.success && tRes.data) {
+              targetStorage = globalStorageRouter.resolveAdapter(tRes.data);
+            }
+          }
+          const tokenService = new TokenService(targetStorage);
+          const anomalyDetector = new AnomalyDetector(targetStorage);
+          const ver = await tokenService.verifyAccessToken(accessToken);
+          if (ver.valid && ver.payload) {
+            await tokenService.revokeFamily(ver.payload.familyId, 'USER_LOGOUT');
+            await targetStorage.deleteActiveSession(ver.payload.sessionId);
+            await anomalyDetector.terminateSession(ver.payload.sessionId);
+            DomainEventBus.publish({
+              eventType: 'SESSION_REVOKED',
+              tenantId: payload.tenantId || companyProfile.id,
+              actorId: ver.payload.sub,
+              actorName: 'User',
+              payload: { sessionId: ver.payload.sessionId, reason: 'USER_LOGOUT' },
+            });
+          }
+        }
+      } catch (e) {}
     }
 
     res.clearCookie('an_access_token', { path: '/' });
@@ -750,26 +955,19 @@ async function startServer() {
   });
 
   // 1A — Current User & Session Info (Reads from Cookie and StoragePort)
-  app.get('/api/auth/me', async (req: Request, res: Response) => {
-    const accessToken = req.cookies['an_access_token'];
-    if (!accessToken) {
-      return res.status(401).json({ success: false, message: 'غير مسجل الدخول' });
-    }
+  app.get('/api/auth/me', requireAuth, async (req: Request, res: Response) => {
+    const storage: StoragePort = (req as any).storage || masterStorage;
+    const auth = (req as any).authContext;
+    const tenant: CompanyProfile = (req as any).tenant || companyProfile;
 
-    const ver = await tokenService.verifyAccessToken(accessToken);
-    if (!ver.valid || !ver.payload) {
-      return res.status(401).json({ success: false, message: ver.error || 'جلسة غير صالحة' });
-    }
-
-    // Find user record in unified StoragePort
-    const userRes = await activeStorage.getUserById(ver.payload.sub);
+    const userRes = await storage.getUserById(auth.userId);
     let userRecord = userRes.success ? userRes.data : null;
     if (!userRecord) {
-      const fallback = await activeStorage.getUserByUsername(ver.payload.tenantId || 'tenant-main', 'accountant');
+      const fallback = await storage.getUserByUsername(auth.tenantId, 'accountant');
       userRecord = fallback.success ? fallback.data : null;
     }
 
-    const sessionRes = await activeStorage.getActiveSession(ver.payload.sessionId);
+    const sessionRes = await storage.getActiveSession(auth.sessionId);
     const session = sessionRes.success ? sessionRes.data : null;
     const dualDate = DualCalendar.format();
 
@@ -786,63 +984,23 @@ async function startServer() {
         emergencyBackupCodesCount: userRecord?.backupCodes?.length || userRecord?.hashedBackupCodes?.length || 0,
       },
       session: {
-        sessionId: ver.payload.sessionId,
+        sessionId: auth.sessionId,
         deviceType: session?.deviceType || 'Desktop Browser',
         ipAddress: session?.ipAddress || req.ip,
         location: session?.location || { city: 'Riyadh', country: 'SA' },
         createdAt: session?.createdAt,
       },
-      tenant: companyProfile,
+      tenant,
       calendar: dualDate,
     });
   });
 
-  // ============================================================================
-  // AUTHENTICATION CONTEXT & MIDDLEWARE (Multi-Tenant Isolation via JWT)
-  // ============================================================================
-  interface AuthContext {
-    tenantId: string;
-    userId: string;
-    sessionId: string;
-    role?: string;
-  }
-
-  async function requireAuth(req: Request, res: Response, next: NextFunction) {
-    let accessToken = req.cookies['an_access_token'];
-    if (!accessToken && req.headers.authorization?.startsWith('Bearer ')) {
-      accessToken = req.headers.authorization.split(' ')[1];
-    }
-    if (!accessToken) {
-      if (process.env.NODE_ENV !== 'production' && req.headers['x-bypass-auth'] === 'true') {
-        const devTenant = (req.headers['x-tenant-id'] as string) || 'tenant-main';
-        (req as any).authContext = {
-          tenantId: devTenant,
-          userId: 'USR-ADMIN',
-          sessionId: 'ses-dev',
-          role: 'super_admin',
-        } as AuthContext;
-        return next();
-      }
-      return res.status(401).json({ success: false, message: 'غير مسجل الدخول' });
-    }
-    const ver = await tokenService.verifyAccessToken(accessToken);
-    if (!ver.valid || !ver.payload) {
-      return res.status(401).json({ success: false, message: ver.error || 'جلسة غير صالحة' });
-    }
-    (req as any).authContext = {
-      tenantId: ver.payload.tenantId || 'tenant-main',
-      userId: ver.payload.sub,
-      sessionId: ver.payload.sessionId,
-      role: ver.payload.role,
-    } as AuthContext;
-    next();
-  }
-
   // Section B.2: 2FA Setup with Real TOTP & QR Code (otplib + qrcode) via StoragePort
   app.post('/api/auth/2fa/setup', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const { username } = req.body;
-    const userRes = await activeStorage.getUserByUsername(tenantId, username);
+    const userRes = await storage.getUserByUsername(tenantId, username);
     if (!userRes.success || !userRes.data) {
       return res.status(404).json({ error: 'المستخدم غير موجود' });
     }
@@ -850,7 +1008,7 @@ async function startServer() {
 
     const plainSecret = generateSecret();
     const encryptedSecret = EncryptionService.encryptPII(plainSecret);
-    await activeStorage.updateUser(user.id, { twoFactorSecret: encryptedSecret });
+    await storage.updateUser(user.id, { twoFactorSecret: encryptedSecret });
 
     const otpauthUrl = generateURI({
       label: `${username}@company.sa`,
@@ -869,8 +1027,9 @@ async function startServer() {
 
   app.post('/api/auth/2fa/verify-setup', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const { username, token } = req.body;
-    const userRes = await activeStorage.getUserByUsername(tenantId, username);
+    const userRes = await storage.getUserByUsername(tenantId, username);
     if (!userRes.success || !userRes.data || !userRes.data.twoFactorSecret) {
       return res.status(400).json({ error: 'لم يتم تهيئة 2FA لهذا الحساب' });
     }
@@ -882,17 +1041,20 @@ async function startServer() {
       return res.status(400).json({ success: false, error: 'رمز TOTP غير صحيح أو منتهي الصلاحية' });
     }
 
-    await activeStorage.updateUser(user.id, { twoFactorEnabled: true });
+    await storage.updateUser(user.id, { twoFactorEnabled: true });
     return res.json({ success: true, message: 'تم تفعيل التحقق بخطوتين بنجاح' });
   });
 
   // 1B — Company Settings (Read and Update, with Read-Only backendConfig)
   app.get('/api/company', requireAuth, (req: Request, res: Response) => {
-    return res.json({ success: true, data: companyProfile });
+    const tenant: CompanyProfile = (req as any).tenant || companyProfile;
+    return res.json({ success: true, data: tenant });
   });
 
-  app.put('/api/company', requireAuth, (req: Request, res: Response) => {
+  app.put('/api/company', requireAuth, async (req: Request, res: Response) => {
     const { nameAr, nameEn, crNumber, taxNumber, baseCurrency, auditRetentionPolicyYears } = req.body;
+    const tenant: CompanyProfile = (req as any).tenant || companyProfile;
+    const storage: StoragePort = (req as any).storage || masterStorage;
 
     // Validate 15-digit tax number
     if (taxNumber && !/^\d{15}$/.test(taxNumber.trim())) {
@@ -906,30 +1068,35 @@ async function startServer() {
       return res.status(422).json(problem);
     }
 
-    if (nameAr) companyProfile.nameAr = nameAr;
-    if (nameEn) companyProfile.nameEn = nameEn;
-    if (crNumber) companyProfile.crNumber = crNumber;
-    if (taxNumber) companyProfile.taxNumber = taxNumber;
-    if (baseCurrency) companyProfile.baseCurrency = baseCurrency;
-    if (auditRetentionPolicyYears) companyProfile.auditRetentionPolicyYears = Number(auditRetentionPolicyYears);
+    if (nameAr) tenant.nameAr = nameAr;
+    if (nameEn) tenant.nameEn = nameEn;
+    if (crNumber) tenant.crNumber = crNumber;
+    if (taxNumber) tenant.taxNumber = taxNumber;
+    if (baseCurrency) tenant.baseCurrency = baseCurrency;
+    if (auditRetentionPolicyYears) tenant.auditRetentionPolicyYears = Number(auditRetentionPolicyYears);
 
-    recordAudit(
+    await storage.saveTenant(tenant);
+
+    await recordAudit(
       (req as any).authContext.userId || 'USR-001',
       'المستخدم الحالي',
       'UPDATE_COMPANY_PROFILE',
       'COMPANY',
-      companyProfile.id,
-      companyProfile,
-      req.ip || '127.0.0.1'
+      tenant.id,
+      tenant,
+      req.ip || '127.0.0.1',
+      tenant.id,
+      storage
     );
 
-    return res.json({ success: true, data: companyProfile, message: 'تم تحديث بيانات المنشأة بنجاح' });
+    return res.json({ success: true, data: tenant, message: 'تم تحديث بيانات المنشأة بنجاح' });
   });
 
   // 1C — Users & Segregation of Duties (SoD) Management via StoragePort
   app.get('/api/users', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const usersRes = await activeStorage.listUsers(tenantId);
+    const storage: StoragePort = (req as any).storage || masterStorage;
+    const usersRes = await storage.listUsers(tenantId);
     const users = usersRes.success && usersRes.data ? usersRes.data : [];
     const list = users.map((u) => {
       let decryptedPii: any = {};
@@ -957,6 +1124,7 @@ async function startServer() {
 
   app.post('/api/users', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const { username, fullName, role, branchName, email, phone, nationalId } = req.body;
 
     // SoD Server-Side Conflict Check (Section 1C)
@@ -993,8 +1161,8 @@ async function startServer() {
       createdAt: new Date().toISOString(),
     };
 
-    await activeStorage.saveUser(newUser, `create-user-${newId}`);
-    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'CREATE_USER', 'USER', newUser.id, { username, role }, req.ip || '127.0.0.1');
+    await storage.saveUser(newUser, `create-user-${newId}`);
+    await recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'CREATE_USER', 'USER', newUser.id, { username, role }, req.ip || '127.0.0.1', tenantId, storage);
 
     return res.json({ success: true, data: newUser, message: 'تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام' });
   });
@@ -1002,6 +1170,8 @@ async function startServer() {
   // 1L — Invitation Signed Link Generation
   app.post('/api/invitations', requireAuth, (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
+    const storage: StoragePort = (req as any).storage || masterStorage;
+    const tokenService = new TokenService(storage);
     const { email, role } = req.body;
     if (!email || !role) {
       return res.status(400).json({ error: 'البريد الإلكتروني والدور مطلوبان لإنشاء الدعوة' });
@@ -1024,7 +1194,7 @@ async function startServer() {
       payload: { email, role, expiresAt: invite.expiresAt },
     });
 
-    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'INVITE_USER', 'INVITATION', email, { role, expiresAt: invite.expiresAt }, req.ip || '127.0.0.1');
+    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'INVITE_USER', 'INVITATION', email, { role, expiresAt: invite.expiresAt }, req.ip || '127.0.0.1', tenantId, storage);
 
     return res.json({
       success: true,
@@ -1040,15 +1210,20 @@ async function startServer() {
 
   // 1I — Active Sessions List & Remote Instant Revocation via StoragePort
   app.get('/api/sessions', requireAuth, async (req: Request, res: Response) => {
-    const listRes = await activeStorage.listAllActiveSessions();
+    const tenantId = (req as any).authContext.tenantId;
+    const storage: StoragePort = (req as any).storage || masterStorage;
+    const listRes = await storage.listActiveSessions(tenantId);
     const list = listRes.success && listRes.data ? listRes.data : [];
     return res.json({ success: true, data: list });
   });
 
   app.delete('/api/sessions/:sessionId', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
+    const storage: StoragePort = (req as any).storage || masterStorage;
+    const tokenService = new TokenService(storage);
+    const anomalyDetector = new AnomalyDetector(storage);
     const { sessionId } = req.params;
-    const sessionRes = await activeStorage.getActiveSession(sessionId);
+    const sessionRes = await storage.getActiveSession(sessionId);
     if (!sessionRes.success || !sessionRes.data) {
       return res.status(404).json({ error: 'الجلسة غير موجودة' });
     }
@@ -1056,7 +1231,7 @@ async function startServer() {
 
     // Instantly invalidate entire refresh token family (Section 1I)
     await tokenService.revokeFamily(session.familyId, 'REMOTE_TERMINATION');
-    await activeStorage.deleteActiveSession(sessionId);
+    await storage.deleteActiveSession(sessionId);
     await anomalyDetector.terminateSession(sessionId);
 
     DomainEventBus.publish({
@@ -1067,17 +1242,23 @@ async function startServer() {
       payload: { sessionId, reason: 'REMOTE_INSTANT_TERMINATION' },
     });
 
-    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'TERMINATE_SESSION', 'SESSION', sessionId, { targetUser: session.username }, req.ip || '127.0.0.1');
+    await recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'TERMINATE_SESSION', 'SESSION', sessionId, { targetUser: session.username }, req.ip || '127.0.0.1', tenantId, storage);
 
     return res.json({ success: true, message: 'تم إنهاء الجلسة عن بُعد وإبطال سلسلة التوكن بالكامل فوراً' });
   });
 
-  // 1G — No-Code Custom Fields Management (JSONB)
-  app.get('/api/custom-fields', requireAuth, (req: Request, res: Response) => {
-    return res.json({ success: true, data: customFieldsStore });
+  // 1G — No-Code Custom Fields Management (StoragePort)
+  app.get('/api/custom-fields', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const storage: StoragePort = (req as any).storage || masterStorage;
+    const resFields = await storage.getCustomFields(tenantId);
+    const data = resFields.success && resFields.data && resFields.data.length > 0 ? resFields.data : customFieldsStore;
+    return res.json({ success: true, data });
   });
 
-  app.post('/api/custom-fields', requireAuth, (req: Request, res: Response) => {
+  app.post('/api/custom-fields', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const { targetEntity, fieldName, fieldLabelAr, fieldType, isRequired, options } = req.body;
     if (!fieldName || !fieldLabelAr || !fieldType) {
       return res.status(400).json({ error: 'الاسم التقني والاسم العربي ونوع الحقل مطلوبة' });
@@ -1094,14 +1275,19 @@ async function startServer() {
     };
 
     customFieldsStore.push(newField);
-    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'ADD_CUSTOM_FIELD', 'SCHEMA', newField.id, newField, req.ip || '127.0.0.1');
+    await storage.saveCustomField(tenantId, newField);
+    await recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'ADD_CUSTOM_FIELD', 'SCHEMA', newField.id, newField, req.ip || '127.0.0.1', tenantId, storage);
 
     return res.json({ success: true, data: newField, message: 'تم إضافة الحقل المخصص بنجاح' });
   });
 
   // 1E — Operational Audit Trail
-  app.get('/api/audit-trail', requireAuth, (req: Request, res: Response) => {
-    return res.json({ success: true, data: operationalAuditTrail });
+  app.get('/api/audit-trail', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const storage: StoragePort = (req as any).storage || masterStorage;
+    const resAudit = await storage.getAuditRecords(tenantId);
+    const data = resAudit.success && resAudit.data && resAudit.data.length > 0 ? resAudit.data : operationalAuditTrail;
+    return res.json({ success: true, data });
   });
 
   // 1F — Domain Events Stream
@@ -1114,7 +1300,7 @@ async function startServer() {
   // 3. Transactions List (Read via StoragePort)
   app.get('/api/transactions', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const result = await storage.listJournalEntries(tenantId);
     if (!result.success) {
       return res.status(result.error?.status || 500).json(result.error);
@@ -1137,7 +1323,7 @@ async function startServer() {
       return res.status(400).json(problem);
     }
 
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const postingEngine = new PostingEngine(storage);
     const numberingEngine = new NumberingEngine(storage);
 
@@ -1167,14 +1353,16 @@ async function startServer() {
       idempotencyKey,
     });
 
-    recordAudit(
+    await recordAudit(
       entry.createdBy || userId || 'USR-001',
       'المستخدم الحالي',
       'POST_JOURNAL_ENTRY',
       'JOURNAL_ENTRY',
       entry.id,
       { code: entry.code, amount: entry.totalAmount },
-      req.ip || '127.0.0.1'
+      req.ip || '127.0.0.1',
+      tenantId,
+      storage
     );
 
     return res.json({ success: true, data: postRes.data });
@@ -1196,7 +1384,7 @@ async function startServer() {
     }
 
     const effectiveApproverId = approverId || userId;
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const approvalEngine = new ApprovalEngine(storage);
 
     const approveRes = await approvalEngine.executeApproval(tenantId, requestId, effectiveApproverId, idempotencyKey);
@@ -1204,14 +1392,16 @@ async function startServer() {
       return res.status(approveRes.error?.status || 403).json(approveRes.error);
     }
 
-    recordAudit(
+    await recordAudit(
       effectiveApproverId,
       effectiveApproverId,
       'APPROVE_DOCUMENT',
       'JOURNAL_ENTRY',
       requestId,
       { approverId: effectiveApproverId },
-      req.ip || '127.0.0.1'
+      req.ip || '127.0.0.1',
+      tenantId,
+      storage
     );
 
     return res.json({ success: true, data: approveRes.data });

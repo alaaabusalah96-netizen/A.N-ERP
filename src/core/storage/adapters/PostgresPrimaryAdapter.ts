@@ -31,6 +31,8 @@ import {
   ActiveSessionRecord,
   OrgNode,
   BreakGlassDetails,
+  CustomFieldDefinition,
+  OperationalAuditRecord,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -988,14 +990,16 @@ export class PostgresPrimaryAdapter implements StoragePort {
     try {
       await this.query(
         `INSERT INTO an_active_sessions (
-           session_id, user_id, username, full_name, role, device_type, ip_address, location, family_id, created_at, last_active_at
+           session_id, user_id, tenant_id, username, full_name, role, device_type, ip_address, location, family_id, created_at, last_active_at
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT (session_id) DO UPDATE SET
+           tenant_id = EXCLUDED.tenant_id,
            last_active_at = EXCLUDED.last_active_at`,
         [
           session.sessionId,
           session.userId,
+          session.tenantId || null,
           session.username,
           session.fullName,
           session.role,
@@ -1024,6 +1028,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         data: {
           sessionId: r.session_id,
           userId: r.user_id,
+          tenantId: r.tenant_id || undefined,
           username: r.username,
           fullName: r.full_name,
           role: r.role,
@@ -1063,13 +1068,17 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
-  public async listAllActiveSessions(): Promise<StorageResult<ActiveSessionRecord[]>> {
+  public async listActiveSessions(tenantId: string): Promise<StorageResult<ActiveSessionRecord[]>> {
     if (!this.pool) return this.missingConnError();
     try {
-      const res = await this.query('SELECT * FROM an_active_sessions ORDER BY created_at DESC');
+      const res = await this.query(
+        'SELECT * FROM an_active_sessions WHERE tenant_id = $1 ORDER BY created_at DESC',
+        [tenantId]
+      );
       const list = res.rows.map((r: any) => ({
         sessionId: r.session_id,
         userId: r.user_id,
+        tenantId: r.tenant_id || undefined,
         username: r.username,
         fullName: r.full_name,
         role: r.role,
@@ -2958,5 +2967,128 @@ export class PostgresPrimaryAdapter implements StoragePort {
         return this.dbError(err);
       }
     });
+  }
+
+  // Phase 4.5: Operational Audit & Custom Fields Persistence (4.5E)
+  public async saveAuditRecord(record: OperationalAuditRecord): Promise<StorageResult<OperationalAuditRecord>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_audit_trail (id, tenant_id, actor_id, actor_name, action, entity_type, entity_id, details, ip_address, timestamp)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          record.id,
+          record.tenantId,
+          record.actorId,
+          record.actorName,
+          record.action,
+          record.entityType,
+          record.entityId,
+          record.details ? JSON.stringify(record.details) : null,
+          record.ipAddress || null,
+          record.timestamp ? new Date(record.timestamp) : new Date(),
+        ]
+      );
+      return { success: true, data: record };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getAuditRecords(tenantId: string, limit: number = 100): Promise<StorageResult<OperationalAuditRecord[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        `SELECT id, tenant_id, actor_id, actor_name, action, entity_type, entity_id, details, ip_address, timestamp
+         FROM an_audit_trail
+         WHERE tenant_id = $1
+         ORDER BY timestamp DESC
+         LIMIT $2`,
+        [tenantId, limit]
+      );
+      const records: OperationalAuditRecord[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        actorId: r.actor_id,
+        actorName: r.actor_name,
+        action: r.action,
+        entityType: r.entity_type,
+        entityId: r.entity_id,
+        details: typeof r.details === 'string' ? JSON.parse(r.details) : r.details,
+        ipAddress: r.ip_address || undefined,
+        timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : String(r.timestamp),
+      }));
+      return { success: true, data: records };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveCustomField(tenantId: string, field: CustomFieldDefinition): Promise<StorageResult<CustomFieldDefinition>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_custom_fields (id, tenant_id, module, field_key, field_label_ar, field_type, is_required, options)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+           module = EXCLUDED.module,
+           field_key = EXCLUDED.field_key,
+           field_label_ar = EXCLUDED.field_label_ar,
+           field_type = EXCLUDED.field_type,
+           is_required = EXCLUDED.is_required,
+           options = EXCLUDED.options`,
+        [
+          field.id,
+          tenantId,
+          field.module || 'GENERAL',
+          field.fieldKey,
+          field.fieldLabelAr,
+          field.fieldType,
+          !!field.isRequired,
+          field.options ? JSON.stringify(field.options) : null,
+        ]
+      );
+      return { success: true, data: field };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getCustomFields(tenantId: string, module?: string): Promise<StorageResult<CustomFieldDefinition[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = 'SELECT * FROM an_custom_fields WHERE tenant_id = $1';
+      const params: any[] = [tenantId];
+      if (module) {
+        queryStr += ' AND module = $2';
+        params.push(module);
+      }
+      queryStr += ' ORDER BY field_key ASC';
+      const res = await this.query(queryStr, params);
+      const fields: CustomFieldDefinition[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        module: r.module,
+        fieldKey: r.field_key,
+        fieldLabelAr: r.field_label_ar,
+        fieldType: r.field_type,
+        isRequired: !!r.is_required,
+        options: typeof r.options === 'string' ? JSON.parse(r.options) : r.options || [],
+      }));
+      return { success: true, data: fields };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async checkIdempotencyRecord(tenantId: string, key: string, operation: string): Promise<StorageResult<any | null>> {
+    const payload = await this.checkIdempotency(tenantId, key, operation);
+    return { success: true, data: payload };
+  }
+
+  public async saveIdempotencyRecord(tenantId: string, key: string, operation: string, payload: any): Promise<StorageResult<void>> {
+    await this.recordIdempotency(tenantId, key, operation, payload);
+    return { success: true, data: undefined };
   }
 }

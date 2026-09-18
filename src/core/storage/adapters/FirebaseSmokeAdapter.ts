@@ -69,7 +69,7 @@ export class FirebaseSmokeAdapter implements StoragePort {
   saveActiveSession(session: ActiveSessionRecord) { return this.smokeOnlyError<ActiveSessionRecord>('saveActiveSession'); }
   getActiveSession(sessionId: string) { return this.smokeOnlyError<ActiveSessionRecord | null>('getActiveSession'); }
   listActiveSessionsByUser(userId: string) { return this.smokeOnlyError<ActiveSessionRecord[]>('listActiveSessionsByUser'); }
-  listAllActiveSessions() { return this.smokeOnlyError<ActiveSessionRecord[]>('listAllActiveSessions'); }
+  listActiveSessions(tenantId: string) { return this.smokeOnlyError<ActiveSessionRecord[]>('listActiveSessions'); }
   deleteActiveSession(sessionId: string) { return this.smokeOnlyError<void>('deleteActiveSession'); }
   getAccount(tenantId: string, accountCode: string) { return this.smokeOnlyError<Account>('getAccount'); }
   saveAccount(tenantId: string, account: Account, idempotencyKey: string) { return this.smokeOnlyError<Account>('saveAccount'); }
@@ -114,6 +114,12 @@ export class FirebaseSmokeAdapter implements StoragePort {
   getUserVisibleNodes(tenantId: string, userAssignedNodeId: string) { return this.smokeOnlyError<OrgNode[]>('getUserVisibleNodes'); }
   approveBreakGlass(tenantId: string, requestId: string, breakGlass: BreakGlassDetails, idempotencyKey: string) { return this.smokeOnlyError<ApprovalRequest>('approveBreakGlass'); }
   anonymizeUserPii(tenantId: string, userId: string, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<{ userId: string; anonymizedAt: string }>('anonymizeUserPii'); }
+  saveAuditRecord(record: any) { return this.smokeOnlyError<any>('saveAuditRecord'); }
+  getAuditRecords(tenantId: string, limit?: number) { return this.smokeOnlyError<any[]>('getAuditRecords'); }
+  saveCustomField(tenantId: string, field: any) { return this.smokeOnlyError<any>('saveCustomField'); }
+  getCustomFields(tenantId: string, module?: string) { return this.smokeOnlyError<any[]>('getCustomFields'); }
+  checkIdempotencyRecord(tenantId: string, key: string, operation: string) { return this.smokeOnlyError<any>('checkIdempotencyRecord'); }
+  saveIdempotencyRecord(tenantId: string, key: string, operation: string, payload: any) { return this.smokeOnlyError<void>('saveIdempotencyRecord'); }
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T> { return fn(); }
 
   /**
