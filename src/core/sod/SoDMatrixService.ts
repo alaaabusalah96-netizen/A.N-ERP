@@ -228,4 +228,15 @@ export class SoDMatrixService {
 
     return { allowed: true };
   }
+
+  /**
+   * Returns all enterprise role definitions from the authoritative matrix.
+   */
+  public static getAllRoleDefinitions(): RoleMatrixDefinition[] {
+    return Object.values(this.ROLE_MATRIX);
+  }
+
+  public getAllRoleDefinitions(): RoleMatrixDefinition[] {
+    return SoDMatrixService.getAllRoleDefinitions();
+  }
 }

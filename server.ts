@@ -8,6 +8,7 @@
  */
 
 import express, { Request, Response, NextFunction } from 'express';
+import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import crypto from 'crypto';
@@ -27,6 +28,7 @@ import { TokenService } from './src/core/auth/TokenService';
 import { AnomalyDetector, GeoLocation } from './src/core/auth/AnomalyDetector';
 import { EncryptionService } from './src/core/crypto/EncryptionService';
 import { SoDPolicyEngine } from './src/core/sod/SoDPolicyEngine';
+import { SoDMatrixService } from './src/core/sod/SoDMatrixService';
 import { DomainEventBus } from './src/core/events/DomainEventBus';
 import { DualCalendar } from './src/core/utils/dualCalendar';
 import { CompanyWizardService } from './src/core/wizard/CompanyWizardService';
@@ -288,10 +290,30 @@ async function startServer() {
   const tokenService = new TokenService(activeStorage);
   const anomalyDetector = new AnomalyDetector(activeStorage);
   const accountingService = new AccountingService(activeStorage);
+  const sodMatrixService = new SoDMatrixService();
+
+  // Validate SoD consistency at server boot
+  SoDPolicyEngine.assertConsistencyWithMatrix(sodMatrixService);
 
   await initSeedUsers(activeStorage);
 
   const app = express();
+
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"], // لا تسمح بـ unsafe-eval
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        connectSrc: ["'self'"],
+        frameAncestors: ["'self'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false, // لمنع كسر تحميل الخطوط الخارجية
+  }));
+
   app.use(express.json());
   app.use(cookieParser());
 
@@ -605,7 +627,7 @@ async function startServer() {
     res.cookie('an_access_token', accessToken, {
       httpOnly: true,
       secure: isProd,
-      sameSite: 'lax',
+      sameSite: 'strict',
       maxAge: 15 * 60 * 1000, // 15 minutes (Section 1A)
       path: '/',
     });
@@ -613,7 +635,7 @@ async function startServer() {
     res.cookie('an_refresh_token', refreshToken, {
       httpOnly: true,
       secure: isProd,
-      sameSite: 'lax',
+      sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
       path: '/',
     });
@@ -687,7 +709,7 @@ async function startServer() {
     res.cookie('an_access_token', rotation.newAccessToken, {
       httpOnly: true,
       secure: isProd,
-      sameSite: 'lax',
+      sameSite: 'strict',
       maxAge: 15 * 60 * 1000,
       path: '/',
     });
@@ -695,7 +717,7 @@ async function startServer() {
     res.cookie('an_refresh_token', rotation.newRefreshToken, {
       httpOnly: true,
       secure: isProd,
-      sameSite: 'lax',
+      sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000,
       path: '/',
     });

@@ -411,6 +411,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
 
       -- Schema migrations for Phase 4 (Accounting Core)
       ALTER TABLE an_accounts ADD COLUMN IF NOT EXISTS parent_code VARCHAR(64);
+      ALTER TABLE an_accounts ADD COLUMN IF NOT EXISTS name_en VARCHAR(255);
       ALTER TABLE an_accounts ADD COLUMN IF NOT EXISTS nature VARCHAR(16) DEFAULT 'DEBIT';
       ALTER TABLE an_accounts ADD COLUMN IF NOT EXISTS is_parent BOOLEAN DEFAULT FALSE;
       ALTER TABLE an_accounts ADD COLUMN IF NOT EXISTS level INT DEFAULT 1;

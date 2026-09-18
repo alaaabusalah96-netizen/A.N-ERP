@@ -6,12 +6,15 @@
  */
 
 import { RFC7807Problem } from '../storage/StoragePort';
+import { SoDMatrixService, RoleMatrixDefinition, SystemPermission } from './SoDMatrixService';
 
 export interface IncompatiblePair {
   roles: [string, string];
   conflictKey: string;
   reasonAr: string;
   riskSeverity: 'CRITICAL' | 'HIGH' | 'MEDIUM';
+  permissionA?: SystemPermission;
+  permissionB?: SystemPermission;
 }
 
 export class SoDPolicyEngine {
@@ -25,6 +28,8 @@ export class SoDPolicyEngine {
       conflictKey: 'POST_AND_APPROVE',
       reasonAr: 'لا يجوز الجمع بين صلاحية إنشاء القيود وصلاحية الاعتماد المالي وفق قواعد الرقابة المالية والحوكمة المؤسسية.',
       riskSeverity: 'CRITICAL',
+      permissionA: 'ENTRY_CREATE',
+      permissionB: 'ENTRY_POST',
     },
     {
       roles: ['sales_officer', 'financial_approver'],
@@ -45,6 +50,35 @@ export class SoDPolicyEngine {
       riskSeverity: 'CRITICAL',
     },
   ];
+
+  /**
+   * Asserts structural consistency between SoDPolicyEngine pairs and SoDMatrixService definitions.
+   * If any toxic combination or permission conflict exists that is unconstrained in the matrix,
+   * it fails fast on server startup to prevent silent conflicting policy enforcement.
+   */
+  public static assertConsistencyWithMatrix(matrixService?: SoDMatrixService | typeof SoDMatrixService): void {
+    const service = matrixService || SoDMatrixService;
+    const roleDefs: RoleMatrixDefinition[] =
+      typeof (service as any).getAllRoleDefinitions === 'function'
+        ? (service as any).getAllRoleDefinitions()
+        : SoDMatrixService.getAllRoleDefinitions();
+
+    for (const pair of this.INCOMPATIBLE_PAIRS) {
+      if (pair.permissionA && pair.permissionB) {
+        const rolesHoldingBoth = roleDefs.filter(
+          (def) =>
+            !def.forbiddenPermissions.includes(pair.permissionA!) &&
+            !def.forbiddenPermissions.includes(pair.permissionB!)
+        );
+        if (rolesHoldingBoth.length > 0) {
+          throw new Error(
+            `تعارض تعريف SoD: الزوج المتضارب (${pair.permissionA}/${pair.permissionB}) في SoDPolicyEngine ` +
+            `غير معكوس كحظر في SoDMatrixService لهذه الأدوار: ${rolesHoldingBoth.map((d) => d.role).join(', ')}`
+          );
+        }
+      }
+    }
+  }
 
   /**
    * Validates if assigning a set of roles to a single user violates Segregation of Duties

@@ -307,7 +307,7 @@ export class CompanyWizardService {
       id: `SCL-WIZARD-${Date.now()}`,
       timestamp: new Date().toISOString(),
       actor: firstAdminUser.username,
-      changeType: 'MIGRATION',
+      changeType: 'PLATFORM_MANAGEMENT',
       module: 'TENANT_WIZARD',
       entitiesAffected: [`tenant:${tenantId}`, `user:${adminId}`],
       summaryAr: `تم بنجاح إنشاء وتفعيل شركة جديدة (${newTenant.nameAr}) بقالب (${template.nameAr}) وضريبة (${taxRule.standardVatRate * 100}%)`,

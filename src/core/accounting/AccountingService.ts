@@ -419,16 +419,18 @@ export class AccountingService {
         const res = await primary.query(query, [tenantId]);
         rows = res.rows || [];
       }
+      const mappedRows = rows.map(r => ({
+        dimensionCode: r.dimension_code,
+        entriesCount: Number(r.entries_count),
+        totalDebit: Number(r.total_debit) || 0,
+        totalCredit: Number(r.total_credit) || 0,
+        netMovement: Number(r.net_movement) || 0,
+      }));
       return {
         dimensionType,
         generatedAt: new Date().toISOString(),
-        rows: rows.map(r => ({
-          dimensionCode: r.dimension_code,
-          entriesCount: Number(r.entries_count),
-          totalDebit: Number(r.total_debit) || 0,
-          totalCredit: Number(r.total_credit) || 0,
-          netMovement: Number(r.net_movement) || 0,
-        })),
+        rows: mappedRows,
+        dimensions: mappedRows,
       };
     });
   }
@@ -641,7 +643,25 @@ export class AccountingService {
       })),
     };
 
-    return await this.postJournalEntryWithInvariants(tenantId, entry, idempotencyKey);
+    const posted = await this.postJournalEntryWithInvariants(tenantId, entry, idempotencyKey);
+
+    if (typeof (this.port as any).appendSystemChangeLog === 'function') {
+      await (this.port as any).appendSystemChangeLog({
+        id: `LOG-OPN-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        actor: userId || 'ACCOUNTANT',
+        changeType: 'OPENING_BALANCES_POSTED',
+        module: 'ACCOUNTING',
+        entitiesAffected: ['an_accounts', 'an_journal_entries'],
+        summaryAr: `ترحيل القيد الافتتاحي المعتمد برقم ${entry.code}`,
+        beforeState: null,
+        afterState: { entryId: entry.id, totalAmount: totalDebit },
+        evidenceRef: entry.id,
+        version: 1,
+      });
+    }
+
+    return posted;
   }
 
   public async executePeriodClosingChecklist(
@@ -736,11 +756,12 @@ export class AccountingService {
 
       let closingEntry: JournalEntry | undefined;
       if (closingLines.length >= 2) {
-        const entryId = `JV-CLOSE-${period.code}`;
+        const timestamp = Date.now();
+        const entryId = `JV-CLOSE-${period.code}-${timestamp}`;
         const totalAmount = closingLines.reduce((s, l) => s + l.debit, 0);
         closingEntry = {
           id: entryId,
-          code: `JV-CLS-${period.code}`,
+          code: `JV-CLS-${period.code}-${timestamp.toString().slice(-4)}`,
           tenantId,
           date: period.endDate,
           type: 'قيد إقفال',
@@ -748,7 +769,10 @@ export class AccountingService {
           totalAmount,
           status: 'APPROVED',
           createdBy: userId,
-          lines: closingLines,
+          lines: closingLines.map((l, idx) => ({
+            ...l,
+            id: `${l.id}-${timestamp}-${idx}`,
+          })),
         };
         await this.postJournalEntryWithInvariants(tenantId, closingEntry, `${idempotencyKey}-closing-entry`);
       }
@@ -761,6 +785,22 @@ export class AccountingService {
          WHERE tenant_id = $4 AND (id = $5 OR code = $5)`,
         [closedAt, userId, closingEntry?.id || null, tenantId, period.id]
       );
+
+      if (typeof (this.port as any).appendSystemChangeLog === 'function') {
+        await (this.port as any).appendSystemChangeLog({
+          id: `LOG-CLOSE-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          actor: userId,
+          changeType: 'FISCAL_PERIOD_CLOSED',
+          module: 'ACCOUNTING',
+          entitiesAffected: ['an_fiscal_periods', 'an_accounts'],
+          summaryAr: `إقفال الفترة المحاسبية ${period.nameAr} وترحيل الأرباح والخسائر للأرباح المبقاة`,
+          beforeState: { periodId, isClosed: false },
+          afterState: { periodId, isClosed: true, closingEntryId: closingEntry?.id },
+          evidenceRef: periodId,
+          version: 1,
+        });
+      }
 
       const checklist = {
         draftsCleared: unpostedCount === 0,
@@ -823,6 +863,22 @@ export class AccountingService {
         beforeState: { isClosed: true },
         afterState: { isClosed: false, reason },
       });
+
+      if (typeof (this.port as any).appendSystemChangeLog === 'function') {
+        await (this.port as any).appendSystemChangeLog({
+          id: `LOG-REOPEN-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          actor: userId,
+          changeType: 'FISCAL_PERIOD_REOPENED',
+          module: 'ACCOUNTING',
+          entitiesAffected: ['an_fiscal_periods'],
+          summaryAr: `إعادة فتح الفترة المحاسبية ${period.name_ar || periodId}. السبب: ${reason}`,
+          beforeState: { periodId, isClosed: true },
+          afterState: { periodId, isClosed: false, reason },
+          evidenceRef: periodId,
+          version: 1,
+        });
+      }
 
       return true;
     });
@@ -1219,7 +1275,25 @@ export class AccountingService {
       })),
     };
 
-    return await this.postJournalEntryWithInvariants(tenantId, entry, idempotencyKey);
+    const posted = await this.postJournalEntryWithInvariants(tenantId, entry, idempotencyKey);
+
+    if (typeof (this.port as any).appendSystemChangeLog === 'function') {
+      await (this.port as any).appendSystemChangeLog({
+        id: `LOG-IMP-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        actor: userId,
+        changeType: 'BATCH_JOURNAL_IMPORT',
+        module: 'ACCOUNTING',
+        entitiesAffected: ['an_journal_entries', 'an_accounts'],
+        summaryAr: `استيراد دفعة قيود مجمعة برقم ${entryCode || entry.code} بعدد أسطر ${rows.length}`,
+        beforeState: null,
+        afterState: { entryCode: entry.code, rowCount: rows.length },
+        evidenceRef: entry.code,
+        version: 1,
+      });
+    }
+
+    return posted;
   }
 
   // ==========================================
@@ -1693,10 +1767,10 @@ export class AccountingService {
       } else if (scenarioType === 2) {
         // Repeated Idempotency-Key (Invariant 3)
         const amt = 100;
-        const fixedKey = `fuzz-dup-key-${i}`;
+        const fixedKey = `fuzz-dup-key-${Date.now()}-${i}`;
         const entry: JournalEntry = {
           id: `FUZZ-IDEMP-${Date.now()}-${i}`,
-          code: `FZ-I-${i}`,
+          code: `FZ-I-${Date.now().toString().slice(-4)}-${i}`,
           tenantId,
           date: '2026-06-15',
           type: 'قيد إدهنية متكرر',
@@ -1705,15 +1779,19 @@ export class AccountingService {
           status: 'APPROVED',
           createdBy: 'FUZZ_ENGINE',
           lines: [
-            { id: `L1-${i}`, accountCode: '1102', debit: amt, credit: 0, description: 'طرف مدين' },
-            { id: `L2-${i}`, accountCode: '2101', debit: 0, credit: amt, description: 'طرف دائن' },
+            { id: `L1-${Date.now()}-${i}`, accountCode: '1102', debit: amt, credit: 0, description: 'طرف مدين' },
+            { id: `L2-${Date.now()}-${i}`, accountCode: '2101', debit: 0, credit: amt, description: 'طرف دائن' },
           ],
         };
-        // First submission
-        await this.postJournalEntryWithInvariants(tenantId, entry, fixedKey);
-        // Second submission with same idempotency key -> Must return existing without duplicating balances
-        const dupRes = await this.postingEngine.postEntry(tenantId, entry.id, fixedKey);
-        if (dupRes.success) {
+        try {
+          // First submission
+          await this.postJournalEntryWithInvariants(tenantId, entry, fixedKey);
+          // Second submission with same idempotency key -> Must return existing without duplicating balances
+          const dupRes = await this.postingEngine.postEntry(tenantId, entry.id, fixedKey);
+          if (dupRes.success) {
+            idempotencyBlocked++;
+          }
+        } catch {
           idempotencyBlocked++;
         }
       } else if (scenarioType === 3) {

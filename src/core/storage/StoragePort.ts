@@ -208,7 +208,7 @@ export interface SystemChangeLogEntry {
   id: string;
   timestamp: string;
   actor: string;
-  changeType: 'SCHEMA_MIGRATION' | 'PHASE_CLOSURE' | 'STORAGE_CONFIG' | 'ENGINE_POST' | 'SOD_ENFORCEMENT' | 'MIGRATION' | 'NUMBERING_OVERRIDE' | 'SECURITY' | 'Security' | 'ANONYMIZATION' | 'CANARY_ALERT' | 'BREAK_GLASS';
+  changeType: 'SCHEMA_MIGRATION' | 'PHASE_CLOSURE' | 'STORAGE_CONFIG' | 'ENGINE_POST' | 'SOD_ENFORCEMENT' | 'MIGRATION' | 'NUMBERING_OVERRIDE' | 'SECURITY' | 'Security' | 'ANONYMIZATION' | 'CANARY_ALERT' | 'BREAK_GLASS' | 'PLATFORM_MANAGEMENT';
   module: string;
   entitiesAffected: string[];
   summaryAr: string;
