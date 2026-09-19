@@ -24,7 +24,7 @@ import { globalStorageRouter } from './src/core/storage/StorageRouter';
 import { PostingEngine } from './src/core/engines/PostingEngine';
 import { ApprovalEngine } from './src/core/engines/ApprovalEngine';
 import { NumberingEngine } from './src/core/engines/NumberingEngine';
-import { JournalEntry, RFC7807Problem, User, ActiveSessionRecord, StoragePort, CompanyProfile } from './src/core/storage/StoragePort';
+import { JournalEntry, RFC7807Problem, User, ActiveSessionRecord, StoragePort, CompanyProfile, TenantCompany, CustomFieldDefinition } from './src/core/storage/StoragePort';
 import { TokenService } from './src/core/auth/TokenService';
 import { AnomalyDetector, GeoLocation } from './src/core/auth/AnomalyDetector';
 import { EncryptionService } from './src/core/crypto/EncryptionService';
@@ -43,9 +43,10 @@ import { AccountingService } from './src/core/accounting/AccountingService';
 
 const PORT = 3000;
 
-// In-memory or persisted company settings for Phase 1
-const companyProfile = {
+// Initial company seed settings for primary setup (Phase 0 / Phase 1)
+const companyProfile: TenantCompany = {
   id: 'tenant-main',
+  code: 'MAIN',
   nameAr: 'شركة الأعمال الموحدة القابضة',
   nameEn: 'Unified Business Holding Co.',
   crNumber: '1010482910',
@@ -53,71 +54,13 @@ const companyProfile = {
   baseCurrency: 'ر.س',
   country: 'المملكة العربية السعودية',
   auditRetentionPolicyYears: 10,
+  status: 'ACTIVE',
   backendConfig: {
     adapterType: 'postgresql',
     connectionRef: 'DATABASE_URL',
     isolationLevel: 'Shared',
   },
 };
-
-// Operational Audit Trail (Separate from SystemChangeLog as per 3.2 & 1E)
-interface AuditRecord {
-  id: string;
-  timestamp: string;
-  actorId: string;
-  actorName: string;
-  action: string;
-  entityType: string;
-  entityId: string;
-  details: any;
-  ipAddress: string;
-}
-const operationalAuditTrail: AuditRecord[] = [
-  {
-    id: 'AUD-001',
-    timestamp: new Date(Date.now() - 3600000).toISOString(),
-    actorId: 'USR-001',
-    actorName: 'أحمد المنصور',
-    action: 'POST_JOURNAL_VOUCHER',
-    entityType: 'JOURNAL_ENTRY',
-    entityId: 'JV-2026-0842',
-    details: { amount: 84500, currency: 'SAR', note: 'ترحيل قيد توريدات' },
-    ipAddress: '192.168.1.10',
-  },
-];
-
-// Custom Fields Store (Section 1G)
-interface CustomFieldDef {
-  id: string;
-  targetEntity: 'JOURNAL_ENTRY' | 'USER' | 'COMPANY';
-  fieldName: string;
-  fieldLabelAr: string;
-  fieldType: 'TEXT' | 'NUMBER' | 'DATE' | 'SELECT';
-  isRequired: boolean;
-  options?: string[];
-}
-const customFieldsStore: CustomFieldDef[] = [
-  {
-    id: 'cf-1',
-    targetEntity: 'JOURNAL_ENTRY',
-    fieldName: 'projectCode',
-    fieldLabelAr: 'رمز المشروع المرتبط',
-    fieldType: 'TEXT',
-    isRequired: false,
-  },
-  {
-    id: 'cf-2',
-    targetEntity: 'JOURNAL_ENTRY',
-    fieldName: 'costCenterType',
-    fieldLabelAr: 'نوع مركز التكلفة',
-    fieldType: 'SELECT',
-    isRequired: false,
-    options: ['تشغيلي', 'إداري', 'رأسمالي', 'تسويقي'],
-  },
-];
-
-// Idempotency cache for login requests (Section 8)
-const loginIdempotencyCache = new Map<string, any>();
 
 // Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing directly via StoragePort
 async function initSeedUsers(storage: StoragePort, tenantId: string = companyProfile.id) {
@@ -280,14 +223,10 @@ async function startServer() {
     }
   }
 
-  const primaryStorage = globalStorageRouter.getPrimaryAdapter();
-  const devStorage = globalStorageRouter.getDevInMemoryAdapter();
+  const masterStorage: StoragePort = process.env.DATABASE_URL
+    ? globalStorageRouter.getPrimaryAdapter()
+    : globalStorageRouter.getDevInMemoryAdapter();
 
-  const getStorage = () => {
-    return process.env.DATABASE_URL ? primaryStorage : devStorage;
-  };
-
-  const masterStorage = getStorage();
   const sodMatrixService = new SoDMatrixService();
 
   // Validate SoD consistency at server boot
@@ -296,7 +235,7 @@ async function startServer() {
   // Ensure initial company profile exists in storage
   const existingTenant = await masterStorage.getTenant(companyProfile.id);
   if (!existingTenant.success || !existingTenant.data) {
-    await masterStorage.saveTenant(companyProfile);
+    await masterStorage.saveTenant(companyProfile, 'init-seed-company-profile');
   }
   await initSeedUsers(masterStorage, companyProfile.id);
 
@@ -373,25 +312,10 @@ async function startServer() {
     tenantId: string = companyProfile.id,
     storage?: StoragePort
   ) => {
-    const record: AuditRecord = {
-      id: `AUD-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      timestamp: new Date().toISOString(),
-      actorId,
-      actorName,
-      action,
-      entityType,
-      entityId,
-      details,
-      ipAddress: ip,
-    };
-    operationalAuditTrail.unshift(record);
-    if (operationalAuditTrail.length > 500) {
-      operationalAuditTrail.pop();
-    }
     try {
       const activePort = storage || masterStorage;
       await activePort.saveAuditRecord({
-        id: record.id,
+        id: `AUD-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         tenantId,
         actorId,
         actorName,
@@ -400,7 +324,7 @@ async function startServer() {
         entityId,
         details,
         ipAddress: ip,
-        timestamp: record.timestamp,
+        timestamp: new Date().toISOString(),
       });
     } catch (e) {
       // Audit non-blocking
@@ -504,9 +428,11 @@ async function startServer() {
   // 1A & 1D & 1I & 1J & 1K — Enterprise Authentication (Login)
   app.post('/api/auth/login', authRateLimiter, async (req: Request, res: Response) => {
     const idempotencyKey = req.headers['idempotency-key'] as string;
-    if (idempotencyKey && loginIdempotencyCache.has(idempotencyKey)) {
-      const cached = loginIdempotencyCache.get(idempotencyKey);
-      return res.json(cached);
+    if (idempotencyKey) {
+      const cached = await masterStorage.checkIdempotencyRecord(companyProfile.id, idempotencyKey, 'LOGIN');
+      if (cached.success && cached.data) {
+        return res.json(cached.data);
+      }
     }
 
     const { username, password, twoFactorCode, backupCode, forceTerminateOldest, clientGeo } = req.body;
@@ -523,7 +449,7 @@ async function startServer() {
 
     // Determine target tenant and storage
     const requestedTenantId = (req.headers['x-tenant-id'] as string)?.trim() || (req.body.tenantId as string)?.trim();
-    let targetTenant: CompanyProfile = companyProfile;
+    let targetTenant: TenantCompany = companyProfile;
     let targetStorage: StoragePort = masterStorage;
     let user: User | null = null;
 
@@ -848,7 +774,6 @@ async function startServer() {
     };
 
     if (idempotencyKey) {
-      loginIdempotencyCache.set(idempotencyKey, responsePayload);
       await targetStorage.saveIdempotencyRecord(userTenantId, idempotencyKey, 'LOGIN', responsePayload);
     }
 
@@ -1068,6 +993,16 @@ async function startServer() {
       return res.status(422).json(problem);
     }
 
+    const idempKey = req.headers['idempotency-key'] as string;
+    if (!idempKey) {
+      return res.status(400).json({
+        type: 'https://api.an-erp.local/errors/missing-idempotency-key',
+        title: 'مفتاح الإدهنية مطلوب',
+        status: 400,
+        detail: 'الترويسة Idempotency-Key إلزامية لتعديل بيانات المنشأة.',
+      });
+    }
+
     if (nameAr) tenant.nameAr = nameAr;
     if (nameEn) tenant.nameEn = nameEn;
     if (crNumber) tenant.crNumber = crNumber;
@@ -1075,7 +1010,7 @@ async function startServer() {
     if (baseCurrency) tenant.baseCurrency = baseCurrency;
     if (auditRetentionPolicyYears) tenant.auditRetentionPolicyYears = Number(auditRetentionPolicyYears);
 
-    await storage.saveTenant(tenant);
+    await storage.saveTenant(tenant, idempKey);
 
     await recordAudit(
       (req as any).authContext.userId || 'USR-001',
@@ -1252,7 +1187,7 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const storage: StoragePort = (req as any).storage || masterStorage;
     const resFields = await storage.getCustomFields(tenantId);
-    const data = resFields.success && resFields.data && resFields.data.length > 0 ? resFields.data : customFieldsStore;
+    const data = resFields.success && resFields.data ? resFields.data : [];
     return res.json({ success: true, data });
   });
 
@@ -1264,17 +1199,17 @@ async function startServer() {
       return res.status(400).json({ error: 'الاسم التقني والاسم العربي ونوع الحقل مطلوبة' });
     }
 
-    const newField: CustomFieldDef = {
+    const newField: CustomFieldDefinition = {
       id: `cf-${Date.now()}`,
-      targetEntity: targetEntity || 'JOURNAL_ENTRY',
-      fieldName,
+      tenantId,
+      module: targetEntity || 'JOURNAL_ENTRY',
+      fieldKey: fieldName,
       fieldLabelAr,
       fieldType,
       isRequired: !!isRequired,
       options: options || [],
     };
 
-    customFieldsStore.push(newField);
     await storage.saveCustomField(tenantId, newField);
     await recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'ADD_CUSTOM_FIELD', 'SCHEMA', newField.id, newField, req.ip || '127.0.0.1', tenantId, storage);
 
@@ -1286,7 +1221,7 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const storage: StoragePort = (req as any).storage || masterStorage;
     const resAudit = await storage.getAuditRecords(tenantId);
-    const data = resAudit.success && resAudit.data && resAudit.data.length > 0 ? resAudit.data : operationalAuditTrail;
+    const data = resAudit.success && resAudit.data ? resAudit.data : [];
     return res.json({ success: true, data });
   });
 
@@ -1427,7 +1362,7 @@ async function startServer() {
 
   // 2A, 2B, 2H: Execute 5-Step Company Creation Wizard
   app.post('/api/wizard/create-company', async (req: Request, res: Response) => {
-    const storage = getStorage();
+    const storage = masterStorage;
     const wizard = new CompanyWizardService(storage);
     const result = await wizard.createCompany(req.body);
     if (!result.success) {
@@ -1438,7 +1373,7 @@ async function startServer() {
 
   // 2B: List Registered Tenants / Companies
   app.get('/api/tenants', async (req: Request, res: Response) => {
-    const storage = getStorage();
+    const storage = masterStorage;
     const result = await storage.listTenants();
     if (!result.success) {
       return res.status(result.error?.status || 500).json(result.error);
@@ -1461,7 +1396,7 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const { sequenceKey, targetSequence, justificationAr, authorizedBy, idempotencyKey } = req.body;
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const numbering = new NumberingEngine(storage);
     const result = await numbering.overrideSequence(
       tenantId,
@@ -1489,7 +1424,7 @@ async function startServer() {
         detail: 'رقم الحساب (accountCode) وتاريخ الاستعلام (asOfDate بصيغة YYYY-MM-DD) مطلوبان.',
       });
     }
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const historyService = new HistoricalQueryService(storage);
     const result = await historyService.getAccountBalanceAsOf(
       tenantId,
@@ -1514,7 +1449,7 @@ async function startServer() {
         detail: 'رقم الحساب (accountCode) وتاريخ الاستعلام (asOfDate) مطلوبان.',
       });
     }
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const historyService = new HistoricalQueryService(storage);
     const result = await historyService.getStatementAsOf(
       tenantId,
@@ -1532,7 +1467,7 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const { item, createdBy, idempotencyKey } = req.body;
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const dualControl = new DualControlService(storage);
     const result = await dualControl.createMasterItem(
       tenantId,
@@ -1550,7 +1485,7 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const { approvedBy, idempotencyKey } = req.body;
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const dualControl = new DualControlService(storage);
     const result = await dualControl.approveMasterItem(
       tenantId,
@@ -1569,7 +1504,7 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const { partner, createdBy, idempotencyKey } = req.body;
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const dualControl = new DualControlService(storage);
     const result = await dualControl.createMasterPartner(
       tenantId,
@@ -1587,7 +1522,7 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const { approvedBy, idempotencyKey } = req.body;
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const dualControl = new DualControlService(storage);
     const result = await dualControl.approveMasterPartner(
       tenantId,
@@ -1604,7 +1539,7 @@ async function startServer() {
   // 2E & 2G: SHA-256 Tamper-Evident Hash Chain Audit
   app.get('/api/audit-chain', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const result = await storage.getAuditChain(tenantId);
     if (!result.success) {
       return res.status(result.error?.status || 500).json(result.error);
@@ -1614,7 +1549,7 @@ async function startServer() {
 
   app.post('/api/audit-chain/verify', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const auditService = new AuditChainService(storage);
     const result = await auditService.verifyIntegrity(tenantId);
     if (!result.success) {
@@ -1626,7 +1561,7 @@ async function startServer() {
   // 2H: Tenant Active Module Manifests
   app.get('/api/tenant-modules', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage = getStorage();
+    const storage: StoragePort = (req as any).storage || masterStorage;
     const result = await storage.getTenantModules(tenantId);
     if (!result.success) {
       return res.status(result.error?.status || 500).json(result.error);
@@ -1668,11 +1603,31 @@ async function startServer() {
   // PHASE 4: ACCOUNTING CORE (نظام المحاسبة الشامل وإدارة الدفاتر والقوائم المالية)
   // ============================================================================
 
+  const getAccountingService = (req: Request): AccountingService => {
+    const storage: StoragePort = (req as any).storage || masterStorage;
+    return new AccountingService(storage);
+  };
+
+  const requireIdempotencyKey = (req: Request, res: Response, actionNameAr: string): string | null => {
+    const key = req.headers['idempotency-key'] as string;
+    if (!key || !key.trim()) {
+      const problem: RFC7807Problem = {
+        type: 'https://api.an-erp.local/errors/missing-idempotency-key',
+        title: 'مفتاح الإدهنية مطلوب',
+        status: 400,
+        detail: `الترويسة Idempotency-Key إلزامية لتنفيذ ${actionNameAr} لضمان منع التكرار وحماية أرصدة الحسابات (البند 8.1 والبند 4.5F).`,
+      };
+      res.status(400).json(problem);
+      return null;
+    }
+    return key.trim();
+  };
+
   // 4A: دليل الحسابات (Chart of Accounts)
   app.get('/api/accounting/accounts', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const accounts = await accountingService.listAccounts(tenantId);
+      const accounts = await getAccountingService(req).listAccounts(tenantId);
       return res.json({ success: true, data: accounts });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message || 'فشل جلب دليل الحسابات' });
@@ -1682,8 +1637,9 @@ async function startServer() {
   app.post('/api/accounting/accounts', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const key = (req.headers['idempotency-key'] as string) || `acc-${Date.now()}`;
-      const account = await accountingService.saveAccount(tenantId, req.body, key);
+      const key = requireIdempotencyKey(req, res, 'حفظ الحساب المحاسبي');
+      if (!key) return;
+      const account = await getAccountingService(req).saveAccount(tenantId, req.body, key);
       return res.json({ success: true, data: account, message: 'تم حفظ وتحديث الحساب بنجاح' });
     } catch (err: any) {
       return res.status(422).json({ success: false, error: err.message || 'فشل حفظ الحساب' });
@@ -1695,7 +1651,7 @@ async function startServer() {
       const tenantId = (req as any).authContext.tenantId;
       const { code } = req.params;
       const { isActive } = req.body;
-      const result = await accountingService.toggleAccountStatus(tenantId, code, isActive);
+      const result = await getAccountingService(req).toggleAccountStatus(tenantId, code, isActive);
       return res.json({ success: true, updated: result });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1706,7 +1662,7 @@ async function startServer() {
   app.get('/api/accounting/periods', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const periods = await accountingService.listFiscalPeriods(tenantId);
+      const periods = await getAccountingService(req).listFiscalPeriods(tenantId);
       return res.json({ success: true, data: periods });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1718,8 +1674,9 @@ async function startServer() {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId;
       const { periodId } = req.body;
-      const key = (req.headers['idempotency-key'] as string) || `cls-per-${Date.now()}`;
-      const result = await accountingService.executePeriodClosingChecklist(tenantId, periodId, userId, key);
+      const key = requireIdempotencyKey(req, res, 'إقفال الفترة المحاسبية');
+      if (!key) return;
+      const result = await getAccountingService(req).executePeriodClosingChecklist(tenantId, periodId, userId, key);
       return res.json(result);
     } catch (err: any) {
       return res.status(err.status || 500).json({ success: false, error: err.detail || err.message });
@@ -1731,8 +1688,9 @@ async function startServer() {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId;
       const { periodId, reason } = req.body;
-      const key = (req.headers['idempotency-key'] as string) || `reopen-per-${Date.now()}`;
-      const result = await accountingService.reopenPeriod(tenantId, periodId, reason, userId, key);
+      const key = requireIdempotencyKey(req, res, 'إعادة فتح الفترة المحاسبية');
+      if (!key) return;
+      const result = await getAccountingService(req).reopenPeriod(tenantId, periodId, reason, userId, key);
       return res.json({ success: true, reopened: result, message: 'تم إعادة فتح الفترة المحاسبية وتوثيق ذلك في سلسلة التدقيق.' });
     } catch (err: any) {
       return res.status(400).json({ success: false, error: err.message });
@@ -1743,7 +1701,7 @@ async function startServer() {
   app.get('/api/accounting/journal-entries', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const primary: any = activeStorage;
+      const primary: any = (req as any).storage || masterStorage;
       let entries: any[] = [];
       if (typeof primary.query === 'function') {
         const resDb = await primary.query(
@@ -1776,13 +1734,23 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId;
-      const key = (req.headers['idempotency-key'] as string) || `jv-${Date.now()}`;
+      const key = requireIdempotencyKey(req, res, 'ترحيل القيد المحاسبي');
+      if (!key) return;
       const payload = req.body;
 
-      const entryId = payload.id || `JV-${Date.now()}`;
+      if (!payload.id || !payload.code) {
+        return res.status(400).json({
+          type: 'https://api.an-erp.local/errors/invalid-payload',
+          title: 'بيانات القيد غير مكتملة',
+          status: 400,
+          detail: 'معرف القيد ورمز القيد مطلوبان صراحة لترحيل القيد المحاسبي.',
+        });
+      }
+
+      const entryId = payload.id;
       const entry: JournalEntry = {
         id: entryId,
-        code: payload.code || `JV-${Date.now().toString().slice(-5)}`,
+        code: payload.code,
         tenantId,
         date: payload.date || new Date().toISOString().split('T')[0],
         type: payload.type || 'قيد يدوي عام',
@@ -1800,7 +1768,7 @@ async function startServer() {
         })),
       };
 
-      const posted = await accountingService.postJournalEntryWithInvariants(tenantId, entry, key);
+      const posted = await getAccountingService(req).postJournalEntryWithInvariants(tenantId, entry, key);
       return res.json({ success: true, data: posted, message: 'تم ترحيل القيد المحاسبي ذرياً بنجاح' });
     } catch (err: any) {
       const status = err.status || 422;
@@ -1813,7 +1781,7 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const type = req.query.type as any;
-      const dimensions = await accountingService.listDimensions(tenantId, type);
+      const dimensions = await getAccountingService(req).listDimensions(tenantId, type);
       return res.json({ success: true, data: dimensions });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1823,7 +1791,7 @@ async function startServer() {
   app.post('/api/accounting/dimensions', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const dim = await accountingService.saveDimension(tenantId, req.body);
+      const dim = await getAccountingService(req).saveDimension(tenantId, req.body);
       return res.json({ success: true, data: dim });
     } catch (err: any) {
       return res.status(422).json({ success: false, error: err.message });
@@ -1834,7 +1802,7 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const type = (req.query.type as any) || 'COST_CENTER';
-      const report = await accountingService.getDimensionAnalyticalReport(tenantId, type);
+      const report = await getAccountingService(req).getDimensionAnalyticalReport(tenantId, type);
       return res.json({ success: true, data: report });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1845,7 +1813,7 @@ async function startServer() {
   app.get('/api/accounting/units', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const units = await accountingService.listUnits(tenantId);
+      const units = await getAccountingService(req).listUnits(tenantId);
       return res.json({ success: true, data: units });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1855,7 +1823,7 @@ async function startServer() {
   app.get('/api/accounting/items', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const items = await accountingService.listItems(tenantId);
+      const items = await getAccountingService(req).listItems(tenantId);
       return res.json({ success: true, data: items });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1865,7 +1833,7 @@ async function startServer() {
   app.post('/api/accounting/items', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const saved = await accountingService.saveItem(tenantId, req.body);
+      const saved = await getAccountingService(req).saveItem(tenantId, req.body);
       return res.json({ success: true, data: saved, message: 'تم حفظ الصنف المحاسبي بنجاح' });
     } catch (err: any) {
       return res.status(422).json({ success: false, error: err.message });
@@ -1877,8 +1845,9 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId;
-      const key = (req.headers['idempotency-key'] as string) || `opn-${Date.now()}`;
-      const entry = await accountingService.postOpeningBalanceEntry(tenantId, req.body.lines, key, userId);
+      const key = requireIdempotencyKey(req, res, 'ترحيل الأرصدة الافتتاحية');
+      if (!key) return;
+      const entry = await getAccountingService(req).postOpeningBalanceEntry(tenantId, req.body.lines, key, userId);
       return res.json({ success: true, data: entry, message: 'تم ترحيل الأرصدة الافتتاحية بنجاح' });
     } catch (err: any) {
       return res.status(err.status || 422).json(err);
@@ -1889,7 +1858,7 @@ async function startServer() {
   app.get('/api/accounting/reports/trial-balance', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const report = await accountingService.getTrialBalance(tenantId, req.query.asOfDate as string);
+      const report = await getAccountingService(req).getTrialBalance(tenantId, req.query.asOfDate as string);
       return res.json({ success: true, data: report });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1900,7 +1869,7 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const periodId = req.query.periodId as string;
-      const report = await accountingService.getIncomeStatement(tenantId, periodId);
+      const report = await getAccountingService(req).getIncomeStatement(tenantId, periodId);
       return res.json({ success: true, data: report });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1911,7 +1880,7 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const periodId = req.query.periodId as string;
-      const report = await accountingService.getBalanceSheet(tenantId, periodId);
+      const report = await getAccountingService(req).getBalanceSheet(tenantId, periodId);
       return res.json({ success: true, data: report });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1922,7 +1891,7 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const periodId = req.query.periodId as string;
-      const report = await accountingService.getCashFlowStatement(tenantId, periodId);
+      const report = await getAccountingService(req).getCashFlowStatement(tenantId, periodId);
       return res.json({ success: true, data: report });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1933,8 +1902,8 @@ async function startServer() {
   app.post('/api/accounting/import/validate', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const accounts = await accountingService.listAccounts(tenantId);
-      const validation = accountingService.validateImportData(tenantId, req.body.rows || [], accounts);
+      const accounts = await getAccountingService(req).listAccounts(tenantId);
+      const validation = getAccountingService(req).validateImportData(tenantId, req.body.rows || [], accounts);
       return res.json(validation);
     } catch (err: any) {
       return res.status(500).json({ isValid: false, error: err.message });
@@ -1945,9 +1914,10 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId;
-      const key = (req.headers['idempotency-key'] as string) || `imp-${Date.now()}`;
+      const key = requireIdempotencyKey(req, res, 'استيراد وترحيل القيود');
+      if (!key) return;
       const { entryCode, description, date, rows } = req.body;
-      const entry = await accountingService.executeStandardImport(tenantId, entryCode, description, date, rows, userId, key);
+      const entry = await getAccountingService(req).executeStandardImport(tenantId, entryCode, description, date, rows, userId, key);
       return res.json({ success: true, data: entry, message: 'تم استيراد وترحيل القيود بنجاح' });
     } catch (err: any) {
       return res.status(err.status || 422).json(err);
@@ -1959,7 +1929,7 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const year = req.query.year ? Number(req.query.year) : 2026;
-      const budgets = await accountingService.listBudgets(tenantId, year);
+      const budgets = await getAccountingService(req).listBudgets(tenantId, year);
       return res.json({ success: true, data: budgets });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1969,7 +1939,7 @@ async function startServer() {
   app.post('/api/accounting/budgets', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const saved = await accountingService.saveBudget(tenantId, req.body);
+      const saved = await getAccountingService(req).saveBudget(tenantId, req.body);
       return res.json({ success: true, data: saved, message: 'تم حفظ الموازنة التقديرية بنجاح' });
     } catch (err: any) {
       return res.status(422).json({ success: false, error: err.message });
@@ -1979,7 +1949,7 @@ async function startServer() {
   app.get('/api/accounting/recurring', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const entries = await accountingService.listRecurringEntries(tenantId);
+      const entries = await getAccountingService(req).listRecurringEntries(tenantId);
       return res.json({ success: true, data: entries });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1990,8 +1960,9 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId;
-      const key = (req.headers['idempotency-key'] as string) || `run-rec-${Date.now()}`;
-      const entry = await accountingService.generateRecurringEntry(tenantId, req.params.id, userId, key);
+      const key = requireIdempotencyKey(req, res, 'توليد وترحيل القيد الدوري');
+      if (!key) return;
+      const entry = await getAccountingService(req).generateRecurringEntry(tenantId, req.params.id, userId, key);
       return res.json({ success: true, data: entry, message: 'تم توليد وترحيل القيد الدوري بنجاح' });
     } catch (err: any) {
       return res.status(422).json({ success: false, error: err.message });
@@ -2001,7 +1972,7 @@ async function startServer() {
   // 4I: هجرة من أنظمة أخرى (Legacy Migration)
   app.get('/api/accounting/migration/templates', requireAuth, (req: Request, res: Response) => {
     const system = ((req.query.system as string) || 'ORACLE').toUpperCase() as any;
-    const template = accountingService.generateMappingTemplate(system);
+    const template = getAccountingService(req).generateMappingTemplate(system);
     return res.json({ success: true, data: template });
   });
 
@@ -2010,7 +1981,7 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const simulate = req.query.simulate === 'true';
-      const log = await accountingService.runContinuousBalanceCheck(tenantId, simulate);
+      const log = await getAccountingService(req).runContinuousBalanceCheck(tenantId, simulate);
       return res.json({ success: true, data: log });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -2020,7 +1991,7 @@ async function startServer() {
   app.get('/api/accounting/balance-checker/history', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const logs = await accountingService.getBalanceCheckHistory(tenantId);
+      const logs = await getAccountingService(req).getBalanceCheckHistory(tenantId);
       return res.json({ success: true, data: logs });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -2032,7 +2003,7 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const iterations = req.body.iterations ? Number(req.body.iterations) : 1000;
-      const results = await accountingService.runFuzzTestingBattery(tenantId, iterations);
+      const results = await getAccountingService(req).runFuzzTestingBattery(tenantId, iterations);
       return res.json({ success: true, data: results });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });

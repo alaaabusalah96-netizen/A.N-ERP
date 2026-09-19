@@ -49,13 +49,11 @@ export async function runPhase1Battery(): Promise<Phase1BatteryResult> {
 
   const primary = globalStorageRouter.getPrimaryAdapter();
   const primaryHealth = await primary.checkHealth();
-  const storage = primaryHealth.connected
-    ? primary
-    : globalStorageRouter.getDevInMemoryAdapter();
-
-  if (primaryHealth.connected) {
-    await primary.initializeSchema();
+  if (!primaryHealth.connected) {
+    throw new Error('فشل بطارية القبول: Primary Postgres غير متصل — ممنوع الإغلاق على InMemory وفقاً للبند 4.5 والبند 3.1.');
   }
+  const storage = primary;
+  await primary.initializeSchema();
 
   const tokenService = new TokenService(storage);
 
@@ -626,7 +624,7 @@ export async function runPhase1Battery(): Promise<Phase1BatteryResult> {
     totalTests: results.length,
     passedTests,
     failedTests,
-    adapterTested: process.env.DATABASE_URL ? 'PostgreSQL (Primary / Supabase)' : 'InMemoryAdapter',
+    adapterTested: 'PostgreSQL (Primary / Supabase)',
     results,
   };
 }

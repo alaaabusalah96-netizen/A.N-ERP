@@ -36,11 +36,17 @@ export interface TenantCompany {
   code: string;
   nameAr: string;
   nameEn?: string;
+  crNumber?: string;
   taxNumber?: string;
+  baseCurrency?: string;
+  country?: string;
+  auditRetentionPolicyYears?: number;
   backendConfig: BackendConfig;
   status: 'ACTIVE' | 'SUSPENDED';
   createdAt?: string;
 }
+
+export type CompanyProfile = TenantCompany;
 
 export interface GeoLocation {
   city: string;
