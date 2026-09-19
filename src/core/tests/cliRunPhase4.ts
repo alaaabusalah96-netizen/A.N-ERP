@@ -26,6 +26,7 @@ async function main() {
     console.log('=====================================================');
     if (suite.allPassed) {
       console.log('🏆 ALL PHASE 4 TESTS PASSED ACCORDING TO CLAUSE 3.4 & 16');
+      process.exit(0);
     } else {
       console.log('⚠️ SOME TESTS FAILED');
       process.exit(1);

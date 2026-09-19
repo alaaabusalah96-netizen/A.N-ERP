@@ -649,3 +649,21 @@ export async function runPhase3Battery(): Promise<Phase3BatterySuiteResult> {
     tests: results,
   };
 }
+
+if (process.argv[1] && (process.argv[1].endsWith('runPhase3Battery.ts') || process.argv[1].endsWith('runPhase3Battery.js'))) {
+  runPhase3Battery().then((report) => {
+    console.log('\n======================================================');
+    console.log('       A.N ERP v7.1 — PHASE 3 ACCEPTANCE BATTERY      ');
+    console.log('======================================================');
+    console.log(`Adapter Tested: ${report.adapterName}`);
+    console.log(`Total Tests:    ${report.totalTests}`);
+    console.log(`Passed:         ${report.passedCount}`);
+    console.log(`Failed:         ${report.failedCount}`);
+    console.log(`Overall Result: ${report.allPassed ? 'ALL PASSED (' + report.passedCount + '/' + report.totalTests + ')' : 'FAILED'}`);
+    console.log('======================================================\n');
+    process.exit(report.allPassed ? 0 : 1);
+  }).catch((err) => {
+    console.error('Fatal battery error:', err);
+    process.exit(1);
+  });
+}

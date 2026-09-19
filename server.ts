@@ -41,7 +41,7 @@ import { runPhase3Battery } from './src/core/tests/runPhase3Battery';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
 import { AccountingService } from './src/core/accounting/AccountingService';
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Initial company seed settings for primary setup (Phase 0 / Phase 1)
 const companyProfile: TenantCompany = {
@@ -232,12 +232,8 @@ async function startServer() {
   // Validate SoD consistency at server boot
   SoDPolicyEngine.assertConsistencyWithMatrix(sodMatrixService);
 
-  // Ensure initial company profile exists in storage
-  const existingTenant = await masterStorage.getTenant(companyProfile.id);
-  if (!existingTenant.success || !existingTenant.data) {
-    await masterStorage.saveTenant(companyProfile, 'init-seed-company-profile');
-  }
-  await initSeedUsers(masterStorage, companyProfile.id);
+  // الشركة والمستخدمون الأوائل يتم فحصهم وبذرهم بعد فتح المنفذ مباشرة (Non-blocking) لضمان سرعة الاستجابة لـ Cloud Run
+
 
   const app = express();
 
@@ -245,14 +241,15 @@ async function startServer() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"], // لا تسمح بـ unsafe-eval
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
         imgSrc: ["'self'", 'data:', 'blob:'],
-        connectSrc: ["'self'"],
-        frameAncestors: ["'self'"],
+        connectSrc: ["'self'", 'ws:', 'wss:', 'https://*.google.com', 'https://*.run.app', 'https://*.aistudio.google.com', 'https://ai.studio'],
+        frameAncestors: ["'self'", 'https://*.google.com', 'https://*.run.app', 'https://*.aistudio.google.com', 'https://ai.studio'],
       },
     },
+    frameguard: false, // Rely on modern CSP frame-ancestors to permit AI Studio preview embedding while protecting against malicious framing
     crossOriginEmbedderPolicy: false, // لمنع كسر تحميل الخطوط الخارجية
   }));
 
@@ -295,8 +292,6 @@ async function startServer() {
     if (process.env.NODE_ENV === 'production') {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     }
-    // Allow embedding in AI Studio preview iframe while securing external origins
-    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     next();
   });
 
@@ -341,6 +336,20 @@ async function startServer() {
       environment: process.env.NODE_ENV || 'development',
       storageEngine: process.env.DATABASE_URL ? 'PostgreSQL (Primary)' : 'InMemoryAdapter (Dev)',
       calendar: dualDate.combinedFormatted,
+    });
+  });
+
+  // 1.1 Dual Calendar endpoint for frontend
+  app.get('/api/calendar', (req: Request, res: Response) => {
+    const dualDate = DualCalendar.format();
+    res.json({
+      success: true,
+      data: {
+        gregorianFormatted: dualDate.gregorianFormatted,
+        hijriFormatted: dualDate.hijriFormatted,
+        combinedFormatted: dualDate.combinedFormatted,
+      },
+      calendar: dualDate,
     });
   });
 
@@ -587,10 +596,13 @@ async function startServer() {
         let plainSecret = '';
         if (user.twoFactorSecret) {
           try {
-            plainSecret = EncryptionService.decryptPII<string>(user.twoFactorSecret);
+            const dec = EncryptionService.decryptPII<string>(user.twoFactorSecret);
+            if (typeof dec === 'string' && dec.length > 0) {
+              plainSecret = dec;
+            }
           } catch (e) {}
         }
-        if (!plainSecret) {
+        if (!plainSecret || typeof plainSecret !== 'string') {
           plainSecret = generateSecret();
           const encryptedSecret = EncryptionService.encryptPII(plainSecret);
           await targetStorage.updateUser(user.id, { twoFactorSecret: encryptedSecret });
@@ -616,11 +628,19 @@ async function startServer() {
       let twoFactorValid = false;
       if (twoFactorCode) {
         if (user.twoFactorSecret) {
-          const plainSecret = EncryptionService.decryptPII<string>(user.twoFactorSecret);
-          const verifyResult = await verify({ token: twoFactorCode, secret: plainSecret });
-          twoFactorValid = !!verifyResult.valid;
-          if (twoFactorValid && !user.twoFactorEnabled) {
-            await targetStorage.updateUser(user.id, { twoFactorEnabled: true });
+          let plainSecret = '';
+          try {
+            const dec = EncryptionService.decryptPII<string>(user.twoFactorSecret);
+            if (typeof dec === 'string' && dec.length > 0) {
+              plainSecret = dec;
+            }
+          } catch (e) {}
+          if (plainSecret) {
+            const verifyResult = await verify({ token: twoFactorCode, secret: plainSecret });
+            twoFactorValid = !!verifyResult.valid;
+            if (twoFactorValid && !user.twoFactorEnabled) {
+              await targetStorage.updateUser(user.id, { twoFactorEnabled: true });
+            }
           }
         }
       } else if (backupCode) {
@@ -722,10 +742,13 @@ async function startServer() {
 
     // 1A: Set HttpOnly, Secure, SameSite Cookies — Zero tokens in localStorage!
     const isProd = process.env.NODE_ENV === 'production';
+    const isIframeOrCross = req.headers['sec-fetch-dest'] === 'iframe' || req.headers['sec-fetch-site'] === 'cross-site';
+    const sameSiteMode: 'none' | 'lax' | 'strict' = isProd && isIframeOrCross ? 'none' : 'lax';
+
     res.cookie('an_access_token', accessToken, {
       httpOnly: true,
       secure: isProd,
-      sameSite: 'strict',
+      sameSite: sameSiteMode,
       maxAge: 15 * 60 * 1000, // 15 minutes (Section 1A)
       path: '/',
     });
@@ -733,7 +756,7 @@ async function startServer() {
     res.cookie('an_refresh_token', refreshToken, {
       httpOnly: true,
       secure: isProd,
-      sameSite: 'strict',
+      sameSite: sameSiteMode,
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
       path: '/',
     });
@@ -760,6 +783,7 @@ async function startServer() {
 
     const responsePayload = {
       success: true,
+      accessToken,
       user: {
         id: user.id,
         username: user.username,
@@ -821,10 +845,13 @@ async function startServer() {
     }
 
     const isProd = process.env.NODE_ENV === 'production';
+    const isIframeOrCross = req.headers['sec-fetch-dest'] === 'iframe' || req.headers['sec-fetch-site'] === 'cross-site';
+    const sameSiteMode: 'none' | 'lax' | 'strict' = isProd && isIframeOrCross ? 'none' : 'lax';
+
     res.cookie('an_access_token', rotation.newAccessToken, {
       httpOnly: true,
       secure: isProd,
-      sameSite: 'strict',
+      sameSite: sameSiteMode,
       maxAge: 15 * 60 * 1000,
       path: '/',
     });
@@ -832,12 +859,12 @@ async function startServer() {
     res.cookie('an_refresh_token', rotation.newRefreshToken, {
       httpOnly: true,
       secure: isProd,
-      sameSite: 'strict',
+      sameSite: sameSiteMode,
       maxAge: 7 * 24 * 60 * 60 * 1000,
       path: '/',
     });
 
-    return res.json({ success: true, message: 'تم تدوير رمز الجلسة بنجاح' });
+    return res.json({ success: true, accessToken: rotation.newAccessToken, message: 'تم تدوير رمز الجلسة بنجاح' });
   });
 
   // 1A — Logout Endpoint
@@ -1340,6 +1367,69 @@ async function startServer() {
     );
 
     return res.json({ success: true, data: approveRes.data });
+  });
+
+  // 5.1 Approve transaction by URL param id
+  app.post('/api/transactions/:id/approve', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
+    const requestId = req.params.id;
+    const idempotencyKey = (req.headers['idempotency-key'] as string) || req.body?.idempotencyKey;
+    if (!idempotencyKey) {
+      return res.status(400).json({
+        type: 'https://api.an-erp.local/errors/missing-idempotency-key',
+        title: 'مفتاح idempotencyKey مطلوب',
+        status: 400,
+        detail: 'عمليات الاعتماد المالي تتطلب Idempotency-Key.',
+      });
+    }
+
+    const storage: StoragePort = (req as any).storage || masterStorage;
+    const approvalEngine = new ApprovalEngine(storage);
+
+    const approveRes = await approvalEngine.executeApproval(tenantId, requestId, userId, idempotencyKey);
+    if (!approveRes.success) {
+      return res.status(approveRes.error?.status || 403).json(approveRes.error);
+    }
+
+    await recordAudit(
+      userId,
+      userId,
+      'APPROVE_DOCUMENT',
+      'JOURNAL_ENTRY',
+      requestId,
+      { approverId: userId },
+      req.ip || '127.0.0.1',
+      tenantId,
+      storage
+    );
+
+    return res.json({ success: true, data: approveRes.data });
+  });
+
+  // 5.2 Post transaction by URL param id
+  app.post('/api/transactions/:id/post', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const entryId = req.params.id;
+    const idempotencyKey = (req.headers['idempotency-key'] as string) || req.body?.idempotencyKey;
+    if (!idempotencyKey) {
+      return res.status(400).json({
+        type: 'https://api.an-erp.local/errors/missing-idempotency-key',
+        title: 'مفتاح idempotencyKey مطلوب',
+        status: 400,
+        detail: 'عمليات ترحيل القيود تتطلب Idempotency-Key.',
+      });
+    }
+
+    const storage: StoragePort = (req as any).storage || masterStorage;
+    const postingEngine = new PostingEngine(storage);
+
+    const postRes = await postingEngine.postEntry(tenantId, entryId, idempotencyKey);
+    if (!postRes.success) {
+      return res.status(postRes.error?.status || 422).json(postRes.error);
+    }
+
+    return res.json({ success: true, data: postRes.data });
   });
 
   // ============================================================================
@@ -2027,6 +2117,20 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`A.N ERP Server running on http://0.0.0.0:${PORT}`);
+
+    // تشغيل بذر المنشأة والمستخدمين بشكل غير معطل للمنفذ بعد استماع السيرفر مباشرة
+    (async () => {
+      try {
+        const existingTenant = await masterStorage.getTenant(companyProfile.id);
+        if (!existingTenant.success || !existingTenant.data) {
+          await masterStorage.saveTenant(companyProfile, 'init-seed-company-profile');
+        }
+        await initSeedUsers(masterStorage, companyProfile.id);
+        console.log('✓ تم فحص وبذر بيانات المستأجر والمستخدمين بنجاح.');
+      } catch (seedErr) {
+        console.error('تنبيه: تعذر إكمال بذر البيانات الأولية تلقائياً — المنفذ متاح والفحوصات تعمل:', seedErr);
+      }
+    })();
   });
 }
 

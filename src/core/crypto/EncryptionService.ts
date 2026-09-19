@@ -89,7 +89,7 @@ export class EncryptionService {
       }
       return obj as T;
     } catch {
-      return {} as T;
+      return null as unknown as T;
     }
   }
 

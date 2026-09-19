@@ -75,7 +75,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         setShow2FAPrompt(true);
         setSecurityNote(data.securityNote || 'التحقق الثنائي إلزامي');
         setQrCodeUrl(data.qrCodeDataUrl || null);
-        setSetupSecret(data.secret || null);
+        setSetupSecret(typeof data.secret === 'string' && data.secret ? data.secret : null);
         setIsLoading(false);
         return;
       }
@@ -192,7 +192,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 <div className="text-center p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
                   <p className="text-[11px] font-semibold text-slate-700">امسح الرمز بتطبيق Authenticator أو أدخل المفتاح يدوياً:</p>
                   <img src={qrCodeUrl} alt="2FA QR Code" className="w-32 h-32 mx-auto rounded-lg border border-slate-200 bg-white p-1" />
-                  {setupSecret && (
+                  {typeof setupSecret === 'string' && setupSecret.length > 0 && (
                     <div className="text-[11px] font-mono text-slate-700 bg-white p-1.5 rounded border border-slate-200 select-all break-all">
                       المفتاح: <span className="font-bold text-blue-700">{setupSecret}</span>
                     </div>

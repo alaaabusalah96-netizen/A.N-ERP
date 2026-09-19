@@ -310,6 +310,10 @@ export async function runPhase2Battery(): Promise<Phase2BatterySuiteResult> {
     'توجيه المستأجر المخصص (Dedicated Isolation) للـ Adapter الصحيح ديناميكياً بدلاً من Postgres الدائم',
     '2B_ADAPTER_GOVERNANCE',
     async () => {
+      // Mock environment variables for dedicated adapter references in test
+      process.env.MYSQL_URL_DEDICATED = 'mysql://test:test@127.0.0.1:3306/test';
+      process.env.MONGO_URL_DEDICATED = 'mongodb://127.0.0.1:27017/test';
+
       // 1. Dedicated MySQL Company
       const dedicatedMySQLCompany: TenantCompany = {
         id: `comp-ded-mysql-${Date.now()}`,
@@ -892,7 +896,11 @@ if (process.argv[1] && (process.argv[1].endsWith('runPhase2Battery.ts') || proce
       if (r.error) console.log(`       Error: ${r.error}`);
     });
     console.log('======================================================\n');
-    if (!report.allPassed) process.exit(1);
+    if (!report.allPassed) {
+      process.exit(1);
+    } else {
+      process.exit(0);
+    }
   }).catch((err) => {
     console.error('Fatal battery error:', err);
     process.exit(1);

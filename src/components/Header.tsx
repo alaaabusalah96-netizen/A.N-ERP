@@ -11,11 +11,13 @@ interface HeaderProps {
 }
 
 const availableRoles: { role: UserRole; titleAr: string }[] = [
+  { role: 'admin', titleAr: 'مدير النظام (Admin)' },
   { role: 'accountant', titleAr: 'محاسب عام' },
   { role: 'financial_approver', titleAr: 'معتمد مالي' },
   { role: 'warehouse_keeper', titleAr: 'أمين مستودع' },
   { role: 'sales_officer', titleAr: 'مسؤول مبيعات' },
   { role: 'branch_manager', titleAr: 'مدير الفرع' },
+  { role: 'fleet_supervisor', titleAr: 'مشرف أسطول' },
 ];
 
 export const Header: React.FC<HeaderProps> = ({
@@ -25,6 +27,11 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
   onToggleMobileNav,
 }) => {
+  const currentRoleExists = availableRoles.some((r) => r.role === currentUser.role);
+  const displayRoles = currentRoleExists
+    ? availableRoles
+    : [{ role: currentUser.role, titleAr: currentUser.roleTitleAr || currentUser.role }, ...availableRoles];
+
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -97,7 +104,7 @@ export const Header: React.FC<HeaderProps> = ({
                   onChange={(e) => onRoleChange(e.target.value as UserRole)}
                   className="bg-white text-xs font-semibold text-slate-800 py-1.5 px-3 pr-2 pl-7 rounded-md border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-600 appearance-none cursor-pointer"
                 >
-                  {availableRoles.map((r) => (
+                  {displayRoles.map((r) => (
                     <option key={r.role} value={r.role}>
                       {r.titleAr}
                     </option>

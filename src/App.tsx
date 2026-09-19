@@ -24,12 +24,22 @@ export default function App() {
   const [selectedTxForPrint, setSelectedTxForPrint] = useState<OperationalTransaction | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
 
   const showNotification = (msg: string) => {
     setNotification(msg);
     setTimeout(() => {
       setNotification(null);
     }, 4500);
+  };
+
+  const getAuthHeaders = (extraHeaders?: Record<string, string>, tokenOverride?: string) => {
+    const headers: Record<string, string> = { ...(extraHeaders || {}) };
+    const activeToken = tokenOverride || authToken;
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    return headers;
   };
 
   // Check auth session via HttpOnly cookie on initial mount
@@ -40,7 +50,7 @@ export default function App() {
 
   const checkCurrentAuth = async () => {
     try {
-      const res = await fetch('/api/auth/me');
+      const res = await fetch('/api/auth/me', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         if ((data.authenticated || data.success) && data.user) {
@@ -57,9 +67,13 @@ export default function App() {
   const fetchDualCalendar = async () => {
     try {
       const res = await fetch('/api/calendar');
-      const data = await res.json();
-      if (data.success) {
-        setCalendar(data.data);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.data) {
+          setCalendar(data.data);
+        } else if (data.calendar) {
+          setCalendar(data.calendar);
+        }
       }
     } catch {
       // fallback
@@ -81,25 +95,30 @@ export default function App() {
     }
   }
 
-  const fetchTransactions = async () => {
+  const fetchTransactions = async (overrideToken?: string) => {
     setIsLoadingTransactions(true);
     try {
-      const res = await fetch('/api/transactions');
-      const data = await res.json();
-      if (data.success && Array.isArray(data.data)) {
-        const mapped: OperationalTransaction[] = data.data.map((entry: any) => ({
-          id: entry.id,
-          code: entry.code ?? '—',
-          date: entry.date ?? '',
-          type: entry.type ?? 'قيد',
-          description: entry.description ?? '',
-          amount: typeof entry.totalAmount === 'number' ? entry.totalAmount : 0,
-          currency: entry.currency ?? 'ر.س',
-          party: entry.party ?? '—',
-          initiator: entry.createdBy ?? '—',
-          status: mapJournalStatusToArabic(entry.status),
-        }));
-        setTransactions(mapped);
+      const res = await fetch('/api/transactions', {
+        headers: getAuthHeaders(undefined, overrideToken),
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.data)) {
+          const mapped: OperationalTransaction[] = data.data.map((entry: any) => ({
+            id: entry.id,
+            code: entry.code ?? '—',
+            date: entry.date ?? '',
+            type: entry.type ?? 'قيد',
+            description: entry.description ?? '',
+            amount: typeof entry.totalAmount === 'number' ? entry.totalAmount : 0,
+            currency: entry.currency ?? 'ر.س',
+            party: entry.party ?? '—',
+            initiator: entry.createdBy ?? '—',
+            status: mapJournalStatusToArabic(entry.status),
+          }));
+          setTransactions(mapped);
+        }
       }
     } catch {
       // ignore
@@ -109,21 +128,31 @@ export default function App() {
   };
 
   const handleLoginSuccess = (loginData: any) => {
-    setCurrentUser(loginData?.user ?? null);
+    const user = loginData?.user ?? null;
+    const token = loginData?.accessToken || null;
+    if (token) {
+      setAuthToken(token);
+    }
+    setCurrentUser(user);
     setIsLoggedIn(true);
     if (loginData?.calendar) {
       setCalendar(loginData.calendar);
     }
-    showNotification(`مرحباً بك ${loginData?.user?.fullName ?? ''}، تم تسجيل الدخول بنجاح.`);
-    fetchTransactions();
+    showNotification(`مرحباً بك ${user?.fullName ?? ''}، تم تسجيل الدخول بنجاح.`);
+    fetchTransactions(token || undefined);
   };
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        credentials: 'include',
+      });
     } catch {
       // ignore
     }
+    setAuthToken(null);
     setIsLoggedIn(false);
     setCurrentUser(null);
     setActiveSection('overview');
@@ -133,7 +162,8 @@ export default function App() {
     try {
       const res = await fetch('/api/transactions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        credentials: 'include',
         body: JSON.stringify(newTx),
       });
       const data = await res.json();
@@ -150,7 +180,16 @@ export default function App() {
 
   const handleApproveTransaction = async (id: string) => {
     try {
-      const res = await fetch(`/api/transactions/${id}/approve`, { method: 'POST' });
+      const idemKey = `appr-${id}-${Date.now()}`;
+      const res = await fetch(`/api/transactions/${id}/approve`, {
+        method: 'POST',
+        headers: getAuthHeaders({
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idemKey,
+        }),
+        credentials: 'include',
+        body: JSON.stringify({ idempotencyKey: idemKey }),
+      });
       const data = await res.json();
       if (res.ok) {
         setTransactions(transactions.map((tx) => (tx.id === id ? { ...tx, status: 'معتمد' } : tx)));
@@ -166,7 +205,16 @@ export default function App() {
 
   const handlePostTransaction = async (id: string) => {
     try {
-      const res = await fetch(`/api/transactions/${id}/post`, { method: 'POST' });
+      const idemKey = `post-${id}-${Date.now()}`;
+      const res = await fetch(`/api/transactions/${id}/post`, {
+        method: 'POST',
+        headers: getAuthHeaders({
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idemKey,
+        }),
+        credentials: 'include',
+        body: JSON.stringify({ idempotencyKey: idemKey }),
+      });
       const data = await res.json();
       if (res.ok) {
         showNotification('تم ترحيل السند إلى دفاتر الأستاذ العام وتحديث الأرصدة بدقة.');
