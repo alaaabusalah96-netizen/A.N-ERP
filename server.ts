@@ -38,8 +38,10 @@ import { DualControlService } from './src/core/governance/DualControlService';
 import { AuditChainService } from './src/core/audit/AuditChainService';
 import { runPhase2Battery } from './src/core/tests/runPhase2Battery';
 import { runPhase3Battery } from './src/core/tests/runPhase3Battery';
+import { runPhase46Battery } from './src/core/tests/runPhase4_6Battery';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
 import { AccountingService } from './src/core/accounting/AccountingService';
+import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -295,7 +297,68 @@ async function startServer() {
     next();
   });
 
-  // Helper to record operational audit log
+  // 4.6A: Strict Storage & Tenant Request Resolvers — No Silent Fallbacks Allowed
+  function getRequestStorage(req: Request, res: Response): StoragePort | null {
+    const storage = (req as any).storage as StoragePort;
+    if (!storage) {
+      res.status(500).json({
+        type: 'https://api.an-erp.local/errors/missing-storage-context',
+        title: 'سياق التخزين مفقود',
+        status: 500,
+        detail: 'تعذر تحديد محوّل التخزين الخاص بهذه المنشأة (ممنوع السقوط الصامت على المخزن الافتراضي وفق البند 4.6A).',
+      });
+      return null;
+    }
+    return storage;
+  }
+
+  function getRequestTenant(req: Request, res: Response): TenantCompany | null {
+    const tenant = (req as any).tenant as TenantCompany;
+    if (!tenant) {
+      res.status(500).json({
+        type: 'https://api.an-erp.local/errors/missing-tenant-context',
+        title: 'سياق المنشأة مفقود',
+        status: 500,
+        detail: 'تعذر تحديد سياق المنشأة الحالية (ممنوع السقوط الصامت على المنشأة الافتراضية وفق البند 4.6A).',
+      });
+      return null;
+    }
+    return tenant;
+  }
+
+  // 4.6G: CSRF & Origin Defense-in-Depth for State-Changing Requests (ADR 007)
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const method = req.method.toUpperCase();
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      const origin = req.headers['origin'] as string;
+      const host = req.headers['host'] as string;
+
+      if (origin && host) {
+        try {
+          const originHost = new URL(origin).host;
+          if (originHost !== host) {
+            // Must have custom anti-CSRF header
+            const hasCustomHeader =
+              req.headers['idempotency-key'] ||
+              req.headers['x-requested-with'] ||
+              req.headers['authorization'];
+            if (!hasCustomHeader) {
+              const problem: RFC7807Problem = {
+                type: 'https://api.an-erp.local/errors/csrf-violation',
+                title: 'انتهاك حماية CSRF',
+                status: 403,
+                detail: 'تم رفض الطلب الخارجي غير المصرح به لافتقاره إلى ترويسة مخصصة (ADR 007 والبند 4.6G).',
+              };
+              return res.status(403).json(problem);
+            }
+          }
+        } catch (e) {}
+      }
+    }
+    next();
+  });
+
+  // Helper to record operational audit log (scoped strictly to provided storage & tenant)
   const recordAudit = async (
     actorId: string,
     actorName: string,
@@ -304,11 +367,12 @@ async function startServer() {
     entityId: string,
     details: any,
     ip: string,
-    tenantId: string = companyProfile.id,
+    tenantId?: string,
     storage?: StoragePort
   ) => {
     try {
-      const activePort = storage || masterStorage;
+      const activePort = storage;
+      if (!activePort || !tenantId) return;
       await activePort.saveAuditRecord({
         id: `AUD-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         tenantId,
@@ -370,10 +434,26 @@ async function startServer() {
     }
     if (!accessToken) {
       if (process.env.NODE_ENV !== 'production' && req.headers['x-bypass-auth'] === 'true') {
-        const devTenantId = (req.headers['x-tenant-id'] as string) || companyProfile.id;
+        const devTenantId = req.headers['x-tenant-id'] as string;
+        if (!devTenantId) {
+          return res.status(400).json({
+            type: 'https://api.an-erp.local/errors/missing-tenant-id',
+            title: 'معرف المنشأة إلزامي لتجاوز المصادقة',
+            status: 400,
+            detail: 'يتطلب تجاوز المصادقة في بيئة التطوير تمرير الترويسة X-Tenant-Id صراحة دون سقوط صامت (البند 4.6A).',
+          });
+        }
         const tenantRes = await masterStorage.getTenant(devTenantId);
-        const devTenant = tenantRes.success && tenantRes.data ? tenantRes.data : companyProfile;
-        const devStorage = globalStorageRouter.resolveAdapter(devTenant);
+        if (!tenantRes.success || !tenantRes.data) {
+          return res.status(404).json({
+            type: 'https://api.an-erp.local/errors/tenant-not-found',
+            title: 'المنشأة غير مسجلة',
+            status: 404,
+            detail: `المنشأة (${devTenantId}) غير مسجلة في سجل المستأجرين.`,
+          });
+        }
+        const devTenant = tenantRes.data;
+        const devStorage = await globalStorageRouter.resolveAdapterAsync(devTenant);
         (req as any).authContext = {
           tenantId: devTenantId,
           userId: 'USR-ADMIN',
@@ -400,7 +480,7 @@ async function startServer() {
         return res.status(401).json({ success: false, message: 'انتهت صلاحية الجلسة (15 دقيقة)' });
       }
 
-      const tenantId = payload.tenantId || (req.headers['x-tenant-id'] as string);
+      const tenantId = payload.tenantId;
       if (!tenantId) {
         return res.status(401).json({
           type: 'https://api.an-erp.local/errors/unauthorized',
@@ -411,8 +491,16 @@ async function startServer() {
       }
 
       const tenantRes = await masterStorage.getTenant(tenantId);
-      const tenant = tenantRes.success && tenantRes.data ? tenantRes.data : companyProfile;
-      const tenantStorage = globalStorageRouter.resolveAdapter(tenant);
+      if (!tenantRes.success || !tenantRes.data) {
+        return res.status(401).json({
+          type: 'https://api.an-erp.local/errors/tenant-not-found',
+          title: 'المنشأة غير مسجلة',
+          status: 401,
+          detail: `المنشأة ذات المعرف (${tenantId}) غير مسجلة بالنظام أو تم إيقافها.`,
+        });
+      }
+      const tenant = tenantRes.data;
+      const tenantStorage = await globalStorageRouter.resolveAdapterAsync(tenant);
       const tokenService = new TokenService(tenantStorage);
 
       const ver = await tokenService.verifyAccessToken(accessToken);
@@ -435,10 +523,19 @@ async function startServer() {
   }
 
   // 1A & 1D & 1I & 1J & 1K — Enterprise Authentication (Login)
+  // 4.6C & 4.6F: Pre-auth tenant resolution and scoped credential lookup
   app.post('/api/auth/login', authRateLimiter, async (req: Request, res: Response) => {
+    // 4.6C & 4.6F: Resolve target tenant before accessing storage or credentials
+    const tenantResolution = await TenantResolutionService.resolveTenantFromRequest(masterStorage, req);
+    if (!tenantResolution.success || !tenantResolution.tenant) {
+      return res.status(tenantResolution.error?.status || 400).json(tenantResolution.error);
+    }
+    const targetTenant = tenantResolution.tenant;
+    const targetStorage = await globalStorageRouter.resolveAdapterAsync(targetTenant);
+
     const idempotencyKey = req.headers['idempotency-key'] as string;
     if (idempotencyKey) {
-      const cached = await masterStorage.checkIdempotencyRecord(companyProfile.id, idempotencyKey, 'LOGIN');
+      const cached = await targetStorage.checkIdempotencyRecord(targetTenant.id, idempotencyKey, 'LOGIN');
       if (cached.success && cached.data) {
         return res.json(cached.data);
       }
@@ -456,35 +553,11 @@ async function startServer() {
       return res.status(400).json(problem);
     }
 
-    // Determine target tenant and storage
-    const requestedTenantId = (req.headers['x-tenant-id'] as string)?.trim() || (req.body.tenantId as string)?.trim();
-    let targetTenant: TenantCompany = companyProfile;
-    let targetStorage: StoragePort = masterStorage;
+    // 4.6F: Credential check strictly scoped to targetTenant.id — NO cross-tenant search
     let user: User | null = null;
-
-    if (requestedTenantId) {
-      const tenantRes = await masterStorage.getTenant(requestedTenantId);
-      if (tenantRes.success && tenantRes.data) {
-        targetTenant = tenantRes.data;
-        targetStorage = globalStorageRouter.resolveAdapter(targetTenant);
-      }
-      const uRes = await targetStorage.getUserByUsername(targetTenant.id, username);
-      if (uRes.success && uRes.data) {
-        user = uRes.data;
-      }
-    } else {
-      const tenantsRes = await masterStorage.listTenants();
-      const allTenants = tenantsRes.success && tenantsRes.data ? tenantsRes.data : [companyProfile];
-      for (const t of allTenants) {
-        const adp = globalStorageRouter.resolveAdapter(t);
-        const uRes = await adp.getUserByUsername(t.id, username);
-        if (uRes.success && uRes.data) {
-          user = uRes.data;
-          targetTenant = t;
-          targetStorage = adp;
-          break;
-        }
-      }
+    const uRes = await targetStorage.getUserByUsername(targetTenant.id, username);
+    if (uRes.success && uRes.data) {
+      user = uRes.data;
     }
 
     const anomalyDetector = new AnomalyDetector(targetStorage);
@@ -816,7 +889,7 @@ async function startServer() {
       });
     }
 
-    let targetStorage = masterStorage;
+    let targetStorage: StoragePort | null = null;
     try {
       const parts = rawRefreshToken.split('.');
       if (parts.length === 3) {
@@ -824,11 +897,20 @@ async function startServer() {
         if (payload.tenantId) {
           const tRes = await masterStorage.getTenant(payload.tenantId);
           if (tRes.success && tRes.data) {
-            targetStorage = globalStorageRouter.resolveAdapter(tRes.data);
+            targetStorage = await globalStorageRouter.resolveAdapterAsync(tRes.data);
           }
         }
       }
     } catch (e) {}
+
+    if (!targetStorage) {
+      return res.status(401).json({
+        type: 'https://api.an-erp.local/errors/unauthorized',
+        title: 'فشل حسم سياق المنشأة',
+        status: 401,
+        detail: 'تعذر التحقق من سياق المنشأة المرتبط برمز التحديث (البند 4.6A).',
+      });
+    }
 
     const tokenService = new TokenService(targetStorage);
     const rotation = await tokenService.rotateRefreshToken(rawRefreshToken);
@@ -875,27 +957,26 @@ async function startServer() {
         const parts = accessToken.split('.');
         if (parts.length === 3) {
           const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-          let targetStorage = masterStorage;
           if (payload.tenantId) {
             const tRes = await masterStorage.getTenant(payload.tenantId);
             if (tRes.success && tRes.data) {
-              targetStorage = globalStorageRouter.resolveAdapter(tRes.data);
+              const targetStorage = await globalStorageRouter.resolveAdapterAsync(tRes.data);
+              const tokenService = new TokenService(targetStorage);
+              const anomalyDetector = new AnomalyDetector(targetStorage);
+              const ver = await tokenService.verifyAccessToken(accessToken);
+              if (ver.valid && ver.payload) {
+                await tokenService.revokeFamily(ver.payload.familyId, 'USER_LOGOUT');
+                await targetStorage.deleteActiveSession(ver.payload.sessionId);
+                await anomalyDetector.terminateSession(ver.payload.sessionId);
+                DomainEventBus.publish({
+                  eventType: 'SESSION_REVOKED',
+                  tenantId: payload.tenantId,
+                  actorId: ver.payload.sub,
+                  actorName: 'User',
+                  payload: { sessionId: ver.payload.sessionId, reason: 'USER_LOGOUT' },
+                });
+              }
             }
-          }
-          const tokenService = new TokenService(targetStorage);
-          const anomalyDetector = new AnomalyDetector(targetStorage);
-          const ver = await tokenService.verifyAccessToken(accessToken);
-          if (ver.valid && ver.payload) {
-            await tokenService.revokeFamily(ver.payload.familyId, 'USER_LOGOUT');
-            await targetStorage.deleteActiveSession(ver.payload.sessionId);
-            await anomalyDetector.terminateSession(ver.payload.sessionId);
-            DomainEventBus.publish({
-              eventType: 'SESSION_REVOKED',
-              tenantId: payload.tenantId || companyProfile.id,
-              actorId: ver.payload.sub,
-              actorName: 'User',
-              payload: { sessionId: ver.payload.sessionId, reason: 'USER_LOGOUT' },
-            });
           }
         }
       } catch (e) {}
@@ -908,9 +989,11 @@ async function startServer() {
 
   // 1A — Current User & Session Info (Reads from Cookie and StoragePort)
   app.get('/api/auth/me', requireAuth, async (req: Request, res: Response) => {
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
+    const tenant = getRequestTenant(req, res);
+    if (!tenant) return;
     const auth = (req as any).authContext;
-    const tenant: CompanyProfile = (req as any).tenant || companyProfile;
 
     const userRes = await storage.getUserById(auth.userId);
     let userRecord = userRes.success ? userRes.data : null;
@@ -950,7 +1033,8 @@ async function startServer() {
   // Section B.2: 2FA Setup with Real TOTP & QR Code (otplib + qrcode) via StoragePort
   app.post('/api/auth/2fa/setup', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const { username } = req.body;
     const userRes = await storage.getUserByUsername(tenantId, username);
     if (!userRes.success || !userRes.data) {
@@ -979,7 +1063,8 @@ async function startServer() {
 
   app.post('/api/auth/2fa/verify-setup', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const { username, token } = req.body;
     const userRes = await storage.getUserByUsername(tenantId, username);
     if (!userRes.success || !userRes.data || !userRes.data.twoFactorSecret) {
@@ -999,14 +1084,17 @@ async function startServer() {
 
   // 1B — Company Settings (Read and Update, with Read-Only backendConfig)
   app.get('/api/company', requireAuth, (req: Request, res: Response) => {
-    const tenant: CompanyProfile = (req as any).tenant || companyProfile;
+    const tenant = getRequestTenant(req, res);
+    if (!tenant) return;
     return res.json({ success: true, data: tenant });
   });
 
   app.put('/api/company', requireAuth, async (req: Request, res: Response) => {
     const { nameAr, nameEn, crNumber, taxNumber, baseCurrency, auditRetentionPolicyYears } = req.body;
-    const tenant: CompanyProfile = (req as any).tenant || companyProfile;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const tenant = getRequestTenant(req, res);
+    if (!tenant) return;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
 
     // Validate 15-digit tax number
     if (taxNumber && !/^\d{15}$/.test(taxNumber.trim())) {
@@ -1057,7 +1145,8 @@ async function startServer() {
   // 1C — Users & Segregation of Duties (SoD) Management via StoragePort
   app.get('/api/users', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const usersRes = await storage.listUsers(tenantId);
     const users = usersRes.success && usersRes.data ? usersRes.data : [];
     const list = users.map((u) => {
@@ -1086,7 +1175,8 @@ async function startServer() {
 
   app.post('/api/users', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const { username, fullName, role, branchName, email, phone, nationalId } = req.body;
 
     // SoD Server-Side Conflict Check (Section 1C)
@@ -1132,7 +1222,8 @@ async function startServer() {
   // 1L — Invitation Signed Link Generation
   app.post('/api/invitations', requireAuth, (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const tokenService = new TokenService(storage);
     const { email, role } = req.body;
     if (!email || !role) {
@@ -1173,7 +1264,8 @@ async function startServer() {
   // 1I — Active Sessions List & Remote Instant Revocation via StoragePort
   app.get('/api/sessions', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const listRes = await storage.listActiveSessions(tenantId);
     const list = listRes.success && listRes.data ? listRes.data : [];
     return res.json({ success: true, data: list });
@@ -1181,7 +1273,8 @@ async function startServer() {
 
   app.delete('/api/sessions/:sessionId', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const tokenService = new TokenService(storage);
     const anomalyDetector = new AnomalyDetector(storage);
     const { sessionId } = req.params;
@@ -1212,7 +1305,8 @@ async function startServer() {
   // 1G — No-Code Custom Fields Management (StoragePort)
   app.get('/api/custom-fields', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const resFields = await storage.getCustomFields(tenantId);
     const data = resFields.success && resFields.data ? resFields.data : [];
     return res.json({ success: true, data });
@@ -1220,7 +1314,8 @@ async function startServer() {
 
   app.post('/api/custom-fields', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const { targetEntity, fieldName, fieldLabelAr, fieldType, isRequired, options } = req.body;
     if (!fieldName || !fieldLabelAr || !fieldType) {
       return res.status(400).json({ error: 'الاسم التقني والاسم العربي ونوع الحقل مطلوبة' });
@@ -1246,7 +1341,8 @@ async function startServer() {
   // 1E — Operational Audit Trail
   app.get('/api/audit-trail', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const resAudit = await storage.getAuditRecords(tenantId);
     const data = resAudit.success && resAudit.data ? resAudit.data : [];
     return res.json({ success: true, data });
@@ -1262,7 +1358,8 @@ async function startServer() {
   // 3. Transactions List (Read via StoragePort)
   app.get('/api/transactions', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const result = await storage.listJournalEntries(tenantId);
     if (!result.success) {
       return res.status(result.error?.status || 500).json(result.error);
@@ -1285,7 +1382,8 @@ async function startServer() {
       return res.status(400).json(problem);
     }
 
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const postingEngine = new PostingEngine(storage);
     const numberingEngine = new NumberingEngine(storage);
 
@@ -1346,7 +1444,8 @@ async function startServer() {
     }
 
     const effectiveApproverId = approverId || userId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const approvalEngine = new ApprovalEngine(storage);
 
     const approveRes = await approvalEngine.executeApproval(tenantId, requestId, effectiveApproverId, idempotencyKey);
@@ -1384,7 +1483,8 @@ async function startServer() {
       });
     }
 
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const approvalEngine = new ApprovalEngine(storage);
 
     const approveRes = await approvalEngine.executeApproval(tenantId, requestId, userId, idempotencyKey);
@@ -1421,7 +1521,8 @@ async function startServer() {
       });
     }
 
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const postingEngine = new PostingEngine(storage);
 
     const postRes = await postingEngine.postEntry(tenantId, entryId, idempotencyKey);
@@ -1450,9 +1551,15 @@ async function startServer() {
     });
   });
 
-  // 2A, 2B, 2H: Execute 5-Step Company Creation Wizard
+  // ============================================================================
+  // PLATFORM-LEVEL ROUTES (Section 4.6B)
+  // Direct access to masterStorage is strictly restricted to platform-level tenant
+  // provisioning and tenant directory listing. Business operations MUST NOT use masterStorage.
+  // ============================================================================
+
+  // 2A, 2B, 2H: Execute 5-Step Company Creation Wizard (Platform Route — Section 4.6B)
   app.post('/api/wizard/create-company', async (req: Request, res: Response) => {
-    const storage = masterStorage;
+    const storage = masterStorage; // Explicitly allowed: Platform tenant provisioning (4.6B)
     const wizard = new CompanyWizardService(storage);
     const result = await wizard.createCompany(req.body);
     if (!result.success) {
@@ -1461,9 +1568,9 @@ async function startServer() {
     return res.status(201).json(result);
   });
 
-  // 2B: List Registered Tenants / Companies
+  // 2B: List Registered Tenants / Companies (Platform Route — Section 4.6B)
   app.get('/api/tenants', async (req: Request, res: Response) => {
-    const storage = masterStorage;
+    const storage = masterStorage; // Explicitly allowed: Platform tenant directory (4.6B)
     const result = await storage.listTenants();
     if (!result.success) {
       return res.status(result.error?.status || 500).json(result.error);
@@ -1486,7 +1593,8 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const { sequenceKey, targetSequence, justificationAr, authorizedBy, idempotencyKey } = req.body;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const numbering = new NumberingEngine(storage);
     const result = await numbering.overrideSequence(
       tenantId,
@@ -1514,7 +1622,8 @@ async function startServer() {
         detail: 'رقم الحساب (accountCode) وتاريخ الاستعلام (asOfDate بصيغة YYYY-MM-DD) مطلوبان.',
       });
     }
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const historyService = new HistoricalQueryService(storage);
     const result = await historyService.getAccountBalanceAsOf(
       tenantId,
@@ -1539,7 +1648,8 @@ async function startServer() {
         detail: 'رقم الحساب (accountCode) وتاريخ الاستعلام (asOfDate) مطلوبان.',
       });
     }
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const historyService = new HistoricalQueryService(storage);
     const result = await historyService.getStatementAsOf(
       tenantId,
@@ -1557,7 +1667,8 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const { item, createdBy, idempotencyKey } = req.body;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const dualControl = new DualControlService(storage);
     const result = await dualControl.createMasterItem(
       tenantId,
@@ -1575,7 +1686,8 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const { approvedBy, idempotencyKey } = req.body;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const dualControl = new DualControlService(storage);
     const result = await dualControl.approveMasterItem(
       tenantId,
@@ -1594,7 +1706,8 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const { partner, createdBy, idempotencyKey } = req.body;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const dualControl = new DualControlService(storage);
     const result = await dualControl.createMasterPartner(
       tenantId,
@@ -1612,7 +1725,8 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const { approvedBy, idempotencyKey } = req.body;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const dualControl = new DualControlService(storage);
     const result = await dualControl.approveMasterPartner(
       tenantId,
@@ -1629,7 +1743,8 @@ async function startServer() {
   // 2E & 2G: SHA-256 Tamper-Evident Hash Chain Audit
   app.get('/api/audit-chain', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const result = await storage.getAuditChain(tenantId);
     if (!result.success) {
       return res.status(result.error?.status || 500).json(result.error);
@@ -1639,7 +1754,8 @@ async function startServer() {
 
   app.post('/api/audit-chain/verify', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const auditService = new AuditChainService(storage);
     const result = await auditService.verifyIntegrity(tenantId);
     if (!result.success) {
@@ -1651,7 +1767,8 @@ async function startServer() {
   // 2H: Tenant Active Module Manifests
   app.get('/api/tenant-modules', requireAuth, async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
-    const storage: StoragePort = (req as any).storage || masterStorage;
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
     const result = await storage.getTenantModules(tenantId);
     if (!result.success) {
       return res.status(result.error?.status || 500).json(result.error);
@@ -1689,12 +1806,19 @@ async function startServer() {
     return res.json(result);
   });
 
+  // Phase 4.6 Foundation Hardening Acceptance Battery Endpoint
+  app.get('/api/internal/phase4_6-battery', async (req: Request, res: Response) => {
+    const result = await runPhase46Battery();
+    return res.json(result);
+  });
+
   // ============================================================================
   // PHASE 4: ACCOUNTING CORE (نظام المحاسبة الشامل وإدارة الدفاتر والقوائم المالية)
   // ============================================================================
 
-  const getAccountingService = (req: Request): AccountingService => {
-    const storage: StoragePort = (req as any).storage || masterStorage;
+  const getAccountingService = (req: Request, res: Response): AccountingService | null => {
+    const storage = getRequestStorage(req, res);
+    if (!storage) return null;
     return new AccountingService(storage);
   };
 
@@ -1717,7 +1841,9 @@ async function startServer() {
   app.get('/api/accounting/accounts', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const accounts = await getAccountingService(req).listAccounts(tenantId);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const accounts = await svc.listAccounts(tenantId);
       return res.json({ success: true, data: accounts });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message || 'فشل جلب دليل الحسابات' });
@@ -1729,7 +1855,9 @@ async function startServer() {
       const tenantId = (req as any).authContext.tenantId;
       const key = requireIdempotencyKey(req, res, 'حفظ الحساب المحاسبي');
       if (!key) return;
-      const account = await getAccountingService(req).saveAccount(tenantId, req.body, key);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const account = await svc.saveAccount(tenantId, req.body, key);
       return res.json({ success: true, data: account, message: 'تم حفظ وتحديث الحساب بنجاح' });
     } catch (err: any) {
       return res.status(422).json({ success: false, error: err.message || 'فشل حفظ الحساب' });
@@ -1741,7 +1869,9 @@ async function startServer() {
       const tenantId = (req as any).authContext.tenantId;
       const { code } = req.params;
       const { isActive } = req.body;
-      const result = await getAccountingService(req).toggleAccountStatus(tenantId, code, isActive);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const result = await svc.toggleAccountStatus(tenantId, code, isActive);
       return res.json({ success: true, updated: result });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1752,7 +1882,9 @@ async function startServer() {
   app.get('/api/accounting/periods', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const periods = await getAccountingService(req).listFiscalPeriods(tenantId);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const periods = await svc.listFiscalPeriods(tenantId);
       return res.json({ success: true, data: periods });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1766,7 +1898,9 @@ async function startServer() {
       const { periodId } = req.body;
       const key = requireIdempotencyKey(req, res, 'إقفال الفترة المحاسبية');
       if (!key) return;
-      const result = await getAccountingService(req).executePeriodClosingChecklist(tenantId, periodId, userId, key);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const result = await svc.executePeriodClosingChecklist(tenantId, periodId, userId, key);
       return res.json(result);
     } catch (err: any) {
       return res.status(err.status || 500).json({ success: false, error: err.detail || err.message });
@@ -1780,7 +1914,9 @@ async function startServer() {
       const { periodId, reason } = req.body;
       const key = requireIdempotencyKey(req, res, 'إعادة فتح الفترة المحاسبية');
       if (!key) return;
-      const result = await getAccountingService(req).reopenPeriod(tenantId, periodId, reason, userId, key);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const result = await svc.reopenPeriod(tenantId, periodId, reason, userId, key);
       return res.json({ success: true, reopened: result, message: 'تم إعادة فتح الفترة المحاسبية وتوثيق ذلك في سلسلة التدقيق.' });
     } catch (err: any) {
       return res.status(400).json({ success: false, error: err.message });
@@ -1791,7 +1927,8 @@ async function startServer() {
   app.get('/api/accounting/journal-entries', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const primary: any = (req as any).storage || masterStorage;
+      const primary: any = getRequestStorage(req, res);
+      if (!primary) return;
       let entries: any[] = [];
       if (typeof primary.query === 'function') {
         const resDb = await primary.query(
@@ -1858,7 +1995,9 @@ async function startServer() {
         })),
       };
 
-      const posted = await getAccountingService(req).postJournalEntryWithInvariants(tenantId, entry, key);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const posted = await svc.postJournalEntryWithInvariants(tenantId, entry, key);
       return res.json({ success: true, data: posted, message: 'تم ترحيل القيد المحاسبي ذرياً بنجاح' });
     } catch (err: any) {
       const status = err.status || 422;
@@ -1871,7 +2010,9 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const type = req.query.type as any;
-      const dimensions = await getAccountingService(req).listDimensions(tenantId, type);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const dimensions = await svc.listDimensions(tenantId, type);
       return res.json({ success: true, data: dimensions });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1881,7 +2022,9 @@ async function startServer() {
   app.post('/api/accounting/dimensions', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const dim = await getAccountingService(req).saveDimension(tenantId, req.body);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const dim = await svc.saveDimension(tenantId, req.body);
       return res.json({ success: true, data: dim });
     } catch (err: any) {
       return res.status(422).json({ success: false, error: err.message });
@@ -1892,7 +2035,9 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const type = (req.query.type as any) || 'COST_CENTER';
-      const report = await getAccountingService(req).getDimensionAnalyticalReport(tenantId, type);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const report = await svc.getDimensionAnalyticalReport(tenantId, type);
       return res.json({ success: true, data: report });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1903,7 +2048,9 @@ async function startServer() {
   app.get('/api/accounting/units', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const units = await getAccountingService(req).listUnits(tenantId);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const units = await svc.listUnits(tenantId);
       return res.json({ success: true, data: units });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1913,7 +2060,9 @@ async function startServer() {
   app.get('/api/accounting/items', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const items = await getAccountingService(req).listItems(tenantId);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const items = await svc.listItems(tenantId);
       return res.json({ success: true, data: items });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1923,7 +2072,9 @@ async function startServer() {
   app.post('/api/accounting/items', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const saved = await getAccountingService(req).saveItem(tenantId, req.body);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const saved = await svc.saveItem(tenantId, req.body);
       return res.json({ success: true, data: saved, message: 'تم حفظ الصنف المحاسبي بنجاح' });
     } catch (err: any) {
       return res.status(422).json({ success: false, error: err.message });
@@ -1937,7 +2088,9 @@ async function startServer() {
       const userId = (req as any).authContext.userId;
       const key = requireIdempotencyKey(req, res, 'ترحيل الأرصدة الافتتاحية');
       if (!key) return;
-      const entry = await getAccountingService(req).postOpeningBalanceEntry(tenantId, req.body.lines, key, userId);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const entry = await svc.postOpeningBalanceEntry(tenantId, req.body.lines, key, userId);
       return res.json({ success: true, data: entry, message: 'تم ترحيل الأرصدة الافتتاحية بنجاح' });
     } catch (err: any) {
       return res.status(err.status || 422).json(err);
@@ -1948,7 +2101,9 @@ async function startServer() {
   app.get('/api/accounting/reports/trial-balance', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const report = await getAccountingService(req).getTrialBalance(tenantId, req.query.asOfDate as string);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const report = await svc.getTrialBalance(tenantId, req.query.asOfDate as string);
       return res.json({ success: true, data: report });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1959,7 +2114,9 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const periodId = req.query.periodId as string;
-      const report = await getAccountingService(req).getIncomeStatement(tenantId, periodId);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const report = await svc.getIncomeStatement(tenantId, periodId);
       return res.json({ success: true, data: report });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1970,7 +2127,9 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const periodId = req.query.periodId as string;
-      const report = await getAccountingService(req).getBalanceSheet(tenantId, periodId);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const report = await svc.getBalanceSheet(tenantId, periodId);
       return res.json({ success: true, data: report });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1981,7 +2140,9 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const periodId = req.query.periodId as string;
-      const report = await getAccountingService(req).getCashFlowStatement(tenantId, periodId);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const report = await svc.getCashFlowStatement(tenantId, periodId);
       return res.json({ success: true, data: report });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -1992,8 +2153,10 @@ async function startServer() {
   app.post('/api/accounting/import/validate', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const accounts = await getAccountingService(req).listAccounts(tenantId);
-      const validation = getAccountingService(req).validateImportData(tenantId, req.body.rows || [], accounts);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const accounts = await svc.listAccounts(tenantId);
+      const validation = svc.validateImportData(tenantId, req.body.rows || [], accounts);
       return res.json(validation);
     } catch (err: any) {
       return res.status(500).json({ isValid: false, error: err.message });
@@ -2007,7 +2170,9 @@ async function startServer() {
       const key = requireIdempotencyKey(req, res, 'استيراد وترحيل القيود');
       if (!key) return;
       const { entryCode, description, date, rows } = req.body;
-      const entry = await getAccountingService(req).executeStandardImport(tenantId, entryCode, description, date, rows, userId, key);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const entry = await svc.executeStandardImport(tenantId, entryCode, description, date, rows, userId, key);
       return res.json({ success: true, data: entry, message: 'تم استيراد وترحيل القيود بنجاح' });
     } catch (err: any) {
       return res.status(err.status || 422).json(err);
@@ -2019,7 +2184,9 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const year = req.query.year ? Number(req.query.year) : 2026;
-      const budgets = await getAccountingService(req).listBudgets(tenantId, year);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const budgets = await svc.listBudgets(tenantId, year);
       return res.json({ success: true, data: budgets });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -2029,7 +2196,9 @@ async function startServer() {
   app.post('/api/accounting/budgets', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const saved = await getAccountingService(req).saveBudget(tenantId, req.body);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const saved = await svc.saveBudget(tenantId, req.body);
       return res.json({ success: true, data: saved, message: 'تم حفظ الموازنة التقديرية بنجاح' });
     } catch (err: any) {
       return res.status(422).json({ success: false, error: err.message });
@@ -2039,7 +2208,9 @@ async function startServer() {
   app.get('/api/accounting/recurring', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const entries = await getAccountingService(req).listRecurringEntries(tenantId);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const entries = await svc.listRecurringEntries(tenantId);
       return res.json({ success: true, data: entries });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -2052,7 +2223,9 @@ async function startServer() {
       const userId = (req as any).authContext.userId;
       const key = requireIdempotencyKey(req, res, 'توليد وترحيل القيد الدوري');
       if (!key) return;
-      const entry = await getAccountingService(req).generateRecurringEntry(tenantId, req.params.id, userId, key);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const entry = await svc.generateRecurringEntry(tenantId, req.params.id, userId, key);
       return res.json({ success: true, data: entry, message: 'تم توليد وترحيل القيد الدوري بنجاح' });
     } catch (err: any) {
       return res.status(422).json({ success: false, error: err.message });
@@ -2062,7 +2235,9 @@ async function startServer() {
   // 4I: هجرة من أنظمة أخرى (Legacy Migration)
   app.get('/api/accounting/migration/templates', requireAuth, (req: Request, res: Response) => {
     const system = ((req.query.system as string) || 'ORACLE').toUpperCase() as any;
-    const template = getAccountingService(req).generateMappingTemplate(system);
+    const svc = getAccountingService(req, res);
+    if (!svc) return;
+    const template = svc.generateMappingTemplate(system);
     return res.json({ success: true, data: template });
   });
 
@@ -2071,7 +2246,9 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const simulate = req.query.simulate === 'true';
-      const log = await getAccountingService(req).runContinuousBalanceCheck(tenantId, simulate);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const log = await svc.runContinuousBalanceCheck(tenantId, simulate);
       return res.json({ success: true, data: log });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -2081,7 +2258,9 @@ async function startServer() {
   app.get('/api/accounting/balance-checker/history', requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const logs = await getAccountingService(req).getBalanceCheckHistory(tenantId);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const logs = await svc.getBalanceCheckHistory(tenantId);
       return res.json({ success: true, data: logs });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -2093,7 +2272,9 @@ async function startServer() {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const iterations = req.body.iterations ? Number(req.body.iterations) : 1000;
-      const results = await getAccountingService(req).runFuzzTestingBattery(tenantId, iterations);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const results = await svc.runFuzzTestingBattery(tenantId, iterations);
       return res.json({ success: true, data: results });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });

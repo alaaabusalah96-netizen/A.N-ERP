@@ -11,7 +11,11 @@ export type DomainEventType =
   | 'MODULE_ACTIVATED_FOR_TENANT'
   | 'USER_INVITED'
   | 'SESSION_REVOKED'
-  | 'SOD_CONFLICT_DETECTED';
+  | 'SOD_CONFLICT_DETECTED'
+  | 'CUSTODY_OPENED'
+  | 'CUSTODY_TRANSACTION_RECORDED'
+  | 'CUSTODY_SETTLED'
+  | 'CUSTODY_CLOSED';
 
 export interface DomainEvent<T = any> {
   id: string;

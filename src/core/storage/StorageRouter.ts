@@ -25,11 +25,22 @@ export interface BackendConfigMigrationContract {
   evidenceRef?: string;
 }
 
+interface DedicatedAdapterEntry {
+  adapter: StoragePort;
+  lastAccessedAt: number;
+  initialized: boolean;
+  initPromise?: Promise<any>;
+}
+
 export class StorageRouter {
+  public static readonly MAX_DEDICATED_POOLS = 20;
+  public static readonly DEFAULT_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
+
   private primaryAdapter: PostgresPrimaryAdapter;
   private devInMemoryAdapter: InMemoryAdapter;
-  private dedicatedAdapters = new Map<string, StoragePort>();
+  private dedicatedAdapters = new Map<string, DedicatedAdapterEntry>();
   private migrations = new Map<string, BackendConfigMigrationContract[]>();
+  private evictionTimer: NodeJS.Timeout | null = null;
 
   // Only adapters that have passed the Full Battery Test can be selected for real companies
   // Postgres passed Phase 0 / Phase 1 full battery with 100% PASS
@@ -38,6 +49,14 @@ export class StorageRouter {
   constructor() {
     this.primaryAdapter = new PostgresPrimaryAdapter();
     this.devInMemoryAdapter = new InMemoryAdapter();
+
+    // 4.6E: Start periodic eviction check every 15 minutes (unreferenced to allow clean exit)
+    this.evictionTimer = setInterval(() => {
+      this.evictIdleAdapters().catch(() => {});
+    }, 15 * 60 * 1000);
+    if (this.evictionTimer && typeof this.evictionTimer.unref === 'function') {
+      this.evictionTimer.unref();
+    }
   }
 
   public getPrimaryAdapter(): PostgresPrimaryAdapter {
@@ -167,6 +186,8 @@ export class StorageRouter {
 
   /**
    * Retrieves or creates a dedicated adapter instance for Dedicated isolation tenants.
+   * 4.6D: Auto-triggers schema initialization on creation.
+   * 4.6E: Enforces maximum connection pool capacity (20) with LRU eviction.
    */
   private getOrCreateDedicatedAdapter(tenantId: string, adapterType: string, connectionRef: string): StoragePort {
     if (!connectionRef || !process.env[connectionRef]) {
@@ -175,13 +196,124 @@ export class StorageRouter {
       );
     }
     const key = `${tenantId}:${connectionRef}`;
-    let adapter = this.dedicatedAdapters.get(key);
-    if (!adapter) {
+    let entry = this.dedicatedAdapters.get(key);
+    if (!entry) {
+      // 4.6E: Enforce max dedicated pools cap by evicting LRU if at or over limit
+      if (this.dedicatedAdapters.size >= StorageRouter.MAX_DEDICATED_POOLS) {
+        this.evictOldestAdapterSync();
+      }
+
       const connectionString = process.env[connectionRef];
-      adapter = this.createAdapterByType(adapterType, connectionString);
-      this.dedicatedAdapters.set(key, adapter);
+      const adapter = this.createAdapterByType(adapterType, connectionString);
+
+      // 4.6D: Auto-trigger initializeSchema upon first resolution
+      let initPromise: Promise<any> | undefined;
+      if (typeof (adapter as any).initializeSchema === 'function') {
+        initPromise = (adapter as any).initializeSchema().then(() => {
+          if (entry) entry.initialized = true;
+        }).catch((err: any) => {
+          console.error(`[StorageRouter] Error initializing schema for dedicated tenant ${tenantId}:`, err);
+        });
+      }
+
+      entry = {
+        adapter,
+        lastAccessedAt: Date.now(),
+        initialized: false,
+        initPromise,
+      };
+      this.dedicatedAdapters.set(key, entry);
+    } else {
+      entry.lastAccessedAt = Date.now();
+    }
+    return entry.adapter;
+  }
+
+  /**
+   * 4.6D: Asynchronous resolution that guarantees schema is initialized before returning.
+   */
+  public async resolveAdapterAsync(tenant?: TenantCompany): Promise<StoragePort> {
+    const adapter = this.resolveAdapter(tenant);
+    if (tenant?.backendConfig?.isolationLevel === 'Dedicated') {
+      const key = `${tenant.id}:${tenant.backendConfig.connectionRef}`;
+      const entry = this.dedicatedAdapters.get(key);
+      if (entry) {
+        if (entry.initPromise && !entry.initialized) {
+          await entry.initPromise;
+        } else if (!entry.initialized && typeof (adapter as any).initializeSchema === 'function') {
+          await (adapter as any).initializeSchema();
+          entry.initialized = true;
+        }
+      }
     }
     return adapter;
+  }
+
+  /**
+   * 4.6E: Evicts idle dedicated adapters not accessed within maxIdleMs (default 1 hour).
+   * Gracefully ends database pool connections to prevent connection leaks.
+   */
+  public async evictIdleAdapters(maxIdleMs: number = StorageRouter.DEFAULT_IDLE_TIMEOUT_MS): Promise<number> {
+    const now = Date.now();
+    let evictedCount = 0;
+    for (const [key, entry] of this.dedicatedAdapters.entries()) {
+      if (now - entry.lastAccessedAt >= maxIdleMs) {
+        if (typeof (entry.adapter as any).close === 'function') {
+          try {
+            await (entry.adapter as any).close();
+          } catch (e) {}
+        }
+        this.dedicatedAdapters.delete(key);
+        evictedCount++;
+      }
+    }
+    return evictedCount;
+  }
+
+  /**
+   * 4.6E: Synchronous helper to evict the oldest (LRU) dedicated adapter when cap is hit.
+   */
+  private evictOldestAdapterSync(): void {
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    for (const [key, entry] of this.dedicatedAdapters.entries()) {
+      if (entry.lastAccessedAt < oldestTime) {
+        oldestTime = entry.lastAccessedAt;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey) {
+      const entry = this.dedicatedAdapters.get(oldestKey);
+      if (entry && typeof (entry.adapter as any).close === 'function') {
+        try {
+          (entry.adapter as any).close().catch(() => {});
+        } catch (e) {}
+      }
+      this.dedicatedAdapters.delete(oldestKey);
+    }
+  }
+
+  public getActiveDedicatedPoolsCount(): number {
+    return this.dedicatedAdapters.size;
+  }
+
+  public getActiveDedicatedPoolCount(): number {
+    return this.dedicatedAdapters.size;
+  }
+
+  public getMaxDedicatedPoolsLimit(): number {
+    return StorageRouter.MAX_DEDICATED_POOLS;
+  }
+
+  public async closeAllDedicatedAdapters(): Promise<void> {
+    for (const [key, entry] of this.dedicatedAdapters.entries()) {
+      if (typeof (entry.adapter as any).close === 'function') {
+        try {
+          await (entry.adapter as any).close();
+        } catch (e) {}
+      }
+    }
+    this.dedicatedAdapters.clear();
   }
 
   /**

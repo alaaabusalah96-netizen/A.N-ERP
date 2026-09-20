@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "guard:foundation": "tsx scripts/guardFoundation.ts"
+    "guard:foundation": "tsx scripts/guardFoundation.ts",
+    "battery:phase4.6": "tsx scripts/runPhase4_6.ts",
+    "test:e2e": "tsx scripts/runPhase4_6E2E.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

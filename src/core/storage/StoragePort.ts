@@ -243,6 +243,81 @@ export interface TenantModuleManifest {
   activatedAt: string;
 }
 
+// Phase 5: Cash Custody Module (1 of 15)
+export type CustodyStatus = 'OPEN' | 'SETTLED' | 'CLOSED' | 'LIQUIDATED';
+export type CustodyTransactionStatus = 'RECORDED' | 'INCLUDED_IN_SETTLEMENT' | 'REJECTED';
+export type CustodySettlementStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+export type CustodyVarianceType = 'NONE' | 'SURPLUS' | 'DEFICIT';
+
+export interface CashCustody {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  custodyCode: string;
+  employeeId: string;
+  employeeName: string;
+  branchId?: string;
+  branchName?: string;
+  costCenterId: string;
+  costCenterName?: string;
+  currency: string;
+  allocatedAmount: number;
+  currentBalance: number;
+  maxLimitPerRole: number;
+  status: CustodyStatus;
+  openedBy: string;
+  openedByName: string;
+  openedAt: string;
+  closedAt?: string;
+  closedBy?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CashCustodyTransaction {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  transactionCode: string;
+  custodyId: string;
+  amount: number;
+  expenseCategory: string;
+  expenseAccountCode: string;
+  description: string;
+  receiptNumber: string;
+  attachmentUrl: string;
+  attachmentName?: string;
+  costCenterId?: string;
+  recordedBy: string;
+  recordedByName: string;
+  status: CustodyTransactionStatus;
+  settlementId?: string;
+  transactionDate: string;
+  createdAt: string;
+  idempotencyKey: string;
+}
+
+export interface CashCustodySettlement {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  settlementCode: string;
+  custodyId: string;
+  settlementDate: string;
+  totalExpenses: number;
+  replenishmentAmount: number;
+  varianceAmount: number;
+  varianceType: CustodyVarianceType;
+  journalEntryId?: string;
+  status: CustodySettlementStatus;
+  settledBy: string;
+  settledByName: string;
+  notes?: string;
+  createdAt: string;
+  idempotencyKey: string;
+}
+
 export type DualControlStatus = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
 
 export interface MasterItem {
@@ -490,6 +565,16 @@ export interface StoragePort {
   getCustomFields(tenantId: string, module?: string): Promise<StorageResult<CustomFieldDefinition[]>>;
   checkIdempotencyRecord(tenantId: string, key: string, operation: string): Promise<StorageResult<any | null>>;
   saveIdempotencyRecord(tenantId: string, key: string, operation: string, payload: any): Promise<StorageResult<void>>;
+
+  // Phase 5: Cash Custody Module Operations (1 of 15)
+  createCashCustody(tenantId: string, custody: CashCustody, idempotencyKey: string): Promise<StorageResult<CashCustody>>;
+  getCashCustody(tenantId: string, custodyId: string): Promise<StorageResult<CashCustody | null>>;
+  listCashCustodies(tenantId: string, filter?: { status?: string; employeeId?: string }): Promise<StorageResult<CashCustody[]>>;
+  updateCashCustody(tenantId: string, custodyId: string, updates: Partial<CashCustody>): Promise<StorageResult<CashCustody>>;
+  recordCustodyExpense(tenantId: string, transaction: CashCustodyTransaction, idempotencyKey: string): Promise<StorageResult<CashCustodyTransaction>>;
+  listCustodyTransactions(tenantId: string, custodyId?: string): Promise<StorageResult<CashCustodyTransaction[]>>;
+  saveCustodySettlement(tenantId: string, settlement: CashCustodySettlement, idempotencyKey: string): Promise<StorageResult<CashCustodySettlement>>;
+  listCustodySettlements(tenantId: string, custodyId?: string): Promise<StorageResult<CashCustodySettlement[]>>;
 
   // Tenant Scoping & Isolation
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T>;

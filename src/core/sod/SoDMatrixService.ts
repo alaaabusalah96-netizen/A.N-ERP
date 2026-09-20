@@ -17,7 +17,10 @@ export type SystemPermission =
   | 'REPORT_VIEW_ASSIGNED' // تقارير الفرع المعيّن
   | 'REPORT_VIEW_ALL'      // التقارير والقوائم المالية الشاملة (المدير المالي)
   | 'USER_MANAGE'          // إدارة المستخدمين والصلاحيات (مدير النظام)
-  | 'BREAK_GLASS_AUTHORIZE'; // تخويل التجاوز الطارئ (مدير مالي / مدير نظام)
+  | 'BREAK_GLASS_AUTHORIZE' // تخويل التجاوز الطارئ (مدير مالي / مدير نظام)
+  | 'CUSTODY_OPEN'          // فتح العهدة النقدية وتخصيص رصيدها
+  | 'CUSTODY_RECORD_EXPENSE' // تسجيل مصروفات من العهدة مع المرفقات
+  | 'CUSTODY_SETTLE';       // اعتماد وتسوية العهدة دورياً وتوليد قيدها عبر المحرك
 
 export interface RoleMatrixDefinition {
   role: string;
@@ -42,13 +45,20 @@ export class SoDMatrixService {
     accountant: {
       role: 'accountant',
       roleTitleAr: 'محاسب عام',
-      allowedPermissions: ['ENTRY_CREATE', 'ENTRY_DRAFT_EDIT', 'REPORT_VIEW_ASSIGNED'],
+      allowedPermissions: [
+        'ENTRY_CREATE',
+        'ENTRY_DRAFT_EDIT',
+        'REPORT_VIEW_ASSIGNED',
+        'CUSTODY_OPEN',
+        'CUSTODY_RECORD_EXPENSE',
+      ],
       forbiddenPermissions: [
         'ENTRY_POST',
         'ENTRY_APPROVE',
         'FINANCIAL_AUDIT',
         'AUDIT_LOG_VIEW',
         'BREAK_GLASS_AUTHORIZE',
+        'CUSTODY_SETTLE',
       ],
       descriptionAr: 'يختص بإدخال ومراجعة المسودات؛ محظور عليه تماماً ترحيل القيود، اعتمادها، أو تدقيقها مالياً.',
     },
@@ -61,29 +71,56 @@ export class SoDMatrixService {
         'REPORT_VIEW_ALL',
         'REPORT_VIEW_ASSIGNED',
         'BREAK_GLASS_AUTHORIZE',
+        'CUSTODY_OPEN',
+        'CUSTODY_SETTLE',
       ],
-      forbiddenPermissions: ['ENTRY_CREATE', 'ENTRY_DRAFT_EDIT', 'FINANCIAL_AUDIT'],
+      forbiddenPermissions: [
+        'ENTRY_CREATE',
+        'ENTRY_DRAFT_EDIT',
+        'FINANCIAL_AUDIT',
+        'CUSTODY_RECORD_EXPENSE',
+      ],
       descriptionAr: 'المسؤول المالي المخول باعتماد وترحيل القيود المالية؛ محظور عليه إنشاء القيود لتجنب التعارض.',
     },
     auditor: {
       role: 'auditor',
       roleTitleAr: 'مدقق حسابات ومفتش مالي',
       allowedPermissions: ['FINANCIAL_AUDIT', 'AUDIT_LOG_VIEW', 'REPORT_VIEW_ALL'],
-      forbiddenPermissions: ['ENTRY_CREATE', 'ENTRY_DRAFT_EDIT', 'ENTRY_POST', 'ENTRY_APPROVE'],
+      forbiddenPermissions: [
+        'ENTRY_CREATE',
+        'ENTRY_DRAFT_EDIT',
+        'ENTRY_POST',
+        'ENTRY_APPROVE',
+        'CUSTODY_OPEN',
+        'CUSTODY_RECORD_EXPENSE',
+        'CUSTODY_SETTLE',
+      ],
       descriptionAr: 'رقابة استرجاعية مستقلة؛ يُمنع من أي صلاحية كتابة أو ترحيل أو اعتماد على الدفاتر المالية.',
     },
     branch_manager: {
       role: 'branch_manager',
       roleTitleAr: 'مدير فرع',
-      allowedPermissions: ['REPORT_VIEW_ASSIGNED'],
-      forbiddenPermissions: ['ENTRY_POST', 'FINANCIAL_AUDIT', 'BREAK_GLASS_AUTHORIZE'],
+      allowedPermissions: ['REPORT_VIEW_ASSIGNED', 'CUSTODY_RECORD_EXPENSE'],
+      forbiddenPermissions: [
+        'ENTRY_POST',
+        'FINANCIAL_AUDIT',
+        'BREAK_GLASS_AUTHORIZE',
+        'CUSTODY_SETTLE',
+      ],
       descriptionAr: 'صلاحيات تشغيلية محصورة في نطاق الفرع المعين.',
     },
     system_admin: {
       role: 'system_admin',
       roleTitleAr: 'مدير النظام المؤسسي',
       allowedPermissions: ['USER_MANAGE', 'BREAK_GLASS_AUTHORIZE'],
-      forbiddenPermissions: ['ENTRY_CREATE', 'ENTRY_POST', 'ENTRY_APPROVE', 'FINANCIAL_AUDIT'],
+      forbiddenPermissions: [
+        'ENTRY_CREATE',
+        'ENTRY_POST',
+        'ENTRY_APPROVE',
+        'FINANCIAL_AUDIT',
+        'CUSTODY_RECORD_EXPENSE',
+        'CUSTODY_SETTLE',
+      ],
       descriptionAr: 'حوكمة المستخدمين والبنية التحتية؛ لا يملك أي صلاحيات محاسبية تشغيلية.',
     },
   };

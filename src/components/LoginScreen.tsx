@@ -7,6 +7,7 @@ interface LoginScreenProps {
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
+  const [tenantCode, setTenantCode] = useState('tenant-main');
   const [username, setUsername] = useState('accountant');
   const [password, setPassword] = useState('');
   const [selectedBranch, setSelectedBranch] = useState('main_riyadh');
@@ -45,6 +46,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           'Idempotency-Key': idempotencyKey,
         },
         body: JSON.stringify({
+          tenantCode: tenantCode.trim(),
           username,
           password,
           twoFactorCode: params.twoFactor,
@@ -270,6 +272,26 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             <form className="space-y-4" onSubmit={handleSubmit}>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  رمز المنشأة / كود المستأجر
+                </label>
+                <div className="relative rounded-lg shadow-2xs">
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                    <Building className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <input
+                    id="login-tenant-code"
+                    type="text"
+                    required
+                    value={tenantCode}
+                    onChange={(e) => setTenantCode(e.target.value)}
+                    className="block w-full pr-10 pl-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white font-mono"
+                    placeholder="tenant-main أو رمز منشأتك"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   اسم المستخدم
                 </label>
                 <div className="relative rounded-lg shadow-2xs">
@@ -277,6 +299,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                     <User className="h-4 w-4 text-slate-400" />
                   </div>
                   <input
+                    id="login-username"
                     type="text"
                     required
                     value={username}
@@ -296,6 +319,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                     <Lock className="h-4 w-4 text-slate-400" />
                   </div>
                   <input
+                    id="login-password"
                     type="password"
                     required
                     value={password}
@@ -315,6 +339,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                     <Building className="h-4 w-4 text-slate-400" />
                   </div>
                   <select
+                    id="login-branch"
                     value={selectedBranch}
                     onChange={(e) => setSelectedBranch(e.target.value)}
                     className="block w-full pr-10 pl-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white"
@@ -375,6 +400,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
               <div className="pt-2">
                 <button
+                  id="login-submit-btn"
                   type="submit"
                   disabled={isLoading}
                   className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-xl shadow-xs text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-600 transition-colors"

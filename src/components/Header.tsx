@@ -126,6 +126,7 @@ export const Header: React.FC<HeaderProps> = ({
 
               {onLogout && (
                 <button
+                  id="header-logout-btn"
                   type="button"
                   onClick={onLogout}
                   className="mr-2 p-2 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition-colors"
