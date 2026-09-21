@@ -39,6 +39,10 @@ import { AuditChainService } from './src/core/audit/AuditChainService';
 import { runPhase2Battery } from './src/core/tests/runPhase2Battery';
 import { runPhase3Battery } from './src/core/tests/runPhase3Battery';
 import { runPhase46Battery } from './src/core/tests/runPhase4_6Battery';
+import { runPhase5Battery } from './src/core/tests/runPhase5Battery';
+import { runPhase6Battery } from './src/core/tests/runPhase6Battery';
+import { CashCustodyService } from './src/core/modules/custody/CashCustodyService';
+import { ExpenseService } from './src/core/modules/expenses/ExpenseService';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
 import { AccountingService } from './src/core/accounting/AccountingService';
 import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
@@ -2276,6 +2280,480 @@ async function startServer() {
       if (!svc) return;
       const results = await svc.runFuzzTestingBattery(tenantId, iterations);
       return res.json({ success: true, data: results });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ============================================================================
+  // PHASE 5: CASH CUSTODY MODULE (موديول العهدة النقدية - موديول 1 من 15)
+  // ============================================================================
+
+  const getCustodyService = (req: Request, res: Response): CashCustodyService | null => {
+    const storage = getRequestStorage(req, res);
+    if (!storage) return null;
+    return new CashCustodyService(storage);
+  };
+
+  // Phase 5 Acceptance Battery Endpoint (Internal / Auditor)
+  app.get('/api/internal/phase5-battery', async (req: Request, res: Response) => {
+    const result = await runPhase5Battery();
+    return res.json(result);
+  });
+
+  // 5A: عرض قائمة العهد النقدية للمنشأة
+  app.get('/api/custody/custodies', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const filter = {
+        status: req.query.status as string,
+        employeeId: req.query.employeeId as string,
+      };
+      const result = await storage.listCashCustodies(tenantId, filter);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 5A: جلب تفاصيل عهدة واحدة
+  app.get('/api/custody/custodies/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const result = await storage.getCashCustody(tenantId, req.params.id);
+      if (!result.success) return res.status(500).json(result.error);
+      if (!result.data) return res.status(404).json({ error: 'العهدة غير موجودة' });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 5A: فتح وتخصيص عهدة نقدية جديدة لموظف/فرع
+  app.post('/api/custody/custodies', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-fin';
+      const key = requireIdempotencyKey(req, res, 'فتح عهدة نقدية');
+      if (!key) return;
+
+      const svc = getCustodyService(req, res);
+      if (!svc) return;
+
+      const payload = {
+        ...req.body,
+        openedBy: userId,
+        openedByName: req.body.openedByName || 'المعتمد المالي',
+        idempotencyKey: key,
+      };
+
+      const result = await svc.openCustody(tenantId, payload);
+      if (!result.success) {
+        return res.status(result.error?.status || 400).json(result.error);
+      }
+
+      return res.json({ success: true, data: result.data, message: 'تم فتح وتخصيص العهدة النقدية بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 5B: تسجيل مصروف من العهدة النقدية
+  app.post('/api/custody/expenses', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-emp';
+      const key = requireIdempotencyKey(req, res, 'تسجيل مصروف من العهدة');
+      if (!key) return;
+
+      const svc = getCustodyService(req, res);
+      if (!svc) return;
+
+      const payload = {
+        ...req.body,
+        recordedBy: userId,
+        recordedByName: req.body.recordedByName || 'الموظف المسؤول',
+        idempotencyKey: key,
+      };
+
+      const result = await svc.recordExpense(tenantId, payload);
+      if (!result.success) {
+        return res.status(result.error?.status || 400).json(result.error);
+      }
+
+      return res.json({ success: true, data: result.data, message: 'تم تسجيل الصرف وخصم المبلغ من رصيد العهدة بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 5B: جلب قائمة مصروفات العهدة
+  app.get('/api/custody/expenses', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const custodyId = req.query.custodyId as string;
+      const result = await storage.listCustodyTransactions(tenantId, custodyId);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 5C: اعتماد وتسوية العهدة الدورية وتوليد قيد الترحيل (PostingEngine + SoD)
+  app.post('/api/custody/settlements', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-auditor';
+      const key = requireIdempotencyKey(req, res, 'تسوية دورية للعهدة النقدية');
+      if (!key) return;
+
+      const svc = getCustodyService(req, res);
+      if (!svc) return;
+
+      const payload = {
+        ...req.body,
+        settledBy: userId,
+        settledByName: req.body.settledByName || 'المدقق المالي المعتمد',
+        idempotencyKey: key,
+      };
+
+      const result = await svc.settleCustody(tenantId, payload);
+      if (!result.success) {
+        return res.status(result.error?.status || 400).json(result.error);
+      }
+
+      return res.json({
+        success: true,
+        data: result.data,
+        message: 'تم ترحيل قيد تسوية العهدة وتجديد الرصيد عبر محرك الترحيل بنجاح',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 5C: قائمة تسويات العهدة
+  app.get('/api/custody/settlements', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const custodyId = req.query.custodyId as string;
+      const result = await storage.listCustodySettlements(tenantId, custodyId);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 5D: فحص إخلاء طرف الموظف للعهد النقدية (HR Clearance Check)
+  app.get('/api/custody/hr-clearance/:employeeId', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getCustodyService(req, res);
+      if (!svc) return;
+      const clearance = await svc.checkEmployeeClearance(tenantId, req.params.employeeId);
+      return res.json({ success: true, data: clearance });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 5D: تصفية العهدة وإقفالها
+  app.post('/api/custody/custodies/:id/liquidate', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-auditor';
+      const key = requireIdempotencyKey(req, res, 'تصفية وإقفال العهدة');
+      if (!key) return;
+
+      const svc = getCustodyService(req, res);
+      if (!svc) return;
+
+      const result = await svc.liquidateCustody(
+        tenantId,
+        req.params.id,
+        userId,
+        req.body.liquidatorName || 'المدقق المالي',
+        key
+      );
+
+      if (!result.success) {
+        return res.status(result.error?.status || 400).json(result.error);
+      }
+
+      return res.json({ success: true, data: result.data, message: 'تم إقفال وتصفية العهدة النقدية نهائياً' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 5D: تحويل مسؤولية العهدة لموظف آخر
+  app.post('/api/custody/custodies/:id/transfer', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-manager';
+      const key = requireIdempotencyKey(req, res, 'تحويل مسؤولية العهدة');
+      if (!key) return;
+
+      const svc = getCustodyService(req, res);
+      if (!svc) return;
+
+      const { newEmployeeId, newEmployeeName } = req.body;
+      if (!newEmployeeId || !newEmployeeName) {
+        return res.status(400).json({ error: 'معرف واسم الموظف البديل مطلوبان' });
+      }
+
+      const result = await svc.transferCustody(
+        tenantId,
+        req.params.id,
+        newEmployeeId,
+        newEmployeeName,
+        userId,
+        req.body.transferredByName || 'مدير الحسابات',
+        key
+      );
+
+      if (!result.success) {
+        return res.status(result.error?.status || 400).json(result.error);
+      }
+
+      return res.json({ success: true, data: result.data, message: 'تم تحويل مسؤولية العهدة النقدية بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ============================================================================
+  // PHASE 6: EXPENSES MODULE (موديول المصروفات - موديول 2 من 15)
+  // ============================================================================
+
+  const getExpenseService = (req: Request, res: Response): ExpenseService | null => {
+    const storage = getRequestStorage(req, res);
+    if (!storage) return null;
+    const pe = new PostingEngine(storage);
+    const ne = new NumberingEngine(storage);
+    const ae = new ApprovalEngine(storage);
+    return new ExpenseService(storage, pe, ne, ae);
+  };
+
+  // Phase 6 Acceptance Battery Endpoint (Internal / Auditor)
+  app.get('/api/internal/phase6-battery', async (req: Request, res: Response) => {
+    const result = await runPhase6Battery();
+    return res.json(result);
+  });
+
+  // 6A: عرض فئات المصروفات
+  app.get('/api/expenses/categories', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const result = await storage.listExpenseCategories(tenantId);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 6A: حفظ / إنشاء فئة مصروفات
+  app.post('/api/expenses/categories', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const key = requireIdempotencyKey(req, res, 'إنشاء فئة مصروفات');
+      if (!key) return;
+
+      const category = {
+        ...req.body,
+        id: req.body.id || `cat-${Date.now()}`,
+        tenantId,
+        companyId: tenantId,
+        createdAt: new Date().toISOString(),
+      };
+      const result = await storage.saveExpenseCategory(tenantId, category, key);
+      if (!result.success) return res.status(400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 6A: استعلام طلبات الصرف مع الفلترة
+  app.get('/api/expenses/requests', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const filter = {
+        status: req.query.status as string,
+        employeeId: req.query.employeeId as string,
+        department: req.query.department as string,
+      };
+      const result = await storage.listExpenseRequests(tenantId, filter);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 6A: تفاصيل طلب صرف واحد مع البنود والمرفقات
+  app.get('/api/expenses/requests/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const result = await storage.getExpenseRequest(tenantId, req.params.id);
+      if (!result.success) return res.status(500).json(result.error);
+      if (!result.data) return res.status(404).json({ error: 'طلب المصروفات غير موجود' });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 6A: تقديم طلب صرف جديد
+  app.post('/api/expenses/requests', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-emp';
+      const key = requireIdempotencyKey(req, res, 'تقديم طلب صرف');
+      if (!key) return;
+
+      const svc = getExpenseService(req, res);
+      if (!svc) return;
+
+      const payload = {
+        ...req.body,
+        submittedBy: userId,
+        submittedByName: req.body.submittedByName || 'الموظف مقدم الطلب',
+        idempotencyKey: key,
+      };
+
+      const result = await svc.submitExpenseRequest(tenantId, payload);
+      if (!result.success) {
+        return res.status(result.error?.status || 400).json(result.error);
+      }
+
+      return res.json({
+        success: true,
+        data: result.data,
+        message: 'تم رفع طلب المصروفات وبدء مسار الاعتماد بنجاح',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 6B: اعتماد المستوى الأول (L1 - المدير المباشر)
+  app.post('/api/expenses/requests/:id/approve-l1', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-manager';
+      const key = requireIdempotencyKey(req, res, 'اعتماد طلب صرف مستوى أول');
+      if (!key) return;
+
+      const svc = getExpenseService(req, res);
+      if (!svc) return;
+
+      const result = await svc.approveL1(tenantId, {
+        requestId: req.params.id,
+        approverId: userId,
+        approverName: req.body.approverName || 'المدير المباشر',
+        comment: req.body.comment,
+        idempotencyKey: key,
+      });
+
+      if (!result.success) {
+        return res.status(result.error?.status || 400).json(result.error);
+      }
+
+      return res.json({
+        success: true,
+        data: result.data,
+        message: result.data.status === 'POSTED'
+          ? 'تم اعتماد وترحيل طلب المصروفات آلياً بنجاح'
+          : 'تم اعتماد المستوى الأول بنجاح وتصعيد الطلب للمدير المالي (L2)',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 6B: اعتماد المستوى الثاني (L2 - المدير المالي)
+  app.post('/api/expenses/requests/:id/approve-l2', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-cfo';
+      const key = requireIdempotencyKey(req, res, 'اعتماد طلب صرف نهائي');
+      if (!key) return;
+
+      const svc = getExpenseService(req, res);
+      if (!svc) return;
+
+      const result = await svc.approveL2(tenantId, {
+        requestId: req.params.id,
+        approverId: userId,
+        approverName: req.body.approverName || 'المدير المالي',
+        comment: req.body.comment,
+        disbursementAccountCode: req.body.disbursementAccountCode,
+        idempotencyKey: key,
+      });
+
+      if (!result.success) {
+        return res.status(result.error?.status || 400).json(result.error);
+      }
+
+      return res.json({
+        success: true,
+        data: result.data,
+        message: 'تم الاعتماد النهائي وترحيل القيد المحاسبي المتوازن لطلب المصروفات بنجاح',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 6B: رفض طلب الصرف
+  app.post('/api/expenses/requests/:id/reject', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-reviewer';
+      const key = requireIdempotencyKey(req, res, 'رفض طلب صرف');
+      if (!key) return;
+
+      const svc = getExpenseService(req, res);
+      if (!svc) return;
+
+      const result = await svc.rejectExpenseRequest(tenantId, {
+        requestId: req.params.id,
+        rejectedBy: userId,
+        rejectedByName: req.body.rejectedByName || 'المسؤول',
+        reasonAr: req.body.reasonAr || 'رفض الطلب لعدم استيفاء الشروط',
+        idempotencyKey: key,
+      });
+
+      if (!result.success) {
+        return res.status(result.error?.status || 400).json(result.error);
+      }
+
+      return res.json({
+        success: true,
+        data: result.data,
+        message: 'تم رفض طلب المصروفات وتحديث الحالة بنجاح',
+      });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }

@@ -120,6 +120,20 @@ export class FirebaseSmokeAdapter implements StoragePort {
   getCustomFields(tenantId: string, module?: string) { return this.smokeOnlyError<any[]>('getCustomFields'); }
   checkIdempotencyRecord(tenantId: string, key: string, operation: string) { return this.smokeOnlyError<any>('checkIdempotencyRecord'); }
   saveIdempotencyRecord(tenantId: string, key: string, operation: string, payload: any) { return this.smokeOnlyError<void>('saveIdempotencyRecord'); }
+  createCashCustody(tenantId: string, custody: any, idempotencyKey: string) { return this.smokeOnlyError<any>('createCashCustody'); }
+  getCashCustody(tenantId: string, custodyId: string) { return this.smokeOnlyError<any>('getCashCustody'); }
+  listCashCustodies(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listCashCustodies'); }
+  updateCashCustody(tenantId: string, custodyId: string, updates: any) { return this.smokeOnlyError<any>('updateCashCustody'); }
+  recordCustodyExpense(tenantId: string, transaction: any, idempotencyKey: string) { return this.smokeOnlyError<any>('recordCustodyExpense'); }
+  listCustodyTransactions(tenantId: string, custodyId?: string) { return this.smokeOnlyError<any[]>('listCustodyTransactions'); }
+  saveCustodySettlement(tenantId: string, settlement: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveCustodySettlement'); }
+  listCustodySettlements(tenantId: string, custodyId?: string) { return this.smokeOnlyError<any[]>('listCustodySettlements'); }
+  createExpenseRequest(tenantId: string, request: any, lines: any[], attachments: any[], idempotencyKey: string) { return this.smokeOnlyError<any>('createExpenseRequest'); }
+  getExpenseRequest(tenantId: string, requestId: string) { return this.smokeOnlyError<any>('getExpenseRequest'); }
+  listExpenseRequests(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listExpenseRequests'); }
+  updateExpenseRequestStatus(tenantId: string, requestId: string, updates: any, idempotencyKey: string) { return this.smokeOnlyError<any>('updateExpenseRequestStatus'); }
+  listExpenseCategories(tenantId: string) { return this.smokeOnlyError<any[]>('listExpenseCategories'); }
+  saveExpenseCategory(tenantId: string, category: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveExpenseCategory'); }
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T> { return fn(); }
 
   /**

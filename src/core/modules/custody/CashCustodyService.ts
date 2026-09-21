@@ -389,6 +389,41 @@ export class CashCustodyService {
     }
     const custody = custodyRes.data;
 
+    // 1.1 Idempotency Check (Clause 8.1): If this settlement was already processed, return idempotent result
+    const existingSettlements = await this.port.listCustodySettlements(tenantId, custody.id);
+    if (existingSettlements.success && existingSettlements.data) {
+      const alreadySettled = existingSettlements.data.find(
+        (s) => s.idempotencyKey === payload.idempotencyKey
+      );
+      if (alreadySettled) {
+        let cachedJe: JournalEntry | undefined;
+        if (alreadySettled.journalEntryId) {
+          const jeRes = await this.port.getJournalEntry(tenantId, alreadySettled.journalEntryId);
+          if (jeRes.success && jeRes.data) {
+            cachedJe = jeRes.data;
+          }
+        }
+        return {
+          success: true,
+          data: {
+            settlement: alreadySettled,
+            journalEntry: cachedJe || {
+              id: alreadySettled.journalEntryId || 'je-cached',
+              code: `JE-${alreadySettled.settlementCode}`,
+              tenantId,
+              date: alreadySettled.settlementDate,
+              type: 'قيد تسوية عهدة',
+              description: `قيد تسوية عهدة مستعاد عبر الإدهنية: ${alreadySettled.settlementCode}`,
+              totalAmount: alreadySettled.totalExpenses,
+              status: 'POSTED',
+              createdBy: alreadySettled.settledBy,
+              lines: [],
+            },
+          },
+        };
+      }
+    }
+
     // 2. SO D CHECK (Clause 7.1): Evaluated against the database-loaded record!
     if (custody.openedBy === payload.settledBy) {
       return {
@@ -466,13 +501,12 @@ export class CashCustodyService {
 
     const journalLines: Array<{
       id: string;
-      entryId: string;
       accountCode: string;
-      accountNameAr?: string;
+      costCenter?: string;
       debit: number;
       credit: number;
-      descriptionAr: string;
-      dimension1Id?: string;
+      description: string;
+      descriptionAr?: string;
     }> = [];
 
     // Debit expense accounts
@@ -480,13 +514,12 @@ export class CashCustodyService {
     expenseGroups.forEach((amount, accCode) => {
       journalLines.push({
         id: `line-${entryId}-${lineIdx++}`,
-        entryId,
         accountCode: accCode,
-        accountNameAr: 'مصروفات تشغيلية مسواة من العهدة',
+        costCenter: custody.costCenterId,
         debit: amount,
         credit: 0,
+        description: `إثبات مصروفات عهدة ${custody.custodyCode} - ${custody.employeeName}`,
         descriptionAr: `إثبات مصروفات عهدة ${custody.custodyCode} - ${custody.employeeName}`,
-        dimension1Id: custody.costCenterId,
       });
     });
 
@@ -494,58 +527,47 @@ export class CashCustodyService {
     if (varianceType === 'DEFICIT' && varianceAmount > 0) {
       journalLines.push({
         id: `line-${entryId}-${lineIdx++}`,
-        entryId,
         accountCode: '5050',
-        accountNameAr: 'فروق وعجز تسوية العهد النقدية',
+        costCenter: custody.costCenterId,
         debit: varianceAmount,
         credit: 0,
+        description: `إثبات عجز في عهدة ${custody.custodyCode}`,
         descriptionAr: `إثبات عجز في عهدة ${custody.custodyCode}`,
-        dimension1Id: custody.costCenterId,
       });
     } else if (varianceType === 'SURPLUS' && varianceAmount > 0) {
       journalLines.push({
         id: `line-${entryId}-${lineIdx++}`,
-        entryId,
         accountCode: '4010',
-        accountNameAr: 'فروق وزيادة تسوية العهد النقدية',
+        costCenter: custody.costCenterId,
         debit: 0,
         credit: varianceAmount,
+        description: `إثبات زيادة في عهدة ${custody.custodyCode}`,
         descriptionAr: `إثبات زيادة في عهدة ${custody.custodyCode}`,
-        dimension1Id: custody.costCenterId,
       });
     }
 
     // Credit replenishment account (الصندوق الرئيسي أو الحساب البنكي)
     journalLines.push({
       id: `line-${entryId}-${lineIdx++}`,
-      entryId,
       accountCode: replenishmentAccount,
-      accountNameAr:
-        replenishmentAccount === '1010'
-          ? 'الصندوق والنقدية بالخزينة'
-          : 'الحسابات الجارية بالبنوك',
+      costCenter: custody.costCenterId,
       debit: 0,
       credit: replenishmentAmount,
+      description: `صرف شيك / نقدية استعاضة وتجديد عهدة ${custody.custodyCode}`,
       descriptionAr: `صرف شيك / نقدية استعاضة وتجديد عهدة ${custody.custodyCode}`,
-      dimension1Id: custody.costCenterId,
     });
 
     const journalEntry: JournalEntry = {
       id: entryId,
+      code: `JE-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`,
       tenantId,
-      entryNumber: `JE-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`,
       date: new Date().toISOString().split('T')[0],
-      descriptionAr: `قيد تسوية واستعاضة عهدة نقدية: ${custody.custodyCode} (${custody.employeeName})`,
+      type: 'قيد تسوية عهدة',
+      description: `قيد تسوية واستعاضة عهدة نقدية: ${custody.custodyCode} (${custody.employeeName})`,
+      totalAmount: totalExpenses,
       status: 'APPROVED',
+      createdBy: payload.settledBy,
       lines: journalLines,
-      metadata: {
-        moduleId: 'custody',
-        custodyId: custody.id,
-        custodyCode: custody.custodyCode,
-        settlementType: 'PERIODIC_REPLENISHMENT',
-        totalExpenses,
-        replenishmentAmount,
-      },
     };
 
     // 5. Post journal entry via PostingEngine (Draft -> Post)

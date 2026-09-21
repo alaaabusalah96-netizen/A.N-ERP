@@ -318,6 +318,93 @@ export interface CashCustodySettlement {
   idempotencyKey: string;
 }
 
+// Phase 6: Expenses Module (2 of 15)
+export type ExpenseRequestStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED_L1' | 'APPROVED' | 'REJECTED' | 'POSTED';
+export type ExpenseApprovalTier = 'L1' | 'L2' | 'COMPLETED';
+export type ExpensePaymentMethod = 'DIRECT_BANK_TRANSFER' | 'CHEQUE' | 'EMPLOYEE_REIMBURSEMENT';
+
+export interface ExpenseCategory {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  code: string;
+  nameAr: string;
+  nameEn?: string;
+  defaultAccountCode: string;
+  requiresAttachment: boolean;
+  attachmentThresholdAmount: number;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface ExpenseLine {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  requestId: string;
+  categoryId: string;
+  categoryNameAr: string;
+  expenseAccountCode: string;
+  description: string;
+  amount: number;
+  costCenterId?: string;
+  projectId?: string;
+  invoiceNumber?: string;
+  invoiceDate?: string;
+  createdAt: string;
+}
+
+export interface ExpenseAttachment {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  requestId: string;
+  lineId?: string;
+  fileName: string;
+  fileUrl: string;
+  fileType: string;
+  fileSizeBytes: number;
+  uploadedBy: string;
+  uploadedAt: string;
+}
+
+export interface ExpenseRequest {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  requestCode: string;
+  titleAr: string;
+  employeeId: string;
+  employeeName: string;
+  department?: string;
+  costCenterId?: string;
+  projectId?: string;
+  totalAmount: number;
+  currency: string;
+  paymentMethod: ExpensePaymentMethod;
+  disbursementAccountCode?: string;
+  status: ExpenseRequestStatus;
+  currentApprovalTier: ExpenseApprovalTier;
+  submittedBy: string;
+  submittedByName: string;
+  submittedAt: string;
+  approvedL1By?: string;
+  approvedL1ByName?: string;
+  approvedL1At?: string;
+  approvedBy?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  rejectedBy?: string;
+  rejectedByName?: string;
+  rejectedAt?: string;
+  rejectionReason?: string;
+  journalEntryId?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  idempotencyKey?: string;
+}
+
 export type DualControlStatus = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
 
 export interface MasterItem {
@@ -575,6 +662,14 @@ export interface StoragePort {
   listCustodyTransactions(tenantId: string, custodyId?: string): Promise<StorageResult<CashCustodyTransaction[]>>;
   saveCustodySettlement(tenantId: string, settlement: CashCustodySettlement, idempotencyKey: string): Promise<StorageResult<CashCustodySettlement>>;
   listCustodySettlements(tenantId: string, custodyId?: string): Promise<StorageResult<CashCustodySettlement[]>>;
+
+  // Phase 6: Expenses Module Operations (2 of 15)
+  createExpenseRequest(tenantId: string, request: ExpenseRequest, lines: ExpenseLine[], attachments: ExpenseAttachment[], idempotencyKey: string): Promise<StorageResult<ExpenseRequest>>;
+  getExpenseRequest(tenantId: string, requestId: string): Promise<StorageResult<{ request: ExpenseRequest; lines: ExpenseLine[]; attachments: ExpenseAttachment[] } | null>>;
+  listExpenseRequests(tenantId: string, filter?: { status?: string; employeeId?: string }): Promise<StorageResult<ExpenseRequest[]>>;
+  updateExpenseRequestStatus(tenantId: string, requestId: string, updates: Partial<ExpenseRequest>, idempotencyKey: string): Promise<StorageResult<ExpenseRequest>>;
+  listExpenseCategories(tenantId: string): Promise<StorageResult<ExpenseCategory[]>>;
+  saveExpenseCategory(tenantId: string, category: ExpenseCategory, idempotencyKey: string): Promise<StorageResult<ExpenseCategory>>;
 
   // Tenant Scoping & Isolation
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T>;

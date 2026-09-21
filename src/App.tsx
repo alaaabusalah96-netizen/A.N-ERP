@@ -11,6 +11,8 @@ import { UsersAndSodView } from './components/UsersAndSodView';
 import { CustomFieldsView } from './components/CustomFieldsView';
 import { AuditTrailView } from './components/AuditTrailView';
 import { AccountingWorkspaceView } from './components/AccountingWorkspaceView';
+import { CashCustodyWorkspaceView } from './components/CashCustodyWorkspaceView';
+import { ExpensesWorkspaceView } from './components/ExpensesWorkspaceView';
 import { OperationalTransaction, UserProfile, UserRole } from './types/erp';
 
 export default function App() {
@@ -316,6 +318,20 @@ export default function App() {
             <AccountingWorkspaceView
               currentUser={userProfile}
               initialTab="coa"
+              onNotification={showNotification}
+            />
+          )}
+
+          {activeSection === 'custody' && (
+            <CashCustodyWorkspaceView
+              currentUser={userProfile}
+              onNotification={showNotification}
+            />
+          )}
+
+          {activeSection === 'expenses' && (
+            <ExpensesWorkspaceView
+              currentUser={userProfile}
               onNotification={showNotification}
             />
           )}

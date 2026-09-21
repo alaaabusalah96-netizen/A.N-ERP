@@ -126,6 +126,12 @@ export class MongoDBSmokeAdapter implements StoragePort {
   listCustodyTransactions(tenantId: string, custodyId?: string) { return this.smokeOnlyError<any[]>('listCustodyTransactions'); }
   saveCustodySettlement(tenantId: string, settlement: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveCustodySettlement'); }
   listCustodySettlements(tenantId: string, custodyId?: string) { return this.smokeOnlyError<any[]>('listCustodySettlements'); }
+  createExpenseRequest(tenantId: string, request: any, lines: any[], attachments: any[], idempotencyKey: string) { return this.smokeOnlyError<any>('createExpenseRequest'); }
+  getExpenseRequest(tenantId: string, requestId: string) { return this.smokeOnlyError<any>('getExpenseRequest'); }
+  listExpenseRequests(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listExpenseRequests'); }
+  updateExpenseRequestStatus(tenantId: string, requestId: string, updates: any, idempotencyKey: string) { return this.smokeOnlyError<any>('updateExpenseRequestStatus'); }
+  listExpenseCategories(tenantId: string) { return this.smokeOnlyError<any[]>('listExpenseCategories'); }
+  saveExpenseCategory(tenantId: string, category: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveExpenseCategory'); }
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T> { return fn(); }
 
   /**

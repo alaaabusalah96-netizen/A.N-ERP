@@ -20,7 +20,10 @@ export type SystemPermission =
   | 'BREAK_GLASS_AUTHORIZE' // تخويل التجاوز الطارئ (مدير مالي / مدير نظام)
   | 'CUSTODY_OPEN'          // فتح العهدة النقدية وتخصيص رصيدها
   | 'CUSTODY_RECORD_EXPENSE' // تسجيل مصروفات من العهدة مع المرفقات
-  | 'CUSTODY_SETTLE';       // اعتماد وتسوية العهدة دورياً وتوليد قيدها عبر المحرك
+  | 'CUSTODY_SETTLE'        // اعتماد وتسوية العهدة دورياً وتوليد قيدها عبر المحرك
+  | 'EXPENSE_SUBMIT'        // تقديم طلب صرف مصروفات مباشرة
+  | 'EXPENSE_APPROVE_L1'    // اعتماد المستوى الأول لطلب الصرف (المدير المباشر)
+  | 'EXPENSE_APPROVE_L2';   // اعتماد المستوى الثاني لطلب الصرف (المدير المالي)
 
 export interface RoleMatrixDefinition {
   role: string;
@@ -51,6 +54,7 @@ export class SoDMatrixService {
         'REPORT_VIEW_ASSIGNED',
         'CUSTODY_OPEN',
         'CUSTODY_RECORD_EXPENSE',
+        'EXPENSE_SUBMIT',
       ],
       forbiddenPermissions: [
         'ENTRY_POST',
@@ -59,6 +63,7 @@ export class SoDMatrixService {
         'AUDIT_LOG_VIEW',
         'BREAK_GLASS_AUTHORIZE',
         'CUSTODY_SETTLE',
+        'EXPENSE_APPROVE_L2',
       ],
       descriptionAr: 'يختص بإدخال ومراجعة المسودات؛ محظور عليه تماماً ترحيل القيود، اعتمادها، أو تدقيقها مالياً.',
     },
@@ -73,6 +78,9 @@ export class SoDMatrixService {
         'BREAK_GLASS_AUTHORIZE',
         'CUSTODY_OPEN',
         'CUSTODY_SETTLE',
+        'EXPENSE_SUBMIT',
+        'EXPENSE_APPROVE_L1',
+        'EXPENSE_APPROVE_L2',
       ],
       forbiddenPermissions: [
         'ENTRY_CREATE',
@@ -94,18 +102,27 @@ export class SoDMatrixService {
         'CUSTODY_OPEN',
         'CUSTODY_RECORD_EXPENSE',
         'CUSTODY_SETTLE',
+        'EXPENSE_SUBMIT',
+        'EXPENSE_APPROVE_L1',
+        'EXPENSE_APPROVE_L2',
       ],
       descriptionAr: 'رقابة استرجاعية مستقلة؛ يُمنع من أي صلاحية كتابة أو ترحيل أو اعتماد على الدفاتر المالية.',
     },
     branch_manager: {
       role: 'branch_manager',
       roleTitleAr: 'مدير فرع',
-      allowedPermissions: ['REPORT_VIEW_ASSIGNED', 'CUSTODY_RECORD_EXPENSE'],
+      allowedPermissions: [
+        'REPORT_VIEW_ASSIGNED',
+        'CUSTODY_RECORD_EXPENSE',
+        'EXPENSE_SUBMIT',
+        'EXPENSE_APPROVE_L1',
+      ],
       forbiddenPermissions: [
         'ENTRY_POST',
         'FINANCIAL_AUDIT',
         'BREAK_GLASS_AUTHORIZE',
         'CUSTODY_SETTLE',
+        'EXPENSE_APPROVE_L2',
       ],
       descriptionAr: 'صلاحيات تشغيلية محصورة في نطاق الفرع المعين.',
     },

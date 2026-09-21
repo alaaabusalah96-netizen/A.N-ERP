@@ -29,6 +29,13 @@ import {
   BreakGlassDetails,
   CustomFieldDefinition,
   OperationalAuditRecord,
+  CashCustody,
+  CashCustodyTransaction,
+  CashCustodySettlement,
+  ExpenseRequest,
+  ExpenseLine,
+  ExpenseAttachment,
+  ExpenseCategory,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -52,12 +59,23 @@ export class InMemoryAdapter implements StoragePort {
   private auditRecords: OperationalAuditRecord[] = [];
   private customFields = new Map<string, CustomFieldDefinition>();
 
+  // Phase 6 Expense collections
+  private expenseRequests = new Map<string, ExpenseRequest>();
+  private expenseLines = new Map<string, ExpenseLine[]>();
+  private expenseAttachments = new Map<string, ExpenseAttachment[]>();
+  private expenseCategories = new Map<string, ExpenseCategory>();
+
   // Phase 2 state collections
   private taxRules = new Map<string, CountryTaxRule>();
   private tenantModules = new Map<string, TenantModuleManifest[]>();
   private masterItems = new Map<string, MasterItem>();
   private masterPartners = new Map<string, MasterPartner>();
   private auditChains = new Map<string, AuditChainEntry[]>();
+
+  // Phase 5: Cash Custody collections
+  private cashCustodies = new Map<string, CashCustody>();
+  private cashCustodyTransactions = new Map<string, CashCustodyTransaction>();
+  private cashCustodySettlements = new Map<string, CashCustodySettlement>();
 
   constructor() {
     this.seedDefaultData();
@@ -1112,5 +1130,222 @@ export class InMemoryAdapter implements StoragePort {
     const cacheKey = `${tenantId}:${operation}:${key}`;
     this.idempotencyRecords.set(cacheKey, payload);
     return { success: true, data: undefined };
+  }
+
+  // Phase 5: Cash Custody Operations
+  public async createCashCustody(tenantId: string, custody: CashCustody, idempotencyKey: string): Promise<StorageResult<CashCustody>> {
+    const cached = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'createCashCustody');
+    if (cached.success && cached.data) {
+      return { success: true, data: cached.data };
+    }
+    const key = `${tenantId}:${custody.id}`;
+    this.cashCustodies.set(key, { ...custody, tenantId });
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'createCashCustody', custody);
+    return { success: true, data: custody };
+  }
+
+  public async getCashCustody(tenantId: string, custodyId: string): Promise<StorageResult<CashCustody | null>> {
+    for (const [k, c] of this.cashCustodies.entries()) {
+      if (c.tenantId === tenantId && (c.id === custodyId || c.custodyCode === custodyId)) {
+        return { success: true, data: { ...c } };
+      }
+    }
+    return { success: true, data: null };
+  }
+
+  public async listCashCustodies(tenantId: string, filter?: { status?: string; employeeId?: string }): Promise<StorageResult<CashCustody[]>> {
+    let list = Array.from(this.cashCustodies.values()).filter(c => c.tenantId === tenantId);
+    if (filter?.status) {
+      list = list.filter(c => c.status === filter.status);
+    }
+    if (filter?.employeeId) {
+      list = list.filter(c => c.employeeId === filter.employeeId);
+    }
+    return { success: true, data: list.map(c => ({ ...c })) };
+  }
+
+  public async updateCashCustody(tenantId: string, custodyId: string, updates: Partial<CashCustody>): Promise<StorageResult<CashCustody>> {
+    for (const [k, c] of this.cashCustodies.entries()) {
+      if (c.tenantId === tenantId && (c.id === custodyId || c.custodyCode === custodyId)) {
+        const updated = { ...c, ...updates, updatedAt: new Date().toISOString() };
+        this.cashCustodies.set(k, updated);
+        return { success: true, data: { ...updated } };
+      }
+    }
+    return {
+      success: false,
+      error: {
+        type: 'https://api.an-erp.local/errors/not-found',
+        title: 'العهدة غير موجودة',
+        status: 404,
+        detail: 'لم يتم العثور على سجل العهدة المطلوب تحديثه.',
+      },
+    };
+  }
+
+  public async recordCustodyExpense(tenantId: string, transaction: CashCustodyTransaction, idempotencyKey: string): Promise<StorageResult<CashCustodyTransaction>> {
+    const cached = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'recordCustodyExpense');
+    if (cached.success && cached.data) {
+      return { success: true, data: cached.data };
+    }
+    // Deduct custody available balance
+    const custody = await this.getCashCustody(tenantId, transaction.custodyId);
+    if (!custody.success || !custody.data) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/not-found',
+          title: 'العهدة غير موجودة',
+          status: 404,
+          detail: 'العهدة النقدية غير موجودة لتسجيل المصروف.',
+        },
+      };
+    }
+    const current = custody.data;
+    const newBalance = Number(current.currentBalance) - Number(transaction.amount);
+    await this.updateCashCustody(tenantId, current.id, { currentBalance: newBalance });
+
+    const key = `${tenantId}:${transaction.id}`;
+    this.cashCustodyTransactions.set(key, { ...transaction, tenantId });
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'recordCustodyExpense', transaction);
+    return { success: true, data: transaction };
+  }
+
+  public async listCustodyTransactions(tenantId: string, custodyId?: string): Promise<StorageResult<CashCustodyTransaction[]>> {
+    let list = Array.from(this.cashCustodyTransactions.values()).filter(t => t.tenantId === tenantId);
+    if (custodyId) {
+      list = list.filter(t => t.custodyId === custodyId);
+    }
+    return { success: true, data: list.map(t => ({ ...t })) };
+  }
+
+  public async saveCustodySettlement(tenantId: string, settlement: CashCustodySettlement, idempotencyKey: string): Promise<StorageResult<CashCustodySettlement>> {
+    const cached = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'saveCustodySettlement');
+    if (cached.success && cached.data) {
+      return { success: true, data: cached.data };
+    }
+    // Mark pending transactions as INCLUDED_IN_SETTLEMENT
+    for (const [k, tx] of this.cashCustodyTransactions.entries()) {
+      if (tx.tenantId === tenantId && tx.custodyId === settlement.custodyId && tx.status === 'RECORDED') {
+        this.cashCustodyTransactions.set(k, { ...tx, status: 'INCLUDED_IN_SETTLEMENT', settlementId: settlement.id });
+      }
+    }
+    const key = `${tenantId}:${settlement.id}`;
+    this.cashCustodySettlements.set(key, { ...settlement, tenantId });
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'saveCustodySettlement', settlement);
+    return { success: true, data: settlement };
+  }
+
+  public async listCustodySettlements(tenantId: string, custodyId?: string): Promise<StorageResult<CashCustodySettlement[]>> {
+    let list = Array.from(this.cashCustodySettlements.values()).filter(s => s.tenantId === tenantId);
+    if (custodyId) {
+      list = list.filter(s => s.custodyId === custodyId);
+    }
+    return { success: true, data: list.map(s => ({ ...s })) };
+  }
+
+  // Phase 6: Expenses Module Methods
+  public async createExpenseRequest(
+    tenantId: string,
+    request: ExpenseRequest,
+    lines: ExpenseLine[],
+    attachments: ExpenseAttachment[],
+    idempotencyKey: string
+  ): Promise<StorageResult<ExpenseRequest>> {
+    const cached = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'createExpenseRequest');
+    if (cached.success && cached.data) {
+      return { success: true, data: cached.data };
+    }
+    const key = `${tenantId}:${request.id}`;
+    this.expenseRequests.set(key, { ...request, tenantId });
+    this.expenseLines.set(request.id, lines.map(l => ({ ...l, tenantId })));
+    this.expenseAttachments.set(request.id, attachments.map(a => ({ ...a, tenantId })));
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'createExpenseRequest', request);
+    return { success: true, data: request };
+  }
+
+  public async getExpenseRequest(
+    tenantId: string,
+    requestId: string
+  ): Promise<StorageResult<{ request: ExpenseRequest; lines: ExpenseLine[]; attachments: ExpenseAttachment[] } | null>> {
+    const key = `${tenantId}:${requestId}`;
+    const request = this.expenseRequests.get(key);
+    if (!request) {
+      return { success: true, data: null };
+    }
+    const lines = this.expenseLines.get(requestId) || [];
+    const attachments = this.expenseAttachments.get(requestId) || [];
+    return {
+      success: true,
+      data: {
+        request: { ...request },
+        lines: lines.map(l => ({ ...l })),
+        attachments: attachments.map(a => ({ ...a })),
+      },
+    };
+  }
+
+  public async listExpenseRequests(
+    tenantId: string,
+    filter?: { status?: string; employeeId?: string }
+  ): Promise<StorageResult<ExpenseRequest[]>> {
+    let list = Array.from(this.expenseRequests.values()).filter(r => r.tenantId === tenantId);
+    if (filter?.status) {
+      list = list.filter(r => r.status === filter.status);
+    }
+    if (filter?.employeeId) {
+      list = list.filter(r => r.employeeId === filter.employeeId);
+    }
+    return { success: true, data: list.map(r => ({ ...r })) };
+  }
+
+  public async updateExpenseRequestStatus(
+    tenantId: string,
+    requestId: string,
+    updates: Partial<ExpenseRequest>,
+    idempotencyKey: string
+  ): Promise<StorageResult<ExpenseRequest>> {
+    const cached = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'updateExpenseRequestStatus');
+    if (cached.success && cached.data) {
+      return { success: true, data: cached.data };
+    }
+    const key = `${tenantId}:${requestId}`;
+    const existing = this.expenseRequests.get(key);
+    if (!existing) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/expense-not-found',
+          title: 'طلب الصرف غير موجود',
+          status: 404,
+          detail: 'تعذر العثور على طلب الصرف.',
+        },
+      };
+    }
+    const updated: ExpenseRequest = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    this.expenseRequests.set(key, updated);
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'updateExpenseRequestStatus', updated);
+    return { success: true, data: updated };
+  }
+
+  public async listExpenseCategories(tenantId: string): Promise<StorageResult<ExpenseCategory[]>> {
+    const list = Array.from(this.expenseCategories.values()).filter(
+      c => c.tenantId === tenantId || c.tenantId === 'tenant-main'
+    );
+    return { success: true, data: list.map(c => ({ ...c })) };
+  }
+
+  public async saveExpenseCategory(
+    tenantId: string,
+    category: ExpenseCategory,
+    idempotencyKey: string
+  ): Promise<StorageResult<ExpenseCategory>> {
+    const key = `${tenantId}:${category.code}`;
+    this.expenseCategories.set(key, { ...category, tenantId });
+    return { success: true, data: category };
   }
 }

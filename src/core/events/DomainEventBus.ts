@@ -15,7 +15,11 @@ export type DomainEventType =
   | 'CUSTODY_OPENED'
   | 'CUSTODY_TRANSACTION_RECORDED'
   | 'CUSTODY_SETTLED'
-  | 'CUSTODY_CLOSED';
+  | 'CUSTODY_CLOSED'
+  | 'EXPENSE_REQUESTED'
+  | 'EXPENSE_APPROVED'
+  | 'EXPENSE_REJECTED'
+  | 'EXPENSE_POSTED';
 
 export interface DomainEvent<T = any> {
   id: string;

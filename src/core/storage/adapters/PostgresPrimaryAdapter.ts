@@ -33,6 +33,13 @@ import {
   BreakGlassDetails,
   CustomFieldDefinition,
   OperationalAuditRecord,
+  CashCustody,
+  CashCustodyTransaction,
+  CashCustodySettlement,
+  ExpenseCategory,
+  ExpenseLine,
+  ExpenseAttachment,
+  ExpenseRequest,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -514,6 +521,174 @@ export class PostgresPrimaryAdapter implements StoragePort {
         details JSONB
       );
 
+      -- Phase 5: Cash Custody Module (1 of 15)
+      CREATE TABLE IF NOT EXISTS an_cash_custodies (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        custody_code VARCHAR(64) NOT NULL,
+        employee_id VARCHAR(64) NOT NULL,
+        employee_name VARCHAR(255) NOT NULL,
+        branch_id VARCHAR(64),
+        branch_name VARCHAR(255),
+        cost_center_id VARCHAR(64) NOT NULL,
+        cost_center_name VARCHAR(255),
+        currency VARCHAR(10) NOT NULL DEFAULT 'SAR',
+        allocated_amount NUMERIC(16, 4) NOT NULL,
+        current_balance NUMERIC(16, 4) NOT NULL,
+        max_limit_per_role NUMERIC(16, 4) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'OPEN',
+        opened_by VARCHAR(64) NOT NULL,
+        opened_by_name VARCHAR(255) NOT NULL,
+        opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        closed_at TIMESTAMPTZ,
+        closed_by VARCHAR(64),
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, custody_code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_cash_custody_transactions (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        transaction_code VARCHAR(64) NOT NULL,
+        custody_id VARCHAR(64) NOT NULL REFERENCES an_cash_custodies(id),
+        amount NUMERIC(16, 4) NOT NULL,
+        expense_category VARCHAR(128) NOT NULL,
+        expense_account_code VARCHAR(64) NOT NULL,
+        description TEXT NOT NULL,
+        receipt_number VARCHAR(128) NOT NULL,
+        attachment_url TEXT NOT NULL,
+        attachment_name VARCHAR(255),
+        cost_center_id VARCHAR(64),
+        recorded_by VARCHAR(64) NOT NULL,
+        recorded_by_name VARCHAR(255) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'RECORDED',
+        settlement_id VARCHAR(64),
+        transaction_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        idempotency_key VARCHAR(128),
+        UNIQUE(tenant_id, transaction_code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_cash_custody_settlements (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        settlement_code VARCHAR(64) NOT NULL,
+        custody_id VARCHAR(64) NOT NULL REFERENCES an_cash_custodies(id),
+        settlement_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        total_expenses NUMERIC(16, 4) NOT NULL,
+        replenishment_amount NUMERIC(16, 4) NOT NULL,
+        variance_amount NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        variance_type VARCHAR(32) NOT NULL DEFAULT 'NONE',
+        journal_entry_id VARCHAR(64),
+        status VARCHAR(32) NOT NULL DEFAULT 'APPROVED',
+        settled_by VARCHAR(64) NOT NULL,
+        settled_by_name VARCHAR(255) NOT NULL,
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        idempotency_key VARCHAR(128),
+        UNIQUE(tenant_id, settlement_code)
+      );
+
+      -- Phase 6: Expenses Module Tables (2 of 15)
+      CREATE TABLE IF NOT EXISTS an_expense_categories (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        code VARCHAR(64) NOT NULL,
+        name_ar VARCHAR(255) NOT NULL,
+        name_en VARCHAR(255),
+        default_account_code VARCHAR(64) NOT NULL,
+        requires_attachment BOOLEAN NOT NULL DEFAULT true,
+        attachment_threshold_amount NUMERIC(16, 4) NOT NULL DEFAULT 500,
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_expense_requests (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        request_code VARCHAR(64) NOT NULL,
+        title_ar VARCHAR(255) NOT NULL,
+        employee_id VARCHAR(64) NOT NULL,
+        employee_name VARCHAR(255) NOT NULL,
+        department VARCHAR(128),
+        cost_center_id VARCHAR(64),
+        project_id VARCHAR(64),
+        total_amount NUMERIC(16, 4) NOT NULL,
+        currency VARCHAR(16) NOT NULL DEFAULT 'SAR',
+        payment_method VARCHAR(64) NOT NULL DEFAULT 'DIRECT_BANK_TRANSFER',
+        disbursement_account_code VARCHAR(64),
+        status VARCHAR(32) NOT NULL DEFAULT 'SUBMITTED',
+        current_approval_tier VARCHAR(32) NOT NULL DEFAULT 'L1',
+        submitted_by VARCHAR(64) NOT NULL,
+        submitted_by_name VARCHAR(255) NOT NULL,
+        submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        approved_l1_by VARCHAR(64),
+        approved_l1_by_name VARCHAR(255),
+        approved_l1_at TIMESTAMPTZ,
+        approved_by VARCHAR(64),
+        approved_by_name VARCHAR(255),
+        approved_at TIMESTAMPTZ,
+        rejected_by VARCHAR(64),
+        rejected_by_name VARCHAR(255),
+        rejected_at TIMESTAMPTZ,
+        rejection_reason TEXT,
+        journal_entry_id VARCHAR(64),
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        idempotency_key VARCHAR(128),
+        UNIQUE(tenant_id, request_code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_expense_lines (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        request_id VARCHAR(64) NOT NULL REFERENCES an_expense_requests(id) ON DELETE CASCADE,
+        category_id VARCHAR(64) NOT NULL,
+        category_name_ar VARCHAR(255) NOT NULL,
+        expense_account_code VARCHAR(64) NOT NULL,
+        description TEXT NOT NULL,
+        amount NUMERIC(16, 4) NOT NULL,
+        cost_center_id VARCHAR(64),
+        project_id VARCHAR(64),
+        invoice_number VARCHAR(128),
+        invoice_date VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS an_expense_attachments (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        request_id VARCHAR(64) NOT NULL REFERENCES an_expense_requests(id) ON DELETE CASCADE,
+        line_id VARCHAR(64),
+        file_name VARCHAR(255) NOT NULL,
+        file_url TEXT NOT NULL,
+        file_type VARCHAR(64) NOT NULL,
+        file_size_bytes BIGINT NOT NULL DEFAULT 0,
+        uploaded_by VARCHAR(64) NOT NULL,
+        uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      -- Seed default expense categories if not exist
+      INSERT INTO an_expense_categories (id, tenant_id, company_id, code, name_ar, name_en, default_account_code, requires_attachment, attachment_threshold_amount, is_active)
+      VALUES
+        ('cat-travel', 'tenant-main', 'tenant-main', 'TRAVEL', 'سفر وانتقالات', 'Travel & Transportation', '5010', true, 300, true),
+        ('cat-hosp', 'tenant-main', 'tenant-main', 'HOSPITALITY', 'ضيافة واستقبال وفود', 'Hospitality & Entertainment', '5020', true, 500, true),
+        ('cat-maint', 'tenant-main', 'tenant-main', 'MAINTENANCE', 'صيانة وتشغيل وتجهيزات', 'Repairs & Maintenance', '5030', true, 1000, true),
+        ('cat-office', 'tenant-main', 'tenant-main', 'OFFICE_SUPPLIES', 'أدوات ومستلزمات مكتبية', 'Office Supplies', '5040', true, 400, true),
+        ('cat-util', 'tenant-main', 'tenant-main', 'COMMUNICATIONS', 'اتصالات وبرمجيات وسحابة', 'Telecommunications & Cloud', '5050', true, 500, true)
+      ON CONFLICT (tenant_id, code) DO NOTHING;
+
       -- Seed country tax rules if not exist
       INSERT INTO an_tax_rules (country_code, country_name_ar, standard_vat_rate, currency_code, tax_authority_name, tax_id_format_regex)
       VALUES 
@@ -561,7 +736,14 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_accounting_items',
           'an_budgets',
           'an_recurring_entries',
-          'an_balance_check_logs'
+          'an_balance_check_logs',
+          'an_cash_custodies',
+          'an_cash_custody_transactions',
+          'an_cash_custody_settlements',
+          'an_expense_categories',
+          'an_expense_requests',
+          'an_expense_lines',
+          'an_expense_attachments'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -3090,5 +3272,914 @@ export class PostgresPrimaryAdapter implements StoragePort {
   public async saveIdempotencyRecord(tenantId: string, key: string, operation: string, payload: any): Promise<StorageResult<void>> {
     await this.recordIdempotency(tenantId, key, operation, payload);
     return { success: true, data: undefined };
+  }
+
+  // =========================================================================
+  // Phase 5: Cash Custody Module Storage Methods (1 of 15)
+  // =========================================================================
+
+  public async createCashCustody(
+    tenantId: string,
+    custody: CashCustody,
+    idempotencyKey: string
+  ): Promise<StorageResult<CashCustody>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'createCashCustody');
+    if (cached) return { success: true, data: cached };
+
+    try {
+      await this.query(
+        `INSERT INTO an_cash_custodies (
+          id, tenant_id, company_id, custody_code, employee_id, employee_name,
+          branch_id, branch_name, cost_center_id, cost_center_name, currency,
+          allocated_amount, current_balance, max_limit_per_role, status,
+          opened_by, opened_by_name, opened_at, notes, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+        [
+          custody.id,
+          tenantId,
+          custody.companyId || tenantId,
+          custody.custodyCode,
+          custody.employeeId,
+          custody.employeeName,
+          custody.branchId || null,
+          custody.branchName || null,
+          custody.costCenterId,
+          custody.costCenterName || null,
+          custody.currency || 'SAR',
+          custody.allocatedAmount,
+          custody.currentBalance,
+          custody.maxLimitPerRole,
+          custody.status || 'OPEN',
+          custody.openedBy,
+          custody.openedByName,
+          custody.openedAt,
+          custody.notes || null,
+          custody.createdAt,
+          custody.updatedAt,
+        ]
+      );
+
+      await this.recordIdempotency(tenantId, idempotencyKey, 'createCashCustody', custody);
+      return { success: true, data: custody };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getCashCustody(
+    tenantId: string,
+    custodyId: string
+  ): Promise<StorageResult<CashCustody | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        `SELECT * FROM an_cash_custodies WHERE tenant_id = $1 AND (id = $2 OR custody_code = $2)`,
+        [tenantId, custodyId]
+      );
+      if (res.rows.length === 0) return { success: true, data: null };
+      const r = res.rows[0];
+      const custody: CashCustody = {
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        custodyCode: r.custody_code,
+        employeeId: r.employee_id,
+        employeeName: r.employee_name,
+        branchId: r.branch_id || undefined,
+        branchName: r.branch_name || undefined,
+        costCenterId: r.cost_center_id,
+        costCenterName: r.cost_center_name || undefined,
+        currency: r.currency,
+        allocatedAmount: Number(r.allocated_amount),
+        currentBalance: Number(r.current_balance),
+        maxLimitPerRole: Number(r.max_limit_per_role),
+        status: r.status,
+        openedBy: r.opened_by,
+        openedByName: r.opened_by_name,
+        openedAt: r.opened_at?.toISOString?.() || r.opened_at,
+        closedAt: r.closed_at?.toISOString?.() || r.closed_at,
+        closedBy: r.closed_by || undefined,
+        notes: r.notes || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+      };
+      return { success: true, data: custody };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listCashCustodies(
+    tenantId: string,
+    filter?: { status?: string; employeeId?: string }
+  ): Promise<StorageResult<CashCustody[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_cash_custodies WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      let pIdx = 2;
+      if (filter?.status) {
+        queryStr += ` AND status = $${pIdx++}`;
+        params.push(filter.status);
+      }
+      if (filter?.employeeId) {
+        queryStr += ` AND employee_id = $${pIdx++}`;
+        params.push(filter.employeeId);
+      }
+      queryStr += ` ORDER BY created_at DESC`;
+
+      const res = await this.query(queryStr, params);
+      const list: CashCustody[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        custodyCode: r.custody_code,
+        employeeId: r.employee_id,
+        employeeName: r.employee_name,
+        branchId: r.branch_id || undefined,
+        branchName: r.branch_name || undefined,
+        costCenterId: r.cost_center_id,
+        costCenterName: r.cost_center_name || undefined,
+        currency: r.currency,
+        allocatedAmount: Number(r.allocated_amount),
+        currentBalance: Number(r.current_balance),
+        maxLimitPerRole: Number(r.max_limit_per_role),
+        status: r.status,
+        openedBy: r.opened_by,
+        openedByName: r.opened_by_name,
+        openedAt: r.opened_at?.toISOString?.() || r.opened_at,
+        closedAt: r.closed_at?.toISOString?.() || r.closed_at,
+        closedBy: r.closed_by || undefined,
+        notes: r.notes || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async updateCashCustody(
+    tenantId: string,
+    custodyId: string,
+    updates: Partial<CashCustody>
+  ): Promise<StorageResult<CashCustody>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const setClauses: string[] = ['updated_at = NOW()'];
+      const params: any[] = [tenantId, custodyId];
+      let pIdx = 3;
+
+      if (updates.currentBalance !== undefined) {
+        setClauses.push(`current_balance = $${pIdx++}`);
+        params.push(updates.currentBalance);
+      }
+      if (updates.status !== undefined) {
+        setClauses.push(`status = $${pIdx++}`);
+        params.push(updates.status);
+      }
+      if (updates.employeeId !== undefined) {
+        setClauses.push(`employee_id = $${pIdx++}`);
+        params.push(updates.employeeId);
+      }
+      if (updates.employeeName !== undefined) {
+        setClauses.push(`employee_name = $${pIdx++}`);
+        params.push(updates.employeeName);
+      }
+      if (updates.closedAt !== undefined) {
+        setClauses.push(`closed_at = $${pIdx++}`);
+        params.push(updates.closedAt);
+      }
+      if (updates.closedBy !== undefined) {
+        setClauses.push(`closed_by = $${pIdx++}`);
+        params.push(updates.closedBy);
+      }
+      if (updates.notes !== undefined) {
+        setClauses.push(`notes = $${pIdx++}`);
+        params.push(updates.notes);
+      }
+
+      const queryStr = `UPDATE an_cash_custodies SET ${setClauses.join(', ')} WHERE tenant_id = $1 AND (id = $2 OR custody_code = $2) RETURNING *`;
+      const res = await this.query(queryStr, params);
+      if (res.rows.length === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/not-found',
+            title: 'العهدة غير موجودة',
+            status: 404,
+            detail: 'سجل العهدة المطلوب تحديثه غير موجود.',
+          },
+        };
+      }
+      return this.getCashCustody(tenantId, custodyId) as any;
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async recordCustodyExpense(
+    tenantId: string,
+    transaction: CashCustodyTransaction,
+    idempotencyKey: string
+  ): Promise<StorageResult<CashCustodyTransaction>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'recordCustodyExpense');
+    if (cached) return { success: true, data: cached };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Deduct custody balance atomically
+      const deductRes = await client.query(
+        `UPDATE an_cash_custodies 
+         SET current_balance = current_balance - $1, updated_at = NOW() 
+         WHERE tenant_id = $2 AND id = $3 AND current_balance >= $1 
+         RETURNING current_balance`,
+        [transaction.amount, tenantId, transaction.custodyId]
+      );
+
+      if (deductRes.rows.length === 0) {
+        throw new Error('رصيد العهدة غير كافٍ أو العهدة غير موجودة في قاعدة البيانات.');
+      }
+
+      // 2. Insert transaction
+      await client.query(
+        `INSERT INTO an_cash_custody_transactions (
+          id, tenant_id, company_id, transaction_code, custody_id, amount,
+          expense_category, expense_account_code, description, receipt_number,
+          attachment_url, attachment_name, cost_center_id, recorded_by,
+          recorded_by_name, status, settlement_id, transaction_date,
+          created_at, idempotency_key
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+        [
+          transaction.id,
+          tenantId,
+          transaction.companyId || tenantId,
+          transaction.transactionCode,
+          transaction.custodyId,
+          transaction.amount,
+          transaction.expenseCategory,
+          transaction.expenseAccountCode,
+          transaction.description,
+          transaction.receiptNumber,
+          transaction.attachmentUrl,
+          transaction.attachmentName || null,
+          transaction.costCenterId || null,
+          transaction.recordedBy,
+          transaction.recordedByName,
+          transaction.status || 'RECORDED',
+          transaction.settlementId || null,
+          transaction.transactionDate,
+          transaction.createdAt,
+          idempotencyKey,
+        ]
+      );
+
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'recordCustodyExpense', transaction);
+      return { success: true, data: transaction };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async listCustodyTransactions(
+    tenantId: string,
+    custodyId?: string
+  ): Promise<StorageResult<CashCustodyTransaction[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_cash_custody_transactions WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (custodyId) {
+        queryStr += ` AND custody_id = $2`;
+        params.push(custodyId);
+      }
+      queryStr += ` ORDER BY transaction_date DESC`;
+
+      const res = await this.pool.query(queryStr, params);
+      const list: CashCustodyTransaction[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        transactionCode: r.transaction_code,
+        custodyId: r.custody_id,
+        amount: Number(r.amount),
+        expenseCategory: r.expense_category,
+        expenseAccountCode: r.expense_account_code,
+        description: r.description,
+        receiptNumber: r.receipt_number,
+        attachmentUrl: r.attachment_url,
+        attachmentName: r.attachment_name || undefined,
+        costCenterId: r.cost_center_id || undefined,
+        recordedBy: r.recorded_by,
+        recordedByName: r.recorded_by_name,
+        status: r.status,
+        settlementId: r.settlement_id || undefined,
+        transactionDate: r.transaction_date?.toISOString?.() || r.transaction_date,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        idempotencyKey: r.idempotency_key,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveCustodySettlement(
+    tenantId: string,
+    settlement: CashCustodySettlement,
+    idempotencyKey: string
+  ): Promise<StorageResult<CashCustodySettlement>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'saveCustodySettlement');
+    if (cached) return { success: true, data: cached };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Mark included transactions as settled
+      await client.query(
+        `UPDATE an_cash_custody_transactions 
+         SET status = 'INCLUDED_IN_SETTLEMENT', settlement_id = $1 
+         WHERE tenant_id = $2 AND custody_id = $3 AND status = 'RECORDED'`,
+        [settlement.id, tenantId, settlement.custodyId]
+      );
+
+      // 2. Insert settlement record
+      await client.query(
+        `INSERT INTO an_cash_custody_settlements (
+          id, tenant_id, company_id, settlement_code, custody_id,
+          settlement_date, total_expenses, replenishment_amount,
+          variance_amount, variance_type, journal_entry_id, status,
+          settled_by, settled_by_name, notes, created_at, idempotency_key
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+        [
+          settlement.id,
+          tenantId,
+          settlement.companyId || tenantId,
+          settlement.settlementCode,
+          settlement.custodyId,
+          settlement.settlementDate,
+          settlement.totalExpenses,
+          settlement.replenishmentAmount,
+          settlement.varianceAmount || 0,
+          settlement.varianceType || 'NONE',
+          settlement.journalEntryId || null,
+          settlement.status || 'APPROVED',
+          settlement.settledBy,
+          settlement.settledByName,
+          settlement.notes || null,
+          settlement.createdAt,
+          idempotencyKey,
+        ]
+      );
+
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'saveCustodySettlement', settlement);
+      return { success: true, data: settlement };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async listCustodySettlements(
+    tenantId: string,
+    custodyId?: string
+  ): Promise<StorageResult<CashCustodySettlement[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_cash_custody_settlements WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (custodyId) {
+        queryStr += ` AND custody_id = $2`;
+        params.push(custodyId);
+      }
+      queryStr += ` ORDER BY settlement_date DESC`;
+
+      const res = await this.query(queryStr, params);
+      const list: CashCustodySettlement[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        settlementCode: r.settlement_code,
+        custodyId: r.custody_id,
+        settlementDate: r.settlement_date?.toISOString?.() || r.settlement_date,
+        totalExpenses: Number(r.total_expenses),
+        replenishmentAmount: Number(r.replenishment_amount),
+        varianceAmount: Number(r.variance_amount),
+        varianceType: r.variance_type,
+        journalEntryId: r.journal_entry_id || undefined,
+        status: r.status,
+        settledBy: r.settled_by,
+        settledByName: r.settled_by_name,
+        notes: r.notes || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        idempotencyKey: r.idempotency_key,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  // Phase 6: Expenses Module Methods (2 of 15)
+  public async createExpenseRequest(
+    tenantId: string,
+    request: ExpenseRequest,
+    lines: ExpenseLine[],
+    attachments: ExpenseAttachment[],
+    idempotencyKey: string
+  ): Promise<StorageResult<ExpenseRequest>> {
+    if (!this.pool) return this.missingConnError();
+
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'createExpenseRequest');
+    if (cached) return { success: true, data: cached };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+
+      // 1. Insert Request
+      await client.query(
+        `INSERT INTO an_expense_requests (
+          id, tenant_id, company_id, request_code, title_ar, employee_id, employee_name,
+          department, cost_center_id, project_id, total_amount, currency, payment_method,
+          disbursement_account_code, status, current_approval_tier, submitted_by, submitted_by_name,
+          submitted_at, approved_l1_by, approved_l1_by_name, approved_l1_at, approved_by, approved_by_name,
+          approved_at, rejected_by, rejected_by_name, rejected_at, rejection_reason, journal_entry_id,
+          notes, created_at, updated_at, idempotency_key
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+          $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34
+        )`,
+        [
+          request.id,
+          tenantId,
+          request.companyId || tenantId,
+          request.requestCode,
+          request.titleAr,
+          request.employeeId,
+          request.employeeName,
+          request.department || null,
+          request.costCenterId || null,
+          request.projectId || null,
+          request.totalAmount,
+          request.currency || 'SAR',
+          request.paymentMethod || 'DIRECT_BANK_TRANSFER',
+          request.disbursementAccountCode || null,
+          request.status || 'SUBMITTED',
+          request.currentApprovalTier || 'L1',
+          request.submittedBy,
+          request.submittedByName,
+          request.submittedAt || new Date().toISOString(),
+          request.approvedL1By || null,
+          request.approvedL1ByName || null,
+          request.approvedL1At || null,
+          request.approvedBy || null,
+          request.approvedByName || null,
+          request.approvedAt || null,
+          request.rejectedBy || null,
+          request.rejectedByName || null,
+          request.rejectedAt || null,
+          request.rejectionReason || null,
+          request.journalEntryId || null,
+          request.notes || null,
+          request.createdAt || new Date().toISOString(),
+          request.updatedAt || new Date().toISOString(),
+          idempotencyKey,
+        ]
+      );
+
+      // 2. Insert Lines
+      for (const line of lines) {
+        await client.query(
+          `INSERT INTO an_expense_lines (
+            id, tenant_id, company_id, request_id, category_id, category_name_ar,
+            expense_account_code, description, amount, cost_center_id, project_id,
+            invoice_number, invoice_date, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+          [
+            line.id,
+            tenantId,
+            line.companyId || tenantId,
+            request.id,
+            line.categoryId,
+            line.categoryNameAr,
+            line.expenseAccountCode,
+            line.description,
+            line.amount,
+            line.costCenterId || request.costCenterId || null,
+            line.projectId || request.projectId || null,
+            line.invoiceNumber || null,
+            line.invoiceDate || null,
+            line.createdAt || new Date().toISOString(),
+          ]
+        );
+      }
+
+      // 3. Insert Attachments
+      for (const att of attachments) {
+        await client.query(
+          `INSERT INTO an_expense_attachments (
+            id, tenant_id, company_id, request_id, line_id, file_name, file_url,
+            file_type, file_size_bytes, uploaded_by, uploaded_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [
+            att.id,
+            tenantId,
+            att.companyId || tenantId,
+            request.id,
+            att.lineId || null,
+            att.fileName,
+            att.fileUrl,
+            att.fileType || 'application/pdf',
+            att.fileSizeBytes || 0,
+            att.uploadedBy,
+            att.uploadedAt || new Date().toISOString(),
+          ]
+        );
+      }
+
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'createExpenseRequest', request);
+      return { success: true, data: request };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async getExpenseRequest(
+    tenantId: string,
+    requestId: string
+  ): Promise<StorageResult<{ request: ExpenseRequest; lines: ExpenseLine[]; attachments: ExpenseAttachment[] } | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const reqRes = await this.query(
+        `SELECT * FROM an_expense_requests WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, requestId]
+      );
+      if (reqRes.rows.length === 0) {
+        return { success: true, data: null };
+      }
+      const r = reqRes.rows[0];
+      const request: ExpenseRequest = {
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        requestCode: r.request_code,
+        titleAr: r.title_ar,
+        employeeId: r.employee_id,
+        employeeName: r.employee_name,
+        department: r.department || undefined,
+        costCenterId: r.cost_center_id || undefined,
+        projectId: r.project_id || undefined,
+        totalAmount: Number(r.total_amount),
+        currency: r.currency,
+        paymentMethod: r.payment_method,
+        disbursementAccountCode: r.disbursement_account_code || undefined,
+        status: r.status,
+        currentApprovalTier: r.current_approval_tier,
+        submittedBy: r.submitted_by,
+        submittedByName: r.submitted_by_name,
+        submittedAt: r.submitted_at?.toISOString?.() || r.submitted_at,
+        approvedL1By: r.approved_l1_by || undefined,
+        approvedL1ByName: r.approved_l1_by_name || undefined,
+        approvedL1At: r.approved_l1_at?.toISOString?.() || r.approved_l1_at || undefined,
+        approvedBy: r.approved_by || undefined,
+        approvedByName: r.approved_by_name || undefined,
+        approvedAt: r.approved_at?.toISOString?.() || r.approved_at || undefined,
+        rejectedBy: r.rejected_by || undefined,
+        rejectedByName: r.rejected_by_name || undefined,
+        rejectedAt: r.rejected_at?.toISOString?.() || r.rejected_at || undefined,
+        rejectionReason: r.rejection_reason || undefined,
+        journalEntryId: r.journal_entry_id || undefined,
+        notes: r.notes || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+        idempotencyKey: r.idempotency_key || undefined,
+      };
+
+      const linesRes = await this.query(
+        `SELECT * FROM an_expense_lines WHERE tenant_id = $1 AND request_id = $2 ORDER BY created_at ASC`,
+        [tenantId, requestId]
+      );
+      const lines: ExpenseLine[] = linesRes.rows.map((l: any) => ({
+        id: l.id,
+        tenantId: l.tenant_id,
+        companyId: l.company_id,
+        requestId: l.request_id,
+        categoryId: l.category_id,
+        categoryNameAr: l.category_name_ar,
+        expenseAccountCode: l.expense_account_code,
+        description: l.description,
+        amount: Number(l.amount),
+        costCenterId: l.cost_center_id || undefined,
+        projectId: l.project_id || undefined,
+        invoiceNumber: l.invoice_number || undefined,
+        invoiceDate: l.invoice_date || undefined,
+        createdAt: l.created_at?.toISOString?.() || l.created_at,
+      }));
+
+      const attRes = await this.query(
+        `SELECT * FROM an_expense_attachments WHERE tenant_id = $1 AND request_id = $2 ORDER BY uploaded_at ASC`,
+        [tenantId, requestId]
+      );
+      const attachments: ExpenseAttachment[] = attRes.rows.map((a: any) => ({
+        id: a.id,
+        tenantId: a.tenant_id,
+        companyId: a.company_id,
+        requestId: a.request_id,
+        lineId: a.line_id || undefined,
+        fileName: a.file_name,
+        fileUrl: a.file_url,
+        fileType: a.file_type,
+        fileSizeBytes: Number(a.file_size_bytes),
+        uploadedBy: a.uploaded_by,
+        uploadedAt: a.uploaded_at?.toISOString?.() || a.uploaded_at,
+      }));
+
+      return { success: true, data: { request, lines, attachments } };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listExpenseRequests(
+    tenantId: string,
+    filter?: { status?: string; employeeId?: string }
+  ): Promise<StorageResult<ExpenseRequest[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_expense_requests WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (filter?.status) {
+        params.push(filter.status);
+        queryStr += ` AND status = $${params.length}`;
+      }
+      if (filter?.employeeId) {
+        params.push(filter.employeeId);
+        queryStr += ` AND employee_id = $${params.length}`;
+      }
+      queryStr += ` ORDER BY created_at DESC`;
+
+      const res = await this.query(queryStr, params);
+      const list: ExpenseRequest[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        requestCode: r.request_code,
+        titleAr: r.title_ar,
+        employeeId: r.employee_id,
+        employeeName: r.employee_name,
+        department: r.department || undefined,
+        costCenterId: r.cost_center_id || undefined,
+        projectId: r.project_id || undefined,
+        totalAmount: Number(r.total_amount),
+        currency: r.currency,
+        paymentMethod: r.payment_method,
+        disbursementAccountCode: r.disbursement_account_code || undefined,
+        status: r.status,
+        currentApprovalTier: r.current_approval_tier,
+        submittedBy: r.submitted_by,
+        submittedByName: r.submitted_by_name,
+        submittedAt: r.submitted_at?.toISOString?.() || r.submitted_at,
+        approvedL1By: r.approved_l1_by || undefined,
+        approvedL1ByName: r.approved_l1_by_name || undefined,
+        approvedL1At: r.approved_l1_at?.toISOString?.() || r.approved_l1_at || undefined,
+        approvedBy: r.approved_by || undefined,
+        approvedByName: r.approved_by_name || undefined,
+        approvedAt: r.approved_at?.toISOString?.() || r.approved_at || undefined,
+        rejectedBy: r.rejected_by || undefined,
+        rejectedByName: r.rejected_by_name || undefined,
+        rejectedAt: r.rejected_at?.toISOString?.() || r.rejected_at || undefined,
+        rejectionReason: r.rejection_reason || undefined,
+        journalEntryId: r.journal_entry_id || undefined,
+        notes: r.notes || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+        idempotencyKey: r.idempotency_key || undefined,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async updateExpenseRequestStatus(
+    tenantId: string,
+    requestId: string,
+    updates: Partial<ExpenseRequest>,
+    idempotencyKey: string
+  ): Promise<StorageResult<ExpenseRequest>> {
+    if (!this.pool) return this.missingConnError();
+
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'updateExpenseRequestStatus');
+    if (cached) return { success: true, data: cached };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+
+      const checkRes = await client.query(
+        `SELECT * FROM an_expense_requests WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, requestId]
+      );
+      if (checkRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/expense-not-found',
+            title: 'طلب الصرف غير موجود',
+            status: 404,
+            detail: `تعذر العثور على طلب الصرف برقم ${requestId}`,
+          },
+        };
+      }
+
+      const existing = checkRes.rows[0];
+      const newStatus = updates.status !== undefined ? updates.status : existing.status;
+      const newTier = updates.currentApprovalTier !== undefined ? updates.currentApprovalTier : existing.current_approval_tier;
+      const l1By = updates.approvedL1By !== undefined ? updates.approvedL1By : existing.approved_l1_by;
+      const l1ByName = updates.approvedL1ByName !== undefined ? updates.approvedL1ByName : existing.approved_l1_by_name;
+      const l1At = updates.approvedL1At !== undefined ? updates.approvedL1At : existing.approved_l1_at;
+      const appBy = updates.approvedBy !== undefined ? updates.approvedBy : existing.approved_by;
+      const appByName = updates.approvedByName !== undefined ? updates.approvedByName : existing.approved_by_name;
+      const appAt = updates.approvedAt !== undefined ? updates.approvedAt : existing.approved_at;
+      const rejBy = updates.rejectedBy !== undefined ? updates.rejectedBy : existing.rejected_by;
+      const rejByName = updates.rejectedByName !== undefined ? updates.rejectedByName : existing.rejected_by_name;
+      const rejAt = updates.rejectedAt !== undefined ? updates.rejectedAt : existing.rejected_at;
+      const rejReason = updates.rejectionReason !== undefined ? updates.rejectionReason : existing.rejection_reason;
+      const jeId = updates.journalEntryId !== undefined ? updates.journalEntryId : existing.journal_entry_id;
+      const notes = updates.notes !== undefined ? updates.notes : existing.notes;
+      const nowIso = new Date().toISOString();
+
+      await client.query(
+        `UPDATE an_expense_requests SET
+          status = $1,
+          current_approval_tier = $2,
+          approved_l1_by = $3,
+          approved_l1_by_name = $4,
+          approved_l1_at = $5,
+          approved_by = $6,
+          approved_by_name = $7,
+          approved_at = $8,
+          rejected_by = $9,
+          rejected_by_name = $10,
+          rejected_at = $11,
+          rejection_reason = $12,
+          journal_entry_id = $13,
+          notes = $14,
+          updated_at = $15
+        WHERE tenant_id = $16 AND id = $17`,
+        [
+          newStatus,
+          newTier,
+          l1By,
+          l1ByName,
+          l1At,
+          appBy,
+          appByName,
+          appAt,
+          rejBy,
+          rejByName,
+          rejAt,
+          rejReason,
+          jeId,
+          notes,
+          nowIso,
+          tenantId,
+          requestId,
+        ]
+      );
+
+      const updatedRequest: ExpenseRequest = {
+        id: existing.id,
+        tenantId: existing.tenant_id,
+        companyId: existing.company_id,
+        requestCode: existing.request_code,
+        titleAr: existing.title_ar,
+        employeeId: existing.employee_id,
+        employeeName: existing.employee_name,
+        department: existing.department || undefined,
+        costCenterId: existing.cost_center_id || undefined,
+        projectId: existing.project_id || undefined,
+        totalAmount: Number(existing.total_amount),
+        currency: existing.currency,
+        paymentMethod: existing.payment_method,
+        disbursementAccountCode: existing.disbursement_account_code || undefined,
+        status: newStatus,
+        currentApprovalTier: newTier,
+        submittedBy: existing.submitted_by,
+        submittedByName: existing.submitted_by_name,
+        submittedAt: existing.submitted_at?.toISOString?.() || existing.submitted_at,
+        approvedL1By: l1By || undefined,
+        approvedL1ByName: l1ByName || undefined,
+        approvedL1At: l1At?.toISOString?.() || l1At || undefined,
+        approvedBy: appBy || undefined,
+        approvedByName: appByName || undefined,
+        approvedAt: appAt?.toISOString?.() || appAt || undefined,
+        rejectedBy: rejBy || undefined,
+        rejectedByName: rejByName || undefined,
+        rejectedAt: rejAt?.toISOString?.() || rejAt || undefined,
+        rejectionReason: rejReason || undefined,
+        journalEntryId: jeId || undefined,
+        notes: notes || undefined,
+        createdAt: existing.created_at?.toISOString?.() || existing.created_at,
+        updatedAt: nowIso,
+        idempotencyKey,
+      };
+
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'updateExpenseRequestStatus', updatedRequest);
+      return { success: true, data: updatedRequest };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async listExpenseCategories(tenantId: string): Promise<StorageResult<ExpenseCategory[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        `SELECT * FROM an_expense_categories WHERE (tenant_id = $1 OR tenant_id = 'tenant-main') ORDER BY created_at ASC`,
+        [tenantId]
+      );
+      const list: ExpenseCategory[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        code: r.code,
+        nameAr: r.name_ar,
+        nameEn: r.name_en || undefined,
+        defaultAccountCode: r.default_account_code,
+        requiresAttachment: Boolean(r.requires_attachment),
+        attachmentThresholdAmount: Number(r.attachment_threshold_amount),
+        isActive: Boolean(r.is_active),
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveExpenseCategory(
+    tenantId: string,
+    category: ExpenseCategory,
+    idempotencyKey: string
+  ): Promise<StorageResult<ExpenseCategory>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_expense_categories (
+          id, tenant_id, company_id, code, name_ar, name_en,
+          default_account_code, requires_attachment, attachment_threshold_amount, is_active, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (tenant_id, code) DO UPDATE SET
+          name_ar = EXCLUDED.name_ar,
+          name_en = EXCLUDED.name_en,
+          default_account_code = EXCLUDED.default_account_code,
+          requires_attachment = EXCLUDED.requires_attachment,
+          attachment_threshold_amount = EXCLUDED.attachment_threshold_amount,
+          is_active = EXCLUDED.is_active`,
+        [
+          category.id,
+          tenantId,
+          category.companyId || tenantId,
+          category.code,
+          category.nameAr,
+          category.nameEn || null,
+          category.defaultAccountCode,
+          category.requiresAttachment,
+          category.attachmentThresholdAmount,
+          category.isActive,
+          category.createdAt || new Date().toISOString(),
+        ]
+      );
+      return { success: true, data: category };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
   }
 }
