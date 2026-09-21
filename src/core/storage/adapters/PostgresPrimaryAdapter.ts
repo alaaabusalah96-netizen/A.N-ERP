@@ -40,6 +40,19 @@ import {
   ExpenseLine,
   ExpenseAttachment,
   ExpenseRequest,
+  Warehouse,
+  WarehouseBin,
+  StockItem,
+  WarehouseStock,
+  StockMovement,
+  StockTransfer,
+  StockTransferLine,
+  StockTransferStatus,
+  StockCount,
+  StockCountLine,
+  StockCountStatus,
+  ItemBatch,
+  ItemSerial,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -688,6 +701,234 @@ export class PostgresPrimaryAdapter implements StoragePort {
         ('cat-office', 'tenant-main', 'tenant-main', 'OFFICE_SUPPLIES', 'أدوات ومستلزمات مكتبية', 'Office Supplies', '5040', true, 400, true),
         ('cat-util', 'tenant-main', 'tenant-main', 'COMMUNICATIONS', 'اتصالات وبرمجيات وسحابة', 'Telecommunications & Cloud', '5050', true, 500, true)
       ON CONFLICT (tenant_id, code) DO NOTHING;
+
+      -- ============================================================================
+      -- Phase 7: Warehouses & Inventory Module Tables (3 of 15)
+      -- ============================================================================
+      CREATE TABLE IF NOT EXISTS an_warehouses (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        code VARCHAR(64) NOT NULL,
+        name_ar VARCHAR(255) NOT NULL,
+        name_en VARCHAR(255),
+        branch_id VARCHAR(64),
+        branch_name VARCHAR(255),
+        location TEXT,
+        is_default BOOLEAN NOT NULL DEFAULT false,
+        valuation_method VARCHAR(32) NOT NULL DEFAULT 'WEIGHTED_AVERAGE',
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_warehouse_bins (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id) ON DELETE CASCADE,
+        code VARCHAR(64) NOT NULL,
+        aisle VARCHAR(64),
+        rack VARCHAR(64),
+        shelf VARCHAR(64),
+        bin VARCHAR(64),
+        description_ar VARCHAR(255),
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, warehouse_id, code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_stock_items (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        item_code VARCHAR(64) NOT NULL,
+        barcode VARCHAR(128),
+        name_ar VARCHAR(255) NOT NULL,
+        name_en VARCHAR(255),
+        category VARCHAR(128) NOT NULL DEFAULT 'GENERAL',
+        uom VARCHAR(64) NOT NULL DEFAULT 'حبة',
+        inventory_account_code VARCHAR(64) NOT NULL DEFAULT '1050',
+        cogs_account_code VARCHAR(64) NOT NULL DEFAULT '5010',
+        adjustment_expense_account_code VARCHAR(64) NOT NULL DEFAULT '5090',
+        adjustment_gain_account_code VARCHAR(64) NOT NULL DEFAULT '4090',
+        valuation_method VARCHAR(32) NOT NULL DEFAULT 'WEIGHTED_AVERAGE',
+        standard_cost NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        average_cost NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        last_purchase_cost NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        selling_price NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        reorder_point NUMERIC(16, 4) NOT NULL DEFAULT 10,
+        min_stock_level NUMERIC(16, 4) NOT NULL DEFAULT 5,
+        max_stock_level NUMERIC(16, 4) NOT NULL DEFAULT 1000,
+        track_batch BOOLEAN NOT NULL DEFAULT false,
+        track_serial BOOLEAN NOT NULL DEFAULT false,
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, item_code)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_warehouse_stock (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id) ON DELETE CASCADE,
+        item_id VARCHAR(64) NOT NULL REFERENCES an_stock_items(id) ON DELETE CASCADE,
+        current_qty NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        reserved_qty NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        available_qty NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        average_cost NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        total_value NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, warehouse_id, item_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_stock_movements (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        movement_number VARCHAR(64) NOT NULL,
+        movement_type VARCHAR(64) NOT NULL,
+        warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id),
+        warehouse_name_ar VARCHAR(255),
+        bin_id VARCHAR(64),
+        item_id VARCHAR(64) NOT NULL REFERENCES an_stock_items(id),
+        item_code VARCHAR(64) NOT NULL,
+        item_name_ar VARCHAR(255) NOT NULL,
+        quantity NUMERIC(16, 4) NOT NULL,
+        unit_cost NUMERIC(16, 4) NOT NULL,
+        total_cost NUMERIC(16, 4) NOT NULL,
+        balance_after_qty NUMERIC(16, 4) NOT NULL,
+        source_document_type VARCHAR(64),
+        source_document_id VARCHAR(64),
+        source_document_number VARCHAR(64),
+        journal_entry_id VARCHAR(64),
+        batch_number VARCHAR(128),
+        serial_number VARCHAR(128),
+        notes TEXT,
+        performed_by VARCHAR(64) NOT NULL,
+        performed_by_name VARCHAR(255) NOT NULL,
+        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        idempotency_key VARCHAR(128),
+        UNIQUE(tenant_id, movement_number)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_stock_transfers (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        transfer_number VARCHAR(64) NOT NULL,
+        source_warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id),
+        source_warehouse_name_ar VARCHAR(255) NOT NULL,
+        target_warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id),
+        target_warehouse_name_ar VARCHAR(255) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'DRAFT',
+        requested_by VARCHAR(64) NOT NULL,
+        requested_by_name VARCHAR(255) NOT NULL,
+        requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        dispatched_by VARCHAR(64),
+        dispatched_by_name VARCHAR(255),
+        dispatched_at TIMESTAMPTZ,
+        received_by VARCHAR(64),
+        received_by_name VARCHAR(255),
+        received_at TIMESTAMPTZ,
+        total_items_count INT NOT NULL DEFAULT 0,
+        total_quantity NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        total_cost NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        idempotency_key VARCHAR(128),
+        UNIQUE(tenant_id, transfer_number)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_stock_transfer_lines (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        transfer_id VARCHAR(64) NOT NULL REFERENCES an_stock_transfers(id) ON DELETE CASCADE,
+        item_id VARCHAR(64) NOT NULL REFERENCES an_stock_items(id),
+        item_code VARCHAR(64) NOT NULL,
+        item_name_ar VARCHAR(255) NOT NULL,
+        quantity NUMERIC(16, 4) NOT NULL,
+        unit_cost NUMERIC(16, 4) NOT NULL,
+        total_cost NUMERIC(16, 4) NOT NULL,
+        batch_number VARCHAR(128),
+        serial_number VARCHAR(128)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_stock_counts (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        count_number VARCHAR(64) NOT NULL,
+        count_type VARCHAR(32) NOT NULL DEFAULT 'PERIODIC',
+        warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id),
+        warehouse_name_ar VARCHAR(255) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'COMPLETED',
+        performed_by VARCHAR(64) NOT NULL,
+        performed_by_name VARCHAR(255) NOT NULL,
+        performed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        approved_by VARCHAR(64),
+        approved_by_name VARCHAR(255),
+        approved_at TIMESTAMPTZ,
+        total_items_count INT NOT NULL DEFAULT 0,
+        has_variance BOOLEAN NOT NULL DEFAULT false,
+        net_variance_amount NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        journal_entry_id VARCHAR(64),
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        idempotency_key VARCHAR(128),
+        UNIQUE(tenant_id, count_number)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_stock_count_lines (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        count_id VARCHAR(64) NOT NULL REFERENCES an_stock_counts(id) ON DELETE CASCADE,
+        item_id VARCHAR(64) NOT NULL REFERENCES an_stock_items(id),
+        item_code VARCHAR(64) NOT NULL,
+        item_name_ar VARCHAR(255) NOT NULL,
+        system_qty NUMERIC(16, 4) NOT NULL,
+        counted_qty NUMERIC(16, 4) NOT NULL,
+        variance_qty NUMERIC(16, 4) NOT NULL,
+        unit_cost NUMERIC(16, 4) NOT NULL,
+        variance_amount NUMERIC(16, 4) NOT NULL,
+        batch_number VARCHAR(128),
+        serial_number VARCHAR(128),
+        notes TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS an_item_batches (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        item_id VARCHAR(64) NOT NULL REFERENCES an_stock_items(id),
+        warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id),
+        batch_number VARCHAR(128) NOT NULL,
+        production_date VARCHAR(64),
+        expiry_date VARCHAR(64),
+        current_qty NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        unit_cost NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, warehouse_id, item_id, batch_number)
+      );
+
+      CREATE TABLE IF NOT EXISTS an_item_serials (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        item_id VARCHAR(64) NOT NULL REFERENCES an_stock_items(id),
+        warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id),
+        serial_number VARCHAR(128) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'IN_STOCK',
+        warranty_expiry VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, item_id, serial_number)
+      );
 
       -- Seed country tax rules if not exist
       INSERT INTO an_tax_rules (country_code, country_name_ar, standard_vat_rate, currency_code, tax_authority_name, tax_id_format_regex)
@@ -4182,4 +4423,1439 @@ export class PostgresPrimaryAdapter implements StoragePort {
       return this.dbError(err);
     }
   }
+
+  // ============================================================================
+  // Phase 7: Warehouses & Inventory Module Implementation (3 of 15 - بند 7)
+  // ============================================================================
+
+  public async saveWarehouse(
+    tenantId: string,
+    warehouse: Warehouse,
+    idempotencyKey: string
+  ): Promise<StorageResult<Warehouse>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'saveWarehouse');
+    if (cached) return { success: true, data: cached };
+
+    try {
+      await this.query(
+        `INSERT INTO an_warehouses (
+          id, tenant_id, company_id, code, name_ar, name_en,
+          branch_id, branch_name, location, is_default, valuation_method, is_active, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        ON CONFLICT (tenant_id, code) DO UPDATE SET
+          name_ar = EXCLUDED.name_ar,
+          name_en = EXCLUDED.name_en,
+          branch_id = EXCLUDED.branch_id,
+          branch_name = EXCLUDED.branch_name,
+          location = EXCLUDED.location,
+          is_default = EXCLUDED.is_default,
+          valuation_method = EXCLUDED.valuation_method,
+          is_active = EXCLUDED.is_active,
+          updated_at = EXCLUDED.updated_at`,
+        [
+          warehouse.id,
+          tenantId,
+          warehouse.companyId || tenantId,
+          warehouse.code,
+          warehouse.nameAr,
+          warehouse.nameEn || null,
+          warehouse.branchId || null,
+          warehouse.branchName || null,
+          warehouse.location || null,
+          warehouse.isDefault ?? false,
+          warehouse.valuationMethod || 'WEIGHTED_AVERAGE',
+          warehouse.isActive ?? true,
+          warehouse.createdAt || new Date().toISOString(),
+          new Date().toISOString(),
+        ]
+      );
+
+      await this.recordIdempotency(tenantId, idempotencyKey, 'saveWarehouse', warehouse);
+      return { success: true, data: warehouse };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getWarehouse(tenantId: string, warehouseId: string): Promise<StorageResult<Warehouse | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        `SELECT * FROM an_warehouses WHERE tenant_id = $1 AND (id = $2 OR code = $2)`,
+        [tenantId, warehouseId]
+      );
+      if (res.rows.length === 0) return { success: true, data: null };
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          id: r.id,
+          tenantId: r.tenant_id,
+          companyId: r.company_id,
+          code: r.code,
+          nameAr: r.name_ar,
+          nameEn: r.name_en || undefined,
+          branchId: r.branch_id || undefined,
+          branchName: r.branch_name || undefined,
+          location: r.location || undefined,
+          isDefault: r.is_default,
+          valuationMethod: r.valuation_method,
+          isActive: r.is_active,
+          createdAt: r.created_at?.toISOString?.() || r.created_at,
+          updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listWarehouses(
+    tenantId: string,
+    filter?: { isActive?: boolean; branchId?: string }
+  ): Promise<StorageResult<Warehouse[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_warehouses WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (filter?.isActive !== undefined) {
+        params.push(filter.isActive);
+        queryStr += ` AND is_active = $${params.length}`;
+      }
+      if (filter?.branchId) {
+        params.push(filter.branchId);
+        queryStr += ` AND branch_id = $${params.length}`;
+      }
+      queryStr += ` ORDER BY is_default DESC, code ASC`;
+
+      const res = await this.query(queryStr, params);
+      const list: Warehouse[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        code: r.code,
+        nameAr: r.name_ar,
+        nameEn: r.name_en || undefined,
+        branchId: r.branch_id || undefined,
+        branchName: r.branch_name || undefined,
+        location: r.location || undefined,
+        isDefault: r.is_default,
+        valuationMethod: r.valuation_method,
+        isActive: r.is_active,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveWarehouseBin(tenantId: string, bin: WarehouseBin): Promise<StorageResult<WarehouseBin>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_warehouse_bins (
+          id, tenant_id, company_id, warehouse_id, code, aisle, rack, shelf, bin, description_ar, is_active, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT (tenant_id, warehouse_id, code) DO UPDATE SET
+          aisle = EXCLUDED.aisle,
+          rack = EXCLUDED.rack,
+          shelf = EXCLUDED.shelf,
+          bin = EXCLUDED.bin,
+          description_ar = EXCLUDED.description_ar,
+          is_active = EXCLUDED.is_active`,
+        [
+          bin.id,
+          tenantId,
+          bin.companyId || tenantId,
+          bin.warehouseId,
+          bin.code,
+          bin.aisle || null,
+          bin.rack || null,
+          bin.shelf || null,
+          bin.bin || null,
+          bin.descriptionAr || null,
+          bin.isActive ?? true,
+          bin.createdAt || new Date().toISOString(),
+        ]
+      );
+      return { success: true, data: bin };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listWarehouseBins(tenantId: string, warehouseId: string): Promise<StorageResult<WarehouseBin[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        `SELECT * FROM an_warehouse_bins WHERE tenant_id = $1 AND warehouse_id = $2 ORDER BY code ASC`,
+        [tenantId, warehouseId]
+      );
+      const list: WarehouseBin[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        warehouseId: r.warehouse_id,
+        code: r.code,
+        aisle: r.aisle || undefined,
+        rack: r.rack || undefined,
+        shelf: r.shelf || undefined,
+        bin: r.bin || undefined,
+        descriptionAr: r.description_ar || undefined,
+        isActive: r.is_active,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveStockItem(
+    tenantId: string,
+    item: StockItem,
+    idempotencyKey: string
+  ): Promise<StorageResult<StockItem>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'saveStockItem');
+    if (cached) return { success: true, data: cached };
+
+    try {
+      await this.query(
+        `INSERT INTO an_stock_items (
+          id, tenant_id, company_id, item_code, barcode, name_ar, name_en,
+          category, uom, inventory_account_code, cogs_account_code,
+          adjustment_expense_account_code, adjustment_gain_account_code,
+          valuation_method, standard_cost, average_cost, last_purchase_cost,
+          selling_price, reorder_point, min_stock_level, max_stock_level,
+          track_batch, track_serial, is_active, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+        ON CONFLICT (tenant_id, item_code) DO UPDATE SET
+          name_ar = EXCLUDED.name_ar,
+          name_en = EXCLUDED.name_en,
+          barcode = EXCLUDED.barcode,
+          category = EXCLUDED.category,
+          uom = EXCLUDED.uom,
+          inventory_account_code = EXCLUDED.inventory_account_code,
+          cogs_account_code = EXCLUDED.cogs_account_code,
+          adjustment_expense_account_code = EXCLUDED.adjustment_expense_account_code,
+          adjustment_gain_account_code = EXCLUDED.adjustment_gain_account_code,
+          valuation_method = EXCLUDED.valuation_method,
+          standard_cost = EXCLUDED.standard_cost,
+          average_cost = EXCLUDED.average_cost,
+          last_purchase_cost = EXCLUDED.last_purchase_cost,
+          selling_price = EXCLUDED.selling_price,
+          reorder_point = EXCLUDED.reorder_point,
+          min_stock_level = EXCLUDED.min_stock_level,
+          max_stock_level = EXCLUDED.max_stock_level,
+          track_batch = EXCLUDED.track_batch,
+          track_serial = EXCLUDED.track_serial,
+          is_active = EXCLUDED.is_active,
+          updated_at = EXCLUDED.updated_at`,
+        [
+          item.id,
+          tenantId,
+          item.companyId || tenantId,
+          item.itemCode,
+          item.barcode || null,
+          item.nameAr,
+          item.nameEn || null,
+          item.category || 'GENERAL',
+          item.uom || 'حبة',
+          item.inventoryAccountCode || '1050',
+          item.cogsAccountCode || '5010',
+          item.adjustmentExpenseAccountCode || '5090',
+          item.adjustmentGainAccountCode || '4090',
+          item.valuationMethod || 'WEIGHTED_AVERAGE',
+          item.standardCost || 0,
+          item.averageCost || 0,
+          item.lastPurchaseCost || 0,
+          item.sellingPrice || 0,
+          item.reorderPoint || 10,
+          item.minStockLevel || 5,
+          item.maxStockLevel || 1000,
+          item.trackBatch ?? false,
+          item.trackSerial ?? false,
+          item.isActive ?? true,
+          item.createdAt || new Date().toISOString(),
+          new Date().toISOString(),
+        ]
+      );
+
+      await this.recordIdempotency(tenantId, idempotencyKey, 'saveStockItem', item);
+      return { success: true, data: item };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getStockItem(tenantId: string, itemId: string): Promise<StorageResult<StockItem | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        `SELECT * FROM an_stock_items WHERE tenant_id = $1 AND (id = $2 OR item_code = $2)`,
+        [tenantId, itemId]
+      );
+      if (res.rows.length === 0) return { success: true, data: null };
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          id: r.id,
+          tenantId: r.tenant_id,
+          companyId: r.company_id,
+          itemCode: r.item_code,
+          barcode: r.barcode || undefined,
+          nameAr: r.name_ar,
+          nameEn: r.name_en || undefined,
+          category: r.category,
+          uom: r.uom,
+          inventoryAccountCode: r.inventory_account_code,
+          cogsAccountCode: r.cogs_account_code,
+          adjustmentExpenseAccountCode: r.adjustment_expense_account_code,
+          adjustmentGainAccountCode: r.adjustment_gain_account_code,
+          valuationMethod: r.valuation_method,
+          standardCost: Number(r.standard_cost),
+          averageCost: Number(r.average_cost),
+          lastPurchaseCost: Number(r.last_purchase_cost),
+          sellingPrice: Number(r.selling_price),
+          reorderPoint: Number(r.reorder_point),
+          minStockLevel: Number(r.min_stock_level),
+          maxStockLevel: Number(r.max_stock_level),
+          trackBatch: r.track_batch,
+          trackSerial: r.track_serial,
+          isActive: r.is_active,
+          createdAt: r.created_at?.toISOString?.() || r.created_at,
+          updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listStockItems(
+    tenantId: string,
+    filter?: { category?: string; isActive?: boolean }
+  ): Promise<StorageResult<StockItem[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_stock_items WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (filter?.isActive !== undefined) {
+        params.push(filter.isActive);
+        queryStr += ` AND is_active = $${params.length}`;
+      }
+      if (filter?.category) {
+        params.push(filter.category);
+        queryStr += ` AND category = $${params.length}`;
+      }
+      queryStr += ` ORDER BY item_code ASC`;
+
+      const res = await this.query(queryStr, params);
+      const list: StockItem[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        itemCode: r.item_code,
+        barcode: r.barcode || undefined,
+        nameAr: r.name_ar,
+        nameEn: r.name_en || undefined,
+        category: r.category,
+        uom: r.uom,
+        inventoryAccountCode: r.inventory_account_code,
+        cogsAccountCode: r.cogs_account_code,
+        adjustmentExpenseAccountCode: r.adjustment_expense_account_code,
+        adjustmentGainAccountCode: r.adjustment_gain_account_code,
+        valuationMethod: r.valuation_method,
+        standardCost: Number(r.standard_cost),
+        averageCost: Number(r.average_cost),
+        lastPurchaseCost: Number(r.last_purchase_cost),
+        sellingPrice: Number(r.selling_price),
+        reorderPoint: Number(r.reorder_point),
+        minStockLevel: Number(r.min_stock_level),
+        maxStockLevel: Number(r.max_stock_level),
+        trackBatch: r.track_batch,
+        trackSerial: r.track_serial,
+        isActive: r.is_active,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getWarehouseStock(
+    tenantId: string,
+    warehouseId: string,
+    itemId: string
+  ): Promise<StorageResult<WarehouseStock | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        `SELECT * FROM an_warehouse_stock WHERE tenant_id = $1 AND warehouse_id = $2 AND item_id = $3`,
+        [tenantId, warehouseId, itemId]
+      );
+      if (res.rows.length === 0) return { success: true, data: null };
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          id: r.id,
+          tenantId: r.tenant_id,
+          companyId: r.company_id,
+          warehouseId: r.warehouse_id,
+          itemId: r.item_id,
+          currentQty: Number(r.current_qty),
+          reservedQty: Number(r.reserved_qty),
+          availableQty: Number(r.available_qty),
+          averageCost: Number(r.average_cost),
+          totalValue: Number(r.total_value),
+          updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listWarehouseStock(
+    tenantId: string,
+    warehouseId?: string,
+    itemId?: string
+  ): Promise<StorageResult<WarehouseStock[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_warehouse_stock WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (warehouseId) {
+        params.push(warehouseId);
+        queryStr += ` AND warehouse_id = $${params.length}`;
+      }
+      if (itemId) {
+        params.push(itemId);
+        queryStr += ` AND item_id = $${params.length}`;
+      }
+      queryStr += ` ORDER BY updated_at DESC`;
+
+      const res = await this.query(queryStr, params);
+      const list: WarehouseStock[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        warehouseId: r.warehouse_id,
+        itemId: r.item_id,
+        currentQty: Number(r.current_qty),
+        reservedQty: Number(r.reserved_qty),
+        availableQty: Number(r.available_qty),
+        averageCost: Number(r.average_cost),
+        totalValue: Number(r.total_value),
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async recordStockMovement(
+    tenantId: string,
+    movement: StockMovement,
+    idempotencyKey: string
+  ): Promise<StorageResult<StockMovement>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'recordStockMovement');
+    if (cached) return { success: true, data: cached };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+
+      // Check warehouse stock row with FOR UPDATE lock
+      const stockRes = await client.query(
+        `SELECT * FROM an_warehouse_stock WHERE tenant_id = $1 AND warehouse_id = $2 AND item_id = $3 FOR UPDATE`,
+        [tenantId, movement.warehouseId, movement.itemId]
+      );
+
+      let currentQty = 0;
+      let totalValue = 0;
+      let averageCost = movement.unitCost;
+
+      if (stockRes.rows.length > 0) {
+        currentQty = Number(stockRes.rows[0].current_qty);
+        totalValue = Number(stockRes.rows[0].total_value);
+        averageCost = Number(stockRes.rows[0].average_cost);
+      }
+
+      // Calculate quantity delta based on movement type
+      let qtyDelta = 0;
+      let valueDelta = 0;
+
+      if (movement.movementType === 'RECEIPT' || movement.movementType === 'TRANSFER_IN' || movement.movementType === 'COUNT_ADJUSTMENT_GAIN') {
+        qtyDelta = Math.abs(movement.quantity);
+        valueDelta = qtyDelta * movement.unitCost;
+      } else if (movement.movementType === 'ISSUE' || movement.movementType === 'TRANSFER_OUT' || movement.movementType === 'COUNT_ADJUSTMENT_LOSS') {
+        qtyDelta = -Math.abs(movement.quantity);
+        valueDelta = qtyDelta * (averageCost > 0 ? averageCost : movement.unitCost);
+      }
+
+      const newQty = currentQty + qtyDelta;
+      const newTotalValue = Math.max(0, totalValue + valueDelta);
+      const newAverageCost = newQty > 0 ? newTotalValue / newQty : (movement.unitCost > 0 ? movement.unitCost : averageCost);
+
+      const stockId = stockRes.rows.length > 0 ? stockRes.rows[0].id : `stk-${movement.warehouseId}-${movement.itemId}`;
+      const nowIso = new Date().toISOString();
+
+      await client.query(
+        `INSERT INTO an_warehouse_stock (
+          id, tenant_id, company_id, warehouse_id, item_id, current_qty, reserved_qty, available_qty, average_cost, total_value, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, 0, $6, $7, $8, $9)
+        ON CONFLICT (tenant_id, warehouse_id, item_id) DO UPDATE SET
+          current_qty = EXCLUDED.current_qty,
+          available_qty = EXCLUDED.available_qty,
+          average_cost = EXCLUDED.average_cost,
+          total_value = EXCLUDED.total_value,
+          updated_at = EXCLUDED.updated_at`,
+        [
+          stockId,
+          tenantId,
+          movement.companyId || tenantId,
+          movement.warehouseId,
+          movement.itemId,
+          newQty,
+          newAverageCost,
+          newTotalValue,
+          nowIso,
+        ]
+      );
+
+      // Update global item average cost and last purchase cost if receipt
+      if (movement.movementType === 'RECEIPT' && movement.unitCost > 0) {
+        await client.query(
+          `UPDATE an_stock_items SET
+            average_cost = $1,
+            last_purchase_cost = $2,
+            updated_at = $3
+          WHERE tenant_id = $4 AND id = $5`,
+          [newAverageCost, movement.unitCost, nowIso, tenantId, movement.itemId]
+        );
+      }
+
+      // Insert stock movement record
+      await client.query(
+        `INSERT INTO an_stock_movements (
+          id, tenant_id, company_id, movement_number, movement_type,
+          warehouse_id, warehouse_name_ar, bin_id, item_id, item_code, item_name_ar,
+          quantity, unit_cost, total_cost, balance_after_qty,
+          source_document_type, source_document_id, source_document_number,
+          journal_entry_id, batch_number, serial_number, notes,
+          performed_by, performed_by_name, timestamp, idempotency_key
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)`,
+        [
+          movement.id,
+          tenantId,
+          movement.companyId || tenantId,
+          movement.movementNumber,
+          movement.movementType,
+          movement.warehouseId,
+          movement.warehouseNameAr || null,
+          movement.binId || null,
+          movement.itemId,
+          movement.itemCode,
+          movement.itemNameAr,
+          movement.quantity,
+          movement.unitCost,
+          movement.totalCost,
+          newQty,
+          movement.sourceDocumentType || null,
+          movement.sourceDocumentId || null,
+          movement.sourceDocumentNumber || null,
+          movement.journalEntryId || null,
+          movement.batchNumber || null,
+          movement.serialNumber || null,
+          movement.notes || null,
+          movement.performedBy,
+          movement.performedByName,
+          movement.timestamp || nowIso,
+          idempotencyKey,
+        ]
+      );
+
+      // Update Batch if provided
+      if (movement.batchNumber) {
+        const batchDelta = (movement.movementType === 'RECEIPT' || movement.movementType === 'TRANSFER_IN')
+          ? Math.abs(movement.quantity)
+          : -Math.abs(movement.quantity);
+        await client.query(
+          `INSERT INTO an_item_batches (
+            id, tenant_id, company_id, item_id, warehouse_id, batch_number, current_qty, unit_cost, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ON CONFLICT (tenant_id, warehouse_id, item_id, batch_number) DO UPDATE SET
+            current_qty = GREATEST(0, an_item_batches.current_qty + $10)`,
+          [
+            `bat-${movement.warehouseId}-${movement.itemId}-${movement.batchNumber}`,
+            tenantId,
+            movement.companyId || tenantId,
+            movement.itemId,
+            movement.warehouseId,
+            movement.batchNumber,
+            Math.max(0, batchDelta),
+            movement.unitCost,
+            nowIso,
+            batchDelta,
+          ]
+        );
+      }
+
+      await client.query('COMMIT');
+
+      const savedMovement: StockMovement = {
+        ...movement,
+        balanceAfterQty: newQty,
+        idempotencyKey,
+      };
+
+      await this.recordIdempotency(tenantId, idempotencyKey, 'recordStockMovement', savedMovement);
+      return { success: true, data: savedMovement };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async listStockMovements(
+    tenantId: string,
+    filter?: { warehouseId?: string; itemId?: string; movementType?: string; limit?: number }
+  ): Promise<StorageResult<StockMovement[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_stock_movements WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (filter?.warehouseId) {
+        params.push(filter.warehouseId);
+        queryStr += ` AND warehouse_id = $${params.length}`;
+      }
+      if (filter?.itemId) {
+        params.push(filter.itemId);
+        queryStr += ` AND item_id = $${params.length}`;
+      }
+      if (filter?.movementType) {
+        params.push(filter.movementType);
+        queryStr += ` AND movement_type = $${params.length}`;
+      }
+      queryStr += ` ORDER BY timestamp DESC LIMIT $${params.length + 1}`;
+      params.push(filter?.limit || 100);
+
+      const res = await this.query(queryStr, params);
+      const list: StockMovement[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        movementNumber: r.movement_number,
+        movementType: r.movement_type,
+        warehouseId: r.warehouse_id,
+        warehouseNameAr: r.warehouse_name_ar || undefined,
+        binId: r.bin_id || undefined,
+        itemId: r.item_id,
+        itemCode: r.item_code,
+        itemNameAr: r.item_name_ar,
+        quantity: Number(r.quantity),
+        unitCost: Number(r.unit_cost),
+        totalCost: Number(r.total_cost),
+        balanceAfterQty: Number(r.balance_after_qty),
+        sourceDocumentType: r.source_document_type || undefined,
+        sourceDocumentId: r.source_document_id || undefined,
+        sourceDocumentNumber: r.source_document_number || undefined,
+        journalEntryId: r.journal_entry_id || undefined,
+        batchNumber: r.batch_number || undefined,
+        serialNumber: r.serial_number || undefined,
+        notes: r.notes || undefined,
+        performedBy: r.performed_by,
+        performedByName: r.performed_by_name,
+        timestamp: r.timestamp?.toISOString?.() || r.timestamp,
+        idempotencyKey: r.idempotency_key || undefined,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async createStockTransfer(
+    tenantId: string,
+    transfer: StockTransfer,
+    lines: StockTransferLine[],
+    idempotencyKey: string
+  ): Promise<StorageResult<StockTransfer>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'createStockTransfer');
+    if (cached) return { success: true, data: cached };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+
+      await client.query(
+        `INSERT INTO an_stock_transfers (
+          id, tenant_id, company_id, transfer_number,
+          source_warehouse_id, source_warehouse_name_ar,
+          target_warehouse_id, target_warehouse_name_ar,
+          status, requested_by, requested_by_name, requested_at,
+          total_items_count, total_quantity, total_cost, notes,
+          created_at, updated_at, idempotency_key
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+        [
+          transfer.id,
+          tenantId,
+          transfer.companyId || tenantId,
+          transfer.transferNumber,
+          transfer.sourceWarehouseId,
+          transfer.sourceWarehouseNameAr,
+          transfer.targetWarehouseId,
+          transfer.targetWarehouseNameAr,
+          transfer.status || 'DRAFT',
+          transfer.requestedBy,
+          transfer.requestedByName,
+          transfer.requestedAt || new Date().toISOString(),
+          lines.length,
+          transfer.totalQuantity,
+          transfer.totalCost,
+          transfer.notes || null,
+          new Date().toISOString(),
+          new Date().toISOString(),
+          idempotencyKey,
+        ]
+      );
+
+      for (const line of lines) {
+        await client.query(
+          `INSERT INTO an_stock_transfer_lines (
+            id, tenant_id, company_id, transfer_id, item_id, item_code, item_name_ar,
+            quantity, unit_cost, total_cost, batch_number, serial_number
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          [
+            line.id,
+            tenantId,
+            line.companyId || tenantId,
+            transfer.id,
+            line.itemId,
+            line.itemCode,
+            line.itemNameAr,
+            line.quantity,
+            line.unitCost,
+            line.totalCost,
+            line.batchNumber || null,
+            line.serialNumber || null,
+          ]
+        );
+      }
+
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'createStockTransfer', transfer);
+      return { success: true, data: transfer };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async getStockTransfer(
+    tenantId: string,
+    transferId: string
+  ): Promise<StorageResult<{ transfer: StockTransfer; lines: StockTransferLine[] } | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        `SELECT * FROM an_stock_transfers WHERE tenant_id = $1 AND (id = $2 OR transfer_number = $2)`,
+        [tenantId, transferId]
+      );
+      if (res.rows.length === 0) return { success: true, data: null };
+      const r = res.rows[0];
+      const transfer: StockTransfer = {
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        transferNumber: r.transfer_number,
+        sourceWarehouseId: r.source_warehouse_id,
+        sourceWarehouseNameAr: r.source_warehouse_name_ar,
+        targetWarehouseId: r.target_warehouse_id,
+        targetWarehouseNameAr: r.target_warehouse_name_ar,
+        status: r.status,
+        requestedBy: r.requested_by,
+        requestedByName: r.requested_by_name,
+        requestedAt: r.requested_at?.toISOString?.() || r.requested_at,
+        dispatchedBy: r.dispatched_by || undefined,
+        dispatchedByName: r.dispatched_by_name || undefined,
+        dispatchedAt: r.dispatched_at?.toISOString?.() || r.dispatched_at || undefined,
+        receivedBy: r.received_by || undefined,
+        receivedByName: r.received_by_name || undefined,
+        receivedAt: r.received_at?.toISOString?.() || r.received_at || undefined,
+        totalItemsCount: Number(r.total_items_count),
+        totalQuantity: Number(r.total_quantity),
+        totalCost: Number(r.total_cost),
+        notes: r.notes || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+        idempotencyKey: r.idempotency_key || undefined,
+      };
+
+      const linesRes = await this.query(
+        `SELECT * FROM an_stock_transfer_lines WHERE tenant_id = $1 AND transfer_id = $2`,
+        [tenantId, transfer.id]
+      );
+      const lines: StockTransferLine[] = linesRes.rows.map((l: any) => ({
+        id: l.id,
+        tenantId: l.tenant_id,
+        companyId: l.company_id,
+        transferId: l.transfer_id,
+        itemId: l.item_id,
+        itemCode: l.item_code,
+        itemNameAr: l.item_name_ar,
+        quantity: Number(l.quantity),
+        unitCost: Number(l.unit_cost),
+        totalCost: Number(l.total_cost),
+        batchNumber: l.batch_number || undefined,
+        serialNumber: l.serial_number || undefined,
+      }));
+
+      return { success: true, data: { transfer, lines } };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listStockTransfers(
+    tenantId: string,
+    filter?: { status?: string; warehouseId?: string }
+  ): Promise<StorageResult<StockTransfer[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_stock_transfers WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (filter?.status) {
+        params.push(filter.status);
+        queryStr += ` AND status = $${params.length}`;
+      }
+      if (filter?.warehouseId) {
+        params.push(filter.warehouseId);
+        queryStr += ` AND (source_warehouse_id = $${params.length} OR target_warehouse_id = $${params.length})`;
+      }
+      queryStr += ` ORDER BY created_at DESC`;
+
+      const res = await this.query(queryStr, params);
+      const list: StockTransfer[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        transferNumber: r.transfer_number,
+        sourceWarehouseId: r.source_warehouse_id,
+        sourceWarehouseNameAr: r.source_warehouse_name_ar,
+        targetWarehouseId: r.target_warehouse_id,
+        targetWarehouseNameAr: r.target_warehouse_name_ar,
+        status: r.status,
+        requestedBy: r.requested_by,
+        requestedByName: r.requested_by_name,
+        requestedAt: r.requested_at?.toISOString?.() || r.requested_at,
+        dispatchedBy: r.dispatched_by || undefined,
+        dispatchedByName: r.dispatched_by_name || undefined,
+        dispatchedAt: r.dispatched_at?.toISOString?.() || r.dispatched_at || undefined,
+        receivedBy: r.received_by || undefined,
+        receivedByName: r.received_by_name || undefined,
+        receivedAt: r.received_at?.toISOString?.() || r.received_at || undefined,
+        totalItemsCount: Number(r.total_items_count),
+        totalQuantity: Number(r.total_quantity),
+        totalCost: Number(r.total_cost),
+        notes: r.notes || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+        idempotencyKey: r.idempotency_key || undefined,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async updateStockTransferStatus(
+    tenantId: string,
+    transferId: string,
+    status: StockTransferStatus,
+    actorId: string,
+    actorName: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<StockTransfer>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'updateStockTransferStatus');
+    if (cached) return { success: true, data: cached };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+
+      const selRes = await client.query(
+        `SELECT * FROM an_stock_transfers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, transferId]
+      );
+      if (selRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/transfer-not-found',
+            title: 'Stock Transfer Not Found',
+            status: 404,
+            detail: `Stock transfer ${transferId} was not found`,
+            instance: `/api/inventory/transfers/${transferId}`,
+          },
+        };
+      }
+
+      const existing = selRes.rows[0];
+      const nowIso = new Date().toISOString();
+
+      let dispatchedBy = existing.dispatched_by;
+      let dispatchedByName = existing.dispatched_by_name;
+      let dispatchedAt = existing.dispatched_at;
+      let receivedBy = existing.received_by;
+      let receivedByName = existing.received_by_name;
+      let receivedAt = existing.received_at;
+
+      if (status === 'IN_TRANSIT') {
+        dispatchedBy = actorId;
+        dispatchedByName = actorName;
+        dispatchedAt = nowIso;
+      } else if (status === 'RECEIVED') {
+        receivedBy = actorId;
+        receivedByName = actorName;
+        receivedAt = nowIso;
+      }
+
+      await client.query(
+        `UPDATE an_stock_transfers SET
+          status = $1,
+          dispatched_by = $2,
+          dispatched_by_name = $3,
+          dispatched_at = $4,
+          received_by = $5,
+          received_by_name = $6,
+          received_at = $7,
+          updated_at = $8
+        WHERE tenant_id = $9 AND id = $10`,
+        [
+          status,
+          dispatchedBy,
+          dispatchedByName,
+          dispatchedAt,
+          receivedBy,
+          receivedByName,
+          receivedAt,
+          nowIso,
+          tenantId,
+          transferId,
+        ]
+      );
+
+      const updated: StockTransfer = {
+        id: existing.id,
+        tenantId: existing.tenant_id,
+        companyId: existing.company_id,
+        transferNumber: existing.transfer_number,
+        sourceWarehouseId: existing.source_warehouse_id,
+        sourceWarehouseNameAr: existing.source_warehouse_name_ar,
+        targetWarehouseId: existing.target_warehouse_id,
+        targetWarehouseNameAr: existing.target_warehouse_name_ar,
+        status,
+        requestedBy: existing.requested_by,
+        requestedByName: existing.requested_by_name,
+        requestedAt: existing.requested_at?.toISOString?.() || existing.requested_at,
+        dispatchedBy,
+        dispatchedByName,
+        dispatchedAt: dispatchedAt?.toISOString?.() || dispatchedAt,
+        receivedBy,
+        receivedByName,
+        receivedAt: receivedAt?.toISOString?.() || receivedAt,
+        totalItemsCount: Number(existing.total_items_count),
+        totalQuantity: Number(existing.total_quantity),
+        totalCost: Number(existing.total_cost),
+        notes: existing.notes || undefined,
+        createdAt: existing.created_at?.toISOString?.() || existing.created_at,
+        updatedAt: nowIso,
+        idempotencyKey,
+      };
+
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'updateStockTransferStatus', updated);
+      return { success: true, data: updated };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async createStockCount(
+    tenantId: string,
+    count: StockCount,
+    lines: StockCountLine[],
+    idempotencyKey: string
+  ): Promise<StorageResult<StockCount>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'createStockCount');
+    if (cached) return { success: true, data: cached };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+
+      await client.query(
+        `INSERT INTO an_stock_counts (
+          id, tenant_id, company_id, count_number, count_type,
+          warehouse_id, warehouse_name_ar, status,
+          performed_by, performed_by_name, performed_at,
+          total_items_count, has_variance, net_variance_amount,
+          notes, created_at, updated_at, idempotency_key
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+        [
+          count.id,
+          tenantId,
+          count.companyId || tenantId,
+          count.countNumber,
+          count.countType || 'PERIODIC',
+          count.warehouseId,
+          count.warehouseNameAr,
+          count.status || 'COMPLETED',
+          count.performedBy,
+          count.performedByName,
+          count.performedAt || new Date().toISOString(),
+          lines.length,
+          count.hasVariance,
+          count.netVarianceAmount,
+          count.notes || null,
+          new Date().toISOString(),
+          new Date().toISOString(),
+          idempotencyKey,
+        ]
+      );
+
+      for (const line of lines) {
+        await client.query(
+          `INSERT INTO an_stock_count_lines (
+            id, tenant_id, company_id, count_id, item_id, item_code, item_name_ar,
+            system_qty, counted_qty, variance_qty, unit_cost, variance_amount,
+            batch_number, serial_number, notes
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+          [
+            line.id,
+            tenantId,
+            line.companyId || tenantId,
+            count.id,
+            line.itemId,
+            line.itemCode,
+            line.itemNameAr,
+            line.systemQty,
+            line.countedQty,
+            line.varianceQty,
+            line.unitCost,
+            line.varianceAmount,
+            line.batchNumber || null,
+            line.serialNumber || null,
+            line.notes || null,
+          ]
+        );
+      }
+
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'createStockCount', count);
+      return { success: true, data: count };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async getStockCount(
+    tenantId: string,
+    countId: string
+  ): Promise<StorageResult<{ count: StockCount; lines: StockCountLine[] } | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        `SELECT * FROM an_stock_counts WHERE tenant_id = $1 AND (id = $2 OR count_number = $2)`,
+        [tenantId, countId]
+      );
+      if (res.rows.length === 0) return { success: true, data: null };
+      const r = res.rows[0];
+      const count: StockCount = {
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        countNumber: r.count_number,
+        countType: r.count_type,
+        warehouseId: r.warehouse_id,
+        warehouseNameAr: r.warehouse_name_ar,
+        status: r.status,
+        performedBy: r.performed_by,
+        performedByName: r.performed_by_name,
+        performedAt: r.performed_at?.toISOString?.() || r.performed_at,
+        approvedBy: r.approved_by || undefined,
+        approvedByName: r.approved_by_name || undefined,
+        approvedAt: r.approved_at?.toISOString?.() || r.approved_at || undefined,
+        totalItemsCount: Number(r.total_items_count),
+        hasVariance: r.has_variance,
+        netVarianceAmount: Number(r.net_variance_amount),
+        journalEntryId: r.journal_entry_id || undefined,
+        notes: r.notes || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+        idempotencyKey: r.idempotency_key || undefined,
+      };
+
+      const linesRes = await this.query(
+        `SELECT * FROM an_stock_count_lines WHERE tenant_id = $1 AND count_id = $2`,
+        [tenantId, count.id]
+      );
+      const lines: StockCountLine[] = linesRes.rows.map((l: any) => ({
+        id: l.id,
+        tenantId: l.tenant_id,
+        companyId: l.company_id,
+        countId: l.count_id,
+        itemId: l.item_id,
+        itemCode: l.item_code,
+        itemNameAr: l.item_name_ar,
+        systemQty: Number(l.system_qty),
+        countedQty: Number(l.counted_qty),
+        varianceQty: Number(l.variance_qty),
+        unitCost: Number(l.unit_cost),
+        varianceAmount: Number(l.variance_amount),
+        batchNumber: l.batch_number || undefined,
+        serialNumber: l.serial_number || undefined,
+        notes: l.notes || undefined,
+      }));
+
+      return { success: true, data: { count, lines } };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listStockCounts(
+    tenantId: string,
+    filter?: { warehouseId?: string; status?: string }
+  ): Promise<StorageResult<StockCount[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_stock_counts WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (filter?.warehouseId) {
+        params.push(filter.warehouseId);
+        queryStr += ` AND warehouse_id = $${params.length}`;
+      }
+      if (filter?.status) {
+        params.push(filter.status);
+        queryStr += ` AND status = $${params.length}`;
+      }
+      queryStr += ` ORDER BY created_at DESC`;
+
+      const res = await this.query(queryStr, params);
+      const list: StockCount[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        countNumber: r.count_number,
+        countType: r.count_type,
+        warehouseId: r.warehouse_id,
+        warehouseNameAr: r.warehouse_name_ar,
+        status: r.status,
+        performedBy: r.performed_by,
+        performedByName: r.performed_by_name,
+        performedAt: r.performed_at?.toISOString?.() || r.performed_at,
+        approvedBy: r.approved_by || undefined,
+        approvedByName: r.approved_by_name || undefined,
+        approvedAt: r.approved_at?.toISOString?.() || r.approved_at || undefined,
+        totalItemsCount: Number(r.total_items_count),
+        hasVariance: r.has_variance,
+        netVarianceAmount: Number(r.net_variance_amount),
+        journalEntryId: r.journal_entry_id || undefined,
+        notes: r.notes || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+        idempotencyKey: r.idempotency_key || undefined,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async updateStockCountStatus(
+    tenantId: string,
+    countId: string,
+    status: StockCountStatus,
+    actorId: string,
+    actorName: string,
+    journalEntryId?: string,
+    idempotencyKey?: string
+  ): Promise<StorageResult<StockCount>> {
+    if (!this.pool) return this.missingConnError();
+    if (idempotencyKey) {
+      const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'updateStockCountStatus');
+      if (cached) return { success: true, data: cached };
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+
+      const selRes = await client.query(
+        `SELECT * FROM an_stock_counts WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, countId]
+      );
+      if (selRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/count-not-found',
+            title: 'Stock Count Not Found',
+            status: 404,
+            detail: `Stock count ${countId} was not found`,
+            instance: `/api/inventory/counts/${countId}`,
+          },
+        };
+      }
+
+      const existing = selRes.rows[0];
+
+      // SoD Enforcement: Section 7.1 - Performer cannot approve own stock count
+      if ((status === 'APPROVED' || status === 'POSTED') && existing.performed_by === actorId) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/sod-violation',
+            title: 'Segregation of Duties Violation',
+            status: 403,
+            detail: 'لا يجوز للقائم بالجرد الفعلي اعتماد نتيجة الجرد أو ترحيل فروقه تسوية (بند 7/SoD)',
+            instance: `/api/inventory/counts/${countId}/approve`,
+          },
+        };
+      }
+
+      const nowIso = new Date().toISOString();
+      const jeId = journalEntryId || existing.journal_entry_id;
+
+      await client.query(
+        `UPDATE an_stock_counts SET
+          status = $1,
+          approved_by = $2,
+          approved_by_name = $3,
+          approved_at = $4,
+          journal_entry_id = $5,
+          updated_at = $6
+        WHERE tenant_id = $7 AND id = $8`,
+        [
+          status,
+          actorId,
+          actorName,
+          nowIso,
+          jeId,
+          nowIso,
+          tenantId,
+          countId,
+        ]
+      );
+
+      const updated: StockCount = {
+        id: existing.id,
+        tenantId: existing.tenant_id,
+        companyId: existing.company_id,
+        countNumber: existing.count_number,
+        countType: existing.count_type,
+        warehouseId: existing.warehouse_id,
+        warehouseNameAr: existing.warehouse_name_ar,
+        status,
+        performedBy: existing.performed_by,
+        performedByName: existing.performed_by_name,
+        performedAt: existing.performed_at?.toISOString?.() || existing.performed_at,
+        approvedBy: actorId,
+        approvedByName: actorName,
+        approvedAt: nowIso,
+        totalItemsCount: Number(existing.total_items_count),
+        hasVariance: existing.has_variance,
+        netVarianceAmount: Number(existing.net_variance_amount),
+        journalEntryId: jeId,
+        notes: existing.notes || undefined,
+        createdAt: existing.created_at?.toISOString?.() || existing.created_at,
+        updatedAt: nowIso,
+        idempotencyKey,
+      };
+
+      await client.query('COMMIT');
+      if (idempotencyKey) {
+        await this.recordIdempotency(tenantId, idempotencyKey, 'updateStockCountStatus', updated);
+      }
+      return { success: true, data: updated };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async saveItemBatch(tenantId: string, batch: ItemBatch): Promise<StorageResult<ItemBatch>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_item_batches (
+          id, tenant_id, company_id, item_id, warehouse_id, batch_number,
+          production_date, expiry_date, current_qty, unit_cost, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (tenant_id, warehouse_id, item_id, batch_number) DO UPDATE SET
+          current_qty = EXCLUDED.current_qty,
+          production_date = EXCLUDED.production_date,
+          expiry_date = EXCLUDED.expiry_date,
+          unit_cost = EXCLUDED.unit_cost`,
+        [
+          batch.id,
+          tenantId,
+          batch.companyId || tenantId,
+          batch.itemId,
+          batch.warehouseId,
+          batch.batchNumber,
+          batch.productionDate || null,
+          batch.expiryDate || null,
+          batch.currentQty || 0,
+          batch.unitCost || 0,
+          batch.createdAt || new Date().toISOString(),
+        ]
+      );
+      return { success: true, data: batch };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listItemBatches(
+    tenantId: string,
+    itemId?: string,
+    warehouseId?: string
+  ): Promise<StorageResult<ItemBatch[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_item_batches WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (itemId) {
+        params.push(itemId);
+        queryStr += ` AND item_id = $${params.length}`;
+      }
+      if (warehouseId) {
+        params.push(warehouseId);
+        queryStr += ` AND warehouse_id = $${params.length}`;
+      }
+      queryStr += ` ORDER BY expiry_date ASC, created_at DESC`;
+
+      const res = await this.query(queryStr, params);
+      const list: ItemBatch[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        itemId: r.item_id,
+        warehouseId: r.warehouse_id,
+        batchNumber: r.batch_number,
+        productionDate: r.production_date || undefined,
+        expiryDate: r.expiry_date || undefined,
+        currentQty: Number(r.current_qty),
+        unitCost: Number(r.unit_cost),
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveItemSerial(tenantId: string, serial: ItemSerial): Promise<StorageResult<ItemSerial>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_item_serials (
+          id, tenant_id, company_id, item_id, warehouse_id, serial_number, status, warranty_expiry, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (tenant_id, item_id, serial_number) DO UPDATE SET
+          warehouse_id = EXCLUDED.warehouse_id,
+          status = EXCLUDED.status,
+          warranty_expiry = EXCLUDED.warranty_expiry`,
+        [
+          serial.id,
+          tenantId,
+          serial.companyId || tenantId,
+          serial.itemId,
+          serial.warehouseId,
+          serial.serialNumber,
+          serial.status || 'IN_STOCK',
+          serial.warrantyExpiry || null,
+          serial.createdAt || new Date().toISOString(),
+        ]
+      );
+      return { success: true, data: serial };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listItemSerials(
+    tenantId: string,
+    itemId?: string,
+    warehouseId?: string
+  ): Promise<StorageResult<ItemSerial[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_item_serials WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (itemId) {
+        params.push(itemId);
+        queryStr += ` AND item_id = $${params.length}`;
+      }
+      if (warehouseId) {
+        params.push(warehouseId);
+        queryStr += ` AND warehouse_id = $${params.length}`;
+      }
+      queryStr += ` ORDER BY created_at DESC`;
+
+      const res = await this.query(queryStr, params);
+      const list: ItemSerial[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        itemId: r.item_id,
+        warehouseId: r.warehouse_id,
+        serialNumber: r.serial_number,
+        status: r.status,
+        warrantyExpiry: r.warranty_expiry || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
 }
+

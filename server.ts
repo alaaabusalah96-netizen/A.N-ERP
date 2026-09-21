@@ -43,6 +43,8 @@ import { runPhase5Battery } from './src/core/tests/runPhase5Battery';
 import { runPhase6Battery } from './src/core/tests/runPhase6Battery';
 import { CashCustodyService } from './src/core/modules/custody/CashCustodyService';
 import { ExpenseService } from './src/core/modules/expenses/ExpenseService';
+import { InventoryService } from './src/core/inventory/InventoryService';
+import { runPhase7Battery } from './src/core/inventory/Phase7Battery';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
 import { AccountingService } from './src/core/accounting/AccountingService';
 import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
@@ -2754,6 +2756,360 @@ async function startServer() {
         data: result.data,
         message: 'تم رفض طلب المصروفات وتحديث الحالة بنجاح',
       });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ============================================================================
+  // PHASE 7: WAREHOUSES & INVENTORY MODULE (موديول المخازن والمخزون - موديول 3 من 15)
+  // ============================================================================
+
+  const getInventoryService = (req: Request, res: Response): InventoryService | null => {
+    const storage = getRequestStorage(req, res);
+    if (!storage) return null;
+    const pe = new PostingEngine(storage);
+    const ne = new NumberingEngine(storage);
+    return new InventoryService(storage, pe, ne);
+  };
+
+  // Phase 7 Acceptance Battery Endpoint (Internal / Auditor)
+  app.get('/api/internal/phase7-battery', async (req: Request, res: Response) => {
+    const result = await runPhase7Battery();
+    return res.json(result);
+  });
+
+  // 7A: Warehouses List
+  app.get('/api/inventory/warehouses', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const filter = {
+        isActive: req.query.isActive !== undefined ? req.query.isActive === 'true' : undefined,
+        branchId: req.query.branchId as string,
+      };
+      const result = await svc.listWarehouses(tenantId, filter);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7A: Save / Create Warehouse
+  app.post('/api/inventory/warehouses', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const key = requireIdempotencyKey(req, res, 'حفظ مستودع');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const result = await svc.saveWarehouse(tenantId, req.body, key);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ المستودع بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7A: Warehouse Bins
+  app.get('/api/inventory/warehouses/:id/bins', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const result = await svc.listWarehouseBins(tenantId, req.params.id);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/inventory/warehouses/:id/bins', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const result = await svc.saveWarehouseBin(tenantId, { ...req.body, warehouseId: req.params.id });
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data, message: 'تم إضافة موقع التخزين الفرعي بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7A: Items List & Card
+  app.get('/api/inventory/items', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const filter = {
+        category: req.query.category as string,
+        isActive: req.query.isActive !== undefined ? req.query.isActive === 'true' : undefined,
+      };
+      const result = await svc.listStockItems(tenantId, filter);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/inventory/items', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const key = requireIdempotencyKey(req, res, 'حفظ بطاقة صنف');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const result = await svc.saveStockItem(tenantId, req.body, key);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ بطاقة الصنف بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7B: Stock Balances & Real-Time Levels
+  app.get('/api/inventory/stock', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const warehouseId = req.query.warehouseId as string;
+      const itemId = req.query.itemId as string;
+      const result = await svc.listWarehouseStock(tenantId, warehouseId, itemId);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7B: Stock Movements
+  app.get('/api/inventory/movements', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const filter = {
+        warehouseId: req.query.warehouseId as string,
+        itemId: req.query.itemId as string,
+        movementType: req.query.movementType as string,
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+      };
+      const result = await svc.listStockMovements(tenantId, filter);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7B: Stock Receipt (توريد مخزني)
+  app.post('/api/inventory/receive', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-storekeeper';
+      const key = requireIdempotencyKey(req, res, 'توريد مخزني');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+
+      const result = await svc.receiveStock(tenantId, {
+        ...req.body,
+        performedBy: userId,
+        performedByName: req.body.performedByName || 'أمين المستودع',
+        idempotencyKey: key,
+      });
+
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data, message: 'تم تسجيل التوريد المخزني واحتساب التكلفة بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7B: Stock Issue (صرف مخزني)
+  app.post('/api/inventory/issue', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-storekeeper';
+      const key = requireIdempotencyKey(req, res, 'صرف مخزني');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+
+      const result = await svc.issueStock(tenantId, {
+        ...req.body,
+        performedBy: userId,
+        performedByName: req.body.performedByName || 'أمين المستودع',
+        idempotencyKey: key,
+      });
+
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data, message: 'تم صرف الأصناف وتحديث الأرصدة بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7A: Transfers Between Warehouses
+  app.get('/api/inventory/transfers', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const filter = {
+        status: req.query.status as string,
+        warehouseId: req.query.warehouseId as string,
+      };
+      const result = await svc.listStockTransfers(tenantId, filter);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/inventory/transfers', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-logistics';
+      const key = requireIdempotencyKey(req, res, 'إنشاء تحويل مخزني');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+
+      const result = await svc.createTransfer(tenantId, {
+        ...req.body,
+        requestedBy: userId,
+        requestedByName: req.body.requestedByName || 'مشرف الحركة المخزنية',
+        idempotencyKey: key,
+      });
+
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data, message: 'تم إنشاء مستند التحويل وإرسال البضاعة بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/inventory/transfers/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const result = await svc.getStockTransfer(tenantId, req.params.id);
+      if (!result.success) return res.status(500).json(result.error);
+      if (!result.data) return res.status(404).json({ error: 'مستند التحويل غير موجود' });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/inventory/transfers/:id/receive', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-storekeeper-dest';
+      const key = requireIdempotencyKey(req, res, 'استلام تحويل مخزني');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+
+      const result = await svc.receiveTransfer(
+        tenantId,
+        req.params.id,
+        userId,
+        req.body.receivedByName || 'أمين مستودع الوصول',
+        key
+      );
+
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data, message: 'تم تأكيد استلام الشحنة وإيداعها بالمستودع بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7C: Inventory Counts (الجرد الفعلي والتسويات)
+  app.get('/api/inventory/counts', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const filter = {
+        warehouseId: req.query.warehouseId as string,
+        status: req.query.status as string,
+      };
+      const result = await svc.listStockCounts(tenantId, filter);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/inventory/counts', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-auditor';
+      const key = requireIdempotencyKey(req, res, 'تسجيل محضر جرد');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+
+      const result = await svc.createStockCount(tenantId, {
+        ...req.body,
+        performedBy: userId,
+        performedByName: req.body.performedByName || 'المراجع الميداني',
+        idempotencyKey: key,
+      });
+
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ محضر الجرد واحتساب الفروقات بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/inventory/counts/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const result = await svc.getStockCount(tenantId, req.params.id);
+      if (!result.success) return res.status(500).json(result.error);
+      if (!result.data) return res.status(404).json({ error: 'محضر الجرد غير موجود' });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7C: Approve & Post Count (with strict SoD check & PostingEngine)
+  app.post('/api/inventory/counts/:id/approve', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-cfo';
+      const key = requireIdempotencyKey(req, res, 'اعتماد وترحيل تسوية الجرد');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+
+      const result = await svc.approveAndPostStockCount(tenantId, {
+        countId: req.params.id,
+        approvedBy: userId,
+        approvedByName: req.body.approvedByName || 'المدير المالي',
+        idempotencyKey: key,
+      });
+
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data, message: 'تم اعتماد محضر الجرد وترحيل قيود التسوية المتوازنة بنجاح' });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }

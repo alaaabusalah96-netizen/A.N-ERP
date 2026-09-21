@@ -36,6 +36,20 @@ import {
   ExpenseLine,
   ExpenseAttachment,
   ExpenseCategory,
+  Warehouse,
+  WarehouseBin,
+  StockItem,
+  WarehouseStock,
+  StockMovement,
+  StockMovementType,
+  StockTransfer,
+  StockTransferLine,
+  StockTransferStatus,
+  StockCount,
+  StockCountLine,
+  StockCountStatus,
+  ItemBatch,
+  ItemSerial,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -76,6 +90,19 @@ export class InMemoryAdapter implements StoragePort {
   private cashCustodies = new Map<string, CashCustody>();
   private cashCustodyTransactions = new Map<string, CashCustodyTransaction>();
   private cashCustodySettlements = new Map<string, CashCustodySettlement>();
+
+  // Phase 7: Inventory & Warehouses
+  private warehouses = new Map<string, Warehouse>();
+  private warehouseBins = new Map<string, WarehouseBin>();
+  private stockItems = new Map<string, StockItem>();
+  private warehouseStock = new Map<string, WarehouseStock>();
+  private stockMovements = new Map<string, StockMovement>();
+  private stockTransfers = new Map<string, StockTransfer>();
+  private stockTransferLines = new Map<string, StockTransferLine[]>();
+  private stockCounts = new Map<string, StockCount>();
+  private stockCountLines = new Map<string, StockCountLine[]>();
+  private itemBatches = new Map<string, ItemBatch>();
+  private itemSerials = new Map<string, ItemSerial>();
 
   constructor() {
     this.seedDefaultData();
@@ -145,6 +172,76 @@ export class InMemoryAdapter implements StoragePort {
     for (const acc of defaultAccounts) {
       this.accounts.set(`${acc.tenantId}:${acc.code}`, acc);
     }
+
+    // Default Seed Warehouse and Items
+    const defaultWarehouse: Warehouse = {
+      id: 'wh-main',
+      tenantId: 'tenant-main',
+      companyId: 'tenant-main',
+      code: 'WH-001',
+      nameAr: 'المستودع الرئيسي - الرياض',
+      nameEn: 'Main Warehouse - Riyadh',
+      location: 'الرياض - المنطقة الصناعية الثانية',
+      valuationMethod: 'WEIGHTED_AVERAGE',
+      isActive: true,
+      createdAt: new Date().toISOString(),
+    };
+    this.warehouses.set(`tenant-main:${defaultWarehouse.id}`, defaultWarehouse);
+
+    const branchWarehouse: Warehouse = {
+      id: 'wh-jeddah',
+      tenantId: 'tenant-main',
+      companyId: 'tenant-main',
+      code: 'WH-002',
+      nameAr: 'مستودع جدة الإقليمي',
+      nameEn: 'Jeddah Regional Warehouse',
+      location: 'جدة - مستودعات الخمرة',
+      valuationMethod: 'WEIGHTED_AVERAGE',
+      isActive: true,
+      createdAt: new Date().toISOString(),
+    };
+    this.warehouses.set(`tenant-main:${branchWarehouse.id}`, branchWarehouse);
+
+    const defaultItem: StockItem = {
+      id: 'item-001',
+      tenantId: 'tenant-main',
+      companyId: 'tenant-main',
+      itemCode: 'SKU-LAPTOP-01',
+      nameAr: 'حاسب محمول للأعمال - فئة ممتازة',
+      nameEn: 'Business Laptop Enterprise',
+      category: 'ELECTRONICS',
+      uom: 'قطعة',
+      inventoryAccountCode: '110301',
+      cogsAccountCode: '510101',
+      adjustmentExpenseAccountCode: '520101',
+      adjustmentGainAccountCode: '410101',
+      valuationMethod: 'WEIGHTED_AVERAGE',
+      standardCost: 3200,
+      averageCost: 3200,
+      sellingPrice: 4200,
+      reorderPoint: 5,
+      minStockLevel: 2,
+      maxStockLevel: 30,
+      trackBatch: false,
+      trackSerial: true,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+    };
+    this.stockItems.set(`tenant-main:${defaultItem.id}`, defaultItem);
+
+    this.warehouseStock.set(`tenant-main:wh-main:item-001`, {
+      id: 'wh-main-item-001',
+      tenantId: 'tenant-main',
+      companyId: 'tenant-main',
+      itemId: 'item-001',
+      warehouseId: 'wh-main',
+      currentQty: 18,
+      reservedQty: 0,
+      availableQty: 18,
+      averageCost: 3200,
+      totalValue: 57600,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   public async getTenant(tenantId: string): Promise<StorageResult<TenantCompany>> {
@@ -1347,5 +1444,272 @@ export class InMemoryAdapter implements StoragePort {
     const key = `${tenantId}:${category.code}`;
     this.expenseCategories.set(key, { ...category, tenantId });
     return { success: true, data: category };
+  }
+
+  // Phase 7: Inventory & Warehouses (InMemory)
+  public async saveWarehouse(tenantId: string, warehouse: Warehouse, idempotencyKey: string): Promise<StorageResult<Warehouse>> {
+    this.warehouses.set(`${tenantId}:${warehouse.id}`, { ...warehouse, tenantId });
+    return { success: true, data: warehouse };
+  }
+
+  public async getWarehouse(tenantId: string, warehouseId: string): Promise<StorageResult<Warehouse | null>> {
+    const wh = this.warehouses.get(`${tenantId}:${warehouseId}`);
+    return { success: true, data: wh ? { ...wh } : null };
+  }
+
+  public async listWarehouses(tenantId: string, filter?: { isActive?: boolean; branchId?: string }): Promise<StorageResult<Warehouse[]>> {
+    let list = Array.from(this.warehouses.values()).filter(w => w.tenantId === tenantId);
+    if (filter?.isActive !== undefined) list = list.filter(w => w.isActive === filter.isActive);
+    if (filter?.branchId) list = list.filter(w => w.branchId === filter.branchId);
+    return { success: true, data: list.map(w => ({ ...w })) };
+  }
+
+  public async saveWarehouseBin(tenantId: string, bin: WarehouseBin): Promise<StorageResult<WarehouseBin>> {
+    this.warehouseBins.set(`${tenantId}:${bin.id}`, { ...bin, tenantId });
+    return { success: true, data: bin };
+  }
+
+  public async listWarehouseBins(tenantId: string, warehouseId: string): Promise<StorageResult<WarehouseBin[]>> {
+    const list = Array.from(this.warehouseBins.values()).filter(b => b.tenantId === tenantId && b.warehouseId === warehouseId);
+    return { success: true, data: list.map(b => ({ ...b })) };
+  }
+
+  public async saveStockItem(tenantId: string, item: StockItem, idempotencyKey: string): Promise<StorageResult<StockItem>> {
+    this.stockItems.set(`${tenantId}:${item.id}`, { ...item, tenantId });
+    return { success: true, data: item };
+  }
+
+  public async getStockItem(tenantId: string, itemId: string): Promise<StorageResult<StockItem | null>> {
+    const item = this.stockItems.get(`${tenantId}:${itemId}`);
+    return { success: true, data: item ? { ...item } : null };
+  }
+
+  public async listStockItems(tenantId: string, filter?: { category?: string; isActive?: boolean }): Promise<StorageResult<StockItem[]>> {
+    let list = Array.from(this.stockItems.values()).filter(i => i.tenantId === tenantId);
+    if (filter?.category) list = list.filter(i => i.category === filter.category);
+    if (filter?.isActive !== undefined) list = list.filter(i => i.isActive === filter.isActive);
+    return { success: true, data: list.map(i => ({ ...i })) };
+  }
+
+  public async getWarehouseStock(tenantId: string, warehouseId: string, itemId: string): Promise<StorageResult<WarehouseStock | null>> {
+    const sl = this.warehouseStock.get(`${tenantId}:${warehouseId}:${itemId}`);
+    return { success: true, data: sl ? { ...sl } : null };
+  }
+
+  public async listWarehouseStock(tenantId: string, warehouseId?: string, itemId?: string): Promise<StorageResult<WarehouseStock[]>> {
+    let list = Array.from(this.warehouseStock.values()).filter(s => s.tenantId === tenantId);
+    if (warehouseId) list = list.filter(s => s.warehouseId === warehouseId);
+    if (itemId) list = list.filter(s => s.itemId === itemId);
+    return { success: true, data: list.map(s => ({ ...s })) };
+  }
+
+  public async recordStockMovement(tenantId: string, movement: StockMovement, idempotencyKey: string): Promise<StorageResult<StockMovement>> {
+    const cached = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'recordStockMovement');
+    if (cached.success && cached.data) {
+      return { success: true, data: cached.data };
+    }
+
+    const key = `${tenantId}:${movement.warehouseId}:${movement.itemId}`;
+    const existing = this.warehouseStock.get(key) || {
+      id: `${movement.warehouseId}-${movement.itemId}`,
+      tenantId,
+      companyId: movement.companyId || tenantId,
+      warehouseId: movement.warehouseId,
+      itemId: movement.itemId,
+      currentQty: 0,
+      reservedQty: 0,
+      availableQty: 0,
+      averageCost: movement.unitCost || 0,
+      totalValue: 0,
+      updatedAt: new Date().toISOString(),
+    };
+
+    let newQty = existing.currentQty;
+    let newAvgCost = existing.averageCost;
+
+    if (movement.movementType === 'RECEIPT' || movement.movementType === 'TRANSFER_IN' || movement.movementType === 'COUNT_ADJUSTMENT_GAIN') {
+      const addedQty = movement.quantity;
+      const totalQty = newQty + addedQty;
+      if (totalQty > 0 && movement.unitCost) {
+        newAvgCost = ((newQty * existing.averageCost) + (addedQty * movement.unitCost)) / totalQty;
+      }
+      newQty = totalQty;
+    } else {
+      newQty = Math.max(0, newQty - movement.quantity);
+    }
+
+    const updatedStock: WarehouseStock = {
+      ...existing,
+      currentQty: newQty,
+      availableQty: Math.max(0, newQty - existing.reservedQty),
+      averageCost: Math.round(newAvgCost * 100) / 100,
+      totalValue: Math.round(newQty * newAvgCost * 100) / 100,
+      updatedAt: new Date().toISOString(),
+    };
+    this.warehouseStock.set(key, updatedStock);
+
+    const savedMovement: StockMovement = {
+      ...movement,
+      balanceAfterQty: newQty,
+      timestamp: movement.timestamp || new Date().toISOString(),
+    };
+    this.stockMovements.set(`${tenantId}:${movement.id}`, savedMovement);
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'recordStockMovement', savedMovement);
+    return { success: true, data: savedMovement };
+  }
+
+  public async listStockMovements(tenantId: string, filter?: { warehouseId?: string; itemId?: string; movementType?: string; limit?: number }): Promise<StorageResult<StockMovement[]>> {
+    let list = Array.from(this.stockMovements.values()).filter(m => m.tenantId === tenantId);
+    if (filter?.warehouseId) list = list.filter(m => m.warehouseId === filter.warehouseId);
+    if (filter?.itemId) list = list.filter(m => m.itemId === filter.itemId);
+    if (filter?.movementType) list = list.filter(m => m.movementType === filter.movementType);
+    if (filter?.limit) list = list.slice(0, filter.limit);
+    return { success: true, data: list.map(m => ({ ...m })) };
+  }
+
+  public async createStockTransfer(tenantId: string, transfer: StockTransfer, lines: StockTransferLine[], idempotencyKey: string): Promise<StorageResult<StockTransfer>> {
+    this.stockTransfers.set(`${tenantId}:${transfer.id}`, { ...transfer, tenantId });
+    this.stockTransferLines.set(`${tenantId}:${transfer.id}`, lines.map(l => ({ ...l, tenantId })));
+    return { success: true, data: transfer };
+  }
+
+  public async getStockTransfer(tenantId: string, transferId: string): Promise<StorageResult<{ transfer: StockTransfer; lines: StockTransferLine[] } | null>> {
+    const tr = this.stockTransfers.get(`${tenantId}:${transferId}`);
+    if (!tr) return { success: true, data: null };
+    const lines = this.stockTransferLines.get(`${tenantId}:${transferId}`) || [];
+    return { success: true, data: { transfer: { ...tr }, lines: lines.map(l => ({ ...l })) } };
+  }
+
+  public async listStockTransfers(tenantId: string, filter?: { status?: string; warehouseId?: string }): Promise<StorageResult<StockTransfer[]>> {
+    let list = Array.from(this.stockTransfers.values()).filter(t => t.tenantId === tenantId);
+    if (filter?.status) list = list.filter(t => t.status === filter.status);
+    if (filter?.warehouseId) list = list.filter(t => t.sourceWarehouseId === filter.warehouseId || t.targetWarehouseId === filter.warehouseId);
+    return { success: true, data: list.map(t => ({ ...t })) };
+  }
+
+  public async updateStockTransferStatus(
+    tenantId: string,
+    transferId: string,
+    status: StockTransferStatus,
+    actorId: string,
+    actorName: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<StockTransfer>> {
+    const tr = this.stockTransfers.get(`${tenantId}:${transferId}`);
+    if (!tr) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/transfer-not-found',
+          title: 'مستند التحويل غير موجود',
+          status: 404,
+          detail: 'تعذر العثور على مستند التحويل المخزني.',
+        },
+      };
+    }
+    const updated: StockTransfer = {
+      ...tr,
+      status,
+      receivedBy: status === 'RECEIVED' ? actorId : tr.receivedBy,
+      receivedByName: status === 'RECEIVED' ? actorName : tr.receivedByName,
+      receivedAt: status === 'RECEIVED' ? new Date().toISOString() : tr.receivedAt,
+      updatedAt: new Date().toISOString(),
+    };
+    this.stockTransfers.set(`${tenantId}:${transferId}`, updated);
+    return { success: true, data: updated };
+  }
+
+  public async createStockCount(tenantId: string, count: StockCount, lines: StockCountLine[], idempotencyKey: string): Promise<StorageResult<StockCount>> {
+    this.stockCounts.set(`${tenantId}:${count.id}`, { ...count, tenantId });
+    this.stockCountLines.set(`${tenantId}:${count.id}`, lines.map(l => ({ ...l, tenantId })));
+    return { success: true, data: count };
+  }
+
+  public async getStockCount(tenantId: string, countId: string): Promise<StorageResult<{ count: StockCount; lines: StockCountLine[] } | null>> {
+    const sc = this.stockCounts.get(`${tenantId}:${countId}`);
+    if (!sc) return { success: true, data: null };
+    const lines = this.stockCountLines.get(`${tenantId}:${countId}`) || [];
+    return { success: true, data: { count: { ...sc }, lines: lines.map(l => ({ ...l })) } };
+  }
+
+  public async listStockCounts(tenantId: string, filter?: { warehouseId?: string; status?: string }): Promise<StorageResult<StockCount[]>> {
+    let list = Array.from(this.stockCounts.values()).filter(c => c.tenantId === tenantId);
+    if (filter?.warehouseId) list = list.filter(c => c.warehouseId === filter.warehouseId);
+    if (filter?.status) list = list.filter(c => c.status === filter.status);
+    return { success: true, data: list.map(c => ({ ...c })) };
+  }
+
+  public async updateStockCountStatus(
+    tenantId: string,
+    countId: string,
+    status: StockCountStatus,
+    actorId: string,
+    actorName: string,
+    journalEntryId?: string,
+    idempotencyKey?: string
+  ): Promise<StorageResult<StockCount>> {
+    const sc = this.stockCounts.get(`${tenantId}:${countId}`);
+    if (!sc) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/count-not-found',
+          title: 'مستند الجرد غير موجود',
+          status: 404,
+          detail: 'تعذر العثور على عملية الجرد المخزني.',
+        },
+      };
+    }
+
+    // Strict SoD check: creator/performer cannot approve their own inventory count
+    if (status === 'APPROVED' || status === 'POSTED') {
+      if (sc.performedBy === actorId) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/sod-violation',
+            title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
+            status: 403,
+            detail: 'ممنوع نظامياً: لا يجوز لمن قام بتنفيذ الجرد المخزني فعلياً اعتماده أو ترحيله (SoD).',
+          },
+        };
+      }
+    }
+
+    const updated: StockCount = {
+      ...sc,
+      status,
+      approvedBy: (status === 'APPROVED' || status === 'POSTED') ? actorId : sc.approvedBy,
+      approvedByName: (status === 'APPROVED' || status === 'POSTED') ? actorName : sc.approvedByName,
+      approvedAt: (status === 'APPROVED' || status === 'POSTED') ? new Date().toISOString() : sc.approvedAt,
+      journalEntryId: journalEntryId || sc.journalEntryId,
+      updatedAt: new Date().toISOString(),
+    };
+    this.stockCounts.set(`${tenantId}:${countId}`, updated);
+    return { success: true, data: updated };
+  }
+
+  public async saveItemBatch(tenantId: string, batch: ItemBatch): Promise<StorageResult<ItemBatch>> {
+    this.itemBatches.set(`${tenantId}:${batch.id}`, { ...batch, tenantId });
+    return { success: true, data: batch };
+  }
+
+  public async listItemBatches(tenantId: string, itemId?: string, warehouseId?: string): Promise<StorageResult<ItemBatch[]>> {
+    let list = Array.from(this.itemBatches.values()).filter(b => b.tenantId === tenantId);
+    if (itemId) list = list.filter(b => b.itemId === itemId);
+    if (warehouseId) list = list.filter(b => b.warehouseId === warehouseId);
+    return { success: true, data: list.map(b => ({ ...b })) };
+  }
+
+  public async saveItemSerial(tenantId: string, serial: ItemSerial): Promise<StorageResult<ItemSerial>> {
+    this.itemSerials.set(`${tenantId}:${serial.id}`, { ...serial, tenantId });
+    return { success: true, data: serial };
+  }
+
+  public async listItemSerials(tenantId: string, itemId?: string, warehouseId?: string): Promise<StorageResult<ItemSerial[]>> {
+    let list = Array.from(this.itemSerials.values()).filter(s => s.tenantId === tenantId);
+    if (itemId) list = list.filter(s => s.itemId === itemId);
+    if (warehouseId) list = list.filter(s => s.warehouseId === warehouseId);
+    return { success: true, data: list.map(s => ({ ...s })) };
   }
 }

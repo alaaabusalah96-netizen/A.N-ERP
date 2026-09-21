@@ -405,6 +405,238 @@ export interface ExpenseRequest {
   idempotencyKey?: string;
 }
 
+// ============================================================================
+// Phase 7: Warehouses & Inventory Module Types (3 of 15 - بند 7)
+// ============================================================================
+export type InventoryValuationMethod = 'WEIGHTED_AVERAGE' | 'FIFO' | 'STANDARD_COST';
+export type StockMovementType =
+  | 'RECEIPT'
+  | 'ISSUE'
+  | 'TRANSFER_IN'
+  | 'TRANSFER_OUT'
+  | 'COUNT_ADJUSTMENT_GAIN'
+  | 'COUNT_ADJUSTMENT_LOSS';
+
+export type StockTransferStatus = 'DRAFT' | 'IN_TRANSIT' | 'RECEIVED' | 'CANCELLED';
+export type StockCountType = 'PERIODIC' | 'SURPRISE';
+export type StockCountStatus = 'DRAFT' | 'IN_PROGRESS' | 'COMPLETED' | 'APPROVED' | 'POSTED' | 'REJECTED';
+
+export interface Warehouse {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  code: string;
+  nameAr: string;
+  nameEn?: string;
+  branchId?: string;
+  branchName?: string;
+  location?: string;
+  isDefault?: boolean;
+  valuationMethod: InventoryValuationMethod;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface WarehouseBin {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  warehouseId: string;
+  code: string;
+  aisle?: string;
+  rack?: string;
+  shelf?: string;
+  bin?: string;
+  descriptionAr?: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface StockItem {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  itemCode: string;
+  barcode?: string;
+  nameAr: string;
+  nameEn?: string;
+  category: string;
+  uom: string;
+  inventoryAccountCode: string;
+  cogsAccountCode: string;
+  adjustmentExpenseAccountCode: string;
+  adjustmentGainAccountCode: string;
+  valuationMethod: InventoryValuationMethod;
+  standardCost: number;
+  averageCost: number;
+  lastPurchaseCost?: number;
+  sellingPrice: number;
+  reorderPoint: number;
+  minStockLevel: number;
+  maxStockLevel: number;
+  trackBatch: boolean;
+  trackSerial: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface WarehouseStock {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  warehouseId: string;
+  itemId: string;
+  currentQty: number;
+  reservedQty: number;
+  availableQty: number;
+  averageCost: number;
+  totalValue: number;
+  updatedAt: string;
+}
+
+export interface StockMovement {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  movementNumber: string;
+  movementType: StockMovementType;
+  warehouseId: string;
+  warehouseNameAr?: string;
+  binId?: string;
+  itemId: string;
+  itemCode: string;
+  itemNameAr: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+  balanceAfterQty: number;
+  sourceDocumentType?: string;
+  sourceDocumentId?: string;
+  sourceDocumentNumber?: string;
+  journalEntryId?: string;
+  batchNumber?: string;
+  serialNumber?: string;
+  notes?: string;
+  performedBy: string;
+  performedByName: string;
+  timestamp: string;
+  idempotencyKey?: string;
+}
+
+export interface StockTransferLine {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  transferId: string;
+  itemId: string;
+  itemCode: string;
+  itemNameAr: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+  batchNumber?: string;
+  serialNumber?: string;
+}
+
+export interface StockTransfer {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  transferNumber: string;
+  sourceWarehouseId: string;
+  sourceWarehouseNameAr: string;
+  targetWarehouseId: string;
+  targetWarehouseNameAr: string;
+  status: StockTransferStatus;
+  requestedBy: string;
+  requestedByName: string;
+  requestedAt: string;
+  dispatchedBy?: string;
+  dispatchedByName?: string;
+  dispatchedAt?: string;
+  receivedBy?: string;
+  receivedByName?: string;
+  receivedAt?: string;
+  totalItemsCount: number;
+  totalQuantity: number;
+  totalCost: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  idempotencyKey?: string;
+}
+
+export interface StockCountLine {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  countId: string;
+  itemId: string;
+  itemCode: string;
+  itemNameAr: string;
+  systemQty: number;
+  countedQty: number;
+  varianceQty: number;
+  unitCost: number;
+  varianceAmount: number;
+  batchNumber?: string;
+  serialNumber?: string;
+  notes?: string;
+}
+
+export interface StockCount {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  countNumber: string;
+  countType: StockCountType;
+  warehouseId: string;
+  warehouseNameAr: string;
+  status: StockCountStatus;
+  performedBy: string;
+  performedByName: string;
+  performedAt: string;
+  approvedBy?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  totalItemsCount: number;
+  hasVariance: boolean;
+  netVarianceAmount: number;
+  journalEntryId?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  idempotencyKey?: string;
+}
+
+export interface ItemBatch {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  itemId: string;
+  warehouseId: string;
+  batchNumber: string;
+  productionDate?: string;
+  expiryDate?: string;
+  currentQty: number;
+  unitCost: number;
+  createdAt: string;
+}
+
+export interface ItemSerial {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  itemId: string;
+  warehouseId: string;
+  serialNumber: string;
+  status: 'IN_STOCK' | 'ISSUED' | 'TRANSFERRED' | 'WRITTEN_OFF';
+  warrantyExpiry?: string;
+  createdAt: string;
+}
+
 export type DualControlStatus = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
 
 export interface MasterItem {
@@ -670,6 +902,40 @@ export interface StoragePort {
   updateExpenseRequestStatus(tenantId: string, requestId: string, updates: Partial<ExpenseRequest>, idempotencyKey: string): Promise<StorageResult<ExpenseRequest>>;
   listExpenseCategories(tenantId: string): Promise<StorageResult<ExpenseCategory[]>>;
   saveExpenseCategory(tenantId: string, category: ExpenseCategory, idempotencyKey: string): Promise<StorageResult<ExpenseCategory>>;
+
+  // Phase 7: Warehouses & Inventory Module Operations (3 of 15 - بند 7)
+  saveWarehouse(tenantId: string, warehouse: Warehouse, idempotencyKey: string): Promise<StorageResult<Warehouse>>;
+  getWarehouse(tenantId: string, warehouseId: string): Promise<StorageResult<Warehouse | null>>;
+  listWarehouses(tenantId: string, filter?: { isActive?: boolean; branchId?: string }): Promise<StorageResult<Warehouse[]>>;
+  
+  saveWarehouseBin(tenantId: string, bin: WarehouseBin): Promise<StorageResult<WarehouseBin>>;
+  listWarehouseBins(tenantId: string, warehouseId: string): Promise<StorageResult<WarehouseBin[]>>;
+  
+  saveStockItem(tenantId: string, item: StockItem, idempotencyKey: string): Promise<StorageResult<StockItem>>;
+  getStockItem(tenantId: string, itemId: string): Promise<StorageResult<StockItem | null>>;
+  listStockItems(tenantId: string, filter?: { category?: string; isActive?: boolean }): Promise<StorageResult<StockItem[]>>;
+  
+  getWarehouseStock(tenantId: string, warehouseId: string, itemId: string): Promise<StorageResult<WarehouseStock | null>>;
+  listWarehouseStock(tenantId: string, warehouseId?: string, itemId?: string): Promise<StorageResult<WarehouseStock[]>>;
+  
+  recordStockMovement(tenantId: string, movement: StockMovement, idempotencyKey: string): Promise<StorageResult<StockMovement>>;
+  listStockMovements(tenantId: string, filter?: { warehouseId?: string; itemId?: string; movementType?: string; limit?: number }): Promise<StorageResult<StockMovement[]>>;
+  
+  createStockTransfer(tenantId: string, transfer: StockTransfer, lines: StockTransferLine[], idempotencyKey: string): Promise<StorageResult<StockTransfer>>;
+  getStockTransfer(tenantId: string, transferId: string): Promise<StorageResult<{ transfer: StockTransfer; lines: StockTransferLine[] } | null>>;
+  listStockTransfers(tenantId: string, filter?: { status?: string; warehouseId?: string }): Promise<StorageResult<StockTransfer[]>>;
+  updateStockTransferStatus(tenantId: string, transferId: string, status: StockTransferStatus, actorId: string, actorName: string, idempotencyKey: string): Promise<StorageResult<StockTransfer>>;
+  
+  createStockCount(tenantId: string, count: StockCount, lines: StockCountLine[], idempotencyKey: string): Promise<StorageResult<StockCount>>;
+  getStockCount(tenantId: string, countId: string): Promise<StorageResult<{ count: StockCount; lines: StockCountLine[] } | null>>;
+  listStockCounts(tenantId: string, filter?: { warehouseId?: string; status?: string }): Promise<StorageResult<StockCount[]>>;
+  updateStockCountStatus(tenantId: string, countId: string, status: StockCountStatus, actorId: string, actorName: string, journalEntryId?: string, idempotencyKey?: string): Promise<StorageResult<StockCount>>;
+  
+  saveItemBatch(tenantId: string, batch: ItemBatch): Promise<StorageResult<ItemBatch>>;
+  listItemBatches(tenantId: string, itemId?: string, warehouseId?: string): Promise<StorageResult<ItemBatch[]>>;
+  
+  saveItemSerial(tenantId: string, serial: ItemSerial): Promise<StorageResult<ItemSerial>>;
+  listItemSerials(tenantId: string, itemId?: string, warehouseId?: string): Promise<StorageResult<ItemSerial[]>>;
 
   // Tenant Scoping & Isolation
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T>;

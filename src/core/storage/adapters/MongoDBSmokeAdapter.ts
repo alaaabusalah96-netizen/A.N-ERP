@@ -132,6 +132,33 @@ export class MongoDBSmokeAdapter implements StoragePort {
   updateExpenseRequestStatus(tenantId: string, requestId: string, updates: any, idempotencyKey: string) { return this.smokeOnlyError<any>('updateExpenseRequestStatus'); }
   listExpenseCategories(tenantId: string) { return this.smokeOnlyError<any[]>('listExpenseCategories'); }
   saveExpenseCategory(tenantId: string, category: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveExpenseCategory'); }
+
+  // Inventory & Warehouses (Phase 7)
+  saveWarehouse(tenantId: string, warehouse: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveWarehouse'); }
+  getWarehouse(tenantId: string, warehouseId: string) { return this.smokeOnlyError<any>('getWarehouse'); }
+  listWarehouses(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listWarehouses'); }
+  saveWarehouseBin(tenantId: string, bin: any) { return this.smokeOnlyError<any>('saveWarehouseBin'); }
+  listWarehouseBins(tenantId: string, warehouseId: string) { return this.smokeOnlyError<any[]>('listWarehouseBins'); }
+  saveStockItem(tenantId: string, item: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveStockItem'); }
+  getStockItem(tenantId: string, itemId: string) { return this.smokeOnlyError<any>('getStockItem'); }
+  listStockItems(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listStockItems'); }
+  getWarehouseStock(tenantId: string, warehouseId: string, itemId: string) { return this.smokeOnlyError<any>('getWarehouseStock'); }
+  listWarehouseStock(tenantId: string, warehouseId?: string, itemId?: string) { return this.smokeOnlyError<any[]>('listWarehouseStock'); }
+  recordStockMovement(tenantId: string, movement: any, idempotencyKey: string) { return this.smokeOnlyError<any>('recordStockMovement'); }
+  listStockMovements(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listStockMovements'); }
+  createStockTransfer(tenantId: string, transfer: any, lines: any[], idempotencyKey: string) { return this.smokeOnlyError<any>('createStockTransfer'); }
+  getStockTransfer(tenantId: string, transferId: string) { return this.smokeOnlyError<any>('getStockTransfer'); }
+  listStockTransfers(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listStockTransfers'); }
+  updateStockTransferStatus(tenantId: string, transferId: string, status: any, actorId: string, actorName: string, idempotencyKey: string) { return this.smokeOnlyError<any>('updateStockTransferStatus'); }
+  createStockCount(tenantId: string, count: any, lines: any[], idempotencyKey: string) { return this.smokeOnlyError<any>('createStockCount'); }
+  getStockCount(tenantId: string, countId: string) { return this.smokeOnlyError<any>('getStockCount'); }
+  listStockCounts(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listStockCounts'); }
+  updateStockCountStatus(tenantId: string, countId: string, status: any, actorId: string, actorName: string, journalEntryId?: string, idempotencyKey?: string) { return this.smokeOnlyError<any>('updateStockCountStatus'); }
+  saveItemBatch(tenantId: string, batch: any) { return this.smokeOnlyError<any>('saveItemBatch'); }
+  listItemBatches(tenantId: string, itemId?: string, warehouseId?: string) { return this.smokeOnlyError<any[]>('listItemBatches'); }
+  saveItemSerial(tenantId: string, serial: any) { return this.smokeOnlyError<any>('saveItemSerial'); }
+  listItemSerials(tenantId: string, itemId?: string, warehouseId?: string) { return this.smokeOnlyError<any[]>('listItemSerials'); }
+
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T> { return fn(); }
 
   /**

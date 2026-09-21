@@ -19,7 +19,12 @@ export type DomainEventType =
   | 'EXPENSE_REQUESTED'
   | 'EXPENSE_APPROVED'
   | 'EXPENSE_REJECTED'
-  | 'EXPENSE_POSTED';
+  | 'EXPENSE_POSTED'
+  | 'STOCK_RECEIVED'
+  | 'STOCK_ISSUED'
+  | 'STOCK_TRANSFERRED'
+  | 'STOCK_COUNT_VARIANCE_DETECTED'
+  | 'REORDER_POINT_REACHED';
 
 export interface DomainEvent<T = any> {
   id: string;

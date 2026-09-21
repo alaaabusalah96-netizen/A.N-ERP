@@ -23,7 +23,11 @@ export type SystemPermission =
   | 'CUSTODY_SETTLE'        // اعتماد وتسوية العهدة دورياً وتوليد قيدها عبر المحرك
   | 'EXPENSE_SUBMIT'        // تقديم طلب صرف مصروفات مباشرة
   | 'EXPENSE_APPROVE_L1'    // اعتماد المستوى الأول لطلب الصرف (المدير المباشر)
-  | 'EXPENSE_APPROVE_L2';   // اعتماد المستوى الثاني لطلب الصرف (المدير المالي)
+  | 'EXPENSE_APPROVE_L2'    // اعتماد المستوى الثاني لطلب الصرف (المدير المالي)
+  | 'STOCK_ISSUE'          // صرف بضاعة من المخزن
+  | 'STOCK_RECEIVE'        // استلام بضاعة في المخزن
+  | 'STOCK_TRANSFER_APPROVE' // اعتماد تحويل المخزون بين المستودعات
+  | 'STOCK_COUNT_APPROVE'; // اعتماد نتائج الجرد المخزني وتسوية الفروق (مشرف/مدير مستقل)
 
 export interface RoleMatrixDefinition {
   role: string;
