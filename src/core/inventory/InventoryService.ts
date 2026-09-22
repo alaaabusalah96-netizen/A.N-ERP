@@ -338,8 +338,8 @@ export class InventoryService {
     const warehouse = whRes.data;
 
     // Generate atomic movement number
-    const seqRes = await this.numberingEngine.generateNextNumber(tenantId, 'STK-REC', 'REC');
-    const movementNumber = seqRes.success && seqRes.data ? seqRes.data.formattedNumber : `REC-${Date.now()}`;
+    const seqRes = await this.numberingEngine.generateNumber(tenantId, 'STK-REC', 'REC', input.idempotencyKey || `rec-${Date.now()}`);
+    const movementNumber = seqRes.success && seqRes.data ? seqRes.data.formattedCode : `REC-${Date.now()}`;
 
     const totalCost = Math.round(input.quantity * input.unitCost * 100) / 100;
 
@@ -382,7 +382,8 @@ export class InventoryService {
         itemId: input.itemId,
         warehouseId: input.warehouseId,
         batchNumber: input.batchNumber,
-        quantity: input.quantity,
+        currentQty: input.quantity,
+        unitCost: input.unitCost,
         expiryDate: input.expiryDate,
         createdAt: new Date().toISOString(),
       });
@@ -464,8 +465,8 @@ export class InventoryService {
     }
 
     // Generate atomic numbering
-    const seqRes = await this.numberingEngine.generateNextNumber(tenantId, 'STK-ISS', 'ISS');
-    const movementNumber = seqRes.success && seqRes.data ? seqRes.data.formattedNumber : `ISS-${Date.now()}`;
+    const seqRes = await this.numberingEngine.generateNumber(tenantId, 'STK-ISS', 'ISS', input.idempotencyKey || `iss-${Date.now()}`);
+    const movementNumber = seqRes.success && seqRes.data ? seqRes.data.formattedCode : `ISS-${Date.now()}`;
 
     const totalCost = Math.round(input.quantity * currentAvgCost * 100) / 100;
 
@@ -501,7 +502,7 @@ export class InventoryService {
     // Check reorder point trigger
     if (movRes.success && (availableQty - input.quantity) <= item.reorderPoint) {
       // Reorder point reached event
-      await this.storage.saveSystemChangeLog({
+      await this.storage.appendSystemChangeLog({
         id: `reorder-${Date.now()}`,
         timestamp: new Date().toISOString(),
         actor: input.performedBy,
@@ -630,8 +631,8 @@ export class InventoryService {
     }
 
     // NumberingEngine atomic generation
-    const numRes = await this.numberingEngine.generateNextNumber(tenantId, 'STK-TRF', 'TRF');
-    const transferNumber = numRes.success && numRes.data ? numRes.data.formattedNumber : `TRF-${Date.now()}`;
+    const numRes = await this.numberingEngine.generateNumber(tenantId, 'STK-TRF', 'TRF', input.idempotencyKey || `trf-${Date.now()}`);
+    const transferNumber = numRes.success && numRes.data ? numRes.data.formattedCode : `TRF-${Date.now()}`;
 
     const transfer: StockTransfer = {
       id: transferId,
@@ -850,8 +851,8 @@ export class InventoryService {
     }
 
     // NumberingEngine atomic generation
-    const numRes = await this.numberingEngine.generateNextNumber(tenantId, 'STK-CNT', 'CNT');
-    const countNumber = numRes.success && numRes.data ? numRes.data.formattedNumber : `CNT-${Date.now()}`;
+    const numRes = await this.numberingEngine.generateNumber(tenantId, 'STK-CNT', 'CNT', input.idempotencyKey || `cnt-${Date.now()}`);
+    const countNumber = numRes.success && numRes.data ? numRes.data.formattedCode : `CNT-${Date.now()}`;
 
     const stockCount: StockCount = {
       id: countId,
@@ -931,7 +932,7 @@ export class InventoryService {
 
     // If there is any variance, post a balanced journal entry via PostingEngine
     if (count.hasVariance && count.netVarianceAmount !== 0) {
-      const journalLines: JournalEntryLine[] = [];
+      const journalLines: JournalLine[] = [];
       const absAmount = Math.abs(count.netVarianceAmount);
 
       if (count.netVarianceAmount < 0) {
@@ -942,18 +943,16 @@ export class InventoryService {
           {
             id: `jl-1`,
             accountCode: '520101',
-            accountNameAr: 'عجز وتسويات الجرد المخزني',
             debit: absAmount,
             credit: 0,
-            descriptionAr: `تسوية عجز جرد ${count.warehouseNameAr} بموجب المحضر ${count.countNumber}`,
+            description: `تسوية عجز جرد ${count.warehouseNameAr} بموجب المحضر ${count.countNumber}`,
           },
           {
             id: `jl-2`,
             accountCode: '110301',
-            accountNameAr: 'مخزون البضاعة بغرض البيع',
             debit: 0,
             credit: absAmount,
-            descriptionAr: `تخفيض المخزون بالمستودع بموجب المحضر ${count.countNumber}`,
+            description: `تخفيض المخزون بالمستودع بموجب المحضر ${count.countNumber}`,
           }
         );
       } else {
@@ -964,42 +963,61 @@ export class InventoryService {
           {
             id: `jl-1`,
             accountCode: '110301',
-            accountNameAr: 'مخزون البضاعة بغرض البيع',
             debit: absAmount,
             credit: 0,
-            descriptionAr: `إثبات زيادة المخزون بموجب محضر الجرد ${count.countNumber}`,
+            description: `إثبات زيادة المخزون بموجب محضر الجرد ${count.countNumber}`,
           },
           {
             id: `jl-2`,
             accountCode: '410101',
-            accountNameAr: 'أرباح تسوية زيادة الجرد المخزني',
             debit: 0,
             credit: absAmount,
-            descriptionAr: `إيرادات أرباح فروقات زيادة الجرد بموجب ${count.countNumber}`,
+            description: `إيرادات أرباح فروقات زيادة الجرد بموجب ${count.countNumber}`,
           }
         );
       }
 
-      const postRes = await this.postingEngine.postJournalEntry(tenantId, {
-        entryNumber: `JE-ADJ-${count.countNumber}`,
+      const entryId = `je-adj-${count.id}-${Date.now()}`;
+      const journalEntry: JournalEntry = {
+        id: entryId,
+        code: `JE-ADJ-${count.countNumber}`,
+        tenantId,
         date: new Date().toISOString().split('T')[0],
-        descriptionAr: `قيد تسوية فروقات الجرد المخزني - محضر ${count.countNumber}`,
-        sourceDocumentType: 'STOCK_COUNT',
-        sourceDocumentId: count.id,
-        sourceDocumentNumber: count.countNumber,
+        type: 'قيد تسوية فروقات الجرد المخزني',
+        description: `قيد آلي معتمد لتسوية محضر الجرد ${count.countNumber} بمستودع ${count.warehouseNameAr}`,
         lines: journalLines,
+        totalAmount: absAmount,
+        status: 'APPROVED',
         createdBy: input.approvedBy,
-        idempotencyKey: `${input.idempotencyKey}-posting`,
-      });
+      };
 
-      if (!postRes.success) {
+      const draftRes = await this.postingEngine.draftEntry(tenantId, journalEntry, `${input.idempotencyKey}-draft`);
+      if (!draftRes.success || !draftRes.data) {
         return {
           success: false,
-          error: postRes.error,
+          error: draftRes.error || {
+            type: 'https://api.an-erp.local/errors/draft-failed',
+            title: 'فشل إنشاء مسودة قيد تسوية الجرد',
+            status: 500,
+            detail: 'تعذر إنشاء مسودة القيد اليومي لفروقات الجرد عبر PostingEngine.',
+          },
         };
       }
 
-      journalEntryId = postRes.data?.id;
+      const postRes = await this.postingEngine.postEntry(tenantId, draftRes.data.id, `${input.idempotencyKey}-post`);
+      if (!postRes.success || !postRes.data) {
+        return {
+          success: false,
+          error: postRes.error || {
+            type: 'https://api.an-erp.local/errors/posting-failed',
+            title: 'فشل ترحيل قيد تسوية الجرد',
+            status: 500,
+            detail: 'تعذر ترحيل قيد التسوية إلى دفتر الأستاذ العام.',
+          },
+        };
+      }
+
+      journalEntryId = postRes.data.id;
     }
 
     // Apply adjustments to stock movements & levels

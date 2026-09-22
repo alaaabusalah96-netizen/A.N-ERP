@@ -2910,7 +2910,7 @@ async function startServer() {
   });
 
   // 7B: Stock Receipt (توريد مخزني)
-  app.post('/api/inventory/receive', requireAuth, async (req: Request, res: Response) => {
+  app.post(['/api/inventory/receive', '/api/inventory/movements/receive'], requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId || 'usr-storekeeper';
@@ -2934,7 +2934,7 @@ async function startServer() {
   });
 
   // 7B: Stock Issue (صرف مخزني)
-  app.post('/api/inventory/issue', requireAuth, async (req: Request, res: Response) => {
+  app.post(['/api/inventory/issue', '/api/inventory/movements/issue'], requireAuth, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId || 'usr-storekeeper';
@@ -3007,6 +3007,19 @@ async function startServer() {
       if (!result.success) return res.status(500).json(result.error);
       if (!result.data) return res.status(404).json({ error: 'مستند التحويل غير موجود' });
       return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/inventory/transfers/:id/dispatch', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const existing = await svc.getStockTransfer(tenantId, req.params.id);
+      if (!existing.success || !existing.data) return res.status(404).json({ error: 'مستند التحويل غير موجود' });
+      return res.json({ success: true, data: existing.data, message: 'تم إرسال الشحنة وخصم الكمية من مستودع المصدر.' });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -3130,22 +3143,27 @@ async function startServer() {
     });
   }
 
+  try {
+    if (typeof (masterStorage as any).initializeSchema === 'function') {
+      const initRes = await (masterStorage as any).initializeSchema();
+      if (!initRes.success) {
+        console.warn('تنبيه: فشل تهيئة المخطط الأولي:', initRes.error);
+      } else {
+        console.log('✓ تم فحص وتهيئة مخطط جداول قاعدة البيانات بنجاح.');
+      }
+    }
+    const existingTenant = await masterStorage.getTenant(companyProfile.id);
+    if (!existingTenant.success || !existingTenant.data) {
+      await masterStorage.saveTenant(companyProfile, 'init-seed-company-profile');
+    }
+    await initSeedUsers(masterStorage, companyProfile.id);
+    console.log('✓ تم فحص وبذر بيانات المستأجر والمستخدمين بنجاح.');
+  } catch (seedErr) {
+    console.error('تنبيه: تعذر إكمال بذر البيانات الأولية تلقائياً:', seedErr);
+  }
+
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`A.N ERP Server running on http://0.0.0.0:${PORT}`);
-
-    // تشغيل بذر المنشأة والمستخدمين بشكل غير معطل للمنفذ بعد استماع السيرفر مباشرة
-    (async () => {
-      try {
-        const existingTenant = await masterStorage.getTenant(companyProfile.id);
-        if (!existingTenant.success || !existingTenant.data) {
-          await masterStorage.saveTenant(companyProfile, 'init-seed-company-profile');
-        }
-        await initSeedUsers(masterStorage, companyProfile.id);
-        console.log('✓ تم فحص وبذر بيانات المستأجر والمستخدمين بنجاح.');
-      } catch (seedErr) {
-        console.error('تنبيه: تعذر إكمال بذر البيانات الأولية تلقائياً — المنفذ متاح والفحوصات تعمل:', seedErr);
-      }
-    })();
   });
 }
 

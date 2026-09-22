@@ -13,6 +13,7 @@ import { AuditTrailView } from './components/AuditTrailView';
 import { AccountingWorkspaceView } from './components/AccountingWorkspaceView';
 import { CashCustodyWorkspaceView } from './components/CashCustodyWorkspaceView';
 import { ExpensesWorkspaceView } from './components/ExpensesWorkspaceView';
+import { InventoryWorkspaceView } from './components/InventoryWorkspaceView';
 import { OperationalTransaction, UserProfile, UserRole } from './types/erp';
 
 export default function App() {
@@ -331,6 +332,13 @@ export default function App() {
 
           {activeSection === 'expenses' && (
             <ExpensesWorkspaceView
+              currentUser={userProfile}
+              onNotification={showNotification}
+            />
+          )}
+
+          {activeSection === 'inventory' && (
+            <InventoryWorkspaceView
               currentUser={userProfile}
               onNotification={showNotification}
             />

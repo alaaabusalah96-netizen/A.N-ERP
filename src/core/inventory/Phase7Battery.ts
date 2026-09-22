@@ -15,8 +15,8 @@
 
 import { StoragePort } from '../storage/StoragePort';
 import { InMemoryAdapter } from '../storage/adapters/InMemoryAdapter';
-import { PostingEngine } from '../accounting/PostingEngine';
-import { NumberingEngine } from '../accounting/NumberingEngine';
+import { PostingEngine } from '../engines/PostingEngine';
+import { NumberingEngine } from '../engines/NumberingEngine';
 import { InventoryService } from './InventoryService';
 
 export interface BatteryScenarioResult {
@@ -47,6 +47,38 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
 
   const tenantId = 'tenant-main';
   const scenarios: BatteryScenarioResult[] = [];
+
+  // Seed essential inventory accounts if not present
+  await storage.saveAccount(tenantId, {
+    code: '110301',
+    tenantId,
+    nameAr: 'مخزون البضاعة بغرض البيع',
+    type: 'ASSET',
+    currency: 'SAR',
+    debitBalance: 0,
+    creditBalance: 0,
+    isActive: true,
+  }, 'seed-acc-110301');
+  await storage.saveAccount(tenantId, {
+    code: '520101',
+    tenantId,
+    nameAr: 'عجز وتسويات الجرد المخزني',
+    type: 'EXPENSE',
+    currency: 'SAR',
+    debitBalance: 0,
+    creditBalance: 0,
+    isActive: true,
+  }, 'seed-acc-520101');
+  await storage.saveAccount(tenantId, {
+    code: '410101',
+    tenantId,
+    nameAr: 'أرباح تسوية زيادة الجرد المخزني',
+    type: 'REVENUE',
+    currency: 'SAR',
+    debitBalance: 0,
+    creditBalance: 0,
+    isActive: true,
+  }, 'seed-acc-410101');
 
   // --------------------------------------------------------------------------
   // Scenario 1: Multi-Warehouse & Bins Creation (7A)
@@ -411,7 +443,7 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
       details: passed
         ? `تم ترحيل القيد المحاسبي المتوازن (JE-ADJ) وتحديث رصيد المستودع الفعلي إلى 3 وحدات بنجاح.`
         : `فشل ترحيل قيد التسوية أو تحديث الرصيد.`,
-      evidence: { count: validApproval.data, updatedStock: stockAfter.data },
+      evidence: { count: validApproval.data, updatedStock: stockAfter.data, error: validApproval.error },
     });
   } catch (err: any) {
     scenarios.push({

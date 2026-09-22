@@ -11,6 +11,7 @@ import {
   BarChart3,
   Wallet,
   CreditCard,
+  Boxes,
   X,
 } from 'lucide-react';
 
@@ -18,6 +19,7 @@ export type ActiveSection =
   | 'overview'
   | 'custody'
   | 'expenses'
+  | 'inventory'
   | 'profile'
   | 'company'
   | 'users_sod'
@@ -46,6 +48,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'overview' as ActiveSection, label: 'لوحة العمليات التشغيلية', icon: Layers },
     { id: 'custody' as ActiveSection, label: 'العهدة النقدية المستديمة', icon: Wallet },
     { id: 'expenses' as ActiveSection, label: 'المصروفات وطلبات الصرف', icon: CreditCard },
+    { id: 'inventory' as ActiveSection, label: 'المستودعات والمخزون', icon: Boxes },
     { id: 'accounting' as ActiveSection, label: 'القيود والسندات المالية', icon: FileText },
     {
       id: 'approvals' as ActiveSection,

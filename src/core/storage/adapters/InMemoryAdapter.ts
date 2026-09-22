@@ -167,6 +167,26 @@ export class InMemoryAdapter implements StoragePort {
         creditBalance: 1795000,
         isActive: true,
       },
+      {
+        code: '110301',
+        tenantId: 'tenant-main',
+        nameAr: 'مخزون البضاعة بغرض البيع',
+        type: 'ASSET',
+        currency: 'SAR',
+        debitBalance: 0,
+        creditBalance: 0,
+        isActive: true,
+      },
+      {
+        code: '510101',
+        tenantId: 'tenant-main',
+        nameAr: 'تكلفة البضاعة المباعة',
+        type: 'EXPENSE',
+        currency: 'SAR',
+        debitBalance: 0,
+        creditBalance: 0,
+        isActive: true,
+      },
     ];
 
     for (const acc of defaultAccounts) {

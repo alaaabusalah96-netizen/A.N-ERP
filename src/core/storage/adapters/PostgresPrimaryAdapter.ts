@@ -984,7 +984,18 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_expense_categories',
           'an_expense_requests',
           'an_expense_lines',
-          'an_expense_attachments'
+          'an_expense_attachments',
+          'an_warehouses',
+          'an_warehouse_bins',
+          'an_stock_items',
+          'an_warehouse_stock',
+          'an_stock_movements',
+          'an_stock_transfers',
+          'an_stock_transfer_lines',
+          'an_stock_counts',
+          'an_stock_count_lines',
+          'an_item_batches',
+          'an_item_serials'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP

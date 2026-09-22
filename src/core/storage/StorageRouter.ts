@@ -155,6 +155,9 @@ export class StorageRouter {
    */
   public resolveAdapter(tenant?: TenantCompany): StoragePort {
     if (!tenant || !tenant.backendConfig) {
+      if (!process.env.DATABASE_URL) {
+        return this.devInMemoryAdapter;
+      }
       return this.primaryAdapter;
     }
 
@@ -171,6 +174,9 @@ export class StorageRouter {
 
     // Shared isolation routes to Primary with tenant_id RLS
     if (adapterType === 'postgresql') {
+      if (!process.env.DATABASE_URL) {
+        return this.devInMemoryAdapter;
+      }
       return this.primaryAdapter;
     }
 
