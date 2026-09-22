@@ -7,10 +7,14 @@
  * and Vite dev middleware.
  */
 
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
+import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import argon2 from 'argon2';
@@ -49,6 +53,25 @@ import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/co
 import { AccountingService } from './src/core/accounting/AccountingService';
 import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
 
+// Wave 0: Security Hardening — Strict Environment Secrets Enforcement
+export function requireEnv(name: string): string {
+  const val = process.env[name];
+  if (!val || val.trim() === '') {
+    throw new Error(`المتغيّر ${name} غير معرَّف في البيئة — لا يمكن تشغيل السيرفر بدونه`);
+  }
+  return val;
+}
+
+// Wave 0: Version Synchronization (Single source of truth from package.json)
+const packageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
+export const APP_VERSION = packageJson.version || '7.2.0';
+
+// Ensure all 4 mandatory security secrets are strictly provided at server boot
+requireEnv('SEED_ADMIN_PASSWORD');
+requireEnv('INITIAL_USER_PASSWORD');
+requireEnv('RESET_USER_PASSWORD');
+requireEnv('E2E_TEST_PASSWORD');
+
 const PORT = Number(process.env.PORT) || 3000;
 
 // Initial company seed settings for primary setup (Phase 0 / Phase 1)
@@ -72,7 +95,7 @@ const companyProfile: TenantCompany = {
 
 // Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing directly via StoragePort
 async function initSeedUsers(storage: StoragePort, tenantId: string = companyProfile.id) {
-  const seedAdminPass = process.env.SEED_ADMIN_PASSWORD || 'Admin@ANERP2026!';
+  const seedAdminPass = requireEnv('SEED_ADMIN_PASSWORD');
   const adminHash = await argon2.hash(seedAdminPass, { type: argon2.argon2id });
   const adminTotpSecret = generateSecret();
   const encryptedAdminTotp = EncryptionService.encryptPII(adminTotpSecret);
@@ -124,7 +147,7 @@ async function initSeedUsers(storage: StoragePort, tenantId: string = companyPro
   }
 
   // Standard operational users for business operation
-  const standardPass = process.env.INITIAL_USER_PASSWORD || 'Password@1234';
+  const standardPass = requireEnv('INITIAL_USER_PASSWORD');
   const standardHash = await argon2.hash(standardPass, { type: argon2.argon2id });
 
   const defaultStandardUsers: User[] = [
@@ -245,19 +268,23 @@ async function startServer() {
 
   const app = express();
 
+  // Wave 0: CSP Hardening & Profile Enforcement
+  const cspProfile = process.env.CSP_PROFILE === 'production' ? 'production' : 'development';
+  const isCspProduction = cspProfile === 'production';
+
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        scriptSrc: isCspProduction ? ["'self'"] : ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
         imgSrc: ["'self'", 'data:', 'blob:'],
         connectSrc: ["'self'", 'ws:', 'wss:', 'https://*.google.com', 'https://*.run.app', 'https://*.aistudio.google.com', 'https://ai.studio'],
-        frameAncestors: ["'self'", 'https://*.google.com', 'https://*.run.app', 'https://*.aistudio.google.com', 'https://ai.studio'],
+        frameAncestors: isCspProduction ? ["'none'"] : ["'self'", 'https://*.google.com', 'https://*.run.app', 'https://*.aistudio.google.com', 'https://ai.studio'],
       },
     },
-    frameguard: false, // Rely on modern CSP frame-ancestors to permit AI Studio preview embedding while protecting against malicious framing
+    frameguard: isCspProduction ? { action: 'deny' } : false,
     crossOriginEmbedderPolicy: false, // لمنع كسر تحميل الخطوط الخارجية
   }));
 
@@ -402,7 +429,7 @@ async function startServer() {
     res.json({
       status: 'ok',
       system: 'A.N ERP',
-      version: 'v7.1',
+      version: `v${APP_VERSION}`,
       environment: process.env.NODE_ENV || 'development',
       storageEngine: process.env.DATABASE_URL ? 'PostgreSQL (Primary)' : 'InMemoryAdapter (Dev)',
       calendar: dualDate.combinedFormatted,
@@ -526,6 +553,55 @@ async function startServer() {
     } catch (err: any) {
       return res.status(401).json({ success: false, message: err.message || 'فشل التحقق من الجلسة' });
     }
+  }
+
+  // Wave 0: Sensitive Route Guards (Platform Admin & Developer/Auditor)
+  async function requirePlatformAdmin(req: Request, res: Response, next: NextFunction) {
+    return requireAuth(req, res, () => {
+      const authContext = (req as any).authContext as AuthContext;
+      if (!authContext) {
+        return res.status(401).json({
+          type: 'https://api.an-erp.local/errors/unauthorized',
+          title: 'غير مصادق',
+          status: 401,
+          detail: 'رمز المصادقة مفقود أو غير صالح.',
+        });
+      }
+      const role = authContext.role;
+      if (role !== 'super_admin' && role !== 'platform_admin') {
+        return res.status(403).json({
+          type: 'https://api.an-erp.local/errors/forbidden',
+          title: 'صلاحيات غير كافية',
+          status: 403,
+          detail: 'هذا المسار مخصص لمدير المنصة (Platform Admin) فقط.',
+        });
+      }
+      next();
+    });
+  }
+
+  async function requireDeveloperOrAuditor(req: Request, res: Response, next: NextFunction) {
+    return requireAuth(req, res, () => {
+      const authContext = (req as any).authContext as AuthContext;
+      if (!authContext) {
+        return res.status(401).json({
+          type: 'https://api.an-erp.local/errors/unauthorized',
+          title: 'غير مصادق',
+          status: 401,
+          detail: 'رمز المصادقة مفقود أو غير صالح.',
+        });
+      }
+      const role = authContext.role;
+      if (role !== 'developer' && role !== 'auditor' && role !== 'super_admin' && role !== 'platform_admin') {
+        return res.status(403).json({
+          type: 'https://api.an-erp.local/errors/forbidden',
+          title: 'صلاحيات غير كافية',
+          status: 403,
+          detail: 'هذا المسار محمي ومخصص لدور المطور أو المدقق (Developer/Auditor) فقط (البند 1.3).',
+        });
+      }
+      next();
+    });
   }
 
   // 1A & 1D & 1I & 1J & 1K — Enterprise Authentication (Login)
@@ -1193,7 +1269,7 @@ async function startServer() {
 
     const encryptedPii = EncryptionService.encryptPII({ email, phone, nationalId });
     const newId = `USR-${Date.now().toString().slice(-4)}`;
-    const defaultPass = 'User@ANERP2026!';
+    const defaultPass = requireEnv('RESET_USER_PASSWORD');
     const hash = await argon2.hash(defaultPass, { type: argon2.argon2id });
     const totp = generateSecret();
     const encryptedTotp = EncryptionService.encryptPII(totp);
@@ -1564,7 +1640,7 @@ async function startServer() {
   // ============================================================================
 
   // 2A, 2B, 2H: Execute 5-Step Company Creation Wizard (Platform Route — Section 4.6B)
-  app.post('/api/wizard/create-company', async (req: Request, res: Response) => {
+  app.post('/api/wizard/create-company', requirePlatformAdmin, async (req: Request, res: Response) => {
     const storage = masterStorage; // Explicitly allowed: Platform tenant provisioning (4.6B)
     const wizard = new CompanyWizardService(storage);
     const result = await wizard.createCompany(req.body);
@@ -1575,7 +1651,7 @@ async function startServer() {
   });
 
   // 2B: List Registered Tenants / Companies (Platform Route — Section 4.6B)
-  app.get('/api/tenants', async (req: Request, res: Response) => {
+  app.get('/api/tenants', requirePlatformAdmin, async (req: Request, res: Response) => {
     const storage = masterStorage; // Explicitly allowed: Platform tenant directory (4.6B)
     const result = await storage.listTenants();
     if (!result.success) {
@@ -1585,7 +1661,7 @@ async function startServer() {
   });
 
   // 2B: Propose BackendConfig Migration
-  app.post('/api/storage/propose-migration', (req: Request, res: Response) => {
+  app.post('/api/storage/propose-migration', requirePlatformAdmin, (req: Request, res: Response) => {
     const { tenantId, targetConfig, requestedBy, justificationAr } = req.body;
     const result = globalStorageRouter.proposeMigration(tenantId, targetConfig, requestedBy || 'USR-ADMIN', justificationAr || 'ترقية البنية التحتية');
     if (!result.success) {
@@ -1783,37 +1859,37 @@ async function startServer() {
   });
 
   // Phase 2 Comprehensive Acceptance Battery Endpoint
-  app.get('/api/internal/phase2-battery', async (req: Request, res: Response) => {
+  app.get('/api/internal/phase2-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
     const result = await runPhase2Battery();
     return res.json(result);
   });
 
   // Phase 3 Comprehensive Acceptance Battery Endpoint
-  app.get('/api/internal/phase3-battery', async (req: Request, res: Response) => {
+  app.get('/api/internal/phase3-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
     const result = await runPhase3Battery();
     return res.json(result);
   });
 
   // 6. Internal Route: /internal/build-status (Protected audit view per section 1.3)
-  app.get('/api/internal/build-status', async (req: Request, res: Response) => {
+  app.get('/api/internal/build-status', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
     const runner = new Phase0TestRunner();
     const report = await runner.runAll();
     return res.json(report);
   });
 
-  app.get('/api/internal/primary-battery', async (req: Request, res: Response) => {
+  app.get('/api/internal/primary-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
     const result = await executePrimaryBattery();
     return res.json(result);
   });
 
   // Phase 1 Acceptance Battery Endpoint
-  app.get('/api/internal/phase1-battery', async (req: Request, res: Response) => {
+  app.get('/api/internal/phase1-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
     const result = await runPhase1Battery();
     return res.json(result);
   });
 
   // Phase 4.6 Foundation Hardening Acceptance Battery Endpoint
-  app.get('/api/internal/phase4_6-battery', async (req: Request, res: Response) => {
+  app.get('/api/internal/phase4_6-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
     const result = await runPhase46Battery();
     return res.json(result);
   });
@@ -2298,7 +2374,7 @@ async function startServer() {
   };
 
   // Phase 5 Acceptance Battery Endpoint (Internal / Auditor)
-  app.get('/api/internal/phase5-battery', async (req: Request, res: Response) => {
+  app.get('/api/internal/phase5-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
     const result = await runPhase5Battery();
     return res.json(result);
   });
@@ -2549,7 +2625,7 @@ async function startServer() {
   };
 
   // Phase 6 Acceptance Battery Endpoint (Internal / Auditor)
-  app.get('/api/internal/phase6-battery', async (req: Request, res: Response) => {
+  app.get('/api/internal/phase6-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
     const result = await runPhase6Battery();
     return res.json(result);
   });
@@ -2774,7 +2850,7 @@ async function startServer() {
   };
 
   // Phase 7 Acceptance Battery Endpoint (Internal / Auditor)
-  app.get('/api/internal/phase7-battery', async (req: Request, res: Response) => {
+  app.get('/api/internal/phase7-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
     const result = await runPhase7Battery();
     return res.json(result);
   });

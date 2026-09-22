@@ -1,5 +1,16 @@
 import { chromium, Browser } from 'playwright';
+import dotenv from 'dotenv';
 import { PostgresPrimaryAdapter } from '../src/core/storage/adapters/PostgresPrimaryAdapter';
+
+dotenv.config();
+
+function requireEnv(name: string): string {
+  const val = process.env[name];
+  if (!val || val.trim() === '') {
+    throw new Error(`المتغيّر ${name} غير معرَّف في البيئة — لا يمكن تشغيل السيرفر بدونه`);
+  }
+  return val;
+}
 
 interface E2ETestResult {
   id: string;
@@ -14,7 +25,7 @@ async function runE2E() {
   const results: E2ETestResult[] = [];
   let browser: Browser | null = null;
   const baseUrl = 'http://127.0.0.1:3000';
-  const testPassword = process.env.INITIAL_USER_PASSWORD || 'Alaa3254_3030';
+  const testPassword = requireEnv('E2E_TEST_PASSWORD');
 
   console.log('\n========================================================================');
   console.log('       A.N ERP v7.2 — PHASE 4.6I E2E ACCEPTANCE BATTERY (PLAYWRIGHT)    ');

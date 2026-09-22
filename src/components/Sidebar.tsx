@@ -1,4 +1,5 @@
 import React from 'react';
+import packageJson from '../../package.json';
 import {
   Layers,
   User,
@@ -167,7 +168,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* System Identity Footer */}
       <div className="pt-4 border-t border-slate-100 text-center">
-        <div className="text-xs font-bold text-slate-800">A.N ERP v7.1</div>
+        <div className="text-xs font-bold text-slate-800">A.N ERP v{packageJson.version}</div>
         <div className="text-[10px] text-slate-400 mt-0.5">منصة تخطيط الموارد المؤسسية الموحدة</div>
       </div>
     </aside>
