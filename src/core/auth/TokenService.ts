@@ -186,11 +186,15 @@ export class TokenService {
     tenantId?: string;
     sessionId?: string;
   }> {
-    let tenantId = 'tenant-main';
+    // Wave 7.5A & Section 5.4: Strictly derive tenantId from the cryptographically formatted token; zero fallback
     const parts = oldPlainToken.split('.');
-    if (parts.length >= 3 && parts[0] === 'rt') {
-      tenantId = parts[1];
+    if (parts.length < 3 || parts[0] !== 'rt' || !parts[1] || parts[1].trim() === '') {
+      return {
+        success: false,
+        error: 'رمز التحديث فاقد لمعرّف المنشأة الصريح — تم رفض التجديد لعدم وجود نطاق معتمد (بند 5.4)',
+      };
     }
+    const tenantId = parts[1];
 
     return this.storage.withTenantScope(tenantId, async () => {
       const tokenHash = crypto.createHash('sha256').update(oldPlainToken).digest('hex');

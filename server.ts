@@ -48,6 +48,7 @@ import { runPhase6Battery } from './src/core/tests/runPhase6Battery';
 import { CashCustodyService } from './src/core/modules/custody/CashCustodyService';
 import { ExpenseService } from './src/core/modules/expenses/ExpenseService';
 import { InventoryService } from './src/core/inventory/InventoryService';
+import { SEED_COMPANY_PROFILE, seedOnlyInitialBootstrap } from './src/core/seed/seedOnly';
 import { runPhase7Battery } from './src/core/inventory/Phase7Battery';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
 import { AccountingService } from './src/core/accounting/AccountingService';
@@ -66,6 +67,21 @@ export function requireEnv(name: string): string {
 const packageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
 export const APP_VERSION = packageJson.version || '7.2.0';
 
+/**
+ * Wave 7.5B & Section 3.5: Standard Cookie Security Policy
+ * The default and mandatory value is sameSite='strict'.
+ * sameSite='none' is strictly forbidden unless explicitly enabled via ALLOW_IFRAME_EMBEDDING=true
+ * and the request verified to be within an iframe context.
+ */
+export function resolveCookieSameSite(req: Request): 'strict' | 'none' {
+  const allowIframe = process.env.ALLOW_IFRAME_EMBEDDING === 'true';
+  const isIframe = req.headers['sec-fetch-dest'] === 'iframe' || req.headers['sec-fetch-site'] === 'cross-site';
+  if (allowIframe && isIframe) {
+    return 'none';
+  }
+  return 'strict';
+}
+
 // Ensure all 4 mandatory security secrets are strictly provided at server boot
 requireEnv('SEED_ADMIN_PASSWORD');
 requireEnv('INITIAL_USER_PASSWORD');
@@ -75,23 +91,7 @@ requireEnv('E2E_TEST_PASSWORD');
 const PORT = Number(process.env.PORT) || 3000;
 
 // Initial company seed settings for primary setup (Phase 0 / Phase 1)
-const companyProfile: TenantCompany = {
-  id: 'tenant-main',
-  code: 'MAIN',
-  nameAr: 'شركة الأعمال الموحدة القابضة',
-  nameEn: 'Unified Business Holding Co.',
-  crNumber: '1010482910',
-  taxNumber: '300128472900003', // 15-digit ZATCA standard
-  baseCurrency: 'ر.س',
-  country: 'المملكة العربية السعودية',
-  auditRetentionPolicyYears: 10,
-  status: 'ACTIVE',
-  backendConfig: {
-    adapterType: 'postgresql',
-    connectionRef: 'DATABASE_URL',
-    isolationLevel: 'Shared',
-  },
-};
+const companyProfile: TenantCompany = SEED_COMPANY_PROFILE;
 
 // Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing directly via StoragePort
 async function initSeedUsers(storage: StoragePort, tenantId: string = companyProfile.id) {
@@ -319,6 +319,35 @@ async function startServer() {
   });
 
   app.use('/api', apiRateLimiter);
+
+  // Wave 7.5H & v7.3 Clause 18: Structured Logging, Correlation Tracing & Observability
+  const latencySamples: number[] = [];
+  function getP95Latency(samples: number[]): number {
+    if (samples.length === 0) return 0;
+    const sorted = [...samples].sort((a, b) => a - b);
+    const index = Math.floor(sorted.length * 0.95);
+    return Math.round(sorted[index] * 100) / 100;
+  }
+
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const traceId = (req.headers['x-trace-id'] as string) || `trc-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    (req as any).traceId = traceId;
+    res.setHeader('x-trace-id', traceId);
+
+    const start = performance.now();
+    res.on('finish', () => {
+      const duration = performance.now() - start;
+      if (latencySamples.length > 500) latencySamples.shift();
+      latencySamples.push(duration);
+
+      if (req.path.startsWith('/api') && !req.path.startsWith('/api/health')) {
+        if (res.statusCode >= 400) {
+          console.warn(`[API-WARN][${traceId}] ${req.method} ${req.path} -> ${res.statusCode} (${Math.round(duration * 100) / 100}ms)`);
+        }
+      }
+    });
+    next();
+  });
 
   // 1E — Security Headers (CSP, HSTS, X-Content-Type-Options, etc.)
   app.use((req: Request, res: Response, next: NextFunction) => {
@@ -897,8 +926,7 @@ async function startServer() {
 
     // 1A: Set HttpOnly, Secure, SameSite Cookies — Zero tokens in localStorage!
     const isProd = process.env.NODE_ENV === 'production';
-    const isIframeOrCross = req.headers['sec-fetch-dest'] === 'iframe' || req.headers['sec-fetch-site'] === 'cross-site';
-    const sameSiteMode: 'none' | 'lax' | 'strict' = isProd && isIframeOrCross ? 'none' : 'lax';
+    const sameSiteMode = resolveCookieSameSite(req);
 
     res.cookie('an_access_token', accessToken, {
       httpOnly: true,
@@ -1009,8 +1037,7 @@ async function startServer() {
     }
 
     const isProd = process.env.NODE_ENV === 'production';
-    const isIframeOrCross = req.headers['sec-fetch-dest'] === 'iframe' || req.headers['sec-fetch-site'] === 'cross-site';
-    const sameSiteMode: 'none' | 'lax' | 'strict' = isProd && isIframeOrCross ? 'none' : 'lax';
+    const sameSiteMode = resolveCookieSameSite(req);
 
     res.cookie('an_access_token', rotation.newAccessToken, {
       httpOnly: true,
@@ -1875,6 +1902,33 @@ async function startServer() {
     const runner = new Phase0TestRunner();
     const report = await runner.runAll();
     return res.json(report);
+  });
+
+  // Wave 7.5H & v7.3 Clause 18: Operational Health Dashboard (/internal/health)
+  app.get('/api/internal/health', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
+    const p95 = getP95Latency(latencySamples);
+    const mem = process.memoryUsage();
+    return res.json({
+      status: 'HEALTHY',
+      system: 'A.N ERP',
+      version: `v${APP_VERSION}`,
+      uptimeSeconds: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+      observability: {
+        totalRequestsTracked: latencySamples.length,
+        p95LatencyMs: p95,
+        targetP95Ms: 150,
+        meetsPerformanceTarget: p95 <= 150,
+      },
+      memory: {
+        heapUsedMb: Math.round((mem.heapUsed / 1024 / 1024) * 100) / 100,
+        rssMb: Math.round((mem.rss / 1024 / 1024) * 100) / 100,
+      },
+      storage: {
+        primaryConfigured: !!process.env.DATABASE_URL,
+        currentPrimary: process.env.DATABASE_URL ? 'PostgreSQL' : 'InMemory (Dev)',
+      },
+    });
   });
 
   app.get('/api/internal/primary-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
@@ -3228,12 +3282,9 @@ async function startServer() {
         console.log('✓ تم فحص وتهيئة مخطط جداول قاعدة البيانات بنجاح.');
       }
     }
-    const existingTenant = await masterStorage.getTenant(companyProfile.id);
-    if (!existingTenant.success || !existingTenant.data) {
-      await masterStorage.saveTenant(companyProfile, 'init-seed-company-profile');
-    }
+    await seedOnlyInitialBootstrap(masterStorage);
     await initSeedUsers(masterStorage, companyProfile.id);
-    console.log('✓ تم فحص وبذر بيانات المستأجر والمستخدمين بنجاح.');
+    console.log('✓ تم فحص وبذر بيانات المستأجر والمستخدمين بنجاح (seedOnly).');
   } catch (seedErr) {
     console.error('تنبيه: تعذر إكمال بذر البيانات الأولية تلقائياً:', seedErr);
   }

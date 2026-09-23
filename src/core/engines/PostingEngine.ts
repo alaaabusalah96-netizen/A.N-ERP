@@ -90,8 +90,61 @@ export class PostingEngine {
       return { success: false, error: validationError };
     }
 
+    // Wave 7.5E & Section 13.1: Fiscal Period Gating
+    const periodRes = await this.port.getPeriodForDate(tenantId, entry.date);
+    if (periodRes.success && periodRes.data && periodRes.data.status === 'CLOSED') {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/closed-fiscal-period',
+          title: 'الفترة المالية مقفلة',
+          status: 422,
+          detail: `لا يمكن ترحيل القيد في فترة محاسبية مقفلة (${periodRes.data.code}) إلا بعد إعادة فتحها رسمياً وتوثيق المبرر (بند 13.1).`,
+        },
+      };
+    }
+
     // Atomic post in StoragePort
     return this.port.postJournalEntry(tenantId, entryId, idempotencyKey);
+  }
+
+  /**
+   * Wave 7.5E & Section 13.1: Immutable Posted Entry Invariant
+   * PRECONDITION:
+   * Only DRAFT or non-posted entries can be deleted.
+   * POSTED / REVERSED entries are strictly permanent. Correction is only via reverseEntry.
+   */
+  public async deleteEntry(
+    tenantId: string,
+    entryId: string
+  ): Promise<StorageResult<void>> {
+    const existingResult = await this.port.getJournalEntry(tenantId, entryId);
+    if (!existingResult.success || !existingResult.data) {
+      return {
+        success: false,
+        error: existingResult.error || {
+          type: 'https://api.an-erp.local/errors/entry-not-found',
+          title: 'السند غير موجود',
+          status: 404,
+          detail: `تعذر العثور على القيد المحاسبي برقم ${entryId}.`,
+        },
+      };
+    }
+
+    const entry = existingResult.data;
+    if (entry.status === 'POSTED' || entry.status === 'REVERSED') {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/immutable-posted-entry',
+          title: 'حظر حذف القيد المعتمد',
+          status: 403,
+          detail: 'ممنوع نظامياً: لا يجوز حذف أو تعديل قيد محاسبي مرحل (POSTED) بحكم الثوابت المحاسبية (بند 13.1). التصحيح يتم حصرًا عبر قيد عكسي.',
+        },
+      };
+    }
+
+    return this.port.deleteJournalEntry(tenantId, entryId);
   }
 
   /**

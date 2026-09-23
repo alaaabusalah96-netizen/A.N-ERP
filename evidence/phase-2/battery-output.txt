@@ -1,0 +1,135 @@
+{
+  "totalTests": 15,
+  "passedCount": 10,
+  "failedCount": 5,
+  "adapterName": "PostgreSQL (Supabase Primary)",
+  "allPassed": false,
+  "durationMs": 4660,
+  "tests": [
+    {
+      "testId": "2A-1",
+      "nameAr": "إنشاء شركة سعودية بنسبة ضريبة آلية (15%) والتحقق من قالب النشاط ودليل الحسابات",
+      "category": "2A_WIZARD",
+      "passed": true,
+      "durationMs": 1532,
+      "evidence": "تم إنشاء الشركة السعودية (CMP-7046) بنجاح. الضريبة: 15%، الحسابات المهيأة: 21، الموديولات: 9"
+    },
+    {
+      "testId": "2A-2",
+      "nameAr": "إنشاء شركة مصرية بنسبة ضريبة آلية (14%) وفحص صيغة الرقم الضريبي لـ ETA",
+      "category": "2A_WIZARD",
+      "passed": true,
+      "durationMs": 1303,
+      "evidence": "تم إنشاء الشركة المصرية (CMP-4068) بنجاح. الضريبة المطبقة: 14% لـ ETA، العملة: EGP"
+    },
+    {
+      "testId": "2A-3",
+      "nameAr": "التحقق من توفر 50 قالب نشاط جاهز وتصنيفها",
+      "category": "2A_WIZARD",
+      "passed": true,
+      "durationMs": 0,
+      "evidence": "تم التحقق بنجاح من مكتبة الـ 50 قالب نشاط بالكامل (50 قالباً متاحاً) مع أدلة حسابات وموديولات مخصصة."
+    },
+    {
+      "testId": "2B-1",
+      "nameAr": "منع اختيار Adapter غير معتمد إنتاجياً (MySQL/MongoDB/Firebase) ورفضه برسالة عربية",
+      "category": "2B_ADAPTER_GOVERNANCE",
+      "passed": true,
+      "durationMs": 13,
+      "evidence": "تم الرفض بنجاح وتطبيق الحوكمة: \"الـ Adapter المختار (mysql) ما زال في وضع فحص الاتصال الأولي (Smoke Test) فقط من المرحلة 0 ولم يستوفِ البطارية الكاملة للاعتماد الإنتاجي. الـ Adapter المعتمد حالياً فقط: PostgreSQL (Primary).\""
+    },
+    {
+      "testId": "2B-2",
+      "nameAr": "منع تسريب نصوص الاتصال الصريحة (Connection Strings) داخل connectionRef",
+      "category": "2B_ADAPTER_GOVERNANCE",
+      "passed": true,
+      "durationMs": 0,
+      "evidence": "تم اعتراض ومنع تسريب الأسرار بنجاح: \"ممنوع إدراج نص اتصال صريح (Connection String) في backendConfig.connectionRef منعاً لتسريب الأسرار. يجب تمرير اسم المتغير فقط (مثل: DATABASE_URL أو DATABASE_URL_CUSTOM).\""
+    },
+    {
+      "testId": "2B-3",
+      "nameAr": "إثبات الفصل التام للبيانات بين شركتين (Shared vs Dedicated) على Primary Adapter",
+      "category": "2B_ADAPTER_GOVERNANCE",
+      "passed": true,
+      "durationMs": 274,
+      "evidence": "تم تأكيد العزل الفعلي للبيانات بنجاح: الحسابات والبيانات معزولة بنسبة 100% ولا يمكن لأي شركة الوصول لبيانات الأخرى."
+    },
+    {
+      "testId": "2B-4",
+      "nameAr": "توجيه المستأجر المخصص (Dedicated Isolation) للـ Adapter الصحيح ديناميكياً بدلاً من Postgres الدائم",
+      "category": "2B_ADAPTER_GOVERNANCE",
+      "passed": true,
+      "durationMs": 1,
+      "evidence": "تم التحقق بنجاح: resolveAdapter يرجع نسخة من الكلاس الصحيح لكل نوع Adapter مخصص (MySQL -> MySQLSmokeAdapter, MongoDB -> MongoDBSmokeAdapter, Postgres -> PostgresPrimaryAdapter) ولا يفترض Postgres دايمًا."
+    },
+    {
+      "testId": "2C-1",
+      "nameAr": "توليد أرقام تسلسلية ذرية متتالية بدون فجوات (Atomic Gapless Numbering)",
+      "category": "2C_NUMBERING",
+      "passed": false,
+      "durationMs": 213,
+      "evidence": "فشل الاختبار",
+      "error": "فشل توليد الترقيم الذري"
+    },
+    {
+      "testId": "2C-2",
+      "nameAr": "إجراء تجاوز يدوي معتمد لترقيم تسلسلي مع اشتراط سبب توثيقي صريح (>= 10 أحرف) وتوثيقه",
+      "category": "2C_NUMBERING",
+      "passed": false,
+      "durationMs": 106,
+      "evidence": "فشل الاختبار",
+      "error": "insert or update on table \"an_sequences\" violates foreign key constraint \"an_sequences_tenant_id_fkey\""
+    },
+    {
+      "testId": "2D-1",
+      "nameAr": "استعلام الرصيد في تاريخ ماضٍ (As Of) متجاهلاً الحركات المالية اللاحقة",
+      "category": "2D_AS_OF",
+      "passed": false,
+      "durationMs": 403,
+      "evidence": "فشل الاختبار",
+      "error": "فشل الاستعلام التاريخي As Of"
+    },
+    {
+      "testId": "2E-2G-1",
+      "nameAr": "إنشاء سلسلة تدقيق مشفرة (Genesis -> Block) والتحقق الرياضي من سلامة السلسلة",
+      "category": "2E_2G_AUDIT_CHAIN",
+      "passed": true,
+      "durationMs": 153,
+      "evidence": "تم بناء والتحقق من سلسلة التدقيق المشفرة (3 سجلات) بنجاح: 100% تطابق SHA-256 مرتبط بـ Genesis Hash."
+    },
+    {
+      "testId": "2E-2G-2",
+      "nameAr": "محاكاة كشف تلاعب مباشر في قاعدة البيانات ورفض السلسلة فوراً (Tamper Detection)",
+      "category": "2E_2G_AUDIT_CHAIN",
+      "passed": true,
+      "durationMs": 0,
+      "evidence": "تم إثبات كشف التلاعب فورياً رياضياً وبرمجياً: أي اختلاف بمقدار بت واحد في المحتوى أو الهاش السابق يبطل السلسلة فوراً ويحدد رقم السجل المتلاعب به."
+    },
+    {
+      "testId": "2F-1",
+      "nameAr": "إنشاء صنف مخزني بحالة PENDING_APPROVAL ومنع منشئه من اعتماده بنفسه (SoD)",
+      "category": "2F_DUAL_CONTROL",
+      "passed": false,
+      "durationMs": 18,
+      "evidence": "فشل الاختبار",
+      "error": "insert or update on table \"an_master_items\" violates foreign key constraint \"an_master_items_tenant_id_fkey\""
+    },
+    {
+      "testId": "2F-2",
+      "nameAr": "إنشاء شريك تجاري (عميل/مورد) بحالة PENDING_APPROVAL والتحقق من موثوقية استخدامه بالمعاملات",
+      "category": "2F_DUAL_CONTROL",
+      "passed": false,
+      "durationMs": 90,
+      "evidence": "فشل الاختبار",
+      "error": "فشل إنشاء العميل"
+    },
+    {
+      "testId": "2H-1",
+      "nameAr": "تفعيل الموديولات تلقائياً حسب القالب دون نسخ كود مع إمكانية التخصيص للمستأجر",
+      "category": "2H_MODULE_MANIFEST",
+      "passed": true,
+      "durationMs": 406,
+      "evidence": "تم تفعيل 7 موديولات أساسية وتخصيص موديول المتجر الإلكتروني للشركة بنجاح عبر Module Manifest."
+    }
+  ]
+}

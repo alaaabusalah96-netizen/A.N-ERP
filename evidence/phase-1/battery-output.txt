@@ -1,0 +1,154 @@
+{
+  "overallPassed": true,
+  "totalTests": 12,
+  "passedTests": 12,
+  "failedTests": 0,
+  "adapterTested": "PostgreSQL (Primary / Supabase)",
+  "results": [
+    {
+      "name": "كشف إعادة استخدام Refresh Token وإبطال السلسلة بالكامل وحفظها في StoragePort",
+      "section": "1A (بند 8)",
+      "passed": true,
+      "evidence": {
+        "familyId": "fam-732e3640-45c3-437a-a74b-9d3cdacbfed9",
+        "firstRotationSuccess": true,
+        "reuseBlockedImmediately": true,
+        "familyEntirelyInvalidated": true,
+        "persistedInStorage": true,
+        "rejectionError": "تم اكتشاف محاولة إعادة استخدام رمز جلسة قديم — تم إبطال سلسلة التوكن بالكامل فوراً"
+      }
+    },
+    {
+      "name": "الفحص الآلي للكود (Grep): صفر تخزين لتوكنات المصادقة في localStorage بالفرونت إند",
+      "section": "1A (بند 9)",
+      "passed": true,
+      "evidence": {
+        "scannedDirectory": "/src",
+        "violationsFoundCount": 0,
+        "violatingFiles": [],
+        "ruleCompliance": "التوكنات مخزنة حصرياً في HttpOnly Secure Cookies"
+      }
+    },
+    {
+      "name": "خلو الكود البرمجي بالكامل من أي كلمات مرور أو رموز هاردكودد",
+      "section": "1A & بند 4.6",
+      "passed": true,
+      "evidence": {
+        "prohibitedTermsScanned": [
+          "erp2026",
+          "admin123",
+          "123456"
+        ],
+        "violationsCount": 0,
+        "violatingLocations": [],
+        "status": "نظيف تماماً — صفر هاردكودد"
+      }
+    },
+    {
+      "name": "تشفير وتحقق كلمات المرور الحقيقي بمكتبة argon2 الرسمية وتخزين الـ Hash عبر StoragePort",
+      "section": "1A (بند B.1)",
+      "passed": true,
+      "evidence": {
+        "algorithm": "argon2id",
+        "hashPrefix": "$argon2id$",
+        "correctPasswordVerified": true,
+        "wrongPasswordRejected": true,
+        "persistedInStoragePort": true
+      }
+    },
+    {
+      "name": "التحقق الثنائي الحقيقي (TOTP) بمكتبة otplib الرسمية وتوليد QR Code",
+      "section": "1D (بند B.2)",
+      "passed": true,
+      "evidence": {
+        "secretLength": 32,
+        "encryptedSecretProtected": true,
+        "currentOtpVerified": true,
+        "invalidOtpRejected": true,
+        "qrCodeGeneratedSuccessfully": true,
+        "otpauthIssuer": "A.N ERP"
+      }
+    },
+    {
+      "name": "منع التكرار (Idempotency) عند تسجيل الدخول (إرسال مزدوج → جلسة واحدة)",
+      "section": "1A & 8",
+      "passed": true,
+      "evidence": {
+        "idempotencyKey": "idemp-login-1790149507879",
+        "firstReqSessionId": "ses-1790149507879",
+        "secondReqIsCached": true,
+        "secondReqSessionId": "ses-1790149507879"
+      }
+    },
+    {
+      "name": "تشفير حقول PII بنمط AES-256-GCM وتوليد 8 أكواد طوارئ لمرة واحدة",
+      "section": "1D",
+      "passed": true,
+      "evidence": {
+        "cipherAlgorithm": "aes-256-gcm",
+        "piiDecryptionMatch": true,
+        "generatedCodesCount": 8,
+        "firstCodeConsumedSuccessfully": true,
+        "replayAttackBlocked": true
+      }
+    },
+    {
+      "name": "فصل المهام (SoD): رفض الأدوار المتضاربة والاعتماد الذاتي برمز RFC 7807",
+      "section": "1C",
+      "passed": true,
+      "evidence": {
+        "incompatibleRoleCheckStatus": 409,
+        "incompatibleRoleTitleAr": "تعارض في مبدأ فصل المهام",
+        "selfApprovalBlockedStatus": 403,
+        "rfc7807Type": "https://api.an-erp.local/errors/sod-conflict"
+      }
+    },
+    {
+      "name": "قفل الحساب التصاعدي التلقائي بعد 5 محاولات دخول فاشلة",
+      "section": "1D",
+      "passed": true,
+      "evidence": {
+        "lockedAfterAttempts": 5,
+        "isAccountLocked": true,
+        "lockoutDurationMinutes": 5
+      }
+    },
+    {
+      "name": "كشف القفز الجغرافي المستحيل (Impossible Travel) بمحرك حتمي",
+      "section": "1D & 1J",
+      "passed": true,
+      "evidence": {
+        "isAnomalyDetected": true,
+        "calculatedDistanceKm": 4939,
+        "calculatedVelocityKmH": 296225,
+        "alertSummary": "تم رصد قفزة جغرافية مستحيلة بسرعة مقدرة 296225 كم/ساعة عبر مسافة 4939 كم. تم فرض التحقق الثنائي فورا."
+      }
+    },
+    {
+      "name": "تفعيل أمان الصفوف (Row Level Security) وسياسات عزل المستأجرين مع withTenantScope",
+      "section": "Phase 0 (بند A)",
+      "passed": true,
+      "evidence": {
+        "totalRlsTablesProtected": 9,
+        "expectedRlsTables": 9,
+        "rlsMechanism": "SET LOCAL app.current_tenant_id per transaction scope",
+        "contextIsolationVerified": true
+      }
+    },
+    {
+      "name": "معايير الأداء الحقيقية (p95 زمن استجابة ونسبة أخطاء) ضد Primary Adapter",
+      "section": "1H",
+      "passed": true,
+      "evidence": {
+        "testedAdapter": "PostgreSQL (Supabase Primary)",
+        "totalRequests": 25,
+        "successRate": "100.0%",
+        "avgLatencyMs": 12.76,
+        "p50LatencyMs": 12.01,
+        "p95LatencyMs": 12.79,
+        "p99LatencyMs": 28.59,
+        "throughputRps": 78.37
+      }
+    }
+  ]
+}

@@ -96,10 +96,11 @@ async function runVerification() {
 
   // 3. Sensitive Routes Protection (Unauthorized Role: Accountant => 403)
   console.log('\n--- 3) Verification with Unauthorized Role (Accountant => 403) ---');
-  const accountantPass = process.env.INITIAL_USER_PASSWORD || 'Alaa3254_3030';
+  const accountantPass = process.env.INITIAL_USER_PASSWORD || 'TEST_FIXTURE_DO_NOT_USE';
   const loginRes = await makeRequest('/api/auth/login', {
     method: 'POST',
     body: {
+      tenantCode: 'MAIN',
       username: 'accountant',
       password: accountantPass,
     },
@@ -107,10 +108,10 @@ async function runVerification() {
 
   const cookieHeader = loginRes.headers.get('set-cookie') || '';
   const tokenMatch = cookieHeader.match(/an_access_token=([^;]+)/);
-  const token = tokenMatch ? tokenMatch[1] : '';
+  const token = tokenMatch ? tokenMatch[1] : (loginRes.data?.accessToken || '');
 
   if (!token) {
-    console.error('Failed to login as accountant for RBAC test');
+    console.error('Failed to login as accountant for RBAC test:', loginRes.data);
   } else {
     const authHeaders = {
       Cookie: `an_access_token=${token}`,
@@ -162,10 +163,11 @@ async function runVerification() {
 
   // 4. Authorized Access (Platform Admin / Super Admin)
   console.log('\n--- 4) Verification with Authorized Role (Super Admin => 200) ---');
-  const adminPass = process.env.SEED_ADMIN_PASSWORD || 'Alaasalah_2020';
+  const adminPass = process.env.SEED_ADMIN_PASSWORD || 'TEST_FIXTURE_DO_NOT_USE';
   const adminLoginRes = await makeRequest('/api/auth/login', {
     method: 'POST',
     body: {
+      tenantCode: 'MAIN',
       username: 'admin',
       password: adminPass,
     },
@@ -173,10 +175,10 @@ async function runVerification() {
 
   const adminCookie = adminLoginRes.headers.get('set-cookie') || '';
   const adminTokenMatch = adminCookie.match(/an_access_token=([^;]+)/);
-  const adminToken = adminTokenMatch ? adminTokenMatch[1] : '';
+  const adminToken = adminTokenMatch ? adminTokenMatch[1] : (adminLoginRes.data?.accessToken || '');
 
   if (!adminToken) {
-    console.error('Failed to login as admin for authorized test');
+    console.error('Failed to login as admin for authorized test:', adminLoginRes.data);
   } else {
     const adminHeaders = {
       Cookie: `an_access_token=${adminToken}`,

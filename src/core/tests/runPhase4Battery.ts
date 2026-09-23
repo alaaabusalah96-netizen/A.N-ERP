@@ -50,7 +50,7 @@ export async function runPhase4Battery(): Promise<Phase4BatterySuiteResult> {
   await primary.initializeSchema();
   const service = new AccountingService(primary);
 
-  const tenantId = 'tenant-main';
+  const tenantId = 't-phase4-iso';
 
   async function runTest(
     testId: string,

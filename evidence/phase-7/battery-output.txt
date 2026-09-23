@@ -1,0 +1,231 @@
+{
+  "phase": "PHASE 7",
+  "module": "المخازن والمخزون (Warehouses & Inventory - موديول 3 من 15)",
+  "adapterType": "InMemoryAdapter (Development / Test Execution)",
+  "timestamp": "2026-09-23T07:45:21.553Z",
+  "totalScenarios": 9,
+  "passedScenarios": 5,
+  "failedScenarios": 4,
+  "isClosed": false,
+  "scenarios": [
+    {
+      "id": "PHASE7-SCENARIO-1",
+      "titleAr": "تعدد المستودعات ومواقع التخزين الفرعية (Bins) وربط الفروع",
+      "passed": true,
+      "details": "تم إنشاء مستودع (مستودع الدمام الإقليمي) بنجاح مع رف التخزين (BIN-A-01).",
+      "evidence": {
+        "warehouse": {
+          "id": "wh-dammam",
+          "code": "WH-003",
+          "nameAr": "مستودع الدمام الإقليمي",
+          "nameEn": "Dammam Regional Warehouse",
+          "isActive": true,
+          "location": "الدمام - المدينة الصناعية الأولى",
+          "tenantId": "t-phase7-iso",
+          "companyId": "t-phase7-iso",
+          "createdAt": "2026-09-23T07:37:52.823Z",
+          "isDefault": false,
+          "updatedAt": "2026-09-23T07:37:52.823Z",
+          "valuationMethod": "WEIGHTED_AVERAGE"
+        },
+        "bin": {
+          "id": "bin-1790149520744-to1h",
+          "tenantId": "t-phase7-iso",
+          "companyId": "t-phase7-iso",
+          "warehouseId": "wh-dammam",
+          "code": "BIN-A-01",
+          "aisle": "A",
+          "rack": "01",
+          "shelf": "1",
+          "descriptionAr": "رف تخزين الأجهزة الحساسة",
+          "isActive": true,
+          "createdAt": "2026-09-23T07:45:20.744Z"
+        }
+      }
+    },
+    {
+      "id": "PHASE7-SCENARIO-2",
+      "titleAr": "تعريف بطاقة الصنف وحسابات الأصول وتكلفة المبيعات والتتبع",
+      "passed": true,
+      "details": "تم تسجيل الصنف (جهاز لوحي ميداني 10 بوصة) بالمتوسط المرجح وحد إعادة طلب 5 وتتبع التشغيلات والسيريال.",
+      "evidence": {
+        "id": "item-tablet-01",
+        "uom": "جهاز",
+        "nameAr": "جهاز لوحي ميداني 10 بوصة",
+        "category": "ELECTRONICS",
+        "isActive": true,
+        "itemCode": "SKU-TAB-01",
+        "tenantId": "t-phase7-iso",
+        "companyId": "t-phase7-iso",
+        "createdAt": "2026-09-23T07:37:52.885Z",
+        "updatedAt": "2026-09-23T07:37:52.885Z",
+        "trackBatch": true,
+        "averageCost": 1500,
+        "trackSerial": true,
+        "reorderPoint": 5,
+        "sellingPrice": 0,
+        "standardCost": 1500,
+        "maxStockLevel": 1000,
+        "minStockLevel": 0,
+        "cogsAccountCode": "510101",
+        "valuationMethod": "WEIGHTED_AVERAGE",
+        "lastPurchaseCost": 0,
+        "inventoryAccountCode": "110301",
+        "adjustmentGainAccountCode": "410101",
+        "adjustmentExpenseAccountCode": "520101"
+      }
+    },
+    {
+      "id": "PHASE7-SCENARIO-3",
+      "titleAr": "التوريد المخزني واحتساب التقييم الفوري بالمتوسط المرجح (Weighted Average)",
+      "passed": false,
+      "details": "عدم تطابق في حساب المتوسط المرجح: الكمية=12, المتوسط=1100",
+      "evidence": {
+        "id": "stk-wh-main-item-tablet-01",
+        "tenantId": "t-phase7-iso",
+        "companyId": "t-phase7-iso",
+        "warehouseId": "wh-main",
+        "itemId": "item-tablet-01",
+        "currentQty": 12,
+        "reservedQty": 0,
+        "availableQty": 12,
+        "averageCost": 1100,
+        "totalValue": 13200,
+        "updatedAt": "2026-09-23T07:37:55.075Z"
+      }
+    },
+    {
+      "id": "PHASE7-SCENARIO-4",
+      "titleAr": "منع الصرف عند تجاوز الرصيد المتاح وتحديث أرصدة المخزون بالصرف الفعلي",
+      "passed": false,
+      "details": "فشل التحقق من قيود الرصيد المتاح.",
+      "evidence": {
+        "failIssueError": {
+          "type": "https://api.an-erp.local/errors/insufficient-stock",
+          "title": "الرصيد المخزني غير كافٍ",
+          "status": 400,
+          "detail": "الرصيد المتاح حالياً (12) أقل من الكمية المطلوبة للصرف (25)."
+        },
+        "validIssue": {
+          "id": "mov-1790149073551-bemw",
+          "itemId": "item-tablet-01",
+          "itemCode": "SKU-TAB-01",
+          "quantity": 5,
+          "tenantId": "t-phase7-iso",
+          "unitCost": 1100,
+          "companyId": "t-phase7-iso",
+          "timestamp": "2026-09-23T07:37:53.551Z",
+          "totalCost": 5500,
+          "itemNameAr": "جهاز لوحي ميداني 10 بوصة",
+          "performedBy": "usr-storekeeper-01",
+          "warehouseId": "wh-main",
+          "movementType": "ISSUE",
+          "idempotencyKey": "idemp-valid-issue",
+          "movementNumber": "ISS-000001",
+          "balanceAfterQty": 15,
+          "performedByName": "أمين المستودع فهد",
+          "warehouseNameAr": "المستودع الرئيسي - الرياض",
+          "sourceDocumentType": "SALES_DELIVERY"
+        },
+        "stockAfter": {
+          "id": "stk-wh-main-item-tablet-01",
+          "tenantId": "t-phase7-iso",
+          "companyId": "t-phase7-iso",
+          "warehouseId": "wh-main",
+          "itemId": "item-tablet-01",
+          "currentQty": 12,
+          "reservedQty": 0,
+          "availableQty": 12,
+          "averageCost": 1100,
+          "totalValue": 13200,
+          "updatedAt": "2026-09-23T07:37:55.075Z"
+        }
+      }
+    },
+    {
+      "id": "PHASE7-SCENARIO-5",
+      "titleAr": "التحويل المخزني بين المستودعات مع تدفق الإرسال والاستلام المكتمل",
+      "passed": false,
+      "details": "فشل التحويل المخزني: المستند حالياً في حالة (RECEIVED) ولا يمكن استلامه مجدداً.",
+      "evidence": {
+        "srcQty": 12,
+        "tgtQty": 3
+      }
+    },
+    {
+      "id": "PHASE7-SCENARIO-6",
+      "titleAr": "محضر الجرد الفعلي ورصد الفروقات المخزنية (عجز بقيمة 2 وحدة)",
+      "passed": true,
+      "details": "تم رصد عجز بمقدار 2 وحدة بقيمة صافية (-2200 ر.س) بنجاح.",
+      "evidence": {
+        "id": "cnt-1790149074266-2fkd",
+        "notes": "جرد دوري ربع سنوي لمستودع الدمام",
+        "status": "COMPLETED",
+        "tenantId": "t-phase7-iso",
+        "companyId": "t-phase7-iso",
+        "countType": "PERIODIC",
+        "createdAt": "2026-09-23T07:37:54.310Z",
+        "updatedAt": "2026-09-23T07:37:54.310Z",
+        "countNumber": "CNT-000001",
+        "hasVariance": true,
+        "performedAt": "2026-09-23T07:37:54.310Z",
+        "performedBy": "usr-auditor-ali",
+        "warehouseId": "wh-dammam",
+        "idempotencyKey": "idemp-cnt-01",
+        "performedByName": "المراجع الميداني علي",
+        "totalItemsCount": 1,
+        "warehouseNameAr": "مستودع الدمام الإقليمي",
+        "netVarianceAmount": -2200
+      }
+    },
+    {
+      "id": "PHASE7-SCENARIO-7",
+      "titleAr": "فصل الصلاحيات والواجبات (SoD): منع منفذ الجرد من اعتماده أو ترحيل فروقاته",
+      "passed": true,
+      "details": "تم رفض اعتماد الجرد بواسطة نفس المنفذ (رمز 403 - تعارض مصالح SoD معتمد ومحمي).",
+      "evidence": {
+        "type": "https://api.an-erp.local/errors/sod-violation",
+        "title": "تعارض مصالح - فصل الصلاحيات والواجبات (SoD)",
+        "status": 403,
+        "detail": "ممنوع نظامياً: لا يجوز لمن قام بتنفيذ الجرد المخزني فعلياً اعتماده أو تسوية فروقاته (SoD)."
+      }
+    },
+    {
+      "id": "PHASE7-SCENARIO-8",
+      "titleAr": "ترحيل قيد التسوية المتوازن عبر PostingEngine وتعديل رصيد المخزون الفعلي",
+      "passed": false,
+      "details": "فشل ترحيل قيد التسوية أو تحديث الرصيد.",
+      "evidence": {
+        "updatedStock": {
+          "id": "stk-wh-dammam-item-tablet-01",
+          "tenantId": "t-phase7-iso",
+          "companyId": "t-phase7-iso",
+          "warehouseId": "wh-dammam",
+          "itemId": "item-tablet-01",
+          "currentQty": 3,
+          "reservedQty": 0,
+          "availableQty": 3,
+          "averageCost": 1100,
+          "totalValue": 3300,
+          "updatedAt": "2026-09-23T07:37:54.803Z"
+        },
+        "error": {
+          "type": "https://api.an-erp.local/errors/already-posted",
+          "title": "محضر الجرد مرحل مسبقاً",
+          "status": 400,
+          "detail": "تم ترحيل وتسوية محضر الجرد هذا بالفعل ولا يمكن إعادة ترحيله."
+        }
+      }
+    },
+    {
+      "id": "PHASE7-SCENARIO-9",
+      "titleAr": "ضمان الإدهنية (Idempotency): منع تكرار الحركات المخزنية عند إعادة إرسال نفس المفتاح",
+      "passed": true,
+      "details": "تم استرجاع نتيجة التوريد المخزني السابقة بدقة دون مضاعفة الكميات في المخزن.",
+      "evidence": {
+        "firstId": "mov-1790149075019-vqao",
+        "secondId": "mov-1790149075019-vqao"
+      }
+    }
+  ]
+}

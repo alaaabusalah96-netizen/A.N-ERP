@@ -47,6 +47,19 @@ export async function runPhase2Battery(): Promise<Phase2BatterySuiteResult> {
 
   await primary.initializeSchema();
 
+  // Ensure test tenant exists for foreign key constraints
+  await primary.saveTenant(
+    {
+      id: 't-phase2-iso',
+      code: 'P2-ISO',
+      nameAr: 'شركة اختبار المرحلة الثانية المعزولة',
+      backendConfig: { adapterType: 'postgresql', connectionRef: 'DATABASE_URL', isolationLevel: 'Shared' },
+      status: 'ACTIVE',
+      createdAt: new Date().toISOString(),
+    },
+    'idemp-p2-iso-seed'
+  );
+
   // Helper for running single test
   async function runTest(
     testId: string,
@@ -385,7 +398,7 @@ export async function runPhase2Battery(): Promise<Phase2BatterySuiteResult> {
     '2C_NUMBERING',
     async () => {
       const numbering = new NumberingEngine(primary);
-      const tenantId = 'tenant-main';
+      const tenantId = 't-phase2-iso';
       const seqKey = `INV_SEQ_${Date.now()}`;
 
       const num1 = await numbering.generateNumber(tenantId, seqKey, 'INV-2026', `n1-${Date.now()}`);
@@ -416,7 +429,7 @@ export async function runPhase2Battery(): Promise<Phase2BatterySuiteResult> {
     '2C_NUMBERING',
     async () => {
       const numbering = new NumberingEngine(primary);
-      const tenantId = 'tenant-main';
+      const tenantId = 't-phase2-iso';
       const seqKey = `MANUAL_SEQ_${Date.now()}`;
 
       // Negative case: Short reason rejected
@@ -466,7 +479,7 @@ export async function runPhase2Battery(): Promise<Phase2BatterySuiteResult> {
     async () => {
       const posting = new PostingEngine(primary);
       const historyService = new HistoricalQueryService(primary);
-      const tenantId = 'tenant-main';
+      const tenantId = 't-phase2-iso';
       const accountCode = `1101_${Date.now().toString().slice(-4)}`;
 
       // Create account
@@ -684,7 +697,7 @@ export async function runPhase2Battery(): Promise<Phase2BatterySuiteResult> {
     '2F_DUAL_CONTROL',
     async () => {
       const dualControl = new DualControlService(primary);
-      const tenantId = 'tenant-main';
+      const tenantId = 't-phase2-iso';
       const accountant = { id: 'USR-ACC-1', fullName: 'المحاسب طارق', role: 'accountant' };
       const approver = { id: 'USR-MGR-1', fullName: 'المدير المالي عادل', role: 'financial_approver' };
 
@@ -749,7 +762,7 @@ export async function runPhase2Battery(): Promise<Phase2BatterySuiteResult> {
     '2F_DUAL_CONTROL',
     async () => {
       const dualControl = new DualControlService(primary);
-      const tenantId = 'tenant-main';
+      const tenantId = 't-phase2-iso';
       const accountant = { id: 'USR-ACC-2', fullName: 'المحاسب أيمن', role: 'accountant' };
       const approver = { id: 'USR-AUD-2', fullName: 'المعتمد سامي', role: 'financial_approver' };
 

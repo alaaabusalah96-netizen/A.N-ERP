@@ -55,13 +55,27 @@ export async function runPhase1Battery(): Promise<Phase1BatteryResult> {
   const storage = primary;
   await primary.initializeSchema();
 
+  // Ensure test tenant exists for foreign key constraints
+  await storage.saveTenant(
+    {
+      id: 't-phase1-iso',
+      code: 'P1-ISO',
+      nameAr: 'شركة اختبار المرحلة الأولى المعزولة',
+      backendConfig: { adapterType: 'postgresql', connectionRef: 'DATABASE_URL', isolationLevel: 'Shared' },
+      status: 'ACTIVE',
+      createdAt: new Date().toISOString(),
+    },
+    'idemp-p1-iso-seed'
+  );
+
   const tokenService = new TokenService(storage);
 
   // =========================================================================
   // TEST 1: Refresh Token Reuse Detection & Family Invalidation with StoragePort
   // =========================================================================
   try {
-    const { familyId, refreshToken } = await tokenService.createRefreshTokenFamily('USR-TEST-1', 'tenant-main', 'ses-1');
+    const testTenantId = 't-phase1-iso';
+    const { familyId, refreshToken } = await tokenService.createRefreshTokenFamily('USR-TEST-1', testTenantId, 'ses-1');
     
     // Legitimate first rotation
     const rotation1 = await tokenService.rotateRefreshToken(refreshToken);
@@ -76,7 +90,7 @@ export async function runPhase1Battery(): Promise<Phase1BatteryResult> {
     const familyFullyDead = !blockedNext.success && blockedNext.familyRevoked === true;
 
     // Verify database record has isInvalidated = true
-    const savedFamily = await storage.withTenantScope('tenant-main', () => storage.getTokenFamily(familyId));
+    const savedFamily = await storage.withTenantScope(testTenantId, () => storage.getTokenFamily(familyId));
     const persistedRevocation = savedFamily.success && (savedFamily.data?.isInvalidated === true || (savedFamily.data as any)?.isRevoked === true);
 
     const test1Passed = passedRotation1 && detectedReuse && familyFullyDead && persistedRevocation;
@@ -220,9 +234,10 @@ export async function runPhase1Battery(): Promise<Phase1BatteryResult> {
     const invalidVerify = await argon2.verify(hash, 'IncorrectPassword999!');
 
     // Persist user with argon2id hash via StoragePort
+    const testTenantId = 't-phase1-iso';
     const testUserObj = {
       id: `USR-ARGON-${Date.now()}`,
-      tenantId: 'tenant-main',
+      tenantId: testTenantId,
       username: `argon_user_${Date.now()}`,
       fullName: 'مستخدم تجريبي أرجون',
       email: 'argon@company.sa',
@@ -233,7 +248,7 @@ export async function runPhase1Battery(): Promise<Phase1BatteryResult> {
     };
 
     const saveRes = await storage.saveUser(testUserObj, `idemp-argon-save-${Date.now()}`);
-    const readRes = await storage.getUser('tenant-main', testUserObj.id);
+    const readRes = await storage.getUser(testTenantId, testUserObj.id);
     const verifiedFromStorage = readRes.success && readRes.data?.passwordHash === hash;
 
     const test4Passed = isArgon2id && validVerify && !invalidVerify && saveRes.success && verifiedFromStorage;
@@ -314,7 +329,7 @@ export async function runPhase1Battery(): Promise<Phase1BatteryResult> {
   try {
     const loginStore = new Map<string, any>();
     const idempotencyKey = `idemp-login-${Date.now()}`;
-    const loginPayload = { username: 'accountant', userId: 'USR-001', tenantId: 'tenant-main' };
+    const loginPayload = { username: 'accountant', userId: 'USR-001', tenantId: 't-phase1-iso' };
 
     function executeLoginWithIdempotency(key: string, payload: any) {
       if (loginStore.has(key)) {

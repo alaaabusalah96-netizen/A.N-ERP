@@ -171,6 +171,21 @@ export interface JournalEntry {
   reversedByEntryId?: string;
 }
 
+// Wave 7.5E & Section 13.1: Accounting Periods & Fiscal Closing
+export type AccountingPeriodStatus = 'OPEN' | 'CLOSED' | 'REOPENED';
+export interface AccountingPeriod {
+  id: string;
+  tenantId: string;
+  code: string;
+  startDate: string;
+  endDate: string;
+  status: AccountingPeriodStatus;
+  reopenedBy?: string;
+  reopenedReason?: string;
+  closedAt?: string;
+  closedBy?: string;
+}
+
 export interface SequenceResult {
   sequenceNumber: number;
   formattedCode: string;
@@ -796,6 +811,17 @@ export interface StoragePort {
 
   getJournalEntry(tenantId: string, entryId: string): Promise<StorageResult<JournalEntry>>;
   listJournalEntries(tenantId: string): Promise<StorageResult<JournalEntry[]>>;
+  deleteJournalEntry(tenantId: string, entryId: string): Promise<StorageResult<void>>;
+
+  // Fiscal Closing & Accounting Period Control (Wave 7.5E & Section 13.1)
+  getPeriodForDate(tenantId: string, date: string): Promise<StorageResult<AccountingPeriod | null>>;
+  setPeriodStatus(
+    tenantId: string,
+    periodId: string,
+    status: AccountingPeriodStatus,
+    actorId: string,
+    reason?: string
+  ): Promise<StorageResult<AccountingPeriod>>;
 
   // Atomic Numbering & Override (2C)
   nextSequence(

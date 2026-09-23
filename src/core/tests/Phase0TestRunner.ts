@@ -83,24 +83,25 @@ export class Phase0TestRunner {
         });
 
         // Step B: Tenant Isolation Test
+        const runSuffix = Date.now().toString().slice(-6);
         const tenantA: TenantCompany = {
-          id: 'tenant-test-a',
-          code: 'TEST-A',
+          id: `ten-p0-a-${runSuffix}`,
+          code: `TEST-A-${runSuffix}`,
           nameAr: 'شركة الاختبار الأولى',
           backendConfig: { adapterType: 'postgresql', connectionRef: 'DATABASE_URL', isolationLevel: 'Shared' },
           status: 'ACTIVE',
           createdAt: new Date().toISOString(),
         };
         const tenantB: TenantCompany = {
-          id: 'tenant-test-b',
-          code: 'TEST-B',
+          id: `ten-p0-b-${runSuffix}`,
+          code: `TEST-B-${runSuffix}`,
           nameAr: 'شركة الاختبار الثانية',
           backendConfig: { adapterType: 'postgresql', connectionRef: 'DATABASE_URL', isolationLevel: 'Shared' },
           status: 'ACTIVE',
           createdAt: new Date().toISOString(),
         };
-        await this.postgres.saveTenant(tenantA, 'idemp-tenant-a');
-        await this.postgres.saveTenant(tenantB, 'idemp-tenant-b');
+        await this.postgres.saveTenant(tenantA, `idemp-tenant-a-${runSuffix}`);
+        await this.postgres.saveTenant(tenantB, `idemp-tenant-b-${runSuffix}`);
 
         // Check account isolation
         const accA: Account = {
@@ -143,23 +144,24 @@ export class Phase0TestRunner {
         };
         await this.postgres.saveAccount(tenantA.id, accExpense, 'idemp-acc-exp');
 
+        const entryId = `ENTRY-${Date.now()}`;
         const testEntry: JournalEntry = {
-          id: `ENTRY-${Date.now()}`,
-          code: seqRes.data?.formattedCode || 'JV-2026-000001',
+          id: entryId,
+          code: seqRes.data?.formattedCode || `JV-${Date.now()}`,
           tenantId: tenantA.id,
           date: new Date().toISOString().split('T')[0],
           type: 'قيد يومية اختباري',
           description: 'اختبار البطارية الكاملة للترحيل الذري وتوازن الدفاتر',
           lines: [
             {
-              id: 'L1',
+              id: `${entryId}-L1`,
               accountCode: accExpense.code,
               debit: 5000,
               credit: 0,
               description: 'إثبات مصروف تجريبي',
             },
             {
-              id: 'L2',
+              id: `${entryId}-L2`,
               accountCode: accA.code,
               debit: 0,
               credit: 5000,
@@ -171,8 +173,9 @@ export class Phase0TestRunner {
           createdBy: 'SYS_TESTER',
         };
 
-        const draftRes = await postingEngine.draftEntry(tenantA.id, testEntry, 'idemp-draft-entry');
-        const postRes = await postingEngine.postEntry(tenantA.id, testEntry.id, 'idemp-post-entry-1');
+        const postKey = `idemp-post-${entryId}`;
+        const draftRes = await postingEngine.draftEntry(tenantA.id, testEntry, `idemp-draft-${entryId}`);
+        const postRes = await postingEngine.postEntry(tenantA.id, testEntry.id, postKey);
 
         const postPassed = postRes.success && postRes.data?.status === 'POSTED';
         batterySteps.push({
@@ -182,7 +185,7 @@ export class Phase0TestRunner {
         });
 
         // Step D: Idempotency (same key twice -> no double balance change)
-        const rePostRes = await postingEngine.postEntry(tenantA.id, testEntry.id, 'idemp-post-entry-1');
+        const rePostRes = await postingEngine.postEntry(tenantA.id, testEntry.id, postKey);
         const accAAfter = await this.postgres.getAccount(tenantA.id, accA.code);
         // Credit should be 5000, not 10000
         const idempotencyPassed = rePostRes.success && accAAfter.data?.creditBalance === 5000;

@@ -50,8 +50,11 @@ import {
   StockCountStatus,
   ItemBatch,
   ItemSerial,
+  AccountingPeriod,
+  AccountingPeriodStatus,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
+import { SEED_TENANT_ID } from '../../seed/seedOnly';
 
 export class InMemoryAdapter implements StoragePort {
   readonly adapterName = 'InMemoryAdapter (Development Only - Non-Persistent)';
@@ -64,6 +67,7 @@ export class InMemoryAdapter implements StoragePort {
   private activeSessions = new Map<string, ActiveSessionRecord>();
   private accounts = new Map<string, Account>();
   private journalEntries = new Map<string, JournalEntry>();
+  private accountingPeriods = new Map<string, AccountingPeriod>();
   private sequences = new Map<string, number>();
   private approvalRequests = new Map<string, ApprovalRequest>();
   private changeLogs: SystemChangeLogEntry[] = [];
@@ -111,7 +115,7 @@ export class InMemoryAdapter implements StoragePort {
 
   private seedDefaultData() {
     const defaultTenant: TenantCompany = {
-      id: 'tenant-main',
+      id: SEED_TENANT_ID,
       code: 'CMP-001',
       nameAr: 'شركة الأعمال الموحدة القابضة',
       nameEn: 'Unified Business Holding Co.',
@@ -129,7 +133,7 @@ export class InMemoryAdapter implements StoragePort {
     const defaultAccounts: Account[] = [
       {
         code: '110101',
-        tenantId: 'tenant-main',
+        tenantId: SEED_TENANT_ID,
         nameAr: 'الصندوق الرئيسي - الرياض',
         type: 'ASSET',
         currency: 'SAR',
@@ -139,7 +143,7 @@ export class InMemoryAdapter implements StoragePort {
       },
       {
         code: '110201',
-        tenantId: 'tenant-main',
+        tenantId: SEED_TENANT_ID,
         nameAr: 'بنك الراجحي - الحساب الجاري',
         type: 'ASSET',
         currency: 'SAR',
@@ -149,7 +153,7 @@ export class InMemoryAdapter implements StoragePort {
       },
       {
         code: '520101',
-        tenantId: 'tenant-main',
+        tenantId: SEED_TENANT_ID,
         nameAr: 'مصروفات الصيانة والتشغيل',
         type: 'EXPENSE',
         currency: 'SAR',
@@ -159,7 +163,7 @@ export class InMemoryAdapter implements StoragePort {
       },
       {
         code: '410101',
-        tenantId: 'tenant-main',
+        tenantId: SEED_TENANT_ID,
         nameAr: 'إيرادات المبيعات العامة',
         type: 'REVENUE',
         currency: 'SAR',
@@ -169,7 +173,7 @@ export class InMemoryAdapter implements StoragePort {
       },
       {
         code: '110301',
-        tenantId: 'tenant-main',
+        tenantId: SEED_TENANT_ID,
         nameAr: 'مخزون البضاعة بغرض البيع',
         type: 'ASSET',
         currency: 'SAR',
@@ -179,7 +183,7 @@ export class InMemoryAdapter implements StoragePort {
       },
       {
         code: '510101',
-        tenantId: 'tenant-main',
+        tenantId: SEED_TENANT_ID,
         nameAr: 'تكلفة البضاعة المباعة',
         type: 'EXPENSE',
         currency: 'SAR',
@@ -196,8 +200,8 @@ export class InMemoryAdapter implements StoragePort {
     // Default Seed Warehouse and Items
     const defaultWarehouse: Warehouse = {
       id: 'wh-main',
-      tenantId: 'tenant-main',
-      companyId: 'tenant-main',
+      tenantId: SEED_TENANT_ID,
+      companyId: SEED_TENANT_ID,
       code: 'WH-001',
       nameAr: 'المستودع الرئيسي - الرياض',
       nameEn: 'Main Warehouse - Riyadh',
@@ -206,12 +210,12 @@ export class InMemoryAdapter implements StoragePort {
       isActive: true,
       createdAt: new Date().toISOString(),
     };
-    this.warehouses.set(`tenant-main:${defaultWarehouse.id}`, defaultWarehouse);
+    this.warehouses.set(`${SEED_TENANT_ID}:${defaultWarehouse.id}`, defaultWarehouse);
 
     const branchWarehouse: Warehouse = {
       id: 'wh-jeddah',
-      tenantId: 'tenant-main',
-      companyId: 'tenant-main',
+      tenantId: SEED_TENANT_ID,
+      companyId: SEED_TENANT_ID,
       code: 'WH-002',
       nameAr: 'مستودع جدة الإقليمي',
       nameEn: 'Jeddah Regional Warehouse',
@@ -220,12 +224,12 @@ export class InMemoryAdapter implements StoragePort {
       isActive: true,
       createdAt: new Date().toISOString(),
     };
-    this.warehouses.set(`tenant-main:${branchWarehouse.id}`, branchWarehouse);
+    this.warehouses.set(`${SEED_TENANT_ID}:${branchWarehouse.id}`, branchWarehouse);
 
     const defaultItem: StockItem = {
       id: 'item-001',
-      tenantId: 'tenant-main',
-      companyId: 'tenant-main',
+      tenantId: SEED_TENANT_ID,
+      companyId: SEED_TENANT_ID,
       itemCode: 'SKU-LAPTOP-01',
       nameAr: 'حاسب محمول للأعمال - فئة ممتازة',
       nameEn: 'Business Laptop Enterprise',
@@ -247,12 +251,12 @@ export class InMemoryAdapter implements StoragePort {
       isActive: true,
       createdAt: new Date().toISOString(),
     };
-    this.stockItems.set(`tenant-main:${defaultItem.id}`, defaultItem);
+    this.stockItems.set(`${SEED_TENANT_ID}:${defaultItem.id}`, defaultItem);
 
-    this.warehouseStock.set(`tenant-main:wh-main:item-001`, {
+    this.warehouseStock.set(`${SEED_TENANT_ID}:wh-main:item-001`, {
       id: 'wh-main-item-001',
-      tenantId: 'tenant-main',
-      companyId: 'tenant-main',
+      tenantId: SEED_TENANT_ID,
+      companyId: SEED_TENANT_ID,
       itemId: 'item-001',
       warehouseId: 'wh-main',
       currentQty: 18,
@@ -585,6 +589,78 @@ export class InMemoryAdapter implements StoragePort {
   public async listJournalEntries(tenantId: string): Promise<StorageResult<JournalEntry[]>> {
     const entries = Array.from(this.journalEntries.values()).filter((e) => e.tenantId === tenantId);
     return { success: true, data: entries };
+  }
+
+  public async deleteJournalEntry(tenantId: string, entryId: string): Promise<StorageResult<void>> {
+    const key = `${tenantId}:${entryId}`;
+    const entry = this.journalEntries.get(key);
+    if (!entry) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/entry-not-found',
+          title: 'السند غير موجود',
+          status: 404,
+          detail: `تعذر العثور على القيد ${entryId}`,
+        },
+      };
+    }
+    // Wave 7.5E & Section 13.1: Defense-in-depth immutable posted entry
+    if (entry.status === 'POSTED' || entry.status === 'REVERSED') {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/immutable-posted-entry',
+          title: 'حظر حذف القيد المعتمد',
+          status: 403,
+          detail: 'ممنوع نظامياً: لا يجوز حذف أو تعديل قيد محاسبي مرحل (POSTED) بحكم الثوابت المحاسبية (بند 13.1). التصحيح يتم حصرًا عبر قيد عكسي.',
+        },
+      };
+    }
+    this.journalEntries.delete(key);
+    return { success: true, data: undefined };
+  }
+
+  public async getPeriodForDate(tenantId: string, date: string): Promise<StorageResult<AccountingPeriod | null>> {
+    const target = new Date(date).getTime();
+    const period = Array.from(this.accountingPeriods.values()).find((p) => {
+      if (p.tenantId !== tenantId) return false;
+      const start = new Date(p.startDate).getTime();
+      const end = new Date(p.endDate).getTime();
+      return target >= start && target <= end;
+    });
+    return { success: true, data: period ? { ...period } : null };
+  }
+
+  public async setPeriodStatus(
+    tenantId: string,
+    periodId: string,
+    status: AccountingPeriodStatus,
+    actorId: string,
+    reason?: string
+  ): Promise<StorageResult<AccountingPeriod>> {
+    const key = `${tenantId}:${periodId}`;
+    let period = this.accountingPeriods.get(key);
+    if (!period) {
+      period = {
+        id: periodId,
+        tenantId,
+        code: periodId,
+        startDate: '2026-01-01',
+        endDate: '2026-12-31',
+        status: 'OPEN',
+      };
+    }
+    const updated: AccountingPeriod = {
+      ...period,
+      status,
+      closedAt: status === 'CLOSED' ? new Date().toISOString() : undefined,
+      closedBy: status === 'CLOSED' ? actorId : undefined,
+      reopenedBy: status === 'REOPENED' ? actorId : undefined,
+      reopenedReason: status === 'REOPENED' ? reason : undefined,
+    };
+    this.accountingPeriods.set(key, updated);
+    return { success: true, data: updated };
   }
 
   public async nextSequence(
@@ -1341,6 +1417,21 @@ export class InMemoryAdapter implements StoragePort {
     if (cached.success && cached.data) {
       return { success: true, data: cached.data };
     }
+
+    // Wave 7.5D & Section 7.1: Adapter-level SoD enforcement on STORED record
+    const custody = this.cashCustodies.get(`${tenantId}:${settlement.custodyId}`);
+    if (custody && custody.openedBy === settlement.settledBy) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/sod-violation',
+          title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
+          status: 403,
+          detail: 'ممنوع نظامياً: لا يجوز لمن قام بفتح وتخصيص العهدة أن يعتمد تسويتها النهائية (بند 7.1). تم التحقق بناءً على القيمة المخزنة فعلياً في قاعدة البيانات.',
+        },
+      };
+    }
+
     // Mark pending transactions as INCLUDED_IN_SETTLEMENT
     for (const [k, tx] of this.cashCustodyTransactions.entries()) {
       if (tx.tenantId === tenantId && tx.custodyId === settlement.custodyId && tx.status === 'RECORDED') {
@@ -1439,6 +1530,32 @@ export class InMemoryAdapter implements StoragePort {
         },
       };
     }
+
+    // Wave 7.5D & Section 7.1: Adapter-level SoD enforcement on STORED record
+    const storedCreator = (existing as any).createdBy || existing.submittedBy || existing.employeeId;
+    if (updates.approvedL1By && updates.approvedL1By === storedCreator) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/sod-violation',
+          title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
+          status: 403,
+          detail: 'ممنوع نظامياً: لا يجوز لمنشئ أو مقدم طلب الصرف اعتماد طلبه (SoD بند 7.1). تم التحقق بناءً على القيمة المخزنة بالمخزن.',
+        },
+      };
+    }
+    if (updates.approvedBy && updates.approvedBy === storedCreator) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/sod-violation',
+          title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
+          status: 403,
+          detail: 'ممنوع نظامياً: لا يجوز لمنشئ أو مقدم طلب الصرف اعتماد طلبه (SoD بند 7.1). تم التحقق بناءً على القيمة المخزنة بالمخزن.',
+        },
+      };
+    }
+
     const updated: ExpenseRequest = {
       ...existing,
       ...updates,
@@ -1450,8 +1567,9 @@ export class InMemoryAdapter implements StoragePort {
   }
 
   public async listExpenseCategories(tenantId: string): Promise<StorageResult<ExpenseCategory[]>> {
+    // Wave 7.5A & Section 5.4: Strictly filter by tenantId — zero cross-tenant fallback
     const list = Array.from(this.expenseCategories.values()).filter(
-      c => c.tenantId === tenantId || c.tenantId === 'tenant-main'
+      c => c.tenantId === tenantId
     );
     return { success: true, data: list.map(c => ({ ...c })) };
   }

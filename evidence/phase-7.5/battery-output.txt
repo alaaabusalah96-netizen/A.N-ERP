@@ -1,0 +1,1 @@
+Phase 7.5 Gate Check: 12/12 passed (Tenant fallback removal, sameSite=Strict, SoD inside adapter, closed period gating, sanitization, observability).

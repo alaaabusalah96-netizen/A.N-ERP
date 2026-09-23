@@ -53,7 +53,7 @@ export async function runPhase3Battery(): Promise<Phase3BatterySuiteResult> {
 
   await primary.initializeSchema();
 
-  const tenantId = 'tenant-main';
+  const tenantId = 't-phase3-iso';
 
   async function runTest(
     testId: string,

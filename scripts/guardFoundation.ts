@@ -116,6 +116,74 @@ function runChecks() {
     details: `عدد استدعاءات getDevInMemoryAdapter في حزم القبول: ${totalDevFallbackInAcceptance} (المطلوب: 0)`,
   });
 
+  // ==========================================================================
+  // PHASE 7.5 REMEDIATION CHECKS (v7.3 Standard)
+  // ==========================================================================
+
+  // Check 8 (7.5A): Zero 'tenant-main' in server.ts
+  const serverTenantMainCount = (serverContent.match(/['"]tenant-main['"]/g) || []).length;
+  results.push({
+    id: '7.5A',
+    name: 'إزالة كاملة لمعرف tenant-main من server.ts وتفويضه لملف seedOnly المعزول',
+    passed: serverTenantMainCount === 0,
+    details: `عدد مرات ظهور 'tenant-main' في server.ts: ${serverTenantMainCount} (المطلوب: 0)`,
+  });
+
+  // Check 9 (7.5B): sameSite='strict' cookie policy default
+  const hasStrictCookieDefault = serverContent.includes("return 'strict';") && serverContent.includes('resolveCookieSameSite');
+  results.push({
+    id: '7.5B',
+    name: 'تطبيق سياسة الكوكيز الصارمة sameSite=Strict افتراضياً (بند 3.5)',
+    passed: hasStrictCookieDefault,
+    details: hasStrictCookieDefault
+      ? 'دالة resolveCookieSameSite تُرجع strict افتراضياً مع تقييد صارم لـ none'
+      : 'لم يتم العثور على resolveCookieSameSite مع الإرجاع الافتراضي strict!',
+  });
+
+  // Check 10 (7.5D): SoD enforcement on stored record inside Storage Adapters
+  const inMemoryAdapterPath = path.join(rootDir, 'src/core/storage/adapters/InMemoryAdapter.ts');
+  const inMemoryAdapterContent = fs.readFileSync(inMemoryAdapterPath, 'utf-8');
+  const hasAdapterSoD =
+    inMemoryAdapterContent.includes('https://api.an-erp.local/errors/sod-violation') &&
+    inMemoryAdapterContent.includes('custody.openedBy === settlement.settledBy');
+  results.push({
+    id: '7.5D',
+    name: 'إنفاذ فصل الصلاحيات والواجبات (SoD) داخل محوّل التخزين اعتماداً على السجل المخزن (بند 7.1)',
+    passed: hasAdapterSoD,
+    details: hasAdapterSoD
+      ? 'تم التحقق من وجود فحص SoD داخل محوّل التخزين لمنع منشئ العهدة وطلب الصرف من الاعتماد'
+      : 'لم يتم العثور على فحص SoD المعتمد على السجل المخزن داخل Adapter!',
+  });
+
+  // Check 11 (7.5E): Closed Fiscal Period Gating in PostingEngine
+  const postingEnginePath = path.join(rootDir, 'src/core/engines/PostingEngine.ts');
+  const postingEngineContent = fs.readFileSync(postingEnginePath, 'utf-8');
+  const hasPeriodGating =
+    postingEngineContent.includes('https://api.an-erp.local/errors/closed-fiscal-period') &&
+    postingEngineContent.includes("periodRes.data.status === 'CLOSED'");
+  results.push({
+    id: '7.5E',
+    name: 'بوابة إقفال الفترات المالية ومنع الترحيل بالفترات المقفولة ومنع حذف القيود المرحلة (بند 13.1)',
+    passed: hasPeriodGating,
+    details: hasPeriodGating
+      ? 'PostingEngine يفحص حالة الفترة المالية ويحظر الترحيل في الفترات المقفولة ويمنع حذف القيود المرحلة'
+      : 'PostingEngine لا يتحقق من إقفال الفترات المالية!',
+  });
+
+  // Check 12 (7.5H): Observability & Metrics (/internal/health + trace ID middleware)
+  const hasObservability =
+    serverContent.includes('/api/internal/health') &&
+    serverContent.includes('x-trace-id') &&
+    serverContent.includes('getP95Latency');
+  results.push({
+    id: '7.5H',
+    name: 'معايير الملاحظية وتتبع الطلبات ولوحة الصحة التشغيلية (بنود 17 و18)',
+    passed: hasObservability,
+    details: hasObservability
+      ? 'مسار /api/internal/health وترويسة x-trace-id وقياس زمن الاستجابة p95 مفعّلة في server.ts'
+      : 'الملاحظية ناقصة في server.ts!',
+  });
+
   // Output Report
   console.log('\n========================================================================');
   console.log('       A.N ERP v7.2 — PHASE 4.5 FOUNDATION HARDENING GATE REPORT        ');

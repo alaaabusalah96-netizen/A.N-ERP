@@ -45,8 +45,21 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
   const numberingEngine = new NumberingEngine(storage);
   const inventoryService = new InventoryService(storage, postingEngine, numberingEngine);
 
-  const tenantId = 'tenant-main';
+  const tenantId = 't-phase7-iso';
   const scenarios: BatteryScenarioResult[] = [];
+
+  // Seed tenant company to satisfy database foreign keys
+  await storage.saveTenant(
+    {
+      id: tenantId,
+      code: 'P7-ISO',
+      nameAr: 'شركة المستودعات والمخزون المعزولة',
+      status: 'ACTIVE',
+      backendConfig: { adapterType: 'postgresql', connectionRef: 'DATABASE_URL', isolationLevel: 'Shared' },
+      createdAt: new Date().toISOString(),
+    },
+    'seed-tenant-p7-init'
+  );
 
   // Seed essential inventory accounts if not present
   await storage.saveAccount(tenantId, {
@@ -84,6 +97,20 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
   // Scenario 1: Multi-Warehouse & Bins Creation (7A)
   // --------------------------------------------------------------------------
   try {
+    const whMainRes = await inventoryService.saveWarehouse(
+      tenantId,
+      {
+        id: 'wh-main',
+        code: 'WH-001',
+        nameAr: 'المستودع الرئيسي - الرياض',
+        nameEn: 'Main Warehouse - Riyadh',
+        location: 'الرياض - السلي',
+        valuationMethod: 'WEIGHTED_AVERAGE',
+        isDefault: true,
+      },
+      'idemp-wh-main-1'
+    );
+
     const whRes = await inventoryService.saveWarehouse(
       tenantId,
       {
@@ -107,7 +134,7 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
       descriptionAr: 'رف تخزين الأجهزة الحساسة',
     });
 
-    const passed = Boolean(whRes.success && whRes.data && binRes.success && binRes.data);
+    const passed = Boolean(whMainRes.success && whRes.success && whRes.data && binRes.success && binRes.data);
     scenarios.push({
       id: 'PHASE7-SCENARIO-1',
       titleAr: 'تعدد المستودعات ومواقع التخزين الفرعية (Bins) وربط الفروع',

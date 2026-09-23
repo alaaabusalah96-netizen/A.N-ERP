@@ -173,7 +173,7 @@ async function runE2E() {
         const page = await context.newPage();
         await page.goto(`${baseUrl}/`, { waitUntil: 'load', timeout: 15000 });
 
-        await page.fill('#login-tenant-code', 'tenant-main');
+        await page.fill('#login-tenant-code', 'MAIN');
         await page.fill('#login-username', 'accountant');
         await page.fill('#login-password', testPassword);
         await page.click('#login-submit-btn');
@@ -283,7 +283,7 @@ async function runE2E() {
         const page = await context.newPage();
         await page.goto(`${baseUrl}/`, { waitUntil: 'load', timeout: 15000 });
 
-        await page.fill('#login-tenant-code', 'tenant-main');
+        await page.fill('#login-tenant-code', 'MAIN');
         await page.fill('#login-username', 'accountant');
         await page.fill('#login-password', testPassword);
         await page.click('#login-submit-btn');
@@ -342,7 +342,7 @@ async function runE2E() {
         const page = await context.newPage();
         await page.goto(`${baseUrl}/`, { waitUntil: 'load', timeout: 15000 });
 
-        await page.fill('#login-tenant-code', 'tenant-main');
+        await page.fill('#login-tenant-code', 'MAIN');
         await page.fill('#login-username', 'accountant');
         await page.fill('#login-password', testPassword);
         await page.click('#login-submit-btn');

@@ -10,6 +10,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   StoragePort,
   StorageResult,
+  AccountingPeriod,
+  AccountingPeriodStatus,
   TenantCompany,
   User,
   Account,
@@ -692,16 +694,6 @@ export class PostgresPrimaryAdapter implements StoragePort {
         uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
-      -- Seed default expense categories if not exist
-      INSERT INTO an_expense_categories (id, tenant_id, company_id, code, name_ar, name_en, default_account_code, requires_attachment, attachment_threshold_amount, is_active)
-      VALUES
-        ('cat-travel', 'tenant-main', 'tenant-main', 'TRAVEL', 'سفر وانتقالات', 'Travel & Transportation', '5010', true, 300, true),
-        ('cat-hosp', 'tenant-main', 'tenant-main', 'HOSPITALITY', 'ضيافة واستقبال وفود', 'Hospitality & Entertainment', '5020', true, 500, true),
-        ('cat-maint', 'tenant-main', 'tenant-main', 'MAINTENANCE', 'صيانة وتشغيل وتجهيزات', 'Repairs & Maintenance', '5030', true, 1000, true),
-        ('cat-office', 'tenant-main', 'tenant-main', 'OFFICE_SUPPLIES', 'أدوات ومستلزمات مكتبية', 'Office Supplies', '5040', true, 400, true),
-        ('cat-util', 'tenant-main', 'tenant-main', 'COMMUNICATIONS', 'اتصالات وبرمجيات وسحابة', 'Telecommunications & Cloud', '5050', true, 500, true)
-      ON CONFLICT (tenant_id, code) DO NOTHING;
-
       -- ============================================================================
       -- Phase 7: Warehouses & Inventory Module Tables (3 of 15)
       -- ============================================================================
@@ -940,17 +932,24 @@ export class PostgresPrimaryAdapter implements StoragePort {
         ('BH', 'مملكة البحرين', 0.1000, 'BHD', 'الجهاز الوطني للإيرادات (NBR)', '^[0-9]{15}$')
       ON CONFLICT (country_code) DO NOTHING;
 
-      -- Insert default tenant company if not present
-      INSERT INTO an_tenants (id, code, name_ar, name_en, backend_config, status)
-      VALUES (
-        'tenant-main',
-        'HQ-001',
-        'شركة أ.ن للحلول المتقدمة',
-        'A.N ERP Co.',
-        '{"adapterType":"postgresql","connectionRef":"DATABASE_URL","isolationLevel":"Shared"}'::jsonb,
-        'ACTIVE'
-      )
-      ON CONFLICT (id) DO NOTHING;
+      -- ============================================================================
+      -- Wave 7.5E: Fiscal Periods & Accounting Closing
+      -- ============================================================================
+      CREATE TABLE IF NOT EXISTS an_accounting_periods (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        code VARCHAR(64) NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'OPEN',
+        reopened_by VARCHAR(64),
+        reopened_reason TEXT,
+        closed_at TIMESTAMPTZ,
+        closed_by VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, code)
+      );
+      CREATE INDEX IF NOT EXISTS idx_periods_tenant_date ON an_accounting_periods(tenant_id, start_date, end_date);
 
       -- Enable and Force Row Level Security (RLS) on all tenant-isolated tables
       DO $$
@@ -963,6 +962,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_idempotency_keys',
           'an_journal_entries',
           'an_journal_lines',
+          'an_accounting_periods',
           'an_approval_requests',
           'an_token_families',
           'an_refresh_tokens',
@@ -1255,7 +1255,18 @@ export class PostgresPrimaryAdapter implements StoragePort {
 
   public async saveUser(user: User, idempotencyKey: string): Promise<StorageResult<User>> {
     if (!this.pool) return this.missingConnError();
-    const effectiveTenantId = user.tenantId || 'tenant-main';
+    if (!user.tenantId || user.tenantId.trim() === '') {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/missing-tenant-id',
+          title: 'معرف المنشأة مفقود',
+          status: 400,
+          detail: 'يجب تحديد tenantId صريح لحفظ المستخدم في نطاق الشركة (بند 5.4).',
+        },
+      };
+    }
+    const effectiveTenantId = user.tenantId;
     return this.withTenantScope(effectiveTenantId, async () => {
       try {
         const query = `
@@ -1653,7 +1664,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         entry.description,
         entry.totalAmount,
         entry.status,
-        entry.createdBy,
+        entry.createdBy || 'SYSTEM',
       ]);
 
       for (const line of entry.lines) {
@@ -1872,6 +1883,135 @@ export class PostgresPrimaryAdapter implements StoragePort {
         });
       }
       return { success: true, data: entries };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async deleteJournalEntry(tenantId: string, entryId: string): Promise<StorageResult<void>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.pool.query(
+        'SELECT status FROM an_journal_entries WHERE tenant_id = $1 AND id = $2',
+        [tenantId, entryId]
+      );
+      if (res.rows.length === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/entry-not-found',
+            title: 'السند غير موجود',
+            status: 404,
+            detail: `تعذر العثور على القيد المحاسبي برقم ${entryId}.`,
+          },
+        };
+      }
+
+      const status = res.rows[0].status;
+      // Wave 7.5E & Section 13.1: Defense-in-depth: POSTED / REVERSED entries cannot be deleted
+      if (status === 'POSTED' || status === 'REVERSED') {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/immutable-posted-entry',
+            title: 'حظر حذف القيد المعتمد',
+            status: 403,
+            detail: 'ممنوع نظامياً: لا يجوز حذف أو تعديل قيد محاسبي مرحل (POSTED) بحكم الثوابت المحاسبية (بند 13.1). التصحيح يتم حصرًا عبر قيد عكسي.',
+          },
+        };
+      }
+
+      await this.pool.query('DELETE FROM an_journal_lines WHERE tenant_id = $1 AND journal_id = $2', [tenantId, entryId]);
+      await this.pool.query('DELETE FROM an_journal_entries WHERE tenant_id = $1 AND id = $2', [tenantId, entryId]);
+      return { success: true, data: undefined };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getPeriodForDate(tenantId: string, date: string): Promise<StorageResult<AccountingPeriod | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.pool.query(
+        'SELECT * FROM an_accounting_periods WHERE tenant_id = $1 AND start_date <= $2 AND end_date >= $2 LIMIT 1',
+        [tenantId, date]
+      );
+      if (res.rows.length === 0) {
+        return { success: true, data: null };
+      }
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          id: r.id,
+          tenantId: r.tenant_id,
+          code: r.code,
+          startDate: r.start_date.toISOString().split('T')[0],
+          endDate: r.end_date.toISOString().split('T')[0],
+          status: r.status,
+          reopenedBy: r.reopened_by,
+          reopenedReason: r.reopened_reason,
+          closedAt: r.closed_at ? r.closed_at.toISOString() : undefined,
+          closedBy: r.closed_by,
+        },
+      };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async setPeriodStatus(
+    tenantId: string,
+    periodId: string,
+    status: AccountingPeriodStatus,
+    actorId: string,
+    reason?: string
+  ): Promise<StorageResult<AccountingPeriod>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const query = `
+        INSERT INTO an_accounting_periods (
+          id, tenant_id, code, start_date, end_date, status, reopened_by, reopened_reason, closed_at, closed_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (tenant_id, code) DO UPDATE SET
+          status = EXCLUDED.status,
+          reopened_by = EXCLUDED.reopened_by,
+          reopened_reason = EXCLUDED.reopened_reason,
+          closed_at = EXCLUDED.closed_at,
+          closed_by = EXCLUDED.closed_by
+        RETURNING *;
+      `;
+      const isClosed = status === 'CLOSED';
+      const isReopened = status === 'REOPENED';
+      const res = await this.pool.query(query, [
+        periodId,
+        tenantId,
+        periodId,
+        '2026-01-01',
+        '2026-12-31',
+        status,
+        isReopened ? actorId : null,
+        isReopened ? (reason || null) : null,
+        isClosed ? new Date() : null,
+        isClosed ? actorId : null,
+      ]);
+      const r = res.rows[0];
+      return {
+        success: true,
+        data: {
+          id: r.id,
+          tenantId: r.tenant_id,
+          code: r.code,
+          startDate: r.start_date.toISOString().split('T')[0],
+          endDate: r.end_date.toISOString().split('T')[0],
+          status: r.status,
+          reopenedBy: r.reopened_by,
+          reopenedReason: r.reopened_reason,
+          closedAt: r.closed_at ? r.closed_at.toISOString() : undefined,
+          closedBy: r.closed_by,
+        },
+      };
     } catch (err: any) {
       return this.dbError(err);
     }
@@ -3858,6 +3998,24 @@ export class PostgresPrimaryAdapter implements StoragePort {
     try {
       await client.query('BEGIN');
 
+      // Wave 7.5D & Section 7.1: Adapter-level SoD enforcement on STORED record
+      const custodyRes = await client.query(
+        'SELECT opened_by FROM an_cash_custodies WHERE tenant_id = $1 AND id = $2',
+        [tenantId, settlement.custodyId]
+      );
+      if (custodyRes.rows.length > 0 && custodyRes.rows[0].opened_by === settlement.settledBy) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/sod-violation',
+            title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
+            status: 403,
+            detail: 'ممنوع نظامياً: لا يجوز لمن قام بفتح وتخصيص العهدة أن يعتمد تسويتها النهائية (بند 7.1). تم التحقق بناءً على القيمة المخزنة فعلياً في قاعدة البيانات.',
+          },
+        };
+      }
+
       // 1. Mark included transactions as settled
       await client.query(
         `UPDATE an_cash_custody_transactions 
@@ -4267,6 +4425,34 @@ export class PostgresPrimaryAdapter implements StoragePort {
       }
 
       const existing = checkRes.rows[0];
+
+      // Wave 7.5D & Section 7.1: Adapter-level SoD enforcement on STORED record
+      const storedCreator = existing.submitted_by || existing.employee_id;
+      if (updates.approvedL1By && updates.approvedL1By === storedCreator) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/sod-violation',
+            title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
+            status: 403,
+            detail: 'ممنوع نظامياً: لا يجوز لمنشئ أو مقدم طلب الصرف اعتماد طلبه (SoD بند 7.1). تم التحقق بناءً على القيمة المخزنة بالمخزن.',
+          },
+        };
+      }
+      if (updates.approvedBy && updates.approvedBy === storedCreator) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/sod-violation',
+            title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
+            status: 403,
+            detail: 'ممنوع نظامياً: لا يجوز لمنشئ أو مقدم طلب الصرف اعتماد طلبه (SoD بند 7.1). تم التحقق بناءً على القيمة المخزنة بالمخزن.',
+          },
+        };
+      }
+
       const newStatus = updates.status !== undefined ? updates.status : existing.status;
       const newTier = updates.currentApprovalTier !== undefined ? updates.currentApprovalTier : existing.current_approval_tier;
       const l1By = updates.approvedL1By !== undefined ? updates.approvedL1By : existing.approved_l1_by;
@@ -4374,7 +4560,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     if (!this.pool) return this.missingConnError();
     try {
       const res = await this.query(
-        `SELECT * FROM an_expense_categories WHERE (tenant_id = $1 OR tenant_id = 'tenant-main') ORDER BY created_at ASC`,
+        `SELECT * FROM an_expense_categories WHERE tenant_id = $1 ORDER BY created_at ASC`,
         [tenantId]
       );
       const list: ExpenseCategory[] = res.rows.map((r: any) => ({

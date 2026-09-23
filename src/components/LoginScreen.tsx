@@ -7,7 +7,7 @@ interface LoginScreenProps {
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
-  const [tenantCode, setTenantCode] = useState('tenant-main');
+  const [tenantCode, setTenantCode] = useState('MAIN');
   const [username, setUsername] = useState('accountant');
   const [password, setPassword] = useState('');
   const [selectedBranch, setSelectedBranch] = useState('main_riyadh');

@@ -11,6 +11,8 @@ import { SmokeTestResult } from './MySQLSmokeAdapter';
 import {
   StoragePort,
   StorageResult,
+  AccountingPeriod,
+  AccountingPeriodStatus,
   TenantCompany,
   User,
   Account,
@@ -80,6 +82,9 @@ export class FirebaseSmokeAdapter implements StoragePort {
   reverseJournalEntry(tenantId: string, entryId: string, reason: string, idempotencyKey: string) { return this.smokeOnlyError<JournalEntry>('reverseJournalEntry'); }
   getJournalEntry(tenantId: string, entryId: string) { return this.smokeOnlyError<JournalEntry>('getJournalEntry'); }
   listJournalEntries(tenantId: string) { return this.smokeOnlyError<JournalEntry[]>('listJournalEntries'); }
+  deleteJournalEntry(tenantId: string, entryId: string) { return this.smokeOnlyError<void>('deleteJournalEntry'); }
+  getPeriodForDate(tenantId: string, date: string) { return this.smokeOnlyError<AccountingPeriod | null>('getPeriodForDate'); }
+  setPeriodStatus(tenantId: string, periodId: string, status: AccountingPeriodStatus) { return this.smokeOnlyError<AccountingPeriod>('setPeriodStatus'); }
   nextSequence(tenantId: string, sequenceKey: string, prefix: string, idempotencyKey: string) { return this.smokeOnlyError<SequenceResult>('nextSequence'); }
   overrideSequence(tenantId: string, sequenceKey: string, manualNumber: number, reason: string, authorizedBy: string, idempotencyKey: string) { return this.smokeOnlyError<SequenceResult>('overrideSequence'); }
   createApprovalRequest(tenantId: string, request: ApprovalRequest, idempotencyKey: string) { return this.smokeOnlyError<ApprovalRequest>('createApprovalRequest'); }

@@ -45,7 +45,8 @@ export class BenchmarkRunner {
       const iterStart = performance.now();
       try {
         // Read operational journal entries & tenant info through StoragePort
-        const res = await storage.listJournalEntries('tenant-main');
+        const tenantId = 't-bench';
+        const res = await storage.listJournalEntries(tenantId);
         if (!res.success) {
           failed++;
         }

@@ -121,14 +121,24 @@ export class NumberingEngine {
       return { isGapless: true, expectedCount: 0, actualCount: 0, missingNumbers: [], highestNumber: 0 };
     }
 
-    const sorted = [...new Set(issuedNumbers)].sort((a, b) => a - b);
+    // Wave 7.5F & Section 6: Pure array deduction without hash collection allocations
+    const rawSorted = issuedNumbers.slice().sort((a, b) => a - b);
+    const sorted: number[] = [];
+    for (let idx = 0; idx < rawSorted.length; idx++) {
+      if (idx === 0 || rawSorted[idx] !== rawSorted[idx - 1]) {
+        sorted.push(rawSorted[idx]);
+      }
+    }
+
     const min = sorted[0];
     const max = sorted[sorted.length - 1];
     const missing: number[] = [];
 
-    const numSet = new Set(sorted);
+    let seqPointer = 0;
     for (let i = min; i <= max; i++) {
-      if (!numSet.has(i)) {
+      if (seqPointer < sorted.length && sorted[seqPointer] === i) {
+        seqPointer++;
+      } else {
         missing.push(i);
       }
     }
