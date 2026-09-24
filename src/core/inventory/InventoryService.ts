@@ -32,37 +32,92 @@ import {
   ItemSerial,
   JournalLine,
   JournalEntry,
+  StockDocument,
+  StockDocumentLine,
+  StockDocumentType,
+  DocumentAttachment,
+  ItemPrice,
+  ItemLedgerReport,
+  ItemLedgerEntry,
 } from '../storage/StoragePort';
 import { PostingEngine } from '../engines/PostingEngine';
 import { NumberingEngine } from '../engines/NumberingEngine';
 
-export interface ReceiveStockInput {
-  warehouseId: string;
+export interface StockLineItemInput {
   itemId: string;
   quantity: number;
-  unitCost: number;
+  uom?: string;
+  unitCost?: number;
   batchNumber?: string;
   serialNumber?: string;
   expiryDate?: string;
+  notes?: string;
+}
+
+export interface ReceiveStockInput {
+  warehouseId?: string;
+  itemId?: string;
+  quantity?: number;
+  unitCost?: number;
+  batchNumber?: string;
+  serialNumber?: string;
+  expiryDate?: string;
+  header?: {
+    warehouseId: string;
+    sourceDocumentType?: string;
+    sourceDocumentId?: string;
+    sourceDocumentNumber?: string;
+    notes?: string;
+    performedBy: string;
+    performedByName: string;
+    idempotencyKey: string;
+  };
+  lines?: StockLineItemInput[];
   sourceDocumentType?: string;
   sourceDocumentId?: string;
   sourceDocumentNumber?: string;
   notes?: string;
-  performedBy: string;
-  performedByName: string;
-  idempotencyKey: string;
+  performedBy?: string;
+  performedByName?: string;
+  idempotencyKey?: string;
 }
 
 export interface IssueStockInput {
-  warehouseId: string;
-  itemId: string;
-  quantity: number;
+  warehouseId?: string;
+  itemId?: string;
+  quantity?: number;
   batchNumber?: string;
   serialNumber?: string;
+  header?: {
+    warehouseId: string;
+    sourceDocumentType?: string;
+    sourceDocumentId?: string;
+    sourceDocumentNumber?: string;
+    notes?: string;
+    performedBy: string;
+    performedByName: string;
+    idempotencyKey: string;
+  };
+  lines?: StockLineItemInput[];
   sourceDocumentType?: string;
   sourceDocumentId?: string;
   sourceDocumentNumber?: string;
   notes?: string;
+  performedBy?: string;
+  performedByName?: string;
+  idempotencyKey?: string;
+}
+
+export interface StockReturnInput {
+  originalDocumentId: string;
+  returnType: 'RETURN_RECEIPT' | 'RETURN_ISSUE';
+  reason?: string;
+  lines: Array<{
+    itemId: string;
+    quantity: number;
+    unitCost?: number;
+    notes?: string;
+  }>;
   performedBy: string;
   performedByName: string;
   idempotencyKey: string;
@@ -293,37 +348,54 @@ export class InventoryService {
   }
 
   // ============================================================================
-  // 7B: Stock Movements (إضافة وصرف وتقييم فوري بالمتوسط المرجح)
+  // 7B: Stock Movements & Documents (إضافة وصرف متعدد البنود وتقييم فوري بالمتوسط المرجح)
   // ============================================================================
 
-  public async receiveStock(tenantId: string, input: ReceiveStockInput): Promise<ServiceResult<StockMovement>> {
-    if (input.quantity <= 0) {
+  public async receiveStock(tenantId: string, input: ReceiveStockInput): Promise<ServiceResult<StockDocument>> {
+    const warehouseId = input.warehouseId || input.header?.warehouseId;
+    if (!warehouseId) {
       return {
         success: false,
         error: {
-          type: 'https://api.an-erp.local/errors/invalid-quantity',
-          title: 'كمية التوريد غير صحيحة',
+          type: 'https://api.an-erp.local/errors/invalid-warehouse',
+          title: 'المستودع مطلوب',
           status: 400,
-          detail: 'يجب أن تكون كمية التوريد أكبر من صفر.',
+          detail: 'يجب تحديد المستودع المستلم.',
         },
       };
     }
 
-    const itemRes = await this.storage.getStockItem(tenantId, input.itemId);
-    if (!itemRes.success || !itemRes.data) {
+    const lines: StockLineItemInput[] =
+      input.lines && input.lines.length > 0
+        ? input.lines
+        : input.itemId
+        ? [
+            {
+              itemId: input.itemId,
+              quantity: input.quantity || 0,
+              unitCost: input.unitCost,
+              batchNumber: input.batchNumber,
+              serialNumber: input.serialNumber,
+              expiryDate: input.expiryDate,
+              notes: input.notes,
+            },
+          ]
+        : [];
+
+    if (lines.length === 0) {
       return {
         success: false,
         error: {
-          type: 'https://api.an-erp.local/errors/item-not-found',
-          title: 'الصنف غير موجود',
-          status: 404,
-          detail: 'تعذر العثور على الصنف المحدد.',
+          type: 'https://api.an-erp.local/errors/empty-lines',
+          title: 'أسطر التوريد فارغة',
+          status: 400,
+          detail: 'يجب أن يحتوي إذن التوريد على صنف واحد على الأقل.',
         },
       };
     }
-    const item = itemRes.data;
 
-    const whRes = await this.storage.getWarehouse(tenantId, input.warehouseId);
+    // Validate warehouse
+    const whRes = await this.storage.getWarehouse(tenantId, warehouseId);
     if (!whRes.success || !whRes.data) {
       return {
         success: false,
@@ -337,103 +409,217 @@ export class InventoryService {
     }
     const warehouse = whRes.data;
 
-    // Generate atomic movement number
-    const seqRes = await this.numberingEngine.generateNumber(tenantId, 'STK-REC', 'REC', input.idempotencyKey || `rec-${Date.now()}`);
-    const movementNumber = seqRes.success && seqRes.data ? seqRes.data.formattedCode : `REC-${Date.now()}`;
+    // Validate all items exist and quantities > 0 (Atomic validation)
+    const resolvedItems: Array<{ item: StockItem; line: StockLineItemInput }> = [];
+    for (const line of lines) {
+      if (line.quantity <= 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/invalid-quantity',
+            title: 'كمية التوريد غير صحيحة',
+            status: 400,
+            detail: `الكمية للصنف ${line.itemId} يجب أن تكون أكبر من صفر.`,
+          },
+        };
+      }
+      const itemRes = await this.storage.getStockItem(tenantId, line.itemId);
+      if (!itemRes.success || !itemRes.data) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/item-not-found',
+            title: 'الصنف غير موجود',
+            status: 404,
+            detail: `تعذر العثور على الصنف ${line.itemId} في دليل الأصناف.`,
+          },
+        };
+      }
+      resolvedItems.push({ item: itemRes.data, line });
+    }
 
-    const totalCost = Math.round(input.quantity * input.unitCost * 100) / 100;
+    const idempotencyKey = input.idempotencyKey || input.header?.idempotencyKey || `rec-${Date.now()}`;
+    const performedBy = input.performedBy || input.header?.performedBy || 'system';
+    const performedByName = input.performedByName || input.header?.performedByName || 'أمين المستودع';
+    const sourceDocType = input.sourceDocumentType || input.header?.sourceDocumentType || 'PURCHASE_INVOICE';
+    const sourceDocId = input.sourceDocumentId || input.header?.sourceDocumentId;
+    const sourceDocNumber = input.sourceDocumentNumber || input.header?.sourceDocumentNumber;
+    const generalNotes = input.notes || input.header?.notes;
 
-    const movement: StockMovement = {
-      id: `mov-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    // Generate atomic document number for the entire receipt
+    const seqRes = await this.numberingEngine.generateNumber(tenantId, 'STK-REC', 'REC', idempotencyKey);
+    const documentNumber = seqRes.success && seqRes.data ? seqRes.data.formattedCode : `REC-${Date.now()}`;
+    const docId = `sdoc-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+
+    const docLines: StockDocumentLine[] = [];
+    const movements: StockMovement[] = [];
+    let totalQuantity = 0;
+    let totalCost = 0;
+
+    for (let idx = 0; idx < resolvedItems.length; idx++) {
+      const { item, line } = resolvedItems[idx];
+      const unitCost = line.unitCost !== undefined ? Number(line.unitCost) : item.lastPurchaseCost || item.standardCost || 0;
+      const lineTotalCost = Math.round(line.quantity * unitCost * 100) / 100;
+      totalQuantity += line.quantity;
+      totalCost += lineTotalCost;
+
+      const lineId = `sline-${Date.now()}-${idx}`;
+      docLines.push({
+        id: lineId,
+        tenantId,
+        companyId: tenantId,
+        documentId: docId,
+        lineNumber: idx + 1,
+        itemId: item.id,
+        itemCode: item.itemCode,
+        itemNameAr: item.nameAr,
+        uom: line.uom || item.uom || 'قطعة',
+        quantity: line.quantity,
+        unitCost,
+        totalCost: lineTotalCost,
+        batchNumber: line.batchNumber,
+        serialNumber: line.serialNumber,
+        expiryDate: line.expiryDate,
+        notes: line.notes,
+      });
+
+      const movement: StockMovement = {
+        id: `mov-${Date.now()}-${idx}`,
+        tenantId,
+        companyId: tenantId,
+        movementNumber: `${documentNumber}-${idx + 1}`,
+        movementType: 'RECEIPT',
+        warehouseId,
+        warehouseNameAr: warehouse.nameAr,
+        itemId: item.id,
+        itemCode: item.itemCode,
+        itemNameAr: item.nameAr,
+        quantity: line.quantity,
+        unitCost,
+        totalCost: lineTotalCost,
+        balanceAfterQty: 0,
+        sourceDocumentType: sourceDocType,
+        sourceDocumentId: docId,
+        sourceDocumentNumber: documentNumber,
+        batchNumber: line.batchNumber,
+        serialNumber: line.serialNumber,
+        notes: line.notes || generalNotes,
+        performedBy,
+        performedByName,
+        timestamp: new Date().toISOString(),
+        idempotencyKey: `${idempotencyKey}-line-${idx}`,
+      };
+
+      const movRes = await this.storage.recordStockMovement(tenantId, movement, `${idempotencyKey}-line-${idx}`);
+      if (!movRes.success) return movRes as any;
+      movements.push(movement);
+
+      // Track Batch if provided
+      if (item.trackBatch && line.batchNumber) {
+        await this.storage.saveItemBatch(tenantId, {
+          id: `batch-${item.id}-${line.batchNumber}`,
+          tenantId,
+          companyId: tenantId,
+          itemId: item.id,
+          warehouseId,
+          batchNumber: line.batchNumber,
+          currentQty: line.quantity,
+          unitCost,
+          expiryDate: line.expiryDate,
+          createdAt: new Date().toISOString(),
+        });
+      }
+
+      // Track Serial if provided
+      if (item.trackSerial && line.serialNumber) {
+        await this.storage.saveItemSerial(tenantId, {
+          id: `ser-${item.id}-${line.serialNumber}`,
+          tenantId,
+          companyId: tenantId,
+          itemId: item.id,
+          warehouseId,
+          serialNumber: line.serialNumber,
+          status: 'IN_STOCK',
+          createdAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    const stockDoc: StockDocument & Record<string, any> = {
+      id: docId,
       tenantId,
       companyId: tenantId,
-      movementNumber,
-      movementType: 'RECEIPT',
-      warehouseId: input.warehouseId,
+      documentNumber,
+      documentType: 'RECEIPT',
+      warehouseId,
       warehouseNameAr: warehouse.nameAr,
-      itemId: item.id,
-      itemCode: item.itemCode,
-      itemNameAr: item.nameAr,
-      quantity: input.quantity,
-      unitCost: input.unitCost,
+      status: 'POSTED',
+      totalQuantity,
       totalCost,
-      balanceAfterQty: 0, // Will be set by storage/adapter
-      sourceDocumentType: input.sourceDocumentType || 'PURCHASE_INVOICE',
-      sourceDocumentId: input.sourceDocumentId,
-      sourceDocumentNumber: input.sourceDocumentNumber,
-      batchNumber: input.batchNumber,
-      serialNumber: input.serialNumber,
-      notes: input.notes,
-      performedBy: input.performedBy,
-      performedByName: input.performedByName,
-      timestamp: new Date().toISOString(),
-      idempotencyKey: input.idempotencyKey,
+      referenceType: sourceDocType,
+      referenceId: sourceDocId,
+      referenceNumber: sourceDocNumber,
+      notes: generalNotes,
+      lines: docLines,
+      movements,
+      performedBy,
+      performedByName,
+      idempotencyKey,
+      createdAt: new Date().toISOString(),
+      postedAt: new Date().toISOString(),
+      // Backward compatibility fields for legacy tests/code
+      movementNumber: documentNumber,
+      quantity: totalQuantity,
+      itemId: docLines[0]?.itemId,
+      unitCost: docLines[0]?.unitCost,
     };
 
-    const movRes = await this.storage.recordStockMovement(tenantId, movement, input.idempotencyKey);
-    if (!movRes.success) return movRes;
-
-    // Track Batch if provided
-    if (item.trackBatch && input.batchNumber) {
-      await this.storage.saveItemBatch(tenantId, {
-        id: `batch-${input.itemId}-${input.batchNumber}`,
-        tenantId,
-        companyId: tenantId,
-        itemId: input.itemId,
-        warehouseId: input.warehouseId,
-        batchNumber: input.batchNumber,
-        currentQty: input.quantity,
-        unitCost: input.unitCost,
-        expiryDate: input.expiryDate,
-        createdAt: new Date().toISOString(),
-      });
-    }
-
-    // Track Serial if provided
-    if (item.trackSerial && input.serialNumber) {
-      await this.storage.saveItemSerial(tenantId, {
-        id: `ser-${input.itemId}-${input.serialNumber}`,
-        tenantId,
-        companyId: tenantId,
-        itemId: input.itemId,
-        warehouseId: input.warehouseId,
-        serialNumber: input.serialNumber,
-        status: 'IN_STOCK',
-        createdAt: new Date().toISOString(),
-      });
-    }
-
-    return movRes;
+    await this.storage.saveStockDocument(tenantId, stockDoc, idempotencyKey);
+    return { success: true, data: stockDoc };
   }
 
-  public async issueStock(tenantId: string, input: IssueStockInput): Promise<ServiceResult<StockMovement>> {
-    if (input.quantity <= 0) {
+  public async issueStock(tenantId: string, input: IssueStockInput): Promise<ServiceResult<StockDocument>> {
+    const warehouseId = input.warehouseId || input.header?.warehouseId;
+    if (!warehouseId) {
       return {
         success: false,
         error: {
-          type: 'https://api.an-erp.local/errors/invalid-quantity',
-          title: 'كمية الصرف غير صحيحة',
+          type: 'https://api.an-erp.local/errors/invalid-warehouse',
+          title: 'المستودع مطلوب',
           status: 400,
-          detail: 'يجب أن تكون كمية الصرف أكبر من صفر.',
+          detail: 'يجب تحديد المستودع المراد الصرف منه.',
         },
       };
     }
 
-    const itemRes = await this.storage.getStockItem(tenantId, input.itemId);
-    if (!itemRes.success || !itemRes.data) {
+    const lines: StockLineItemInput[] =
+      input.lines && input.lines.length > 0
+        ? input.lines
+        : input.itemId
+        ? [
+            {
+              itemId: input.itemId,
+              quantity: input.quantity || 0,
+              batchNumber: input.batchNumber,
+              serialNumber: input.serialNumber,
+              notes: input.notes,
+            },
+          ]
+        : [];
+
+    if (lines.length === 0) {
       return {
         success: false,
         error: {
-          type: 'https://api.an-erp.local/errors/item-not-found',
-          title: 'الصنف غير موجود',
-          status: 404,
-          detail: 'تعذر العثور على الصنف المحدد.',
+          type: 'https://api.an-erp.local/errors/empty-lines',
+          title: 'أسطر الصرف فارغة',
+          status: 400,
+          detail: 'يجب أن يحتوي إذن الصرف على صنف واحد على الأقل.',
         },
       };
     }
-    const item = itemRes.data;
 
-    const whRes = await this.storage.getWarehouse(tenantId, input.warehouseId);
+    const whRes = await this.storage.getWarehouse(tenantId, warehouseId);
     if (!whRes.success || !whRes.data) {
       return {
         success: false,
@@ -447,74 +633,610 @@ export class InventoryService {
     }
     const warehouse = whRes.data;
 
-    // Check availability
-    const stockRes = await this.storage.getWarehouseStock(tenantId, input.warehouseId, input.itemId);
-    const availableQty = stockRes.success && stockRes.data ? stockRes.data.availableQty : 0;
-    const currentAvgCost = stockRes.success && stockRes.data ? stockRes.data.averageCost : item.averageCost;
+    // ATOMIC VALIDATION: Check that ALL items exist AND have sufficient stock.
+    // If ANY item has insufficient stock, fail immediately before ANY modification.
+    const resolvedItems: Array<{ item: StockItem; line: StockLineItemInput; availableQty: number; avgCost: number }> = [];
+    for (const line of lines) {
+      if (line.quantity <= 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/invalid-quantity',
+            title: 'كمية الصرف غير صحيحة',
+            status: 400,
+            detail: `الكمية للصنف ${line.itemId} يجب أن تكون أكبر من صفر.`,
+          },
+        };
+      }
+      const itemRes = await this.storage.getStockItem(tenantId, line.itemId);
+      if (!itemRes.success || !itemRes.data) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/item-not-found',
+            title: 'الصنف غير موجود',
+            status: 404,
+            detail: `تعذر العثور على الصنف ${line.itemId} في دليل الأصناف.`,
+          },
+        };
+      }
+      const item = itemRes.data;
+      const stockRes = await this.storage.getWarehouseStock(tenantId, warehouseId, line.itemId);
+      const availableQty = stockRes.success && stockRes.data ? stockRes.data.availableQty : 0;
+      const avgCost = stockRes.success && stockRes.data ? stockRes.data.averageCost : item.averageCost;
 
-    if (availableQty < input.quantity) {
+      if (availableQty < line.quantity) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/insufficient-stock',
+            title: 'الرصيد المخزني غير كافٍ',
+            status: 400,
+            detail: `الرصيد المتاح للصنف ${item.nameAr} (${availableQty}) أقل من الكمية المطلوبة للصرف (${line.quantity}). فشلت العملية بالكامل ذرياً.`,
+          },
+        };
+      }
+
+      resolvedItems.push({ item, line, availableQty, avgCost });
+    }
+
+    const idempotencyKey = input.idempotencyKey || input.header?.idempotencyKey || `iss-${Date.now()}`;
+    const performedBy = input.performedBy || input.header?.performedBy || 'system';
+    const performedByName = input.performedByName || input.header?.performedByName || 'أمين المستودع';
+    const sourceDocType = input.sourceDocumentType || input.header?.sourceDocumentType || 'SALES_DELIVERY';
+    const sourceDocId = input.sourceDocumentId || input.header?.sourceDocumentId;
+    const sourceDocNumber = input.sourceDocumentNumber || input.header?.sourceDocumentNumber;
+    const generalNotes = input.notes || input.header?.notes;
+
+    // Generate atomic numbering for the issue document
+    const seqRes = await this.numberingEngine.generateNumber(tenantId, 'STK-ISS', 'ISS', idempotencyKey);
+    const documentNumber = seqRes.success && seqRes.data ? seqRes.data.formattedCode : `ISS-${Date.now()}`;
+    const docId = `sdoc-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+
+    const docLines: StockDocumentLine[] = [];
+    const movements: StockMovement[] = [];
+    let totalQuantity = 0;
+    let totalCost = 0;
+
+    for (let idx = 0; idx < resolvedItems.length; idx++) {
+      const { item, line, availableQty, avgCost } = resolvedItems[idx];
+      const lineTotalCost = Math.round(line.quantity * avgCost * 100) / 100;
+      totalQuantity += line.quantity;
+      totalCost += lineTotalCost;
+
+      const lineId = `sline-${Date.now()}-${idx}`;
+      docLines.push({
+        id: lineId,
+        tenantId,
+        companyId: tenantId,
+        documentId: docId,
+        lineNumber: idx + 1,
+        itemId: item.id,
+        itemCode: item.itemCode,
+        itemNameAr: item.nameAr,
+        uom: line.uom || item.uom || 'قطعة',
+        quantity: line.quantity,
+        unitCost: avgCost,
+        totalCost: lineTotalCost,
+        batchNumber: line.batchNumber,
+        serialNumber: line.serialNumber,
+        notes: line.notes,
+      });
+
+      const movement: StockMovement = {
+        id: `mov-${Date.now()}-${idx}`,
+        tenantId,
+        companyId: tenantId,
+        movementNumber: `${documentNumber}-${idx + 1}`,
+        movementType: 'ISSUE',
+        warehouseId,
+        warehouseNameAr: warehouse.nameAr,
+        itemId: item.id,
+        itemCode: item.itemCode,
+        itemNameAr: item.nameAr,
+        quantity: line.quantity,
+        unitCost: avgCost,
+        totalCost: lineTotalCost,
+        balanceAfterQty: availableQty - line.quantity,
+        sourceDocumentType: sourceDocType,
+        sourceDocumentId: docId,
+        sourceDocumentNumber: documentNumber,
+        batchNumber: line.batchNumber,
+        serialNumber: line.serialNumber,
+        notes: line.notes || generalNotes,
+        performedBy,
+        performedByName,
+        timestamp: new Date().toISOString(),
+        idempotencyKey: `${idempotencyKey}-line-${idx}`,
+      };
+
+      const movRes = await this.storage.recordStockMovement(tenantId, movement, `${idempotencyKey}-line-${idx}`);
+      if (!movRes.success) return movRes as any;
+      movements.push(movement);
+
+      // Check reorder point
+      if ((availableQty - line.quantity) <= item.reorderPoint) {
+        await this.storage.appendSystemChangeLog({
+          id: `reorder-${Date.now()}-${idx}`,
+          timestamp: new Date().toISOString(),
+          actor: performedBy,
+          changeType: 'SECURITY',
+          module: 'INVENTORY',
+          entitiesAffected: [`StockItem:${item.id}`, `Warehouse:${warehouseId}`],
+          summaryAr: `تنبيه: وصل رصيد الصنف ${item.nameAr} في ${warehouse.nameAr} إلى حد إعادة الطلب (${availableQty - line.quantity} <= ${item.reorderPoint})`,
+          version: '1.0',
+        });
+      }
+    }
+
+    const stockDoc: StockDocument & Record<string, any> = {
+      id: docId,
+      tenantId,
+      companyId: tenantId,
+      documentNumber,
+      documentType: 'ISSUE',
+      warehouseId,
+      warehouseNameAr: warehouse.nameAr,
+      status: 'POSTED',
+      totalQuantity,
+      totalCost,
+      referenceType: sourceDocType,
+      referenceId: sourceDocId,
+      referenceNumber: sourceDocNumber,
+      notes: generalNotes,
+      lines: docLines,
+      movements,
+      performedBy,
+      performedByName,
+      idempotencyKey,
+      createdAt: new Date().toISOString(),
+      postedAt: new Date().toISOString(),
+      // Backward compatibility fields
+      movementNumber: documentNumber,
+      quantity: totalQuantity,
+      itemId: docLines[0]?.itemId,
+      unitCost: docLines[0]?.unitCost,
+    };
+
+    await this.storage.saveStockDocument(tenantId, stockDoc, idempotencyKey);
+    return { success: true, data: stockDoc };
+  }
+
+  // ============================================================================
+  // 7.6D: Stock Returns (مرتجعات التوريد والصرف المتعددة البنود مع قيد عكسي)
+  // ============================================================================
+
+  public async returnStock(tenantId: string, input: StockReturnInput): Promise<ServiceResult<StockDocument>> {
+    if (!input.lines || input.lines.length === 0) {
       return {
         success: false,
         error: {
-          type: 'https://api.an-erp.local/errors/insufficient-stock',
-          title: 'الرصيد المخزني غير كافٍ',
+          type: 'https://api.an-erp.local/errors/empty-lines',
+          title: 'الأسطر فارغة',
           status: 400,
-          detail: `الرصيد المتاح حالياً (${availableQty}) أقل من الكمية المطلوبة للصرف (${input.quantity}).`,
+          detail: 'يجب تحديد بند واحد على الأقل في مستند المرتجع.',
         },
       };
     }
 
-    // Generate atomic numbering
-    const seqRes = await this.numberingEngine.generateNumber(tenantId, 'STK-ISS', 'ISS', input.idempotencyKey || `iss-${Date.now()}`);
-    const movementNumber = seqRes.success && seqRes.data ? seqRes.data.formattedCode : `ISS-${Date.now()}`;
+    const origRes = await this.storage.getStockDocument(tenantId, input.originalDocumentId);
+    if (!origRes.success || !origRes.data) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/document-not-found',
+          title: 'المستند الأصلي غير موجود',
+          status: 404,
+          detail: 'تعذر العثور على مستند المخزون الأصلي المراد إرجاعه.',
+        },
+      };
+    }
+    const origDoc = origRes.data;
 
-    const totalCost = Math.round(input.quantity * currentAvgCost * 100) / 100;
-
-    const movement: StockMovement = {
-      id: `mov-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      tenantId,
-      companyId: tenantId,
-      movementNumber,
-      movementType: 'ISSUE',
-      warehouseId: input.warehouseId,
-      warehouseNameAr: warehouse.nameAr,
-      itemId: item.id,
-      itemCode: item.itemCode,
-      itemNameAr: item.nameAr,
-      quantity: input.quantity,
-      unitCost: currentAvgCost,
-      totalCost,
-      balanceAfterQty: availableQty - input.quantity,
-      sourceDocumentType: input.sourceDocumentType || 'SALES_DELIVERY',
-      sourceDocumentId: input.sourceDocumentId,
-      sourceDocumentNumber: input.sourceDocumentNumber,
-      batchNumber: input.batchNumber,
-      serialNumber: input.serialNumber,
-      notes: input.notes,
-      performedBy: input.performedBy,
-      performedByName: input.performedByName,
-      timestamp: new Date().toISOString(),
-      idempotencyKey: input.idempotencyKey,
-    };
-
-    const movRes = await this.storage.recordStockMovement(tenantId, movement, input.idempotencyKey);
-
-    // Check reorder point trigger
-    if (movRes.success && (availableQty - input.quantity) <= item.reorderPoint) {
-      // Reorder point reached event
-      await this.storage.appendSystemChangeLog({
-        id: `reorder-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        actor: input.performedBy,
-        changeType: 'SECURITY',
-        module: 'INVENTORY',
-        entitiesAffected: [`StockItem:${item.id}`, `Warehouse:${input.warehouseId}`],
-        summaryAr: `تنبيه: وصل رصيد الصنف ${item.nameAr} في ${warehouse.nameAr} إلى حد إعادة الطلب (${availableQty - input.quantity} <= ${item.reorderPoint})`,
-        version: '1.0',
-      });
+    // Validate quantities against original document
+    for (const rLine of input.lines) {
+      if (rLine.quantity <= 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/invalid-quantity',
+            title: 'كمية المرتجع غير صحيحة',
+            status: 400,
+            detail: `الكمية المرتجعة للصنف ${rLine.itemId} يجب أن تكون أكبر من صفر.`,
+          },
+        };
+      }
+      const matchOrig = origDoc.lines.find(l => l.itemId === rLine.itemId);
+      if (!matchOrig) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/item-not-in-original',
+            title: 'الصنف غير وارد بالأصل',
+            status: 400,
+            detail: `الصنف ${rLine.itemId} ليس جزءاً من المستند الأصلي ${origDoc.documentNumber}.`,
+          },
+        };
+      }
+      if (rLine.quantity > matchOrig.quantity) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/quantity-exceeds-original',
+            title: 'الكمية تتجاوز الأصل',
+            status: 400,
+            detail: `الكمية المرتجعة (${rLine.quantity}) تتجاوز كمية المستند الأصلي (${matchOrig.quantity}).`,
+          },
+        };
+      }
     }
 
-    return movRes;
+    // If RETURN_RECEIPT (returning received goods back to supplier), check stock availability
+    if (input.returnType === 'RETURN_RECEIPT') {
+      for (const rLine of input.lines) {
+        const stockRes = await this.storage.getWarehouseStock(tenantId, origDoc.warehouseId, rLine.itemId);
+        const availableQty = stockRes.success && stockRes.data ? stockRes.data.availableQty : 0;
+        if (availableQty < rLine.quantity) {
+          return {
+            success: false,
+            error: {
+              type: 'https://api.an-erp.local/errors/insufficient-stock',
+              title: 'الرصيد غير كافٍ للإرجاع',
+              status: 400,
+              detail: `الرصيد المتاح حالياً بالمستودع (${availableQty}) لا يكفي لإرجاع كمية (${rLine.quantity}).`,
+            },
+          };
+        }
+      }
+    }
+
+    const prefix = input.returnType === 'RETURN_RECEIPT' ? 'RET-REC' : 'RET-ISS';
+    const seqRes = await this.numberingEngine.generateNumber(tenantId, prefix, prefix.split('-')[1], input.idempotencyKey);
+    const docNumber = seqRes.success && seqRes.data ? seqRes.data.formattedCode : `${prefix}-${Date.now()}`;
+
+    const docId = `sdoc-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+    const docLines: StockDocumentLine[] = [];
+    const movements: StockMovement[] = [];
+    let totalQuantity = 0;
+    let totalCost = 0;
+
+    for (let idx = 0; idx < input.lines.length; idx++) {
+      const rLine = input.lines[idx];
+      const matchOrig = origDoc.lines.find(l => l.itemId === rLine.itemId)!;
+      const unitCost = rLine.unitCost !== undefined ? rLine.unitCost : matchOrig.unitCost;
+      const lineTotalCost = Math.round(rLine.quantity * unitCost * 100) / 100;
+      totalQuantity += rLine.quantity;
+      totalCost += lineTotalCost;
+
+      const lineId = `sline-${Date.now()}-${idx}`;
+      docLines.push({
+        id: lineId,
+        tenantId,
+        companyId: origDoc.companyId,
+        documentId: docId,
+        lineNumber: idx + 1,
+        itemId: rLine.itemId,
+        itemCode: matchOrig.itemCode,
+        itemNameAr: matchOrig.itemNameAr,
+        uom: matchOrig.uom,
+        quantity: rLine.quantity,
+        unitCost,
+        totalCost: lineTotalCost,
+        notes: rLine.notes || input.reason,
+      });
+
+      const movementType: StockMovementType = input.returnType === 'RETURN_RECEIPT' ? 'ISSUE' : 'RECEIPT';
+      const movement: StockMovement = {
+        id: `mov-${Date.now()}-${idx}`,
+        tenantId,
+        companyId: origDoc.companyId,
+        movementNumber: `${docNumber}-${idx + 1}`,
+        movementType,
+        warehouseId: origDoc.warehouseId,
+        warehouseNameAr: origDoc.warehouseNameAr,
+        itemId: rLine.itemId,
+        itemCode: matchOrig.itemCode,
+        itemNameAr: matchOrig.itemNameAr,
+        quantity: rLine.quantity,
+        unitCost,
+        totalCost: lineTotalCost,
+        balanceAfterQty: 0,
+        sourceDocumentType: input.returnType,
+        sourceDocumentId: docId,
+        sourceDocumentNumber: docNumber,
+        notes: input.reason || `مرتجع للمستند ${origDoc.documentNumber}`,
+        performedBy: input.performedBy,
+        performedByName: input.performedByName,
+        timestamp: new Date().toISOString(),
+        idempotencyKey: `${input.idempotencyKey}-${idx}`,
+      };
+
+      await this.storage.recordStockMovement(tenantId, movement, `${input.idempotencyKey}-${idx}`);
+      movements.push(movement);
+    }
+
+    const returnDoc: StockDocument = {
+      id: docId,
+      tenantId,
+      companyId: origDoc.companyId,
+      documentNumber: docNumber,
+      documentType: input.returnType,
+      warehouseId: origDoc.warehouseId,
+      warehouseNameAr: origDoc.warehouseNameAr,
+      status: 'POSTED',
+      totalQuantity,
+      totalCost,
+      referenceType: origDoc.documentType,
+      referenceId: origDoc.id,
+      referenceNumber: origDoc.documentNumber,
+      notes: input.reason || `مرتجع للمستند ${origDoc.documentNumber}`,
+      lines: docLines,
+      movements,
+      performedBy: input.performedBy,
+      performedByName: input.performedByName,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: new Date().toISOString(),
+      postedAt: new Date().toISOString(),
+    };
+
+    await this.storage.saveStockDocument(tenantId, returnDoc, input.idempotencyKey);
+
+    // Balanced Reversal Journal Entry via PostingEngine
+    if (this.postingEngine && totalCost > 0) {
+      const journalLines: JournalLine[] = [];
+      if (input.returnType === 'RETURN_RECEIPT') {
+        // Return to vendor: Debit Accounts Payable, Credit Inventory
+        journalLines.push({
+          id: `line-1-${docId}`,
+          accountCode: '210101',
+          debit: totalCost,
+          credit: 0,
+          description: `إثبات مرتجع مشتريات/توريد ${docNumber} للمستند ${origDoc.documentNumber}`,
+        });
+        journalLines.push({
+          id: `line-2-${docId}`,
+          accountCode: '110301',
+          debit: 0,
+          credit: totalCost,
+          description: `تخفيض المخزون بموجب إذن مرتجع توريد ${docNumber}`,
+        });
+      } else {
+        // Return from issue: Debit Inventory, Credit COGS
+        journalLines.push({
+          id: `line-1-${docId}`,
+          accountCode: '110301',
+          debit: totalCost,
+          credit: 0,
+          description: `إعادة إدخال المخزون بموجب مرتجع صرف ${docNumber}`,
+        });
+        journalLines.push({
+          id: `line-2-${docId}`,
+          accountCode: '510101',
+          debit: 0,
+          credit: totalCost,
+          description: `تخفيض تكلفة المنصرف بموجب مرتجع صرف ${docNumber}`,
+        });
+      }
+
+      const entryId = `je-ret-${docId}-${Date.now()}`;
+      const draftRes = await this.postingEngine.draftEntry(
+        tenantId,
+        {
+          id: entryId,
+          code: `JE-${docNumber}`,
+          tenantId,
+          date: new Date().toISOString().split('T')[0],
+          type: 'قيد تسوية مرتجع مخزني',
+          description: `قيد تسوية مرتجع مخزني ${docNumber} - الأصل ${origDoc.documentNumber}`,
+          lines: journalLines,
+          totalAmount: totalCost,
+          status: 'APPROVED',
+          createdBy: input.performedBy,
+        },
+        `draft-${input.idempotencyKey}`
+      );
+      if (draftRes.success && draftRes.data) {
+        await this.postingEngine.postEntry(tenantId, draftRes.data.id, `post-${input.idempotencyKey}`);
+      }
+    }
+
+    return { success: true, data: returnDoc };
+  }
+
+  // ============================================================================
+  // 7.6E: Item Ledger / Stock Card (كارت الصنف وسجل الحركات المستمر)
+  // ============================================================================
+
+  public async getItemLedger(
+    tenantId: string,
+    itemId: string,
+    filter?: { fromDate?: string; toDate?: string; warehouseId?: string }
+  ): Promise<ServiceResult<ItemLedgerReport>> {
+    const itemRes = await this.storage.getStockItem(tenantId, itemId);
+    if (!itemRes.success || !itemRes.data) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/item-not-found',
+          title: 'الصنف غير موجود',
+          status: 404,
+          detail: 'تعذر العثور على الصنف المطلوب لعرض كارت الصنف.',
+        },
+      };
+    }
+    const item = itemRes.data;
+
+    const movRes = await this.storage.listStockMovements(tenantId, {
+      itemId,
+      warehouseId: filter?.warehouseId,
+    });
+    const allMovements = (movRes.success && movRes.data ? movRes.data : []).sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    let openingQty = 0;
+    let openingTotalValue = 0;
+    const entries: ItemLedgerEntry[] = [];
+    let runningQty = 0;
+    let runningTotalValue = 0;
+
+    const fromTime = filter?.fromDate ? new Date(filter.fromDate).getTime() : 0;
+    const toTime = filter?.toDate ? new Date(filter.toDate).getTime() : Infinity;
+
+    for (const mov of allMovements) {
+      const movTime = new Date(mov.timestamp).getTime();
+      const isPositive =
+        mov.movementType === 'RECEIPT' ||
+        mov.movementType === 'TRANSFER_IN' ||
+        mov.movementType === 'COUNT_ADJUSTMENT_GAIN';
+      const qtyChange = isPositive ? mov.quantity : -mov.quantity;
+      const valChange = isPositive
+        ? mov.totalCost
+        : -(mov.quantity * (runningQty > 0 ? runningTotalValue / runningQty : mov.unitCost));
+
+      if (movTime < fromTime) {
+        openingQty += qtyChange;
+        openingTotalValue += valChange;
+      } else if (movTime <= toTime) {
+        const qtyIn = isPositive ? mov.quantity : 0;
+        const qtyOut = !isPositive ? mov.quantity : 0;
+        runningQty = (entries.length === 0 ? openingQty : runningQty) + qtyChange;
+        runningTotalValue = (entries.length === 0 ? openingTotalValue : runningTotalValue) + valChange;
+        const runningAvgCost =
+          runningQty > 0 ? Math.round((runningTotalValue / runningQty) * 100) / 100 : mov.unitCost;
+
+        entries.push({
+          id: mov.id,
+          timestamp: mov.timestamp,
+          documentType: mov.sourceDocumentType || mov.movementType,
+          documentNumber: mov.movementNumber,
+          warehouseId: mov.warehouseId,
+          warehouseNameAr: mov.warehouseNameAr,
+          movementType: mov.movementType,
+          quantityIn: qtyIn,
+          quantityOut: qtyOut,
+          unitCost: mov.unitCost,
+          totalCost: mov.totalCost,
+          runningQuantity: runningQty,
+          runningAverageCost: runningAvgCost,
+          runningTotalValue: Math.round(runningTotalValue * 100) / 100,
+          batchNumber: mov.batchNumber,
+          notes: mov.notes,
+          performedByName: mov.performedByName,
+        });
+      }
+    }
+
+    if (entries.length === 0) {
+      runningQty = openingQty;
+      runningTotalValue = openingTotalValue;
+    }
+
+    const openingAvgCost = openingQty > 0 ? Math.round((openingTotalValue / openingQty) * 100) / 100 : item.averageCost;
+    const closingQty = runningQty;
+    const closingAvgCost = closingQty > 0 ? Math.round((runningTotalValue / closingQty) * 100) / 100 : item.averageCost;
+    const closingTotalValue = Math.round(runningTotalValue * 100) / 100;
+
+    return {
+      success: true,
+      data: {
+        itemId: item.id,
+        itemCode: item.itemCode,
+        itemNameAr: item.nameAr,
+        uom: item.uom,
+        openingQty,
+        openingAvgCost,
+        openingTotalValue: Math.round(openingTotalValue * 100) / 100,
+        entries,
+        closingQty,
+        closingAvgCost,
+        closingTotalValue,
+      },
+    };
+  }
+
+  // ============================================================================
+  // 7.6F: Price Lists & Barcodes (قوائم الأسعار والباركود)
+  // ============================================================================
+
+  public async saveItemPrice(tenantId: string, price: ItemPrice): Promise<ServiceResult<ItemPrice>> {
+    return this.storage.saveItemPrice(tenantId, price);
+  }
+
+  public async getItemPrices(tenantId: string, itemId: string): Promise<ServiceResult<ItemPrice[]>> {
+    return this.storage.getItemPrices(tenantId, itemId);
+  }
+
+  public generateBarcodeSvg(barcodeValue: string): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="220" height="70" viewBox="0 0 220 70">
+      <rect width="220" height="70" fill="#ffffff" />
+      <g fill="#0f172a">
+        <rect x="15" y="10" width="3" height="40" />
+        <rect x="21" y="10" width="2" height="40" />
+        <rect x="26" y="10" width="4" height="40" />
+        <rect x="33" y="10" width="2" height="40" />
+        <rect x="38" y="10" width="3" height="40" />
+        <rect x="44" y="10" width="5" height="40" />
+        <rect x="52" y="10" width="2" height="40" />
+        <rect x="57" y="10" width="4" height="40" />
+        <rect x="64" y="10" width="3" height="40" />
+        <rect x="70" y="10" width="2" height="40" />
+        <rect x="75" y="10" width="5" height="40" />
+        <rect x="83" y="10" width="2" height="40" />
+        <rect x="88" y="10" width="3" height="40" />
+        <rect x="94" y="10" width="4" height="40" />
+        <rect x="101" y="10" width="2" height="40" />
+        <rect x="106" y="10" width="5" height="40" />
+        <rect x="114" y="10" width="3" height="40" />
+        <rect x="120" y="10" width="2" height="40" />
+        <rect x="125" y="10" width="4" height="40" />
+        <rect x="132" y="10" width="3" height="40" />
+        <rect x="138" y="10" width="2" height="40" />
+        <rect x="143" y="10" width="5" height="40" />
+        <rect x="151" y="10" width="2" height="40" />
+        <rect x="156" y="10" width="4" height="40" />
+        <rect x="163" y="10" width="3" height="40" />
+        <rect x="169" y="10" width="2" height="40" />
+        <rect x="174" y="10" width="4" height="40" />
+        <rect x="181" y="10" width="3" height="40" />
+        <rect x="187" y="10" width="2" height="40" />
+        <rect x="192" y="10" width="4" height="40" />
+        <rect x="199" y="10" width="3" height="40" />
+      </g>
+      <text x="110" y="62" text-anchor="middle" font-family="monospace" font-size="12" fill="#334155">${barcodeValue}</text>
+    </svg>`;
+  }
+
+  public async searchItemsByBarcode(tenantId: string, barcodeOrCode: string): Promise<ServiceResult<StockItem[]>> {
+    const allItemsRes = await this.storage.listStockItems(tenantId);
+    if (!allItemsRes.success || !allItemsRes.data) return allItemsRes;
+    const q = barcodeOrCode.trim().toLowerCase();
+    const matched = allItemsRes.data.filter(
+      item =>
+        (item.barcode && item.barcode.toLowerCase() === q) ||
+        item.itemCode.toLowerCase() === q ||
+        item.id.toLowerCase() === q
+    );
+    return { success: true, data: matched };
+  }
+
+  // ============================================================================
+  // 7.6G: Document Attachments (المرفقات على مستندات المخزون)
+  // ============================================================================
+
+  public async addDocumentAttachment(
+    tenantId: string,
+    attachment: DocumentAttachment
+  ): Promise<ServiceResult<DocumentAttachment>> {
+    return this.storage.saveDocumentAttachment(tenantId, attachment);
+  }
+
+  public async listDocumentAttachments(
+    tenantId: string,
+    documentType: string,
+    documentId: string
+  ): Promise<ServiceResult<DocumentAttachment[]>> {
+    return this.storage.listDocumentAttachments(tenantId, documentType, documentId);
   }
 
   // ============================================================================
@@ -941,14 +1663,14 @@ export class InventoryService {
         // Cr: 110301 (Inventory Asset - مخزون البضاعة)
         journalLines.push(
           {
-            id: `jl-1`,
+            id: `jl-${count.id}-1`,
             accountCode: '520101',
             debit: absAmount,
             credit: 0,
             description: `تسوية عجز جرد ${count.warehouseNameAr} بموجب المحضر ${count.countNumber}`,
           },
           {
-            id: `jl-2`,
+            id: `jl-${count.id}-2`,
             accountCode: '110301',
             debit: 0,
             credit: absAmount,
@@ -961,14 +1683,14 @@ export class InventoryService {
         // Cr: 410101 (Inventory Gain - أرباح تسوية زيادة الجرد المخزني)
         journalLines.push(
           {
-            id: `jl-1`,
+            id: `jl-${count.id}-1`,
             accountCode: '110301',
             debit: absAmount,
             credit: 0,
             description: `إثبات زيادة المخزون بموجب محضر الجرد ${count.countNumber}`,
           },
           {
-            id: `jl-2`,
+            id: `jl-${count.id}-2`,
             accountCode: '410101',
             debit: 0,
             credit: absAmount,

@@ -52,6 +52,13 @@ import {
   ItemSerial,
   AccountingPeriod,
   AccountingPeriodStatus,
+  StockDocument,
+  StockDocumentLine,
+  StockDocumentType,
+  CustodyExpenseLine,
+  CustodyExpenseVoucher,
+  DocumentAttachment,
+  ItemPrice,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 import { SEED_TENANT_ID } from '../../seed/seedOnly';
@@ -107,6 +114,12 @@ export class InMemoryAdapter implements StoragePort {
   private stockCountLines = new Map<string, StockCountLine[]>();
   private itemBatches = new Map<string, ItemBatch>();
   private itemSerials = new Map<string, ItemSerial>();
+
+  // Phase 7.6: Multi-line documents, vouchers, attachments, prices
+  private stockDocuments = new Map<string, StockDocument>();
+  private custodyExpenseVouchers = new Map<string, CustodyExpenseVoucher>();
+  private documentAttachments = new Map<string, DocumentAttachment>();
+  private itemPrices = new Map<string, ItemPrice>();
 
   constructor() {
     this.seedDefaultData();
@@ -1849,5 +1862,170 @@ export class InMemoryAdapter implements StoragePort {
     if (itemId) list = list.filter(s => s.itemId === itemId);
     if (warehouseId) list = list.filter(s => s.warehouseId === warehouseId);
     return { success: true, data: list.map(s => ({ ...s })) };
+  }
+
+  // ============================================================================
+  // Phase 7.6 Storage Implementations (InMemory)
+  // ============================================================================
+
+  public async saveStockDocument(tenantId: string, doc: StockDocument, idempotencyKey: string): Promise<StorageResult<StockDocument>> {
+    const cached = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'saveStockDocument');
+    if (cached.success && cached.data) return { success: true, data: cached.data };
+
+    this.stockDocuments.set(`${tenantId}:${doc.id}`, { ...doc, tenantId });
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'saveStockDocument', doc);
+    return { success: true, data: { ...doc } };
+  }
+
+  public async getStockDocument(tenantId: string, docId: string): Promise<StorageResult<StockDocument | null>> {
+    for (const doc of this.stockDocuments.values()) {
+      if (doc.tenantId === tenantId && (doc.id === docId || doc.documentNumber === docId)) {
+        return { success: true, data: { ...doc } };
+      }
+    }
+    return { success: true, data: null };
+  }
+
+  public async listStockDocuments(
+    tenantId: string,
+    filter?: { warehouseId?: string; documentType?: StockDocumentType; limit?: number }
+  ): Promise<StorageResult<StockDocument[]>> {
+    let list = Array.from(this.stockDocuments.values()).filter(d => d.tenantId === tenantId);
+    if (filter?.warehouseId) list = list.filter(d => d.warehouseId === filter.warehouseId);
+    if (filter?.documentType) list = list.filter(d => d.documentType === filter.documentType);
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    if (filter?.limit) list = list.slice(0, filter.limit);
+    return { success: true, data: list.map(d => ({ ...d })) };
+  }
+
+  public async saveCustodyExpenseVoucher(
+    tenantId: string,
+    voucher: CustodyExpenseVoucher,
+    idempotencyKey: string
+  ): Promise<StorageResult<CustodyExpenseVoucher>> {
+    const cached = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'saveCustodyExpenseVoucher');
+    if (cached.success && cached.data) return { success: true, data: cached.data };
+
+    // Deduct custody balance
+    const custody = this.cashCustodies.get(`${tenantId}:${voucher.custodyId}`);
+    if (!custody) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/custody-not-found',
+          title: 'العهدة غير موجودة',
+          status: 404,
+          detail: 'لم يتم العثور على سجل العهدة النقدية.',
+        },
+      };
+    }
+    if (custody.currentBalance < voucher.totalAmount) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/insufficient-custody-balance',
+          title: 'رصيد العهدة غير كافٍ',
+          status: 400,
+          detail: `الرصيد المتاح بالعهدة (${custody.currentBalance} ر.س) لا يكفي لتغطية إجمالي بنود المصروف (${voucher.totalAmount} ر.س).`,
+        },
+      };
+    }
+
+    custody.currentBalance -= voucher.totalAmount;
+    custody.updatedAt = new Date().toISOString();
+    this.cashCustodies.set(`${tenantId}:${voucher.custodyId}`, custody);
+
+    this.custodyExpenseVouchers.set(`${tenantId}:${voucher.id}`, { ...voucher, tenantId });
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'saveCustodyExpenseVoucher', voucher);
+    return { success: true, data: { ...voucher } };
+  }
+
+  public async getCustodyExpenseVoucher(tenantId: string, voucherId: string): Promise<StorageResult<CustodyExpenseVoucher | null>> {
+    for (const v of this.custodyExpenseVouchers.values()) {
+      if (v.tenantId === tenantId && (v.id === voucherId || v.voucherNumber === voucherId)) {
+        return { success: true, data: { ...v } };
+      }
+    }
+    return { success: true, data: null };
+  }
+
+  public async listCustodyExpenseVouchers(tenantId: string, custodyId?: string): Promise<StorageResult<CustodyExpenseVoucher[]>> {
+    let list = Array.from(this.custodyExpenseVouchers.values()).filter(v => v.tenantId === tenantId);
+    if (custodyId) list = list.filter(v => v.custodyId === custodyId);
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return { success: true, data: list.map(v => ({ ...v })) };
+  }
+
+  public async reverseCustodyExpenseVoucher(
+    tenantId: string,
+    voucherId: string,
+    reversedBy: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<CustodyExpenseVoucher>> {
+    const cached = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'reverseCustodyExpenseVoucher');
+    if (cached.success && cached.data) return { success: true, data: cached.data };
+
+    const voucher = this.custodyExpenseVouchers.get(`${tenantId}:${voucherId}`);
+    if (!voucher) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/voucher-not-found',
+          title: 'سند صرف العهدة غير موجود',
+          status: 404,
+          detail: 'تعذر العثور على سند صرف العهدة المراد عكسه.',
+        },
+      };
+    }
+    if (voucher.status === 'REVERSED') {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/already-reversed',
+          title: 'السند معكوس مسبقاً',
+          status: 400,
+          detail: 'تم عكس سند صرف العهدة مسبقاً.',
+        },
+      };
+    }
+
+    // Refund custody balance
+    const custody = this.cashCustodies.get(`${tenantId}:${voucher.custodyId}`);
+    if (custody) {
+      custody.currentBalance += voucher.totalAmount;
+      custody.updatedAt = new Date().toISOString();
+      this.cashCustodies.set(`${tenantId}:${voucher.custodyId}`, custody);
+    }
+
+    voucher.status = 'REVERSED';
+    this.custodyExpenseVouchers.set(`${tenantId}:${voucherId}`, voucher);
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'reverseCustodyExpenseVoucher', voucher);
+    return { success: true, data: { ...voucher } };
+  }
+
+  public async saveDocumentAttachment(tenantId: string, attachment: DocumentAttachment): Promise<StorageResult<DocumentAttachment>> {
+    this.documentAttachments.set(`${tenantId}:${attachment.id}`, { ...attachment, tenantId });
+    return { success: true, data: { ...attachment } };
+  }
+
+  public async listDocumentAttachments(
+    tenantId: string,
+    documentType: string,
+    documentId: string
+  ): Promise<StorageResult<DocumentAttachment[]>> {
+    const list = Array.from(this.documentAttachments.values()).filter(
+      a => a.tenantId === tenantId && a.documentType === documentType && a.documentId === documentId
+    );
+    return { success: true, data: list.map(a => ({ ...a })) };
+  }
+
+  public async saveItemPrice(tenantId: string, price: ItemPrice): Promise<StorageResult<ItemPrice>> {
+    this.itemPrices.set(`${tenantId}:${price.id}`, { ...price, tenantId });
+    return { success: true, data: { ...price } };
+  }
+
+  public async getItemPrices(tenantId: string, itemId: string): Promise<StorageResult<ItemPrice[]>> {
+    const list = Array.from(this.itemPrices.values()).filter(p => p.tenantId === tenantId && p.itemId === itemId);
+    return { success: true, data: list.map(p => ({ ...p })) };
   }
 }

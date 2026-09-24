@@ -45,20 +45,24 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
   const numberingEngine = new NumberingEngine(storage);
   const inventoryService = new InventoryService(storage, postingEngine, numberingEngine);
 
-  const tenantId = 't-phase7-iso';
+  const runSuffix = Date.now().toString().slice(-6);
+  const tenantId = `t-p7-${runSuffix}`;
+  const whMainId = `wh-main-${runSuffix}`;
+  const whDammamId = `wh-dammam-${runSuffix}`;
+  const itemId = `item-tab-${runSuffix}`;
   const scenarios: BatteryScenarioResult[] = [];
 
   // Seed tenant company to satisfy database foreign keys
   await storage.saveTenant(
     {
       id: tenantId,
-      code: 'P7-ISO',
+      code: `P7-${runSuffix}`,
       nameAr: 'شركة المستودعات والمخزون المعزولة',
       status: 'ACTIVE',
       backendConfig: { adapterType: 'postgresql', connectionRef: 'DATABASE_URL', isolationLevel: 'Shared' },
       createdAt: new Date().toISOString(),
     },
-    'seed-tenant-p7-init'
+    `seed-tenant-p7-${runSuffix}`
   );
 
   // Seed essential inventory accounts if not present
@@ -71,7 +75,7 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
     debitBalance: 0,
     creditBalance: 0,
     isActive: true,
-  }, 'seed-acc-110301');
+  }, `seed-acc-110301-${runSuffix}`);
   await storage.saveAccount(tenantId, {
     code: '520101',
     tenantId,
@@ -81,7 +85,7 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
     debitBalance: 0,
     creditBalance: 0,
     isActive: true,
-  }, 'seed-acc-520101');
+  }, `seed-acc-520101-${runSuffix}`);
   await storage.saveAccount(tenantId, {
     code: '410101',
     tenantId,
@@ -91,7 +95,7 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
     debitBalance: 0,
     creditBalance: 0,
     isActive: true,
-  }, 'seed-acc-410101');
+  }, `seed-acc-410101-${runSuffix}`);
 
   // --------------------------------------------------------------------------
   // Scenario 1: Multi-Warehouse & Bins Creation (7A)
@@ -100,33 +104,33 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
     const whMainRes = await inventoryService.saveWarehouse(
       tenantId,
       {
-        id: 'wh-main',
-        code: 'WH-001',
+        id: whMainId,
+        code: `WH-001-${runSuffix}`,
         nameAr: 'المستودع الرئيسي - الرياض',
         nameEn: 'Main Warehouse - Riyadh',
         location: 'الرياض - السلي',
         valuationMethod: 'WEIGHTED_AVERAGE',
         isDefault: true,
       },
-      'idemp-wh-main-1'
+      `idemp-wh-main-${runSuffix}`
     );
 
     const whRes = await inventoryService.saveWarehouse(
       tenantId,
       {
-        id: 'wh-dammam',
-        code: 'WH-003',
+        id: whDammamId,
+        code: `WH-003-${runSuffix}`,
         nameAr: 'مستودع الدمام الإقليمي',
         nameEn: 'Dammam Regional Warehouse',
         location: 'الدمام - المدينة الصناعية الأولى',
         valuationMethod: 'WEIGHTED_AVERAGE',
         isDefault: false,
       },
-      'idemp-wh-dammam-1'
+      `idemp-wh-dammam-${runSuffix}`
     );
 
     const binRes = await inventoryService.saveWarehouseBin(tenantId, {
-      warehouseId: 'wh-dammam',
+      warehouseId: whDammamId,
       code: 'BIN-A-01',
       aisle: 'A',
       rack: '01',
@@ -160,8 +164,8 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
     const itemRes = await inventoryService.saveStockItem(
       tenantId,
       {
-        id: 'item-tablet-01',
-        itemCode: 'SKU-TAB-01',
+        id: itemId,
+        itemCode: `SKU-TAB-${runSuffix}`,
         nameAr: 'جهاز لوحي ميداني 10 بوصة',
         category: 'ELECTRONICS',
         uom: 'جهاز',
@@ -176,10 +180,10 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
         trackBatch: true,
         trackSerial: true,
       },
-      'idemp-item-tab-1'
+      `idemp-item-tab-${runSuffix}`
     );
 
-    const passed = Boolean(itemRes.success && itemRes.data?.id === 'item-tablet-01');
+    const passed = Boolean(itemRes.success && itemRes.data?.id === itemId);
     scenarios.push({
       id: 'PHASE7-SCENARIO-2',
       titleAr: 'تعريف بطاقة الصنف وحسابات الأصول وتكلفة المبيعات والتتبع',
@@ -204,31 +208,31 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
   try {
     // Receipt 1: 10 units @ 1000 SAR
     const rec1 = await inventoryService.receiveStock(tenantId, {
-      warehouseId: 'wh-main',
-      itemId: 'item-tablet-01',
+      warehouseId: whMainId,
+      itemId,
       quantity: 10,
       unitCost: 1000,
       batchNumber: 'BATCH-2026-A',
       expiryDate: '2027-12-31',
       performedBy: 'usr-storekeeper-01',
       performedByName: 'أمين المستودع فهد',
-      idempotencyKey: 'idemp-rec-1',
+      idempotencyKey: `idemp-rec-1-${runSuffix}`,
     });
 
     // Receipt 2: 10 units @ 1200 SAR -> New Avg Cost should be (10*1000 + 10*1200)/20 = 1100 SAR
     const rec2 = await inventoryService.receiveStock(tenantId, {
-      warehouseId: 'wh-main',
-      itemId: 'item-tablet-01',
+      warehouseId: whMainId,
+      itemId,
       quantity: 10,
       unitCost: 1200,
       batchNumber: 'BATCH-2026-B',
       expiryDate: '2027-12-31',
       performedBy: 'usr-storekeeper-01',
       performedByName: 'أمين المستودع فهد',
-      idempotencyKey: 'idemp-rec-2',
+      idempotencyKey: `idemp-rec-2-${runSuffix}`,
     });
 
-    const stockRes = await inventoryService.getWarehouseStock(tenantId, 'wh-main', 'item-tablet-01');
+    const stockRes = await inventoryService.getWarehouseStock(tenantId, whMainId, itemId);
     const currentStock = stockRes.data;
 
     const passed = Boolean(
@@ -263,25 +267,25 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
   try {
     // Attempt to issue 25 units when only 20 are available -> must fail with 400
     const failIssue = await inventoryService.issueStock(tenantId, {
-      warehouseId: 'wh-main',
-      itemId: 'item-tablet-01',
+      warehouseId: whMainId,
+      itemId,
       quantity: 25,
       performedBy: 'usr-storekeeper-01',
       performedByName: 'أمين المستودع فهد',
-      idempotencyKey: 'idemp-fail-issue',
+      idempotencyKey: `idemp-fail-issue-${runSuffix}`,
     });
 
     // Valid issue: 5 units
     const validIssue = await inventoryService.issueStock(tenantId, {
-      warehouseId: 'wh-main',
-      itemId: 'item-tablet-01',
+      warehouseId: whMainId,
+      itemId,
       quantity: 5,
       performedBy: 'usr-storekeeper-01',
       performedByName: 'أمين المستودع فهد',
-      idempotencyKey: 'idemp-valid-issue',
+      idempotencyKey: `idemp-valid-issue-${runSuffix}`,
     });
 
-    const stockRes = await inventoryService.getWarehouseStock(tenantId, 'wh-main', 'item-tablet-01');
+    const stockRes = await inventoryService.getWarehouseStock(tenantId, whMainId, itemId);
 
     const passed = Boolean(!failIssue.success && validIssue.success && stockRes.data?.currentQty === 15);
     scenarios.push({
@@ -308,17 +312,17 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
   try {
     // Transfer 5 units from wh-main to wh-dammam
     const trfRes = await inventoryService.createTransfer(tenantId, {
-      sourceWarehouseId: 'wh-main',
-      targetWarehouseId: 'wh-dammam',
+      sourceWarehouseId: whMainId,
+      targetWarehouseId: whDammamId,
       lines: [
         {
-          itemId: 'item-tablet-01',
+          itemId,
           quantity: 5,
         },
       ],
       requestedBy: 'usr-logistics-01',
       requestedByName: 'مشرف النقل طارق',
-      idempotencyKey: 'idemp-trf-01',
+      idempotencyKey: `idemp-trf-01-${runSuffix}`,
     });
 
     const trfId = trfRes.data?.id || '';
@@ -329,11 +333,11 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
       trfId,
       'usr-dammam-keeper',
       'أمين مستودع الدمام خالد',
-      'idemp-trf-recv-01'
+      `idemp-trf-recv-01-${runSuffix}`
     );
 
-    const srcStock = await inventoryService.getWarehouseStock(tenantId, 'wh-main', 'item-tablet-01');
-    const tgtStock = await inventoryService.getWarehouseStock(tenantId, 'wh-dammam', 'item-tablet-01');
+    const srcStock = await inventoryService.getWarehouseStock(tenantId, whMainId, itemId);
+    const tgtStock = await inventoryService.getWarehouseStock(tenantId, whDammamId, itemId);
 
     const passed = Boolean(
       trfRes.success &&
@@ -348,7 +352,7 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
       titleAr: 'التحويل المخزني بين المستودعات مع تدفق الإرسال والاستلام المكتمل',
       passed,
       details: passed
-        ? `تم تحويل 5 وحدات من مستودع الرياض (wh-main) إلى الدمام (wh-dammam) وتحديث الأرصدة بنجاح.`
+        ? `تم تحويل 5 وحدات من مستودع الرياض (${whMainId}) إلى الدمام (${whDammamId}) وتحديث الأرصدة بنجاح.`
         : `فشل التحويل المخزني: ${trfRes.error?.detail || recvRes.error?.detail}`,
       evidence: { transfer: recvRes.data, srcQty: srcStock.data?.currentQty, tgtQty: tgtStock.data?.currentQty },
     });
@@ -369,10 +373,10 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
     // Current stock in wh-dammam is 5 units. Let's record countedQty = 3 (Deficit of 2 units)
     const countRes = await inventoryService.createStockCount(tenantId, {
       countType: 'PERIODIC',
-      warehouseId: 'wh-dammam',
+      warehouseId: whDammamId,
       lines: [
         {
-          itemId: 'item-tablet-01',
+          itemId,
           countedQty: 3,
           notes: 'عجز فعلي ناتج عن تلف أثناء النقل',
         },
@@ -380,7 +384,7 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
       performedBy: 'usr-auditor-ali',
       performedByName: 'المراجع الميداني علي',
       notes: 'جرد دوري ربع سنوي لمستودع الدمام',
-      idempotencyKey: 'idemp-cnt-01',
+      idempotencyKey: `idemp-cnt-01-${runSuffix}`,
     });
 
     countId = countRes.data?.id || '';
@@ -418,7 +422,7 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
       countId,
       approvedBy: 'usr-auditor-ali',
       approvedByName: 'المراجع الميداني علي (نفس المنفذ)',
-      idempotencyKey: 'idemp-sod-violation',
+      idempotencyKey: `idemp-sod-violation-${runSuffix}`,
     });
 
     const passed = Boolean(!sodViolationAttempt.success && sodViolationAttempt.error?.status === 403);
@@ -449,7 +453,7 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
       countId,
       approvedBy: 'usr-cfo-salem',
       approvedByName: 'المدير المالي سالم',
-      idempotencyKey: 'idemp-legit-cnt-approval',
+      idempotencyKey: `idemp-legit-cnt-approval-${runSuffix}`,
     });
 
     const postPassed = Boolean(
@@ -459,7 +463,7 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
     );
 
     // Verify stock in wh-dammam updated to counted quantity (3 units)
-    const stockAfter = await inventoryService.getWarehouseStock(tenantId, 'wh-dammam', 'item-tablet-01');
+    const stockAfter = await inventoryService.getWarehouseStock(tenantId, whDammamId, itemId);
     const balanceUpdated = stockAfter.data?.currentQty === 3;
 
     const passed = Boolean(postPassed && balanceUpdated);
@@ -485,10 +489,10 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
   // Scenario 9: Idempotency Enforcement on Stock Movements (Section 8.1)
   // --------------------------------------------------------------------------
   try {
-    const key = 'idemp-duplicate-test-key';
+    const key = `idemp-duplicate-test-key-${runSuffix}`;
     const firstCall = await inventoryService.receiveStock(tenantId, {
-      warehouseId: 'wh-main',
-      itemId: 'item-tablet-01',
+      warehouseId: whMainId,
+      itemId,
       quantity: 2,
       unitCost: 1100,
       performedBy: 'usr-storekeeper-01',
@@ -497,8 +501,8 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
     });
 
     const secondCall = await inventoryService.receiveStock(tenantId, {
-      warehouseId: 'wh-main',
-      itemId: 'item-tablet-01',
+      warehouseId: whMainId,
+      itemId,
       quantity: 2,
       unitCost: 1100,
       performedBy: 'usr-storekeeper-01',

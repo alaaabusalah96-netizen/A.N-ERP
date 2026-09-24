@@ -1,37 +1,34 @@
 {
   "totalTests": 11,
-  "passedCount": 6,
-  "failedCount": 5,
+  "passedCount": 11,
+  "failedCount": 0,
   "adapterName": "PostgreSQL (Supabase Primary)",
-  "allPassed": false,
-  "durationMs": 1189,
+  "allPassed": true,
+  "durationMs": 1989,
   "tests": [
     {
       "testId": "P3-01",
       "nameAr": "3A: إنشاء عقدة المنطقة (REGION) كقمة الهيكل ومنع ربطها بعقدة أم",
       "category": "3A_ORG_HIERARCHY",
-      "passed": false,
-      "durationMs": 73,
-      "evidence": "فشل الفحص",
-      "error": "insert or update on table \"an_org_nodes\" violates foreign key constraint \"an_org_nodes_tenant_id_fkey\""
+      "passed": true,
+      "durationMs": 171,
+      "evidence": "تم إنشاء العقدة الجذرية للمنطقة بنجاح [REG-CENTRAL: المنطقة الوسطى] ومُنع ربطها بأم."
     },
     {
       "testId": "P3-02",
       "nameAr": "3A: تطبيق القواعد الصارمة للمستويات الهرمية (منطقة -> موقع -> فرع -> قسم)",
       "category": "3A_ORG_HIERARCHY",
-      "passed": false,
-      "durationMs": 55,
-      "evidence": "فشل الفحص",
-      "error": "العقدة الأم المحددة (node-reg-1790149513236) غير موجودة في سجلات المنشأة."
+      "passed": true,
+      "durationMs": 479,
+      "evidence": "تم التحقق بنجاح من المستويات الهرمية الأربعة ورفض التجاوزات الرأسية الشاذة (HTTP 400)."
     },
     {
       "testId": "P3-03",
       "nameAr": "3A: تقييد نطاق رؤية المستخدم بحسب العقدة المعين لها وفحص التصريح (canAccessNode)",
       "category": "3A_ORG_HIERARCHY",
-      "passed": false,
-      "durationMs": 165,
-      "evidence": "فشل الفحص",
-      "error": "فشل الفحص: يجب أن يتمكن الفرع من رؤية نفسه وأقسامه التابعة"
+      "passed": true,
+      "durationMs": 222,
+      "evidence": "نطاق رؤية الفرع محصور في (2 عقد) ومحجوب تماماً عن المستويات الإدارية الأعلى."
     },
     {
       "testId": "P3-04",
@@ -53,27 +50,25 @@
       "testId": "P3-06",
       "nameAr": "3C: مسار التجاوز الاستثنائي المزدوج (Break-Glass) وتوثيقه في SystemChangeLog",
       "category": "3C_BREAK_GLASS",
-      "passed": false,
-      "durationMs": 160,
-      "evidence": "فشل الفحص",
-      "error": "طلب الاعتماد REQ-BG-1790149513529 غير مسجل"
+      "passed": true,
+      "durationMs": 134,
+      "evidence": "تم اعتماد التجاوز المزدوج بنجاح (CFO + Admin) وتوثيقه في سجل التغييرات الأمني: [SCL-BG-1790234070697-erzr]."
     },
     {
       "testId": "P3-07",
       "nameAr": "3D: بيئة المحاكاة والتدريب المعزولة فوق InMemoryAdapter مع التصفير بضغطة واحدة",
       "category": "3D_SANDBOX",
       "passed": true,
-      "durationMs": 1,
+      "durationMs": 0,
       "evidence": "تمت المحاكاة بنجاح: تم تسجيل معاملة تدريبية ثم تصفيرها بالكامل (0 معاملات) دون أي استدعاء لقاعدة الإنتاج."
     },
     {
       "testId": "P3-08",
       "nameAr": "3E: إعمال حق النسيان وتجهيل بيانات المستخدم مع الحفاظ التام على توازن الدفاتر المحاسبية",
       "category": "3E_PRIVACY_GDPR",
-      "passed": false,
-      "durationMs": 114,
-      "evidence": "فشل الفحص",
-      "error": "insert or update on table \"an_journal_entries\" violates foreign key constraint \"an_journal_entries_tenant_id_fkey\""
+      "passed": true,
+      "durationMs": 423,
+      "evidence": "تم تجهيل هوية المستخدم (user-privacy-1790234070744) ومسح PII المشفر، وتأكيد بقاء القيد المحاسبي (JE-PRIV-1790234070801) متوازناً 100%."
     },
     {
       "testId": "P3-09",
@@ -88,7 +83,7 @@
       "nameAr": "3G: رصد حراسة العزل الدائم (Canary Sentinel) وإحباط محاولات تسريب بيانات المستأجر",
       "category": "3G_CANARY_MONITOR",
       "passed": true,
-      "durationMs": 466,
+      "durationMs": 388,
       "evidence": "تم تنفيذ (3) مجسات اختراق افتراضية، وصُدّت جميعها بنسبة حماية 100%."
     },
     {

@@ -19,6 +19,7 @@ import {
   ExpenseCategory,
   ExpensePaymentMethod,
   JournalEntry,
+  JournalLine,
 } from '../../storage/StoragePort';
 import { PostingEngine } from '../../engines/PostingEngine';
 import { NumberingEngine } from '../../engines/NumberingEngine';
@@ -634,6 +635,104 @@ export class ExpenseService {
       },
       idempotencyKey: payload.idempotencyKey,
     });
+
+    return updateRes;
+  }
+
+  /**
+   * 7.6D — عكس / مرتجع مصروف معتمد بقيد عكسي
+   */
+  public async reverseExpense(
+    tenantId: string,
+    input: {
+      requestId: string;
+      reason: string;
+      reversedBy: string;
+      reversedByName: string;
+      idempotencyKey: string;
+    }
+  ): Promise<StorageResult<ExpenseRequest>> {
+    const fullRes = await this.port.getExpenseRequest(tenantId, input.requestId);
+    if (!fullRes.success || !fullRes.data) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/not-found',
+          title: 'طلب المصروف غير موجود',
+          status: 404,
+          detail: 'تعذر العثور على طلب المصروف المراد إلغاؤه.',
+        },
+      };
+    }
+    const { request, lines } = fullRes.data;
+    if (request.status !== 'POSTED' && request.status !== 'APPROVED') {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/invalid-state',
+          title: 'حالة الطلب لا تسمح بالإلغاء',
+          status: 400,
+          detail: `لا يمكن إلغاء طلب بحالة (${request.status}).`,
+        },
+      };
+    }
+
+    // Balanced Reversal Journal Entry via PostingEngine
+    if (this.postingEngine && request.journalEntryId) {
+      const journalLines: JournalLine[] = [];
+      let idx = 1;
+      const paymentAccount = request.disbursementAccountCode || '1010';
+      journalLines.push({
+        id: `rev-exp-${idx++}-${request.id}`,
+        accountCode: paymentAccount,
+        debit: request.totalAmount,
+        credit: 0,
+        description: `إلغاء قيد المصروف ${request.requestCode}`,
+      });
+
+      for (const line of lines) {
+        const lineAccount = line.expenseAccountCode || '5040';
+        journalLines.push({
+          id: `rev-exp-${idx++}-${request.id}`,
+          accountCode: lineAccount,
+          debit: 0,
+          credit: line.amount,
+          costCenter: line.costCenterId,
+          description: `عكس بند ${line.description}`,
+        });
+      }
+
+      const revEntryId = `je-exp-rev-${request.id}`;
+      const draftRes = await this.postingEngine.draftEntry(
+        tenantId,
+        {
+          id: revEntryId,
+          code: `JE-EXP-REV-${request.requestCode}`,
+          tenantId,
+          date: new Date().toISOString().split('T')[0],
+          type: 'عكس قيد مصروف',
+          description: `قيد عكسي لإلغاء طلب المصروف رقم ${request.requestCode} - ${input.reason}`,
+          lines: journalLines,
+          totalAmount: request.totalAmount,
+          status: 'APPROVED',
+          createdBy: input.reversedBy,
+        },
+        `exp-rev-draft-${input.idempotencyKey}`
+      );
+      if (draftRes.success && draftRes.data) {
+        await this.postingEngine.postEntry(tenantId, revEntryId, `exp-rev-post-${input.idempotencyKey}`);
+      }
+    }
+
+    const updateRes = await this.port.updateExpenseRequestStatus(
+      tenantId,
+      request.id,
+      {
+        status: 'REJECTED',
+        notes: `${request.notes ? request.notes + '\n' : ''}تم الإلغاء بقيد عكسي: ${input.reason}`,
+      },
+      input.idempotencyKey
+    );
 
     return updateRes;
   }

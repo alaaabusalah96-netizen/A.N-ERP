@@ -53,6 +53,7 @@ import { runPhase7Battery } from './src/core/inventory/Phase7Battery';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
 import { AccountingService } from './src/core/accounting/AccountingService';
 import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
+import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
 
 // Wave 0: Security Hardening — Strict Environment Secrets Enforcement
 export function requireEnv(name: string): string {
@@ -3253,6 +3254,351 @@ async function startServer() {
 
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data, message: 'تم اعتماد محضر الجرد وترحيل قيود التسوية المتوازنة بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // =========================================================================
+  // PHASE 7.6 UPGRADE ENDPOINTS: Multi-Line, Printing, Returns, Stock Card
+  // =========================================================================
+
+  // 7.6A: Stock Documents List (Multi-line Receipts, Issues, Returns)
+  app.get('/api/inventory/documents', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const filter = {
+        documentType: req.query.documentType as any,
+        warehouseId: req.query.warehouseId as string,
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+      };
+      const result = await storage.listStockDocuments(tenantId, filter);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7.6A: Stock Document Detail
+  app.get('/api/inventory/documents/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const result = await storage.getStockDocument(tenantId, req.params.id);
+      if (!result.success) return res.status(500).json(result.error);
+      if (!result.data) return res.status(404).json({ error: 'المستند غير موجود' });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7.6D: Stock Return (Multi-line Return for Receipt or Issue with GL Reversal)
+  app.post('/api/inventory/returns', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-storekeeper';
+      const key = requireIdempotencyKey(req, res, 'مرتجع مخزني');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+
+      const result = await svc.returnStock(tenantId, {
+        ...req.body,
+        performedBy: userId,
+        performedByName: req.body.performedByName || 'أمين المستودع',
+        idempotencyKey: key,
+      });
+
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data, message: 'تم ترحيل إذن المرتجع المخزني وعكس الأثر المالي بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7.6E: Item Ledger / Stock Card (كارت الصنف)
+  app.get('/api/inventory/items/:id/ledger', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const warehouseId = req.query.warehouseId as string;
+      const fromDate = req.query.from as string;
+      const toDate = req.query.to as string;
+
+      const result = await svc.getItemLedger(tenantId, req.params.id, {
+        warehouseId,
+        fromDate,
+        toDate,
+      });
+
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7.6F: Item Prices (قوائم أسعار الصنف)
+  app.get('/api/inventory/items/:id/prices', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const result = await svc.getItemPrices(tenantId, req.params.id);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/inventory/items/:id/prices', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const key = requireIdempotencyKey(req, res, 'حفظ سعر الصنف');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+
+      const result = await svc.saveItemPrice(tenantId, {
+        ...req.body,
+        itemId: req.params.id,
+      });
+
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ تسعيرة الصنف بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7.6F: Barcode Lookup & SVG
+  app.get('/api/inventory/items/search/barcode', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const barcode = req.query.barcode as string;
+      if (!barcode) return res.status(400).json({ error: 'رمز الباركود مطلوب' });
+      const result = await svc.searchItemsByBarcode(tenantId, barcode);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/inventory/items/:id/barcode-svg', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const itemRes = await storage.getStockItem(tenantId, req.params.id);
+      const barcode = itemRes.success && itemRes.data?.barcode ? itemRes.data.barcode : req.params.id;
+      const svg = svc.generateBarcodeSvg(barcode);
+      res.setHeader('Content-Type', 'image/svg+xml');
+      return res.send(svg);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7.6G: Document Attachments (مرفقات المستندات 4–7)
+  app.get('/api/attachments', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const docType = req.query.documentType as string;
+      const docId = req.query.documentId as string;
+      if (!docType || !docId) return res.status(400).json({ error: 'documentType و documentId مطلوبان' });
+      const result = await storage.listDocumentAttachments(tenantId, docType, docId);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/attachments', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-uploader';
+      const key = requireIdempotencyKey(req, res, 'إضافة مرفق مستند');
+      if (!key) return;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+
+      const att = {
+        id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        tenantId,
+        companyId: tenantId,
+        documentType: req.body.documentType,
+        documentId: req.body.documentId,
+        documentNumber: req.body.documentNumber,
+        fileName: req.body.fileName,
+        fileUrl: req.body.fileUrl,
+        fileType: req.body.fileType || 'application/pdf',
+        fileSizeBytes: req.body.fileSizeBytes || 1024,
+        uploadedBy: userId,
+        uploadedByName: req.body.uploadedByName || 'المستخدم',
+        createdAt: new Date().toISOString(),
+      };
+
+      const result = await storage.saveDocumentAttachment(tenantId, att);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ المرفق بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7.6B: Custody Expense Vouchers (سندات صرف العهدة متعددة البنود)
+  app.get('/api/custody/vouchers', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const custodyId = req.query.custodyId as string;
+      const result = await storage.listCustodyExpenseVouchers(tenantId, custodyId);
+      if (!result.success) return res.status(500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get('/api/custody/vouchers/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const result = await storage.getCustodyExpenseVoucher(tenantId, req.params.id);
+      if (!result.success) return res.status(500).json(result.error);
+      if (!result.data) return res.status(404).json({ error: 'سند الصرف غير موجود' });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7.6D: Reversal of Custody Voucher (مرتجع سند صرف عهدة بقيد عكسي)
+  app.post('/api/custody/vouchers/:id/return', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-auditor';
+      const key = requireIdempotencyKey(req, res, 'إلغاء ومرتجع سند صرف عهدة');
+      if (!key) return;
+      const svc = getCustodyService(req, res);
+      if (!svc) return;
+
+      const result = await svc.returnCustodyExpense(tenantId, {
+        voucherId: req.params.id,
+        reason: req.body.reason || 'إلغاء سند الصرف ومرتجع النقدية',
+        performedBy: userId,
+        performedByName: req.body.performedByName || 'المدقق المالي',
+        idempotencyKey: key,
+      });
+
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data, message: 'تم إلغاء سند الصرف وعكس القيد وإعادة الرصيد للعهدة بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7.6D: Reversal of Approved Expense Request (مرتجع طلب مصروف بقيد عكسي)
+  app.post('/api/expenses/requests/:id/reverse', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'usr-cfo';
+      const key = requireIdempotencyKey(req, res, 'قيد عكسي لمصروف معتمد');
+      if (!key) return;
+      const svc = getExpenseService(req, res);
+      if (!svc) return;
+
+      const result = await svc.reverseExpense(tenantId, {
+        requestId: req.params.id,
+        reason: req.body.reason || 'إلغاء المصروف بقيد عكسي',
+        reversedBy: userId,
+        reversedByName: req.body.reversedByName || 'المدير المالي',
+        idempotencyKey: key,
+      });
+
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data, message: 'تم إلغاء المصروف وترحيل القيد العكسي بنجاح' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 7.6C: Unified Print Service Endpoint (HTML + Print View)
+  app.get('/api/print/:docType/:docId', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+
+      const printService = new UnifiedPrintService(storage);
+      const { docType, docId } = req.params;
+
+      let html: string | null = null;
+      switch (docType) {
+        case 'journal-entry':
+          html = await printService.renderJournalEntry(tenantId, docId);
+          break;
+        case 'custody-voucher':
+          html = await printService.renderCustodyVoucher(tenantId, docId);
+          break;
+        case 'custody-settlement':
+          html = await printService.renderCustodySettlement(tenantId, docId);
+          break;
+        case 'expense-request':
+          html = await printService.renderExpenseRequest(tenantId, docId);
+          break;
+        case 'stock-receipt':
+          html = await printService.renderStockReceipt(tenantId, docId);
+          break;
+        case 'stock-issue':
+          html = await printService.renderStockIssue(tenantId, docId);
+          break;
+        case 'stock-transfer':
+          html = await printService.renderStockTransfer(tenantId, docId);
+          break;
+        case 'stock-count':
+          html = await printService.renderStockCount(tenantId, docId);
+          break;
+        case 'stock-card':
+        case 'item-ledger':
+          html = await printService.renderStockCard(tenantId, docId, {
+            warehouseId: req.query.warehouseId as string,
+            fromDate: req.query.from as string,
+            toDate: req.query.to as string,
+          });
+          break;
+        default:
+          return res.status(400).json({ error: `نوع المستند (${docType}) غير مدعوم في خدمة الطباعة الموحدة` });
+      }
+
+      if (!html) {
+        return res.status(404).json({ error: 'المستند المراد طباعته غير موجود أو غير مكتمل' });
+      }
+
+      // If user requested raw HTML for iframe / popup window:
+      if (req.query.format === 'raw' || req.headers.accept?.includes('text/html')) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.send(html);
+      }
+
+      return res.json({ success: true, html });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }

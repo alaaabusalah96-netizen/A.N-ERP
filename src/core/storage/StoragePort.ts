@@ -963,6 +963,177 @@ export interface StoragePort {
   saveItemSerial(tenantId: string, serial: ItemSerial): Promise<StorageResult<ItemSerial>>;
   listItemSerials(tenantId: string, itemId?: string, warehouseId?: string): Promise<StorageResult<ItemSerial[]>>;
 
+  // ============================================================================
+  // Phase 7.6: Multi-Line Upgrades, Print, Returns, Stock Cards, Attachments & Barcodes
+  // ============================================================================
+  saveStockDocument(tenantId: string, doc: StockDocument, idempotencyKey: string): Promise<StorageResult<StockDocument>>;
+  getStockDocument(tenantId: string, docId: string): Promise<StorageResult<StockDocument | null>>;
+  listStockDocuments(tenantId: string, filter?: { warehouseId?: string; documentType?: StockDocumentType; limit?: number }): Promise<StorageResult<StockDocument[]>>;
+
+  saveCustodyExpenseVoucher(tenantId: string, voucher: CustodyExpenseVoucher, idempotencyKey: string): Promise<StorageResult<CustodyExpenseVoucher>>;
+  getCustodyExpenseVoucher(tenantId: string, voucherId: string): Promise<StorageResult<CustodyExpenseVoucher | null>>;
+  listCustodyExpenseVouchers(tenantId: string, custodyId?: string): Promise<StorageResult<CustodyExpenseVoucher[]>>;
+  reverseCustodyExpenseVoucher(tenantId: string, voucherId: string, reversedBy: string, idempotencyKey: string): Promise<StorageResult<CustodyExpenseVoucher>>;
+
+  saveDocumentAttachment(tenantId: string, attachment: DocumentAttachment): Promise<StorageResult<DocumentAttachment>>;
+  listDocumentAttachments(tenantId: string, documentType: string, documentId: string): Promise<StorageResult<DocumentAttachment[]>>;
+
+  saveItemPrice(tenantId: string, price: ItemPrice): Promise<StorageResult<ItemPrice>>;
+  getItemPrices(tenantId: string, itemId: string): Promise<StorageResult<ItemPrice[]>>;
+
   // Tenant Scoping & Isolation
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T>;
+}
+
+// ============================================================================
+// Phase 7.6 Interfaces: Multi-Line Upgrades, Returns & Attachments
+// ============================================================================
+export type StockDocumentType = 'RECEIPT' | 'ISSUE' | 'RETURN_RECEIPT' | 'RETURN_ISSUE';
+
+export interface StockDocumentLine {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  documentId: string;
+  lineNumber: number;
+  itemId: string;
+  itemCode: string;
+  itemNameAr: string;
+  uom: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+  batchNumber?: string;
+  serialNumber?: string;
+  expiryDate?: string;
+  notes?: string;
+}
+
+export interface StockDocument {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  documentNumber: string;
+  documentType: StockDocumentType;
+  warehouseId: string;
+  warehouseNameAr?: string;
+  status: 'POSTED' | 'CANCELLED';
+  totalQuantity: number;
+  totalCost: number;
+  referenceType?: string;
+  referenceId?: string;
+  referenceNumber?: string;
+  notes?: string;
+  lines: StockDocumentLine[];
+  movements?: StockMovement[];
+  performedBy: string;
+  performedByName: string;
+  idempotencyKey: string;
+  createdAt: string;
+  postedAt: string;
+}
+
+export interface CustodyExpenseLine {
+  id: string;
+  tenantId: string;
+  voucherId: string;
+  lineNumber: number;
+  expenseCategory: string;
+  expenseAccountCode: string;
+  amount: number;
+  costCenterId?: string;
+  description?: string;
+  receiptNumber?: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+}
+
+export interface CustodyExpenseVoucher {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  voucherNumber: string;
+  custodyId: string;
+  totalAmount: number;
+  notes?: string;
+  receiptNumber?: string;
+  lines: CustodyExpenseLine[];
+  journalEntryId?: string;
+  recordedBy: string;
+  recordedByName: string;
+  status: 'POSTED' | 'REVERSED';
+  createdAt: string;
+  idempotencyKey: string;
+}
+
+export interface DocumentAttachment {
+  id: string;
+  tenantId: string;
+  companyId: string;
+  documentType:
+    | 'JOURNAL_ENTRY'
+    | 'CUSTODY_VOUCHER'
+    | 'CUSTODY_SETTLEMENT'
+    | 'EXPENSE_CLAIM'
+    | 'STOCK_RECEIPT'
+    | 'STOCK_ISSUE'
+    | 'STOCK_TRANSFER'
+    | 'STOCK_COUNT'
+    | 'STOCK_RETURN';
+  documentId: string;
+  fileName: string;
+  fileUrl: string;
+  fileSize?: number;
+  mimeType?: string;
+  uploadedBy: string;
+  uploadedByName?: string;
+  createdAt: string;
+}
+
+export interface ItemPrice {
+  id: string;
+  tenantId: string;
+  itemId: string;
+  priceType: 'DEFAULT_SELLING' | 'DEFAULT_PURCHASE' | 'MIN_SELLING' | 'WHOLESALE';
+  amount: number;
+  currency: string;
+  isDefault: boolean;
+  createdAt: string;
+}
+
+export interface ItemLedgerEntry {
+  id: string;
+  timestamp: string;
+  documentType: string;
+  documentNumber: string;
+  warehouseId: string;
+  warehouseNameAr?: string;
+  movementType: string;
+  quantityIn: number;
+  quantityOut: number;
+  unitCost: number;
+  totalCost: number;
+  runningQuantity: number;
+  runningAverageCost: number;
+  runningTotalValue: number;
+  batchNumber?: string;
+  notes?: string;
+  performedByName?: string;
+}
+
+export interface ItemLedgerReport {
+  itemId: string;
+  itemCode: string;
+  itemNameAr: string;
+  uom: string;
+  warehouseId?: string;
+  openingQty: number;
+  openingAvgCost: number;
+  openingTotalValue: number;
+  entries: ItemLedgerEntry[];
+  closingQty: number;
+  closingAvgCost: number;
+  closingTotalValue: number;
+  fromDate?: string;
+  toDate?: string;
 }

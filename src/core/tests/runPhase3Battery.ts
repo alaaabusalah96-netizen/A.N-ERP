@@ -55,6 +55,19 @@ export async function runPhase3Battery(): Promise<Phase3BatterySuiteResult> {
 
   const tenantId = 't-phase3-iso';
 
+  // Ensure test tenant exists for foreign key constraints
+  await primary.saveTenant(
+    {
+      id: tenantId,
+      code: 'P3-ISO',
+      nameAr: 'شركة اختبار المرحلة الثالثة المعزولة',
+      backendConfig: { adapterType: 'postgresql', connectionRef: 'DATABASE_URL', isolationLevel: 'Shared' },
+      status: 'ACTIVE',
+      createdAt: new Date().toISOString(),
+    },
+    'idemp-p3-iso-seed'
+  );
+
   async function runTest(
     testId: string,
     nameAr: string,

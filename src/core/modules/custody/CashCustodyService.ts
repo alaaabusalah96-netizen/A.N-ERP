@@ -12,6 +12,9 @@ import {
   CashCustodyTransaction,
   CashCustodySettlement,
   JournalEntry,
+  JournalLine,
+  CustodyExpenseVoucher,
+  CustodyExpenseLine,
 } from '../../storage/StoragePort';
 import { PostingEngine } from '../../engines/PostingEngine';
 import { DomainEventBus } from '../../events/DomainEventBus';
@@ -35,17 +38,30 @@ export interface OpenCustodyPayload {
   idempotencyKey: string;
 }
 
+export interface CustodyExpenseLineInput {
+  expenseCategory: string;
+  expenseAccountCode?: string;
+  description: string;
+  amount: number;
+  costCenterId?: string;
+  costCenterName?: string;
+  receiptNumber?: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+}
+
 export interface RecordExpensePayload {
   companyId?: string;
   custodyId: string;
-  amount: number;
-  expenseCategory: string;
-  expenseAccountCode: string;
-  description: string;
-  receiptNumber: string;
-  attachmentUrl: string;
+  amount?: number;
+  expenseCategory?: string;
+  expenseAccountCode?: string;
+  description?: string;
+  receiptNumber?: string;
+  attachmentUrl?: string;
   attachmentName?: string;
   costCenterId?: string;
+  lines?: CustodyExpenseLineInput[];
   recordedBy: string;
   recordedByName: string;
   idempotencyKey: string;
@@ -204,12 +220,12 @@ export class CashCustodyService {
 
   /**
    * 5B — تسجيل مصروفات من العهدة (Record Expense from Custody)
-   * Each expense requires proof attachment (receipt/invoice) and immediately deducts from available balance.
+   * Phase 7.6B Upgrade: Multi-line expense voucher with atomic balance validation and single balanced journal entry.
    */
   public async recordExpense(
     tenantId: string,
     payload: RecordExpensePayload
-  ): Promise<StorageResult<CashCustodyTransaction>> {
+  ): Promise<StorageResult<CashCustodyTransaction & { voucher?: CustodyExpenseVoucher }>> {
     if (!payload.custodyId) {
       return {
         success: false,
@@ -222,40 +238,72 @@ export class CashCustodyService {
       };
     }
 
-    if (!payload.receiptNumber || !payload.receiptNumber.trim()) {
+    // Resolve lines (either payload.lines or single expense converted to lines[1])
+    const lines: CustodyExpenseLineInput[] =
+      payload.lines && payload.lines.length > 0
+        ? payload.lines
+        : [
+            {
+              expenseCategory: payload.expenseCategory || 'نثريات وضيافة',
+              expenseAccountCode: payload.expenseAccountCode || '5040',
+              description: payload.description || 'صرف من العهدة النقدية',
+              amount: payload.amount || 0,
+              costCenterId: payload.costCenterId,
+              receiptNumber: payload.receiptNumber,
+              attachmentUrl: payload.attachmentUrl,
+              attachmentName: payload.attachmentName,
+            },
+          ];
+
+    if (lines.length === 0) {
       return {
         success: false,
         error: {
-          type: 'https://api.an-erp.local/errors/proof-required',
-          title: 'رقم الفاتورة أو الإيصال إلزامي',
+          type: 'https://api.an-erp.local/errors/empty-lines',
+          title: 'بنود المصروف فارغة',
           status: 400,
-          detail: 'لا يمكن تسجيل صرف من العهدة دون رقم فاتورة أو إيصال رسمي مطابق للمستند (بند 5B).',
+          detail: 'يجب تحديد بند مصروف واحد على الأقل.',
         },
       };
     }
 
-    if (!payload.attachmentUrl || !payload.attachmentUrl.trim()) {
-      return {
-        success: false,
-        error: {
-          type: 'https://api.an-erp.local/errors/proof-required',
-          title: 'مرفق إثبات الصرف إلزامي',
-          status: 400,
-          detail: 'كل صرف من العهدة النقدية يُسجَّل بمرفق إثبات (فاتورة/إيصال) وفق متطلبات الامتثال (بند 5B).',
-        },
-      };
-    }
-
-    if (!payload.amount || payload.amount <= 0) {
-      return {
-        success: false,
-        error: {
-          type: 'https://api.an-erp.local/errors/invalid-parameter',
-          title: 'مبلغ المصروف غير صالح',
-          status: 400,
-          detail: 'يجب أن يكون مبلغ المصروف المسجل قيمة موجبة أكبر من صفر.',
-        },
-      };
+    // Validate each line
+    for (const line of lines) {
+      if (!line.amount || line.amount <= 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/invalid-parameter',
+            title: 'مبلغ المصروف غير صالح',
+            status: 400,
+            detail: 'يجب أن يكون مبلغ كل بند في المصروف أكبر من صفر.',
+          },
+        };
+      }
+      const receiptNo = line.receiptNumber || payload.receiptNumber;
+      if (!receiptNo || !receiptNo.trim()) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/proof-required',
+            title: 'رقم الفاتورة أو الإيصال إلزامي',
+            status: 400,
+            detail: 'لا يمكن تسجيل صرف من العهدة دون رقم فاتورة أو إيصال رسمي مطابق للمستند (بند 5B).',
+          },
+        };
+      }
+      const attUrl = line.attachmentUrl || payload.attachmentUrl;
+      if (!attUrl || !attUrl.trim()) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/proof-required',
+            title: 'مرفق إثبات الصرف إلزامي',
+            status: 400,
+            detail: 'كل صرف من العهدة النقدية يُسجَّل بمرفق إثبات (فاتورة/إيصال) وفق متطلبات الامتثال (بند 5B).',
+          },
+        };
+      }
     }
 
     // Load custody from storage to verify state and available balance
@@ -285,44 +333,137 @@ export class CashCustodyService {
       };
     }
 
-    if (payload.amount > custody.currentBalance) {
+    const totalAmount = lines.reduce((acc, l) => acc + l.amount, 0);
+
+    // ATOMIC CHECK: Check if totalAmount > custody.currentBalance
+    if (totalAmount > custody.currentBalance) {
       return {
         success: false,
         error: {
           type: 'https://api.an-erp.local/errors/insufficient-balance',
           title: 'رصيد العهدة غير كافٍ',
           status: 400,
-          detail: `الرصيد المتاح حالياً بالعهدة (${custody.currentBalance} ر.س) لا يكفي لتغطية مبلغ المصروف (${payload.amount} ر.س).`,
+          detail: `الرصيد المتاح حالياً بالعهدة (${custody.currentBalance} ر.س) لا يكفي لتغطية إجمالي مبلغ المصروف (${totalAmount} ر.س). تم إلغاء المعاملة ذرياً.`,
         },
       };
     }
 
+    const voucherId = `cvch-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const voucherNumber = `VCH-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const voucherLines: CustodyExpenseLine[] = lines.map((l, idx) => ({
+      id: `cvl-${Date.now()}-${idx}`,
+      tenantId,
+      companyId: payload.companyId || custody.companyId || tenantId,
+      voucherId,
+      lineNumber: idx + 1,
+      expenseCategory: l.expenseCategory,
+      expenseAccountCode: l.expenseAccountCode || '5040',
+      description: l.description,
+      amount: l.amount,
+      costCenterId: l.costCenterId || custody.costCenterId,
+      costCenterName: l.costCenterName || custody.costCenterName,
+      receiptNumber: (l.receiptNumber || payload.receiptNumber || '').trim(),
+      attachmentUrl: (l.attachmentUrl || payload.attachmentUrl || '').trim(),
+      attachmentName: l.attachmentName || payload.attachmentName || 'فاتورة_مرفقة.pdf',
+    }));
+
+    // Post balanced journal entry via PostingEngine for all lines in one entry (7.6B)
+    let journalEntryId: string | undefined;
+    if (this.postingEngine && totalAmount > 0) {
+      const journalLines: JournalLine[] = [];
+      let idx = 1;
+      // Debit line for each expense line
+      for (const vl of voucherLines) {
+        journalLines.push({
+          id: `line-${idx++}-${voucherId}`,
+          accountCode: vl.expenseAccountCode,
+          debit: vl.amount,
+          credit: 0,
+          costCenter: vl.costCenterId,
+          description: vl.description,
+        });
+      }
+      // Credit custody account
+      journalLines.push({
+        id: `line-${idx}-${voucherId}`,
+        accountCode: '110202',
+        debit: 0,
+        credit: totalAmount,
+        costCenter: custody.costCenterId,
+        description: `صرف بموجب سند صرف عهدة متعدد البنود ${voucherNumber}`,
+      });
+
+      const entryId = `je-cst-${voucherId}`;
+      const draftRes = await this.postingEngine.draftEntry(
+        tenantId,
+        {
+          id: entryId,
+          code: `JE-CST-${voucherNumber}`,
+          tenantId,
+          date: new Date().toISOString().split('T')[0],
+          type: 'سند صرف عهدة',
+          description: `إثبات سند صرف عهدة رقم ${voucherNumber} للموظف ${custody.employeeName}`,
+          lines: journalLines,
+          totalAmount,
+          status: 'APPROVED',
+          createdBy: payload.recordedBy,
+        },
+        `cst-draft-${payload.idempotencyKey}`
+      );
+      if (draftRes.success && draftRes.data) {
+        await this.postingEngine.postEntry(tenantId, entryId, `cst-post-${payload.idempotencyKey}`);
+        journalEntryId = entryId;
+      }
+    }
+
+    const voucher: CustodyExpenseVoucher = {
+      id: voucherId,
+      tenantId,
+      companyId: payload.companyId || custody.companyId || tenantId,
+      voucherNumber,
+      custodyId: custody.id,
+      totalAmount,
+      status: 'POSTED',
+      receiptNumber: lines[0]?.receiptNumber || payload.receiptNumber,
+      notes: lines.map(l => l.description).join(' / '),
+      lines: voucherLines,
+      journalEntryId,
+      recordedBy: payload.recordedBy,
+      recordedByName: payload.recordedByName,
+      idempotencyKey: payload.idempotencyKey,
+      createdAt: new Date().toISOString(),
+    };
+
+    await this.port.saveCustodyExpenseVoucher(tenantId, voucher, payload.idempotencyKey);
+
+    // Also record transaction into custody storage so current balance is deducted
     const txId = `ctx-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const txCode = `CTX-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const transaction: CashCustodyTransaction = {
+    const transaction: CashCustodyTransaction & { voucher?: CustodyExpenseVoucher } = {
       id: txId,
       tenantId,
       companyId: payload.companyId || custody.companyId || tenantId,
       transactionCode: txCode,
       custodyId: custody.id,
-      amount: payload.amount,
-      expenseCategory: payload.expenseCategory || 'نثريات وضيافة',
-      expenseAccountCode: payload.expenseAccountCode || '5040',
-      description: payload.description || 'صرف من العهدة النقدية',
-      receiptNumber: payload.receiptNumber.trim(),
-      attachmentUrl: payload.attachmentUrl.trim(),
-      attachmentName: payload.attachmentName || 'فاتورة_مرفقة.pdf',
-      costCenterId: payload.costCenterId || custody.costCenterId,
+      amount: totalAmount,
+      expenseCategory: voucherLines[0]?.expenseCategory || 'نثريات وضيافة',
+      expenseAccountCode: voucherLines[0]?.expenseAccountCode || '5040',
+      description: voucher.notes || 'صرف من العهدة النقدية',
+      receiptNumber: voucher.receiptNumber || 'REC',
+      attachmentUrl: voucherLines[0]?.attachmentUrl || '/attachments/default.pdf',
+      attachmentName: voucherLines[0]?.attachmentName || 'فاتورة_مرفقة.pdf',
+      costCenterId: custody.costCenterId,
       recordedBy: payload.recordedBy,
       recordedByName: payload.recordedByName,
       status: 'RECORDED',
       transactionDate: new Date().toISOString(),
       createdAt: new Date().toISOString(),
       idempotencyKey: payload.idempotencyKey,
+      voucher,
     };
 
-    // Save transaction and deduct available balance via StoragePort
     const recordRes = await this.port.recordCustodyExpense(
       tenantId,
       transaction,
@@ -338,14 +479,112 @@ export class CashCustodyService {
         payload: {
           custodyId: custody.id,
           transactionId: recordRes.data.id,
-          amount: recordRes.data.amount,
-          receiptNumber: recordRes.data.receiptNumber,
+          amount: totalAmount,
+          receiptNumber: transaction.receiptNumber,
+          voucherNumber,
         },
         idempotencyKey: payload.idempotencyKey,
       });
+      return { success: true, data: { ...recordRes.data, voucher } };
     }
 
     return recordRes;
+  }
+
+  /**
+   * 7.6D — مرتجع مصروف العهدة بقيد عكسي
+   */
+  public async returnCustodyExpense(
+    tenantId: string,
+    input: {
+      voucherId: string;
+      reason?: string;
+      performedBy: string;
+      performedByName: string;
+      idempotencyKey: string;
+    }
+  ): Promise<StorageResult<CustodyExpenseVoucher>> {
+    const vRes = await this.port.getCustodyExpenseVoucher(tenantId, input.voucherId);
+    if (!vRes.success || !vRes.data) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/voucher-not-found',
+          title: 'سند الصرف غير موجود',
+          status: 404,
+          detail: 'تعذر العثور على سند صرف العهدة المراد إلغاؤه/إرجاعه.',
+        },
+      };
+    }
+    const voucher = vRes.data;
+    if (voucher.status === 'REVERSED') {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/already-cancelled',
+          title: 'السند ملغى بالفعل',
+          status: 400,
+          detail: 'تم إلغاء سند الصرف مسبقاً بقيد عكسي.',
+        },
+      };
+    }
+
+    // Load custody to restore balance
+    const custodyRes = await this.port.getCashCustody(tenantId, voucher.custodyId);
+    if (custodyRes.success && custodyRes.data) {
+      const custody = custodyRes.data;
+      await this.port.updateCashCustody(tenantId, custody.id, {
+        currentBalance: custody.currentBalance + voucher.totalAmount,
+      });
+    }
+
+    // Reversal journal entry via PostingEngine
+    if (this.postingEngine && voucher.totalAmount > 0) {
+      const journalLines: JournalLine[] = [];
+      let idx = 1;
+      // Debit custody account
+      journalLines.push({
+        id: `rev-line-${idx++}-${voucher.id}`,
+        accountCode: '110202',
+        debit: voucher.totalAmount,
+        credit: 0,
+        description: `إلغاء سند صرف العهدة ${voucher.voucherNumber}`,
+      });
+      // Credit each expense account
+      for (const vl of voucher.lines) {
+        journalLines.push({
+          id: `rev-line-${idx++}-${voucher.id}`,
+          accountCode: vl.expenseAccountCode,
+          debit: 0,
+          credit: vl.amount,
+          costCenter: vl.costCenterId,
+          description: `عكس صرف ${vl.description}`,
+        });
+      }
+
+      const revEntryId = `je-cst-rev-${voucher.id}`;
+      const draftRes = await this.postingEngine.draftEntry(
+        tenantId,
+        {
+          id: revEntryId,
+          code: `JE-CST-REV-${voucher.voucherNumber}`,
+          tenantId,
+          date: new Date().toISOString().split('T')[0],
+          type: 'عكس سند صرف عهدة',
+          description: `قيد عكسي لإلغاء سند صرف عهدة ${voucher.voucherNumber} - ${input.reason || 'إلغاء الصرف'}`,
+          lines: journalLines,
+          totalAmount: voucher.totalAmount,
+          status: 'APPROVED',
+          createdBy: input.performedBy,
+        },
+        `cst-rev-draft-${input.idempotencyKey}`
+      );
+      if (draftRes.success && draftRes.data) {
+        await this.postingEngine.postEntry(tenantId, revEntryId, `cst-rev-post-${input.idempotencyKey}`);
+      }
+    }
+
+    return this.port.reverseCustodyExpenseVoucher(tenantId, voucher.id, input.performedBy, input.idempotencyKey);
   }
 
   /**

@@ -163,6 +163,17 @@ export class MongoDBSmokeAdapter implements StoragePort {
   listItemBatches(tenantId: string, itemId?: string, warehouseId?: string) { return this.smokeOnlyError<any[]>('listItemBatches'); }
   saveItemSerial(tenantId: string, serial: any) { return this.smokeOnlyError<any>('saveItemSerial'); }
   listItemSerials(tenantId: string, itemId?: string, warehouseId?: string) { return this.smokeOnlyError<any[]>('listItemSerials'); }
+  saveStockDocument(tenantId: string, doc: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveStockDocument'); }
+  getStockDocument(tenantId: string, documentId: string) { return this.smokeOnlyError<any>('getStockDocument'); }
+  listStockDocuments(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listStockDocuments'); }
+  saveCustodyExpenseVoucher(tenantId: string, voucher: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveCustodyExpenseVoucher'); }
+  getCustodyExpenseVoucher(tenantId: string, voucherId: string) { return this.smokeOnlyError<any>('getCustodyExpenseVoucher'); }
+  listCustodyExpenseVouchers(tenantId: string, custodyId?: string) { return this.smokeOnlyError<any[]>('listCustodyExpenseVouchers'); }
+  reverseCustodyExpenseVoucher(tenantId: string, voucherId: string, reversedBy: string, idempotencyKey: string) { return this.smokeOnlyError<any>('reverseCustodyExpenseVoucher'); }
+  saveItemPrice(tenantId: string, price: any) { return this.smokeOnlyError<any>('saveItemPrice'); }
+  getItemPrices(tenantId: string, itemId: string) { return this.smokeOnlyError<any[]>('getItemPrices'); }
+  saveDocumentAttachment(tenantId: string, attachment: any) { return this.smokeOnlyError<any>('saveDocumentAttachment'); }
+  listDocumentAttachments(tenantId: string, documentType: string, documentId: string) { return this.smokeOnlyError<any[]>('listDocumentAttachments'); }
 
   withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T> { return fn(); }
 

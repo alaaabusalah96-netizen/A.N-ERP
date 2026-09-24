@@ -14,6 +14,7 @@
     "battery:phase4.6": "tsx scripts/runPhase4_6.ts",
     "battery:phase5": "tsx scripts/runPhase5.ts",
     "battery:phase6": "tsx scripts/runPhase6.ts",
+    "battery:phase7.6": "tsx src/core/tests/cliRunPhase7_6.ts",
     "test:e2e": "tsx scripts/runPhase4_6E2E.ts"
   },
   "dependencies": {

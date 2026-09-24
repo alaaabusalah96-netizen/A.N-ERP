@@ -55,6 +55,13 @@ import {
   StockCountStatus,
   ItemBatch,
   ItemSerial,
+  StockDocument,
+  StockDocumentLine,
+  StockDocumentType,
+  CustodyExpenseLine,
+  CustodyExpenseVoucher,
+  DocumentAttachment,
+  ItemPrice,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -951,6 +958,117 @@ export class PostgresPrimaryAdapter implements StoragePort {
       );
       CREATE INDEX IF NOT EXISTS idx_periods_tenant_date ON an_accounting_periods(tenant_id, start_date, end_date);
 
+      -- ============================================================================
+      -- Phase 7.6: Multi-line stock documents, custody vouchers, attachments, prices
+      -- ============================================================================
+      CREATE TABLE IF NOT EXISTS an_stock_documents (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        document_number VARCHAR(64) NOT NULL,
+        document_type VARCHAR(32) NOT NULL,
+        warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id),
+        warehouse_name_ar VARCHAR(255),
+        status VARCHAR(32) NOT NULL DEFAULT 'POSTED',
+        total_quantity NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        total_cost NUMERIC(16, 4) NOT NULL DEFAULT 0,
+        reference_type VARCHAR(64),
+        reference_id VARCHAR(64),
+        reference_number VARCHAR(64),
+        notes TEXT,
+        performed_by VARCHAR(64) NOT NULL,
+        performed_by_name VARCHAR(255) NOT NULL,
+        idempotency_key VARCHAR(128),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, document_number)
+      );
+      CREATE INDEX IF NOT EXISTS idx_stock_docs_tenant ON an_stock_documents(tenant_id, document_type, warehouse_id);
+
+      CREATE TABLE IF NOT EXISTS an_stock_document_lines (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        document_id VARCHAR(64) NOT NULL REFERENCES an_stock_documents(id) ON DELETE CASCADE,
+        line_number INT NOT NULL,
+        item_id VARCHAR(64) NOT NULL REFERENCES an_stock_items(id),
+        item_code VARCHAR(64) NOT NULL,
+        item_name_ar VARCHAR(255) NOT NULL,
+        uom VARCHAR(32) NOT NULL,
+        quantity NUMERIC(16, 4) NOT NULL,
+        unit_cost NUMERIC(16, 4) NOT NULL,
+        total_cost NUMERIC(16, 4) NOT NULL,
+        batch_number VARCHAR(128),
+        serial_number VARCHAR(128),
+        expiry_date VARCHAR(64),
+        notes TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_stock_doc_lines ON an_stock_document_lines(tenant_id, document_id, item_id);
+
+      CREATE TABLE IF NOT EXISTS an_custody_expense_vouchers (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        voucher_number VARCHAR(64) NOT NULL,
+        custody_id VARCHAR(64) NOT NULL REFERENCES an_cash_custodies(id),
+        total_amount NUMERIC(16, 4) NOT NULL,
+        notes TEXT,
+        receipt_number VARCHAR(128),
+        journal_entry_id VARCHAR(64),
+        recorded_by VARCHAR(64) NOT NULL,
+        recorded_by_name VARCHAR(255) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'POSTED',
+        idempotency_key VARCHAR(128),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, voucher_number)
+      );
+      CREATE INDEX IF NOT EXISTS idx_custody_vouchers ON an_custody_expense_vouchers(tenant_id, custody_id);
+
+      CREATE TABLE IF NOT EXISTS an_custody_expense_lines (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        voucher_id VARCHAR(64) NOT NULL REFERENCES an_custody_expense_vouchers(id) ON DELETE CASCADE,
+        line_number INT NOT NULL,
+        expense_category VARCHAR(128) NOT NULL,
+        expense_account_code VARCHAR(64) NOT NULL,
+        amount NUMERIC(16, 4) NOT NULL,
+        cost_center_id VARCHAR(64),
+        description TEXT,
+        receipt_number VARCHAR(128),
+        attachment_url TEXT,
+        attachment_name VARCHAR(255)
+      );
+      CREATE INDEX IF NOT EXISTS idx_custody_exp_lines ON an_custody_expense_lines(tenant_id, voucher_id);
+
+      CREATE TABLE IF NOT EXISTS an_document_attachments (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        company_id VARCHAR(64) NOT NULL,
+        document_type VARCHAR(64) NOT NULL,
+        document_id VARCHAR(64) NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        file_url TEXT NOT NULL,
+        file_size INT,
+        mime_type VARCHAR(128),
+        uploaded_by VARCHAR(64) NOT NULL,
+        uploaded_by_name VARCHAR(255),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_doc_attachments ON an_document_attachments(tenant_id, document_type, document_id);
+
+      CREATE TABLE IF NOT EXISTS an_item_prices (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        item_id VARCHAR(64) NOT NULL REFERENCES an_stock_items(id),
+        price_type VARCHAR(64) NOT NULL,
+        amount NUMERIC(16, 4) NOT NULL,
+        currency VARCHAR(8) NOT NULL DEFAULT 'SAR',
+        is_default BOOLEAN NOT NULL DEFAULT true,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(tenant_id, item_id, price_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_item_prices ON an_item_prices(tenant_id, item_id);
+
       -- Enable and Force Row Level Security (RLS) on all tenant-isolated tables
       DO $$
       DECLARE
@@ -995,7 +1113,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_stock_counts',
           'an_stock_count_lines',
           'an_item_batches',
-          'an_item_serials'
+          'an_item_serials',
+          'an_stock_documents',
+          'an_stock_document_lines',
+          'an_custody_expense_vouchers',
+          'an_custody_expense_lines',
+          'an_document_attachments',
+          'an_item_prices'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -6047,6 +6171,633 @@ export class PostgresPrimaryAdapter implements StoragePort {
         serialNumber: r.serial_number,
         status: r.status,
         warrantyExpiry: r.warranty_expiry || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  // ============================================================================
+  // Phase 7.6: Multi-line stock documents, custody vouchers, attachments, prices
+  // ============================================================================
+
+  public async saveStockDocument(
+    tenantId: string,
+    doc: StockDocument,
+    idempotencyKey: string
+  ): Promise<StorageResult<StockDocument>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'saveStockDocument');
+    if (cached) return { success: true, data: cached };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO an_stock_documents (
+          id, tenant_id, company_id, document_number, document_type,
+          warehouse_id, warehouse_name_ar, status, total_quantity, total_cost,
+          reference_type, reference_id, reference_number, notes,
+          performed_by, performed_by_name, idempotency_key, created_at, posted_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+        [
+          doc.id,
+          tenantId,
+          doc.companyId || tenantId,
+          doc.documentNumber,
+          doc.documentType,
+          doc.warehouseId,
+          doc.warehouseNameAr || null,
+          doc.status || 'POSTED',
+          doc.totalQuantity,
+          doc.totalCost,
+          doc.referenceType || null,
+          doc.referenceId || null,
+          doc.referenceNumber || null,
+          doc.notes || null,
+          doc.performedBy,
+          doc.performedByName,
+          idempotencyKey,
+          doc.createdAt,
+          doc.postedAt,
+        ]
+      );
+
+      for (const line of doc.lines) {
+        await client.query(
+          `INSERT INTO an_stock_document_lines (
+            id, tenant_id, company_id, document_id, line_number,
+            item_id, item_code, item_name_ar, uom, quantity,
+            unit_cost, total_cost, batch_number, serial_number, expiry_date, notes
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+          [
+            line.id,
+            tenantId,
+            line.companyId || tenantId,
+            doc.id,
+            line.lineNumber,
+            line.itemId,
+            line.itemCode,
+            line.itemNameAr,
+            line.uom || 'حبه',
+            line.quantity,
+            line.unitCost,
+            line.totalCost,
+            line.batchNumber || null,
+            line.serialNumber || null,
+            line.expiryDate || null,
+            line.notes || null,
+          ]
+        );
+      }
+
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'saveStockDocument', doc);
+      return { success: true, data: doc };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async getStockDocument(
+    tenantId: string,
+    docId: string
+  ): Promise<StorageResult<StockDocument | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const docRes = await this.query(
+        `SELECT * FROM an_stock_documents WHERE tenant_id = $1 AND (id = $2 OR document_number = $2)`,
+        [tenantId, docId]
+      );
+      if (docRes.rows.length === 0) return { success: true, data: null };
+      const r = docRes.rows[0];
+
+      const linesRes = await this.query(
+        `SELECT * FROM an_stock_document_lines WHERE tenant_id = $1 AND document_id = $2 ORDER BY line_number ASC`,
+        [tenantId, r.id]
+      );
+
+      const lines: StockDocumentLine[] = linesRes.rows.map((l: any) => ({
+        id: l.id,
+        tenantId: l.tenant_id,
+        companyId: l.company_id,
+        documentId: l.document_id,
+        lineNumber: Number(l.line_number),
+        itemId: l.item_id,
+        itemCode: l.item_code,
+        itemNameAr: l.item_name_ar,
+        uom: l.uom,
+        quantity: Number(l.quantity),
+        unitCost: Number(l.unit_cost),
+        totalCost: Number(l.total_cost),
+        batchNumber: l.batch_number || undefined,
+        serialNumber: l.serial_number || undefined,
+        expiryDate: l.expiry_date || undefined,
+        notes: l.notes || undefined,
+      }));
+
+      const doc: StockDocument = {
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        documentNumber: r.document_number,
+        documentType: r.document_type,
+        warehouseId: r.warehouse_id,
+        warehouseNameAr: r.warehouse_name_ar || undefined,
+        status: r.status,
+        totalQuantity: Number(r.total_quantity),
+        totalCost: Number(r.total_cost),
+        referenceType: r.reference_type || undefined,
+        referenceId: r.reference_id || undefined,
+        referenceNumber: r.reference_number || undefined,
+        notes: r.notes || undefined,
+        lines,
+        performedBy: r.performed_by,
+        performedByName: r.performed_by_name,
+        idempotencyKey: r.idempotency_key,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        postedAt: r.posted_at?.toISOString?.() || r.posted_at,
+      };
+
+      return { success: true, data: doc };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listStockDocuments(
+    tenantId: string,
+    filter?: { warehouseId?: string; documentType?: StockDocumentType; limit?: number }
+  ): Promise<StorageResult<StockDocument[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_stock_documents WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (filter?.warehouseId) {
+        params.push(filter.warehouseId);
+        queryStr += ` AND warehouse_id = $${params.length}`;
+      }
+      if (filter?.documentType) {
+        params.push(filter.documentType);
+        queryStr += ` AND document_type = $${params.length}`;
+      }
+      queryStr += ` ORDER BY created_at DESC`;
+      if (filter?.limit) {
+        params.push(filter.limit);
+        queryStr += ` LIMIT $${params.length}`;
+      }
+
+      const res = await this.query(queryStr, params);
+      const docs: StockDocument[] = [];
+      for (const r of res.rows) {
+        const linesRes = await this.query(
+          `SELECT * FROM an_stock_document_lines WHERE tenant_id = $1 AND document_id = $2 ORDER BY line_number ASC`,
+          [tenantId, r.id]
+        );
+        const lines: StockDocumentLine[] = linesRes.rows.map((l: any) => ({
+          id: l.id,
+          tenantId: l.tenant_id,
+          companyId: l.company_id,
+          documentId: l.document_id,
+          lineNumber: Number(l.line_number),
+          itemId: l.item_id,
+          itemCode: l.item_code,
+          itemNameAr: l.item_name_ar,
+          uom: l.uom,
+          quantity: Number(l.quantity),
+          unitCost: Number(l.unit_cost),
+          totalCost: Number(l.total_cost),
+          batchNumber: l.batch_number || undefined,
+          serialNumber: l.serial_number || undefined,
+          expiryDate: l.expiry_date || undefined,
+          notes: l.notes || undefined,
+        }));
+        docs.push({
+          id: r.id,
+          tenantId: r.tenant_id,
+          companyId: r.company_id,
+          documentNumber: r.document_number,
+          documentType: r.document_type,
+          warehouseId: r.warehouse_id,
+          warehouseNameAr: r.warehouse_name_ar || undefined,
+          status: r.status,
+          totalQuantity: Number(r.total_quantity),
+          totalCost: Number(r.total_cost),
+          referenceType: r.reference_type || undefined,
+          referenceId: r.reference_id || undefined,
+          referenceNumber: r.reference_number || undefined,
+          notes: r.notes || undefined,
+          lines,
+          performedBy: r.performed_by,
+          performedByName: r.performed_by_name,
+          idempotencyKey: r.idempotency_key,
+          createdAt: r.created_at?.toISOString?.() || r.created_at,
+          postedAt: r.posted_at?.toISOString?.() || r.posted_at,
+        });
+      }
+      return { success: true, data: docs };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveCustodyExpenseVoucher(
+    tenantId: string,
+    voucher: CustodyExpenseVoucher,
+    idempotencyKey: string
+  ): Promise<StorageResult<CustodyExpenseVoucher>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'saveCustodyExpenseVoucher');
+    if (cached) return { success: true, data: cached };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Deduct custody balance atomically
+      const deductRes = await client.query(
+        `UPDATE an_cash_custodies 
+         SET current_balance = current_balance - $1, updated_at = NOW() 
+         WHERE tenant_id = $2 AND id = $3 AND current_balance >= $1 
+         RETURNING current_balance`,
+        [voucher.totalAmount, tenantId, voucher.custodyId]
+      );
+      if (deductRes.rows.length === 0) {
+        throw new Error('رصيد العهدة غير كافٍ أو العهدة غير موجودة في قاعدة البيانات.');
+      }
+
+      await client.query(
+        `INSERT INTO an_custody_expense_vouchers (
+          id, tenant_id, company_id, voucher_number, custody_id, total_amount,
+          notes, receipt_number, journal_entry_id, recorded_by, recorded_by_name,
+          status, idempotency_key, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        [
+          voucher.id,
+          tenantId,
+          voucher.companyId || tenantId,
+          voucher.voucherNumber,
+          voucher.custodyId,
+          voucher.totalAmount,
+          voucher.notes || null,
+          voucher.receiptNumber || null,
+          voucher.journalEntryId || null,
+          voucher.recordedBy,
+          voucher.recordedByName,
+          voucher.status || 'POSTED',
+          idempotencyKey,
+          voucher.createdAt,
+        ]
+      );
+
+      for (const line of voucher.lines) {
+        await client.query(
+          `INSERT INTO an_custody_expense_lines (
+            id, tenant_id, voucher_id, line_number, expense_category,
+            expense_account_code, amount, cost_center_id, description,
+            receipt_number, attachment_url, attachment_name
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          [
+            line.id,
+            tenantId,
+            voucher.id,
+            line.lineNumber,
+            line.expenseCategory,
+            line.expenseAccountCode,
+            line.amount,
+            line.costCenterId || null,
+            line.description || null,
+            line.receiptNumber || null,
+            line.attachmentUrl || null,
+            line.attachmentName || null,
+          ]
+        );
+      }
+
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'saveCustodyExpenseVoucher', voucher);
+      return { success: true, data: voucher };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async getCustodyExpenseVoucher(
+    tenantId: string,
+    voucherId: string
+  ): Promise<StorageResult<CustodyExpenseVoucher | null>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const vRes = await this.query(
+        `SELECT * FROM an_custody_expense_vouchers WHERE tenant_id = $1 AND (id = $2 OR voucher_number = $2)`,
+        [tenantId, voucherId]
+      );
+      if (vRes.rows.length === 0) return { success: true, data: null };
+      const r = vRes.rows[0];
+
+      const linesRes = await this.query(
+        `SELECT * FROM an_custody_expense_lines WHERE tenant_id = $1 AND voucher_id = $2 ORDER BY line_number ASC`,
+        [tenantId, r.id]
+      );
+
+      const lines: CustodyExpenseLine[] = linesRes.rows.map((l: any) => ({
+        id: l.id,
+        tenantId: l.tenant_id,
+        voucherId: l.voucher_id,
+        lineNumber: Number(l.line_number),
+        expenseCategory: l.expense_category,
+        expenseAccountCode: l.expense_account_code,
+        amount: Number(l.amount),
+        costCenterId: l.cost_center_id || undefined,
+        description: l.description || undefined,
+        receiptNumber: l.receipt_number || undefined,
+        attachmentUrl: l.attachment_url || undefined,
+        attachmentName: l.attachment_name || undefined,
+      }));
+
+      const voucher: CustodyExpenseVoucher = {
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        voucherNumber: r.voucher_number,
+        custodyId: r.custody_id,
+        totalAmount: Number(r.total_amount),
+        notes: r.notes || undefined,
+        receiptNumber: r.receipt_number || undefined,
+        journalEntryId: r.journal_entry_id || undefined,
+        recordedBy: r.recorded_by,
+        recordedByName: r.recorded_by_name,
+        status: r.status,
+        lines,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        idempotencyKey: r.idempotency_key,
+      };
+
+      return { success: true, data: voucher };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listCustodyExpenseVouchers(
+    tenantId: string,
+    custodyId?: string
+  ): Promise<StorageResult<CustodyExpenseVoucher[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      let queryStr = `SELECT * FROM an_custody_expense_vouchers WHERE tenant_id = $1`;
+      const params: any[] = [tenantId];
+      if (custodyId) {
+        params.push(custodyId);
+        queryStr += ` AND custody_id = $${params.length}`;
+      }
+      queryStr += ` ORDER BY created_at DESC`;
+
+      const res = await this.query(queryStr, params);
+      const vouchers: CustodyExpenseVoucher[] = [];
+      for (const r of res.rows) {
+        const linesRes = await this.query(
+          `SELECT * FROM an_custody_expense_lines WHERE tenant_id = $1 AND voucher_id = $2 ORDER BY line_number ASC`,
+          [tenantId, r.id]
+        );
+        const lines: CustodyExpenseLine[] = linesRes.rows.map((l: any) => ({
+          id: l.id,
+          tenantId: l.tenant_id,
+          voucherId: l.voucher_id,
+          lineNumber: Number(l.line_number),
+          expenseCategory: l.expense_category,
+          expenseAccountCode: l.expense_account_code,
+          amount: Number(l.amount),
+          costCenterId: l.cost_center_id || undefined,
+          description: l.description || undefined,
+          receiptNumber: l.receipt_number || undefined,
+          attachmentUrl: l.attachment_url || undefined,
+          attachmentName: l.attachment_name || undefined,
+        }));
+        vouchers.push({
+          id: r.id,
+          tenantId: r.tenant_id,
+          companyId: r.company_id,
+          voucherNumber: r.voucher_number,
+          custodyId: r.custody_id,
+          totalAmount: Number(r.total_amount),
+          notes: r.notes || undefined,
+          receiptNumber: r.receipt_number || undefined,
+          journalEntryId: r.journal_entry_id || undefined,
+          recordedBy: r.recorded_by,
+          recordedByName: r.recorded_by_name,
+          status: r.status,
+          lines,
+          createdAt: r.created_at?.toISOString?.() || r.created_at,
+          idempotencyKey: r.idempotency_key,
+        });
+      }
+      return { success: true, data: vouchers };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async reverseCustodyExpenseVoucher(
+    tenantId: string,
+    voucherId: string,
+    reversedBy: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<CustodyExpenseVoucher>> {
+    if (!this.pool) return this.missingConnError();
+    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'reverseCustodyExpenseVoucher');
+    if (cached) return { success: true, data: cached };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const vRes = await client.query(
+        `SELECT * FROM an_custody_expense_vouchers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, voucherId]
+      );
+      if (vRes.rows.length === 0) {
+        throw new Error('سند صرف العهدة غير موجود.');
+      }
+      const r = vRes.rows[0];
+      if (r.status === 'REVERSED') {
+        throw new Error('السند معكوس مسبقاً.');
+      }
+
+      // Refund custody balance
+      await client.query(
+        `UPDATE an_cash_custodies 
+         SET current_balance = current_balance + $1, updated_at = NOW() 
+         WHERE tenant_id = $2 AND id = $3`,
+        [Number(r.total_amount), tenantId, r.custody_id]
+      );
+
+      // Update voucher status
+      await client.query(
+        `UPDATE an_custody_expense_vouchers SET status = 'REVERSED' WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, voucherId]
+      );
+
+      const linesRes = await client.query(
+        `SELECT * FROM an_custody_expense_lines WHERE tenant_id = $1 AND voucher_id = $2 ORDER BY line_number ASC`,
+        [tenantId, voucherId]
+      );
+
+      const lines: CustodyExpenseLine[] = linesRes.rows.map((l: any) => ({
+        id: l.id,
+        tenantId: l.tenant_id,
+        voucherId: l.voucher_id,
+        lineNumber: Number(l.line_number),
+        expenseCategory: l.expense_category,
+        expenseAccountCode: l.expense_account_code,
+        amount: Number(l.amount),
+        costCenterId: l.cost_center_id || undefined,
+        description: l.description || undefined,
+        receiptNumber: l.receipt_number || undefined,
+        attachmentUrl: l.attachment_url || undefined,
+        attachmentName: l.attachment_name || undefined,
+      }));
+
+      const updatedVoucher: CustodyExpenseVoucher = {
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        voucherNumber: r.voucher_number,
+        custodyId: r.custody_id,
+        totalAmount: Number(r.total_amount),
+        notes: r.notes || undefined,
+        receiptNumber: r.receipt_number || undefined,
+        journalEntryId: r.journal_entry_id || undefined,
+        recordedBy: r.recorded_by,
+        recordedByName: r.recorded_by_name,
+        status: 'REVERSED',
+        lines,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        idempotencyKey: r.idempotency_key,
+      };
+
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'reverseCustodyExpenseVoucher', updatedVoucher);
+      return { success: true, data: updatedVoucher };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  public async saveDocumentAttachment(
+    tenantId: string,
+    attachment: DocumentAttachment
+  ): Promise<StorageResult<DocumentAttachment>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_document_attachments (
+          id, tenant_id, company_id, document_type, document_id,
+          file_name, file_url, file_size, mime_type, uploaded_by, uploaded_by_name, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          attachment.id,
+          tenantId,
+          attachment.companyId || tenantId,
+          attachment.documentType,
+          attachment.documentId,
+          attachment.fileName,
+          attachment.fileUrl,
+          attachment.fileSize || null,
+          attachment.mimeType || 'application/pdf',
+          attachment.uploadedBy,
+          attachment.uploadedByName || null,
+          attachment.createdAt,
+        ]
+      );
+      return { success: true, data: attachment };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async listDocumentAttachments(
+    tenantId: string,
+    documentType: string,
+    documentId: string
+  ): Promise<StorageResult<DocumentAttachment[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        `SELECT * FROM an_document_attachments WHERE tenant_id = $1 AND document_type = $2 AND document_id = $3 ORDER BY created_at DESC`,
+        [tenantId, documentType, documentId]
+      );
+      const list: DocumentAttachment[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        companyId: r.company_id,
+        documentType: r.document_type,
+        documentId: r.document_id,
+        fileName: r.file_name,
+        fileUrl: r.file_url,
+        fileSize: r.file_size ? Number(r.file_size) : undefined,
+        mimeType: r.mime_type || undefined,
+        uploadedBy: r.uploaded_by,
+        uploadedByName: r.uploaded_by_name || undefined,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+      }));
+      return { success: true, data: list };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveItemPrice(tenantId: string, price: ItemPrice): Promise<StorageResult<ItemPrice>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_item_prices (id, tenant_id, item_id, price_type, amount, currency, is_default, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (tenant_id, item_id, price_type)
+         DO UPDATE SET amount = EXCLUDED.amount, currency = EXCLUDED.currency, is_default = EXCLUDED.is_default`,
+        [
+          price.id,
+          tenantId,
+          price.itemId,
+          price.priceType,
+          price.amount,
+          price.currency || 'SAR',
+          price.isDefault ?? true,
+          price.createdAt,
+        ]
+      );
+      return { success: true, data: price };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getItemPrices(tenantId: string, itemId: string): Promise<StorageResult<ItemPrice[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        `SELECT * FROM an_item_prices WHERE tenant_id = $1 AND item_id = $2`,
+        [tenantId, itemId]
+      );
+      const list: ItemPrice[] = res.rows.map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        itemId: r.item_id,
+        priceType: r.price_type,
+        amount: Number(r.amount),
+        currency: r.currency,
+        isDefault: r.is_default,
         createdAt: r.created_at?.toISOString?.() || r.created_at,
       }));
       return { success: true, data: list };
