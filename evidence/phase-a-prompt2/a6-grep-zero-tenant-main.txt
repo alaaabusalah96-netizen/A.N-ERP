@@ -1,0 +1,8 @@
+COMMAND: grep -rn "tenant-main" src server.ts | grep -v "src/core/seed/seedOnly.ts"
+EXIT_CODE: 0
+TIMESTAMP: 2026-09-25T07:16:01.921Z
+
+STDOUT:
+(ZERO RESULTS - No tenant-main found outside src/core/seed/seedOnly.ts)
+
+SHA256: da5da02c82fc756942e350fd323d0bcb1356415ab77794661def2c9f83bc4178

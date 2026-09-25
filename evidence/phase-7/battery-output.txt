@@ -1,12 +1,12 @@
 {
   "phase": "PHASE 7",
   "module": "المخازن والمخزون (Warehouses & Inventory - موديول 3 من 15)",
-  "adapterType": "InMemoryAdapter (Development / Test Execution)",
-  "timestamp": "2026-09-24T07:14:40.441Z",
+  "adapterType": "PostgreSQL (Supabase Primary)",
+  "timestamp": "2026-09-25T07:24:25.647Z",
   "totalScenarios": 9,
-  "passedScenarios": 9,
-  "failedScenarios": 0,
-  "isClosed": true,
+  "passedScenarios": 8,
+  "failedScenarios": 1,
+  "isClosed": false,
   "scenarios": [
     {
       "id": "PHASE7-SCENARIO-1",
@@ -15,31 +15,31 @@
       "details": "تم إنشاء مستودع (مستودع الدمام الإقليمي) بنجاح مع رف التخزين (BIN-A-01).",
       "evidence": {
         "warehouse": {
-          "id": "wh-dammam-077725",
-          "tenantId": "t-p7-077725",
-          "companyId": "t-p7-077725",
-          "code": "WH-003-077725",
+          "id": "wh-dammam-062502",
+          "tenantId": "t-p7-062502",
+          "companyId": "t-p7-062502",
+          "code": "WH-003-062502",
           "nameAr": "مستودع الدمام الإقليمي",
           "nameEn": "Dammam Regional Warehouse",
           "location": "الدمام - المدينة الصناعية الأولى",
           "isDefault": false,
           "valuationMethod": "WEIGHTED_AVERAGE",
           "isActive": true,
-          "createdAt": "2026-09-24T07:14:38.072Z",
-          "updatedAt": "2026-09-24T07:14:38.072Z"
+          "createdAt": "2026-09-25T07:24:22.779Z",
+          "updatedAt": "2026-09-25T07:24:22.779Z"
         },
         "bin": {
-          "id": "bin-1790234078117-vrt5",
-          "tenantId": "t-p7-077725",
-          "companyId": "t-p7-077725",
-          "warehouseId": "wh-dammam-077725",
+          "id": "bin-1790321062838-qgdw",
+          "tenantId": "t-p7-062502",
+          "companyId": "t-p7-062502",
+          "warehouseId": "wh-dammam-062502",
           "code": "BIN-A-01",
           "aisle": "A",
           "rack": "01",
           "shelf": "1",
           "descriptionAr": "رف تخزين الأجهزة الحساسة",
           "isActive": true,
-          "createdAt": "2026-09-24T07:14:38.117Z"
+          "createdAt": "2026-09-25T07:24:22.838Z"
         }
       }
     },
@@ -49,10 +49,10 @@
       "passed": true,
       "details": "تم تسجيل الصنف (جهاز لوحي ميداني 10 بوصة) بالمتوسط المرجح وحد إعادة طلب 5 وتتبع التشغيلات والسيريال.",
       "evidence": {
-        "id": "item-tab-077725",
-        "tenantId": "t-p7-077725",
-        "companyId": "t-p7-077725",
-        "itemCode": "SKU-TAB-077725",
+        "id": "item-tab-062502",
+        "tenantId": "t-p7-062502",
+        "companyId": "t-p7-062502",
+        "itemCode": "SKU-TAB-062502",
         "nameAr": "جهاز لوحي ميداني 10 بوصة",
         "category": "ELECTRONICS",
         "uom": "جهاز",
@@ -71,8 +71,8 @@
         "trackBatch": true,
         "trackSerial": true,
         "isActive": true,
-        "createdAt": "2026-09-24T07:14:38.134Z",
-        "updatedAt": "2026-09-24T07:14:38.134Z"
+        "createdAt": "2026-09-25T07:24:22.863Z",
+        "updatedAt": "2026-09-25T07:24:22.863Z"
       }
     },
     {
@@ -81,17 +81,17 @@
       "passed": true,
       "details": "تم توريد دفعتين بإجمالي 20 وحدة واحتساب المتوسط المرجح بدقة متناهية (1,100 ر.س للوحدة بإجمالي 22,000 ر.س).",
       "evidence": {
-        "id": "stk-wh-main-077725-item-tab-077725",
-        "tenantId": "t-p7-077725",
-        "companyId": "t-p7-077725",
-        "warehouseId": "wh-main-077725",
-        "itemId": "item-tab-077725",
+        "id": "stk-wh-main-062502-item-tab-062502",
+        "tenantId": "t-p7-062502",
+        "companyId": "t-p7-062502",
+        "warehouseId": "wh-main-062502",
+        "itemId": "item-tab-062502",
         "currentQty": 20,
         "reservedQty": 0,
         "availableQty": 20,
         "averageCost": 1100,
         "totalValue": 22000,
-        "updatedAt": "2026-09-24T07:14:38.570Z"
+        "updatedAt": "2026-09-25T07:24:23.418Z"
       }
     },
     {
@@ -104,41 +104,83 @@
           "type": "https://api.an-erp.local/errors/insufficient-stock",
           "title": "الرصيد المخزني غير كافٍ",
           "status": 400,
-          "detail": "الرصيد المتاح حالياً (20) أقل من الكمية المطلوبة للصرف (25)."
+          "detail": "الرصيد المتاح للصنف جهاز لوحي ميداني 10 بوصة (20) أقل من الكمية المطلوبة للصرف (25). فشلت العملية بالكامل ذرياً."
         },
         "validIssue": {
-          "id": "mov-1790234078787-re2j",
-          "tenantId": "t-p7-077725",
-          "companyId": "t-p7-077725",
-          "movementNumber": "ISS-000001",
-          "movementType": "ISSUE",
-          "warehouseId": "wh-main-077725",
+          "id": "sdoc-1790321063735-r2su",
+          "tenantId": "t-p7-062502",
+          "companyId": "t-p7-062502",
+          "documentNumber": "ISS-000001",
+          "documentType": "ISSUE",
+          "warehouseId": "wh-main-062502",
           "warehouseNameAr": "المستودع الرئيسي - الرياض",
-          "itemId": "item-tab-077725",
-          "itemCode": "SKU-TAB-077725",
-          "itemNameAr": "جهاز لوحي ميداني 10 بوصة",
-          "quantity": 5,
-          "unitCost": 1100,
+          "status": "POSTED",
+          "totalQuantity": 5,
           "totalCost": 5500,
-          "balanceAfterQty": 15,
-          "sourceDocumentType": "SALES_DELIVERY",
+          "referenceType": "SALES_DELIVERY",
+          "lines": [
+            {
+              "id": "sline-1790321063735-0",
+              "tenantId": "t-p7-062502",
+              "companyId": "t-p7-062502",
+              "documentId": "sdoc-1790321063735-r2su",
+              "lineNumber": 1,
+              "itemId": "item-tab-062502",
+              "itemCode": "SKU-TAB-062502",
+              "itemNameAr": "جهاز لوحي ميداني 10 بوصة",
+              "uom": "جهاز",
+              "quantity": 5,
+              "unitCost": 1100,
+              "totalCost": 5500
+            }
+          ],
+          "movements": [
+            {
+              "id": "mov-1790321063735-0",
+              "tenantId": "t-p7-062502",
+              "companyId": "t-p7-062502",
+              "movementNumber": "ISS-000001-1",
+              "movementType": "ISSUE",
+              "warehouseId": "wh-main-062502",
+              "warehouseNameAr": "المستودع الرئيسي - الرياض",
+              "itemId": "item-tab-062502",
+              "itemCode": "SKU-TAB-062502",
+              "itemNameAr": "جهاز لوحي ميداني 10 بوصة",
+              "quantity": 5,
+              "unitCost": 1100,
+              "totalCost": 5500,
+              "balanceAfterQty": 15,
+              "sourceDocumentType": "SALES_DELIVERY",
+              "sourceDocumentId": "sdoc-1790321063735-r2su",
+              "sourceDocumentNumber": "ISS-000001",
+              "performedBy": "usr-storekeeper-01",
+              "performedByName": "أمين المستودع فهد",
+              "timestamp": "2026-09-25T07:24:23.735Z",
+              "idempotencyKey": "idemp-valid-issue-062502-line-0"
+            }
+          ],
           "performedBy": "usr-storekeeper-01",
           "performedByName": "أمين المستودع فهد",
-          "timestamp": "2026-09-24T07:14:38.787Z",
-          "idempotencyKey": "idemp-valid-issue-077725"
+          "idempotencyKey": "idemp-valid-issue-062502",
+          "createdAt": "2026-09-25T07:24:23.859Z",
+          "postedAt": "2026-09-25T07:24:23.859Z",
+          "movementNumber": "ISS-000001",
+          "quantity": 5,
+          "itemId": "item-tab-062502",
+          "unitCost": 1100
         },
         "stockAfter": {
-          "id": "stk-wh-main-077725-item-tab-077725",
-          "tenantId": "t-p7-077725",
-          "companyId": "t-p7-077725",
-          "warehouseId": "wh-main-077725",
-          "itemId": "item-tab-077725",
+          "id": "stk-wh-main-062502-item-tab-062502",
+          "tenantId": "t-p7-062502",
+          "companyId": "t-p7-062502",
+          "warehouseId": "wh-main-062502",
+          "itemId": "item-tab-062502",
           "currentQty": 15,
           "reservedQty": 0,
           "availableQty": 15,
           "averageCost": 1100,
           "totalValue": 16500,
-          "updatedAt": "2026-09-24T07:14:38.843Z"
+          "updatedAt": "2026-09-25T07:24:23.799Z"
         }
       }
     },
@@ -146,33 +188,33 @@
       "id": "PHASE7-SCENARIO-5",
       "titleAr": "التحويل المخزني بين المستودعات مع تدفق الإرسال والاستلام المكتمل",
       "passed": true,
-      "details": "تم تحويل 5 وحدات من مستودع الرياض (wh-main-077725) إلى الدمام (wh-dammam-077725) وتحديث الأرصدة بنجاح.",
+      "details": "تم تحويل 5 وحدات من مستودع الرياض (wh-main-062502) إلى الدمام (wh-dammam-062502) وتحديث الأرصدة بنجاح.",
       "evidence": {
         "transfer": {
-          "id": "tr-1790234078943-g60d",
-          "tenantId": "t-p7-077725",
-          "companyId": "t-p7-077725",
+          "id": "tr-1790321063994-hwiq",
+          "tenantId": "t-p7-062502",
+          "companyId": "t-p7-062502",
           "transferNumber": "TRF-000001",
-          "sourceWarehouseId": "wh-main-077725",
+          "sourceWarehouseId": "wh-main-062502",
           "sourceWarehouseNameAr": "المستودع الرئيسي - الرياض",
-          "targetWarehouseId": "wh-dammam-077725",
+          "targetWarehouseId": "wh-dammam-062502",
           "targetWarehouseNameAr": "مستودع الدمام الإقليمي",
           "status": "RECEIVED",
           "requestedBy": "usr-logistics-01",
           "requestedByName": "مشرف النقل طارق",
-          "requestedAt": "2026-09-24T07:14:38.987Z",
+          "requestedAt": "2026-09-25T07:24:24.040Z",
           "dispatchedBy": null,
           "dispatchedByName": null,
           "dispatchedAt": null,
           "receivedBy": "usr-dammam-keeper",
           "receivedByName": "أمين مستودع الدمام خالد",
-          "receivedAt": "2026-09-24T07:14:39.402Z",
+          "receivedAt": "2026-09-25T07:24:24.471Z",
           "totalItemsCount": 1,
           "totalQuantity": 5,
           "totalCost": 5500,
-          "createdAt": "2026-09-24T07:14:39.144Z",
-          "updatedAt": "2026-09-24T07:14:39.402Z",
-          "idempotencyKey": "idemp-trf-recv-01-077725"
+          "createdAt": "2026-09-25T07:24:24.202Z",
+          "updatedAt": "2026-09-25T07:24:24.471Z",
+          "idempotencyKey": "idemp-trf-recv-01-062502"
         },
         "srcQty": 10,
         "tgtQty": 5
@@ -184,24 +226,24 @@
       "passed": true,
       "details": "تم رصد عجز بمقدار 2 وحدة بقيمة صافية (-2200 ر.س) بنجاح.",
       "evidence": {
-        "id": "cnt-1790234079489-t68r",
-        "tenantId": "t-p7-077725",
-        "companyId": "t-p7-077725",
+        "id": "cnt-1790321064563-y3a5",
+        "tenantId": "t-p7-062502",
+        "companyId": "t-p7-062502",
         "countNumber": "CNT-000001",
         "countType": "PERIODIC",
-        "warehouseId": "wh-dammam-077725",
+        "warehouseId": "wh-dammam-062502",
         "warehouseNameAr": "مستودع الدمام الإقليمي",
         "status": "COMPLETED",
         "performedBy": "usr-auditor-ali",
         "performedByName": "المراجع الميداني علي",
-        "performedAt": "2026-09-24T07:14:39.535Z",
+        "performedAt": "2026-09-25T07:24:24.615Z",
         "totalItemsCount": 1,
         "hasVariance": true,
         "netVarianceAmount": -2200,
         "notes": "جرد دوري ربع سنوي لمستودع الدمام",
-        "createdAt": "2026-09-24T07:14:39.535Z",
-        "updatedAt": "2026-09-24T07:14:39.535Z",
-        "idempotencyKey": "idemp-cnt-01-077725"
+        "createdAt": "2026-09-25T07:24:24.615Z",
+        "updatedAt": "2026-09-25T07:24:24.615Z",
+        "idempotencyKey": "idemp-cnt-01-062502"
       }
     },
     {
@@ -223,52 +265,52 @@
       "details": "تم ترحيل القيد المحاسبي المتوازن (JE-ADJ) وتحديث رصيد المستودع الفعلي إلى 3 وحدات بنجاح.",
       "evidence": {
         "count": {
-          "id": "cnt-1790234079489-t68r",
-          "tenantId": "t-p7-077725",
-          "companyId": "t-p7-077725",
+          "id": "cnt-1790321064563-y3a5",
+          "tenantId": "t-p7-062502",
+          "companyId": "t-p7-062502",
           "countNumber": "CNT-000001",
           "countType": "PERIODIC",
-          "warehouseId": "wh-dammam-077725",
+          "warehouseId": "wh-dammam-062502",
           "warehouseNameAr": "مستودع الدمام الإقليمي",
           "status": "POSTED",
           "performedBy": "usr-auditor-ali",
           "performedByName": "المراجع الميداني علي",
-          "performedAt": "2026-09-24T07:14:39.535Z",
+          "performedAt": "2026-09-25T07:24:24.615Z",
           "approvedBy": "usr-cfo-salem",
           "approvedByName": "المدير المالي سالم",
-          "approvedAt": "2026-09-24T07:14:40.137Z",
+          "approvedAt": "2026-09-25T07:24:25.245Z",
           "totalItemsCount": 1,
           "hasVariance": true,
           "netVarianceAmount": -2200,
-          "journalEntryId": "je-adj-cnt-1790234079489-t68r-1790234079696",
+          "journalEntryId": "je-adj-cnt-1790321064563-y3a5-1790321064781",
           "notes": "جرد دوري ربع سنوي لمستودع الدمام",
-          "createdAt": "2026-09-24T07:14:39.577Z",
-          "updatedAt": "2026-09-24T07:14:40.137Z",
-          "idempotencyKey": "idemp-legit-cnt-approval-077725"
+          "createdAt": "2026-09-25T07:24:24.659Z",
+          "updatedAt": "2026-09-25T07:24:25.245Z",
+          "idempotencyKey": "idemp-legit-cnt-approval-062502"
         },
         "updatedStock": {
-          "id": "stk-wh-dammam-077725-item-tab-077725",
-          "tenantId": "t-p7-077725",
-          "companyId": "t-p7-077725",
-          "warehouseId": "wh-dammam-077725",
-          "itemId": "item-tab-077725",
+          "id": "stk-wh-dammam-062502-item-tab-062502",
+          "tenantId": "t-p7-062502",
+          "companyId": "t-p7-062502",
+          "warehouseId": "wh-dammam-062502",
+          "itemId": "item-tab-062502",
           "currentQty": 3,
           "reservedQty": 0,
           "availableQty": 3,
           "averageCost": 1100,
           "totalValue": 3300,
-          "updatedAt": "2026-09-24T07:14:40.024Z"
+          "updatedAt": "2026-09-25T07:24:25.126Z"
         }
       }
     },
     {
       "id": "PHASE7-SCENARIO-9",
       "titleAr": "ضمان الإدهنية (Idempotency): منع تكرار الحركات المخزنية عند إعادة إرسال نفس المفتاح",
-      "passed": true,
-      "details": "تم استرجاع نتيجة التوريد المخزني السابقة بدقة دون مضاعفة الكميات في المخزن.",
+      "passed": false,
+      "details": "فشل اختبار الإدهنية وتمت مضاعفة الحركات.",
       "evidence": {
-        "firstId": "mov-1790234080251-d5as",
-        "secondId": "mov-1790234080251-d5as"
+        "firstId": "sdoc-1790321065351-t3lt",
+        "secondId": "sdoc-1790321065617-8ajv"
       }
     }
   ]

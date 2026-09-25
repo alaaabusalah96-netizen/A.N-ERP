@@ -1,0 +1,13 @@
+COMMAND: Test saveTenant when an_idempotency_keys write fails
+EXIT_CODE: 0
+TIMESTAMP: 2026-09-25T07:16:01.906Z
+
+STDOUT:
+=== [A-5] Zero // Ignored Check ===
+(ZERO RESULTS - No // Ignored comments found in PostgresPrimaryAdapter.ts)
+
+=== [A-5] Idempotency Table Write Failure Test ===
+Result: PASS
+Detail: saveTenant correctly failed with error: [خطأ في قاعدة بيانات PostgreSQL] relation "an_idempotency_keys" does not exist
+
+SHA256: 3acbb287d42cc2ab4d43a22b40114b149979f35af076ad2660dbda5faea4b60d

@@ -453,6 +453,16 @@ export class InMemoryAdapter implements StoragePort {
     return { success: true, data: acc };
   }
 
+  public async listAccounts(tenantId: string): Promise<StorageResult<Account[]>> {
+    const list: Account[] = [];
+    for (const [key, acc] of this.accounts.entries()) {
+      if (key.startsWith(`${tenantId}:`)) {
+        list.push(acc);
+      }
+    }
+    return { success: true, data: list };
+  }
+
   public async saveAccount(tenantId: string, account: Account, idempotencyKey: string): Promise<StorageResult<Account>> {
     this.accounts.set(`${tenantId}:${account.code}`, account);
     return { success: true, data: account };
@@ -1389,27 +1399,34 @@ export class InMemoryAdapter implements StoragePort {
     };
   }
 
-  public async recordCustodyExpense(tenantId: string, transaction: CashCustodyTransaction, idempotencyKey: string): Promise<StorageResult<CashCustodyTransaction>> {
+  public async recordCustodyExpense(
+    tenantId: string,
+    transaction: CashCustodyTransaction,
+    idempotencyKey: string,
+    skipBalanceDeduction: boolean = false
+  ): Promise<StorageResult<CashCustodyTransaction>> {
     const cached = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'recordCustodyExpense');
     if (cached.success && cached.data) {
       return { success: true, data: cached.data };
     }
-    // Deduct custody available balance
-    const custody = await this.getCashCustody(tenantId, transaction.custodyId);
-    if (!custody.success || !custody.data) {
-      return {
-        success: false,
-        error: {
-          type: 'https://api.an-erp.local/errors/not-found',
-          title: 'العهدة غير موجودة',
-          status: 404,
-          detail: 'العهدة النقدية غير موجودة لتسجيل المصروف.',
-        },
-      };
+    if (!skipBalanceDeduction) {
+      // Deduct custody available balance
+      const custody = await this.getCashCustody(tenantId, transaction.custodyId);
+      if (!custody.success || !custody.data) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/not-found',
+            title: 'العهدة غير موجودة',
+            status: 404,
+            detail: 'العهدة النقدية غير موجودة لتسجيل المصروف.',
+          },
+        };
+      }
+      const current = custody.data;
+      const newBalance = Number(current.currentBalance) - Number(transaction.amount);
+      await this.updateCashCustody(tenantId, current.id, { currentBalance: newBalance });
     }
-    const current = custody.data;
-    const newBalance = Number(current.currentBalance) - Number(transaction.amount);
-    await this.updateCashCustody(tenantId, current.id, { currentBalance: newBalance });
 
     const key = `${tenantId}:${transaction.id}`;
     this.cashCustodyTransactions.set(key, { ...transaction, tenantId });

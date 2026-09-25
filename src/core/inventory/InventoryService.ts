@@ -56,7 +56,7 @@ export interface StockLineItemInput {
 
 export interface ReceiveStockInput {
   warehouseId?: string;
-  itemId?: string;
+  itemId?: string; // WARN [ADR-011/Phase7.6]: مسار توافقي فردي — يرجى استخدام lines[] المتعددة
   quantity?: number;
   unitCost?: number;
   batchNumber?: string;
@@ -84,7 +84,7 @@ export interface ReceiveStockInput {
 
 export interface IssueStockInput {
   warehouseId?: string;
-  itemId?: string;
+  itemId?: string; // WARN [ADR-011/Phase7.6]: مسار توافقي فردي — يرجى استخدام lines[] المتعددة
   quantity?: number;
   batchNumber?: string;
   serialNumber?: string;
@@ -365,22 +365,23 @@ export class InventoryService {
       };
     }
 
-    const lines: StockLineItemInput[] =
-      input.lines && input.lines.length > 0
-        ? input.lines
-        : input.itemId
-        ? [
-            {
-              itemId: input.itemId,
-              quantity: input.quantity || 0,
-              unitCost: input.unitCost,
-              batchNumber: input.batchNumber,
-              serialNumber: input.serialNumber,
-              expiryDate: input.expiryDate,
-              notes: input.notes,
-            },
-          ]
-        : [];
+    let lines: StockLineItemInput[] = [];
+    if (input.lines && input.lines.length > 0) {
+      lines = input.lines;
+    } else if (input.itemId) {
+      console.warn('WARN [ADR-011/Phase7.6]: مسار توافقي فردي (single itemId) مستخدم في receiveStock — يرجى استخدام مصفوفة lines[] المتعددة.');
+      lines = [
+        {
+          itemId: input.itemId,
+          quantity: input.quantity || 0,
+          unitCost: input.unitCost,
+          batchNumber: input.batchNumber,
+          serialNumber: input.serialNumber,
+          expiryDate: input.expiryDate,
+          notes: input.notes,
+        },
+      ];
+    }
 
     if (lines.length === 0) {
       return {
@@ -592,20 +593,21 @@ export class InventoryService {
       };
     }
 
-    const lines: StockLineItemInput[] =
-      input.lines && input.lines.length > 0
-        ? input.lines
-        : input.itemId
-        ? [
-            {
-              itemId: input.itemId,
-              quantity: input.quantity || 0,
-              batchNumber: input.batchNumber,
-              serialNumber: input.serialNumber,
-              notes: input.notes,
-            },
-          ]
-        : [];
+    let lines: StockLineItemInput[] = [];
+    if (input.lines && input.lines.length > 0) {
+      lines = input.lines;
+    } else if (input.itemId) {
+      console.warn('WARN [ADR-011/Phase7.6]: مسار توافقي فردي (single itemId) مستخدم في issueStock — يرجى استخدام مصفوفة lines[] المتعددة.');
+      lines = [
+        {
+          itemId: input.itemId,
+          quantity: input.quantity || 0,
+          batchNumber: input.batchNumber,
+          serialNumber: input.serialNumber,
+          notes: input.notes,
+        },
+      ];
+    }
 
     if (lines.length === 0) {
       return {
@@ -891,7 +893,7 @@ export class InventoryService {
     }
 
     const prefix = input.returnType === 'RETURN_RECEIPT' ? 'RET-REC' : 'RET-ISS';
-    const seqRes = await this.numberingEngine.generateNumber(tenantId, prefix, prefix.split('-')[1], input.idempotencyKey);
+    const seqRes = await this.numberingEngine.generateNumber(tenantId, prefix, prefix, input.idempotencyKey);
     const docNumber = seqRes.success && seqRes.data ? seqRes.data.formattedCode : `${prefix}-${Date.now()}`;
 
     const docId = `sdoc-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
@@ -951,7 +953,10 @@ export class InventoryService {
         idempotencyKey: `${input.idempotencyKey}-${idx}`,
       };
 
-      await this.storage.recordStockMovement(tenantId, movement, `${input.idempotencyKey}-${idx}`);
+      const movRes = await this.storage.recordStockMovement(tenantId, movement, `${input.idempotencyKey}-${idx}`);
+      if (!movRes.success) {
+        return movRes as any;
+      }
       movements.push(movement);
     }
 

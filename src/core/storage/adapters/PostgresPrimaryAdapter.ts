@@ -1185,9 +1185,9 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
-  public async saveTenant(tenant: TenantCompany, idempotencyKey: string): Promise<StorageResult<TenantCompany>> {
+  public async saveTenant(tenant: TenantCompany, idempotencyKey: string, skipIdempotency: boolean = false): Promise<StorageResult<TenantCompany>> {
     if (!this.pool) return this.missingConnError();
-    const existingKey = await this.checkIdempotency(tenant.id, idempotencyKey, 'saveTenant');
+    const existingKey = skipIdempotency ? null : await this.checkIdempotency(tenant.id, idempotencyKey, 'saveTenant');
     if (existingKey) return { success: true, data: existingKey };
 
     try {
@@ -1213,8 +1213,37 @@ export class PostgresPrimaryAdapter implements StoragePort {
         tenant.createdAt || new Date().toISOString(),
       ]);
 
-      await this.recordIdempotency(tenant.id, idempotencyKey, 'saveTenant', tenant);
-      return { success: true, data: tenant };
+      if (!res || !res.rows || res.rows.length === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/tenant-upsert-noop',
+            title: 'فشل إدراج/تحديث المنشأة',
+            status: 500,
+            detail: `لم يُنتج INSERT ... ON CONFLICT (id) صفًا فعليًا للمنشأة ${tenant.id}.`,
+          },
+        };
+      }
+
+      const row = res.rows[0];
+      const savedTenant: TenantCompany = {
+        id: row.id,
+        code: row.code,
+        nameAr: row.name_ar,
+        nameEn: row.name_en,
+        taxNumber: row.tax_number,
+        backendConfig: typeof row.backend_config === 'string' ? JSON.parse(row.backend_config) : row.backend_config,
+        status: row.status,
+        createdAt: row.created_at ? new Date(row.created_at).toISOString() : (tenant.createdAt || new Date().toISOString()),
+      };
+
+      if (!skipIdempotency) {
+        const idempRes = await this.recordIdempotency(tenant.id, idempotencyKey, 'saveTenant', savedTenant);
+        if (!idempRes.success) {
+          return { success: false, error: idempRes.error };
+        }
+      }
+      return { success: true, data: savedTenant };
     } catch (err: any) {
       return this.dbError(err);
     }
@@ -1377,7 +1406,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
-  public async saveUser(user: User, idempotencyKey: string): Promise<StorageResult<User>> {
+  public async saveUser(user: User, idempotencyKey: string, skipIdempotency: boolean = false): Promise<StorageResult<User>> {
     if (!this.pool) return this.missingConnError();
     if (!user.tenantId || user.tenantId.trim() === '') {
       return {
@@ -1711,7 +1740,32 @@ export class PostgresPrimaryAdapter implements StoragePort {
     });
   }
 
-  public async saveAccount(tenantId: string, account: Account, idempotencyKey: string): Promise<StorageResult<Account>> {
+  public async listAccounts(tenantId: string): Promise<StorageResult<Account[]>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const res = await this.query(
+          'SELECT * FROM an_accounts WHERE tenant_id = $1 ORDER BY code ASC',
+          [tenantId]
+        );
+        const accounts: Account[] = res.rows.map((r: any) => ({
+          code: r.code,
+          tenantId: r.tenant_id,
+          nameAr: r.name_ar,
+          type: r.type,
+          currency: r.currency,
+          debitBalance: Number(r.debit_balance),
+          creditBalance: Number(r.credit_balance),
+          isActive: r.is_active,
+        }));
+        return { success: true, data: accounts };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async saveAccount(tenantId: string, account: Account, idempotencyKey: string, skipIdempotency: boolean = false): Promise<StorageResult<Account>> {
     if (!this.pool) return this.missingConnError();
     return this.withTenantScope(tenantId, async () => {
       try {
@@ -2704,15 +2758,17 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
-  private async recordIdempotency(tenantId: string, key: string, operation: string, payload: any): Promise<void> {
-    if (!this.pool || !key) return;
+  private async recordIdempotency(tenantId: string, key: string, operation: string, payload: any): Promise<StorageResult<boolean>> {
+    if (!this.pool) return this.missingConnError();
+    if (!key) return { success: true, data: true };
     try {
       await this.pool.query(
         'INSERT INTO an_idempotency_keys (idempotency_key, tenant_id, operation, response_payload) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
         [key, tenantId, operation, JSON.stringify(payload)]
       );
-    } catch {
-      // Ignored
+      return { success: true, data: true };
+    } catch (err: any) {
+      return this.dbError(err);
     }
   }
 
@@ -3786,7 +3842,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
   }
 
   public async saveIdempotencyRecord(tenantId: string, key: string, operation: string, payload: any): Promise<StorageResult<void>> {
-    await this.recordIdempotency(tenantId, key, operation, payload);
+    const res = await this.recordIdempotency(tenantId, key, operation, payload);
+    if (!res.success) return { success: false, error: res.error };
     return { success: true, data: undefined };
   }
 
@@ -3999,7 +4056,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
   public async recordCustodyExpense(
     tenantId: string,
     transaction: CashCustodyTransaction,
-    idempotencyKey: string
+    idempotencyKey: string,
+    skipBalanceDeduction: boolean = false
   ): Promise<StorageResult<CashCustodyTransaction>> {
     if (!this.pool) return this.missingConnError();
     const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'recordCustodyExpense');
@@ -4009,17 +4067,19 @@ export class PostgresPrimaryAdapter implements StoragePort {
     try {
       await client.query('BEGIN');
 
-      // 1. Deduct custody balance atomically
-      const deductRes = await client.query(
-        `UPDATE an_cash_custodies 
-         SET current_balance = current_balance - $1, updated_at = NOW() 
-         WHERE tenant_id = $2 AND id = $3 AND current_balance >= $1 
-         RETURNING current_balance`,
-        [transaction.amount, tenantId, transaction.custodyId]
-      );
+      // 1. Deduct custody balance atomically (skipped if voucher already deducted atomically)
+      if (!skipBalanceDeduction) {
+        const deductRes = await client.query(
+          `UPDATE an_cash_custodies 
+           SET current_balance = current_balance - $1, updated_at = NOW() 
+           WHERE tenant_id = $2 AND id = $3 AND current_balance >= $1 
+           RETURNING current_balance`,
+          [transaction.amount, tenantId, transaction.custodyId]
+        );
 
-      if (deductRes.rows.length === 0) {
-        throw new Error('رصيد العهدة غير كافٍ أو العهدة غير موجودة في قاعدة البيانات.');
+        if (deductRes.rows.length === 0) {
+          throw new Error('رصيد العهدة غير كافٍ أو العهدة غير موجودة في قاعدة البيانات.');
+        }
       }
 
       // 2. Insert transaction
@@ -4709,7 +4769,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
   public async saveExpenseCategory(
     tenantId: string,
     category: ExpenseCategory,
-    idempotencyKey: string
+    idempotencyKey: string,
+    skipIdempotency: boolean = false
   ): Promise<StorageResult<ExpenseCategory>> {
     if (!this.pool) return this.missingConnError();
     try {

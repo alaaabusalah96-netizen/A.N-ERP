@@ -467,7 +467,8 @@ export class CashCustodyService {
     const recordRes = await this.port.recordCustodyExpense(
       tenantId,
       transaction,
-      payload.idempotencyKey
+      payload.idempotencyKey,
+      true // voucher was already saved and custody balance deducted atomically once for the document
     );
 
     if (recordRes.success && recordRes.data) {

@@ -115,6 +115,8 @@ export const SEED_CHART_OF_ACCOUNTS: Account[] = [
   { code: '5090', tenantId: SEED_TENANT_ID, nameAr: 'مصروفات عمومية وإدارية أخرى', nameEn: 'General & Admin Expense', type: 'EXPENSE', balance: 0, isActive: true },
 ];
 
+export const seedKey = (tag: string) => `seed-${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
 /**
  * seedOnlyInitialBootstrap:
  * Invoked STRICTLY ONCE during server startup before any HTTP requests are served.
@@ -123,15 +125,15 @@ export async function seedOnlyInitialBootstrap(storage: StoragePort): Promise<vo
   const tenantId = SEED_TENANT_ID;
 
   // 1. Save company profile
-  await storage.saveTenant(SEED_COMPANY_PROFILE, 'seed-company-init');
+  await storage.saveTenant(SEED_COMPANY_PROFILE, seedKey('company'), true);
 
   // 2. Seed chart of accounts
   for (const acc of SEED_CHART_OF_ACCOUNTS) {
-    await storage.saveAccount(tenantId, acc, `seed-acc-${acc.code}`);
+    await storage.saveAccount(tenantId, acc, seedKey('acc-' + acc.code), true);
   }
 
   // 3. Seed expense categories
   for (const cat of SEED_EXPENSE_CATEGORIES) {
-    await storage.saveExpenseCategory(tenantId, cat, `seed-cat-${cat.code}`);
+    await storage.saveExpenseCategory(tenantId, cat, seedKey('cat-' + cat.code), true);
   }
 }

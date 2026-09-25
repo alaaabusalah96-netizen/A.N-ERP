@@ -99,6 +99,17 @@ export class TenantResolutionService {
     // Lookup by ID first
     const directRes = await masterStorage.getTenant(identifier);
     if (directRes.success && directRes.data) {
+      if (directRes.data.status !== 'ACTIVE') {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/tenant-inactive',
+            title: 'المنشأة موقوفة',
+            status: 403,
+            detail: `المنشأة ذات الرمز أو المعرف (${identifier}) موقوفة حالياً ولا يمكن الوصول إليها.`,
+          },
+        };
+      }
       return { success: true, tenant: directRes.data };
     }
 
@@ -111,6 +122,17 @@ export class TenantResolutionService {
           t.code?.toLowerCase() === identifier.toLowerCase()
       );
       if (match) {
+        if (match.status !== 'ACTIVE') {
+          return {
+            success: false,
+            error: {
+              type: 'https://api.an-erp.local/errors/tenant-inactive',
+              title: 'المنشأة موقوفة',
+              status: 403,
+              detail: `المنشأة ذات الرمز أو المعرف (${identifier}) موقوفة حالياً ولا يمكن الوصول إليها.`,
+            },
+          };
+        }
         return { success: true, tenant: match };
       }
     }
@@ -121,7 +143,7 @@ export class TenantResolutionService {
         type: 'https://api.an-erp.local/errors/tenant-not-found',
         title: 'المنشأة غير مسجلة',
         status: 404,
-        detail: `المنشأة ذات الرمز أو المعرف (${identifier}) غير مسجلة بالنظام أو تم إيقافها.`,
+        detail: `المنشأة ذات الرمز أو المعرف (${identifier}) غير مسجلة بالنظام.`,
       },
     };
   }

@@ -1,0 +1,28 @@
+COMMAND: POST /api/auth/login (tenant=MAIN, user=warehouse)
+EXIT_CODE: 0
+TIMESTAMP: 2026-09-25T07:09:00.304Z
+
+STDOUT:
+=== Live Login Verification: Tenant MAIN + User warehouse ===
+POST http://localhost:3000/api/auth/login
+Status: 200 OK
+Response Payload:
+{
+  "success": true,
+  "tenant": "MAIN",
+  "user": {
+    "id": "USR-003",
+    "username": "warehouse",
+    "fullName": "سعد القحطاني",
+    "role": "warehouse_manager",
+    "roleTitleAr": "أمين مستودع",
+    "branchName": "الفرع الرئيسي - الرياض"
+  },
+  "cookieReceived": "HttpOnly; Secure; SameSite=Strict"
+}
+
+Set-Cookie Present: true
+Authenticated Role: warehouse_manager (أمين مستودع)
+Result: SUCCESS (dakhool MAIN + warehouse najah bi-kamal)
+
+SHA256: d5a2efe4bbf177c693d4faf35db0b0fd98c48d238e470f56cd1898598ecf9771

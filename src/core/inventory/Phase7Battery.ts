@@ -15,6 +15,7 @@
 
 import { StoragePort } from '../storage/StoragePort';
 import { InMemoryAdapter } from '../storage/adapters/InMemoryAdapter';
+import { PostgresPrimaryAdapter } from '../storage/adapters/PostgresPrimaryAdapter';
 import { PostingEngine } from '../engines/PostingEngine';
 import { NumberingEngine } from '../engines/NumberingEngine';
 import { InventoryService } from './InventoryService';
@@ -40,7 +41,17 @@ export interface Phase7BatteryReport {
 }
 
 export async function runPhase7Battery(storageOverride?: StoragePort): Promise<Phase7BatteryReport> {
-  const storage = storageOverride || new InMemoryAdapter();
+  let storage = storageOverride;
+  if (!storage) {
+    const primary = new PostgresPrimaryAdapter();
+    const health = await primary.checkHealth();
+    if (health.connected) {
+      await primary.initializeSchema();
+      storage = primary;
+    } else {
+      storage = new InMemoryAdapter();
+    }
+  }
   const postingEngine = new PostingEngine(storage);
   const numberingEngine = new NumberingEngine(storage);
   const inventoryService = new InventoryService(storage, postingEngine, numberingEngine);
@@ -537,15 +548,23 @@ export async function runPhase7Battery(storageOverride?: StoragePort): Promise<P
   const passedScenarios = scenarios.filter(s => s.passed).length;
   const failedScenarios = scenarios.filter(s => !s.passed).length;
 
+  const isPrimary = storage instanceof PostgresPrimaryAdapter || (storage as any).constructor?.name === 'PostgresPrimaryAdapter';
+  const adapterType = isPrimary
+    ? 'PostgreSQL (Supabase Primary)'
+    : 'InMemoryAdapter (Development / Test Execution)';
+
+  // Rule 3.1 & Rule v7.4: InMemoryAdapter can NEVER have isClosed=true.
+  const isClosed = isPrimary && failedScenarios === 0;
+
   return {
     phase: 'PHASE 7',
     module: 'المخازن والمخزون (Warehouses & Inventory - موديول 3 من 15)',
-    adapterType: 'InMemoryAdapter (Development / Test Execution)',
+    adapterType,
     timestamp: new Date().toISOString(),
     totalScenarios: scenarios.length,
     passedScenarios,
     failedScenarios,
-    isClosed: failedScenarios === 0,
+    isClosed,
     scenarios,
   };
 }

@@ -1,0 +1,195 @@
+COMMAND: psql -c "SELECT id, code, status FROM an_tenants; ..."
+EXIT_CODE: 0
+TIMESTAMP: 2026-09-25T07:08:37.097Z
+
+STDOUT:
+=== 1. SELECT id, code, status FROM an_tenants ===
+[
+  {
+    "id": "tenant-main",
+    "code": "MAIN",
+    "status": "ACTIVE"
+  }
+]
+
+=== 2. SELECT count(*) FROM an_accounts WHERE tenant_id='tenant-main' ===
+count = 14
+
+=== 3. SELECT count(*) FROM an_expense_categories WHERE tenant_id='tenant-main' ===
+count = 5
+
+=== 4. SELECT id, username, role, status FROM an_users WHERE tenant_id='tenant-main' ===
+[
+  {
+    "id": "USR-001",
+    "username": "accountant",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-ADMIN",
+    "username": "admin",
+    "role": "super_admin",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "user-privacy-1789629807951",
+    "username": "anon_034a403c_7951",
+    "role": "accountant",
+    "status": "INACTIVE"
+  },
+  {
+    "id": "user-privacy-1789629837914",
+    "username": "anon_52ff7657_7914",
+    "role": "accountant",
+    "status": "INACTIVE"
+  },
+  {
+    "id": "user-privacy-1789629957346",
+    "username": "anon_9b473efb_7346",
+    "role": "accountant",
+    "status": "INACTIVE"
+  },
+  {
+    "id": "user-privacy-1789815393849",
+    "username": "anon_a62617fb_3849",
+    "role": "accountant",
+    "status": "INACTIVE"
+  },
+  {
+    "id": "user-privacy-1789718242242",
+    "username": "anon_d9878169_2242",
+    "role": "accountant",
+    "status": "INACTIVE"
+  },
+  {
+    "id": "user-privacy-1789629989619",
+    "username": "anon_e7893a8b_9619",
+    "role": "accountant",
+    "status": "INACTIVE"
+  },
+  {
+    "id": "USR-002",
+    "username": "approver",
+    "role": "financial_approver",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-ARGON-1789371759079",
+    "username": "argon_user_1789371759079",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-ARGON-1789371826477",
+    "username": "argon_user_1789371826477",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-ARGON-1789469852477",
+    "username": "argon_user_1789469852477",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-ARGON-1789469882328",
+    "username": "argon_user_1789469882328",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-ARGON-1789470153299",
+    "username": "argon_user_1789470153299",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-ARGON-1789470499334",
+    "username": "argon_user_1789470499334",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-ARGON-1789718235100",
+    "username": "argon_user_1789718235100",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-ARGON-1789815320636",
+    "username": "argon_user_1789815320636",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "user-privacy-1789629945669",
+    "username": "employee_5669",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-4842",
+    "username": "live_acc_4834",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-6857",
+    "username": "live_user_6853",
+    "role": "accountant",
+    "status": "ACTIVE"
+  },
+  {
+    "id": "USR-003",
+    "username": "warehouse",
+    "role": "warehouse_manager",
+    "status": "ACTIVE"
+  }
+]
+
+=== 5. SELECT idempotency_key, operation FROM an_idempotency_keys (Sample) ===
+[
+  {
+    "idempotency_key": "test-fixed-idempotency-key-1790320113248",
+    "operation": "saveTenant"
+  },
+  {
+    "idempotency_key": "test-fixed-idempotency-key",
+    "operation": "saveTenant"
+  },
+  {
+    "idempotency_key": "reg-settle-291483",
+    "operation": "saveCustodySettlement"
+  },
+  {
+    "idempotency_key": "reg-settle-291483-post",
+    "operation": "postJournalEntry"
+  },
+  {
+    "idempotency_key": "reg-settle-291483-draft",
+    "operation": "createJournalEntry"
+  },
+  {
+    "idempotency_key": "reg-post-291483",
+    "operation": "postJournalEntry"
+  },
+  {
+    "idempotency_key": "reg-draft-291483",
+    "operation": "createJournalEntry"
+  },
+  {
+    "idempotency_key": "legacy-rcpt-291483",
+    "operation": "saveStockDocument"
+  },
+  {
+    "idempotency_key": "legacy-rcpt-291483-line-0",
+    "operation": "recordStockMovement"
+  },
+  {
+    "idempotency_key": "draft-return-issue-3items-291483",
+    "operation": "createJournalEntry"
+  }
+]
+
+SHA256: 5e7733ac0128a5588f40edf9d542407cbd2c82e3e0fd3c8e1d95c8ceb307eb21

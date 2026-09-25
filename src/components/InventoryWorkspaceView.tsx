@@ -228,10 +228,14 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
         },
         body: JSON.stringify({
           warehouseId: recWarehouseId,
-          itemId: recItemId,
-          quantity: recQty,
-          unitCost: recUnitCost,
-          batchNumber: recBatch || undefined,
+          lines: [
+            {
+              itemId: recItemId,
+              quantity: recQty,
+              unitCost: recUnitCost,
+              batchNumber: recBatch || undefined,
+            },
+          ],
           performedBy: currentUser.id,
           performedByName: currentUser.name,
           idempotencyKey: idemKey,
@@ -269,8 +273,12 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
         },
         body: JSON.stringify({
           warehouseId: issWarehouseId,
-          itemId: issItemId,
-          quantity: issQty,
+          lines: [
+            {
+              itemId: issItemId,
+              quantity: issQty,
+            },
+          ],
           purpose: issPurpose,
           performedBy: currentUser.id,
           performedByName: currentUser.name,

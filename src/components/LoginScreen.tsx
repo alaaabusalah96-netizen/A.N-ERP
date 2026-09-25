@@ -285,7 +285,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                     value={tenantCode}
                     onChange={(e) => setTenantCode(e.target.value)}
                     className="block w-full pr-10 pl-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white font-mono"
-                    placeholder="tenant-main أو رمز منشأتك"
+                    placeholder="رمز منشأتك"
                   />
                 </div>
               </div>

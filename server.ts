@@ -48,7 +48,7 @@ import { runPhase6Battery } from './src/core/tests/runPhase6Battery';
 import { CashCustodyService } from './src/core/modules/custody/CashCustodyService';
 import { ExpenseService } from './src/core/modules/expenses/ExpenseService';
 import { InventoryService } from './src/core/inventory/InventoryService';
-import { SEED_COMPANY_PROFILE, seedOnlyInitialBootstrap } from './src/core/seed/seedOnly';
+import { SEED_COMPANY_PROFILE, seedOnlyInitialBootstrap, seedKey, SEED_TENANT_ID } from './src/core/seed/seedOnly';
 import { runPhase7Battery } from './src/core/inventory/Phase7Battery';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
 import { AccountingService } from './src/core/accounting/AccountingService';
@@ -125,7 +125,7 @@ async function initSeedUsers(storage: StoragePort, tenantId: string = companyPro
       createdAt: new Date().toISOString(),
     };
 
-    await storage.saveUser(adminUser, 'init-admin-seed');
+    await storage.saveUser(adminUser, seedKey('admin'), true);
 
     console.log('\n============================================================');
     console.log('[A.N ERP v7.1] Initial Setup — Seed Administrator Created');
@@ -223,7 +223,7 @@ async function initSeedUsers(storage: StoragePort, tenantId: string = companyPro
   for (const u of defaultStandardUsers) {
     const check = await storage.getUserByUsername(tenantId, u.username);
     if (!check.success || !check.data) {
-      await storage.saveUser(u, `init-user-${u.id}`);
+      await storage.saveUser(u, seedKey(`user-${u.id}`), true);
     } else {
       const standardMatches = check.data.passwordHash
         ? await argon2.verify(check.data.passwordHash, standardPass).catch(() => false)
@@ -415,7 +415,9 @@ async function startServer() {
               return res.status(403).json(problem);
             }
           }
-        } catch (e) {}
+        } catch (e) {
+          console.error(JSON.stringify({ level: 'CRITICAL', op: 'csrf_validation', trace: crypto.randomUUID(), err: String(e) }));
+        }
       }
     }
     next();
@@ -785,7 +787,9 @@ async function startServer() {
             if (typeof dec === 'string' && dec.length > 0) {
               plainSecret = dec;
             }
-          } catch (e) {}
+          } catch (e) {
+            console.error(JSON.stringify({ level: 'CRITICAL', op: 'two_factor_secret_decrypt', trace: crypto.randomUUID(), err: String(e) }));
+          }
         }
         if (!plainSecret || typeof plainSecret !== 'string') {
           plainSecret = generateSecret();
@@ -819,7 +823,9 @@ async function startServer() {
             if (typeof dec === 'string' && dec.length > 0) {
               plainSecret = dec;
             }
-          } catch (e) {}
+          } catch (e) {
+            console.error(JSON.stringify({ level: 'CRITICAL', op: 'two_factor_verify_decrypt', trace: crypto.randomUUID(), err: String(e) }));
+          }
           if (plainSecret) {
             const verifyResult = await verify({ token: twoFactorCode, secret: plainSecret });
             twoFactorValid = !!verifyResult.valid;
@@ -1012,7 +1018,9 @@ async function startServer() {
           }
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error(JSON.stringify({ level: 'CRITICAL', op: 'refresh_token_tenant_parsing', trace: crypto.randomUUID(), err: String(e) }));
+    }
 
     if (!targetStorage) {
       return res.status(401).json({
@@ -1089,7 +1097,9 @@ async function startServer() {
             }
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error(JSON.stringify({ level: 'CRITICAL', op: 'logout_session_revocation', trace: crypto.randomUUID(), err: String(e) }));
+      }
     }
 
     res.clearCookie('an_access_token', { path: '/' });
@@ -1266,7 +1276,9 @@ async function startServer() {
           const rawPii = typeof u.encryptedPii === 'string' ? u.encryptedPii : JSON.stringify(u.encryptedPii);
           decryptedPii = EncryptionService.decryptPII<any>(rawPii);
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error(JSON.stringify({ level: 'CRITICAL', op: 'list_users_decrypt_pii', trace: crypto.randomUUID(), err: String(e) }));
+      }
       return {
         id: u.id,
         username: u.username,
@@ -3623,7 +3635,9 @@ async function startServer() {
     if (typeof (masterStorage as any).initializeSchema === 'function') {
       const initRes = await (masterStorage as any).initializeSchema();
       if (!initRes.success) {
-        console.warn('تنبيه: فشل تهيئة المخطط الأولي:', initRes.error);
+        const msg = `CRITICAL [trace=${crypto.randomUUID()}] فشل تهيئة المخطط الأولي: ${JSON.stringify(initRes.error)}`;
+        if (process.env.NODE_ENV === 'production') throw new Error(msg);
+        console.error(msg);
       } else {
         console.log('✓ تم فحص وتهيئة مخطط جداول قاعدة البيانات بنجاح.');
       }
@@ -3631,8 +3645,40 @@ async function startServer() {
     await seedOnlyInitialBootstrap(masterStorage);
     await initSeedUsers(masterStorage, companyProfile.id);
     console.log('✓ تم فحص وبذر بيانات المستأجر والمستخدمين بنجاح (seedOnly).');
+
+    // Startup Fail-Fast Guard (Section 13.2 & Item A-3)
+    const t = crypto.randomUUID();
+    const problems: string[] = [];
+    const gTenant = await masterStorage.getTenant(SEED_TENANT_ID);
+    if (!gTenant.success || !gTenant.data || gTenant.data.status !== 'ACTIVE') {
+      problems.push(`an_tenants: لا يوجد صف ACTIVE للمنشأة ${SEED_TENANT_ID}`);
+    }
+    const gAcc = masterStorage.listAccounts ? await masterStorage.listAccounts(SEED_TENANT_ID) : { success: false, data: [] };
+    if (!gAcc.success || (gAcc.data?.length ?? 0) < 14) {
+      problems.push(`an_accounts: ${gAcc.data?.length ?? 0} بدل 14`);
+    }
+    const gCat = await masterStorage.listExpenseCategories(SEED_TENANT_ID);
+    if (!gCat.success || (gCat.data?.length ?? 0) < 5) {
+      problems.push(`فئات المصروفات: ${gCat.data?.length ?? 0} بدل 5`);
+    }
+    const gUsr = await masterStorage.listUsers(SEED_TENANT_ID);
+    if (!gUsr.success || (gUsr.data?.length ?? 0) < 1) {
+      problems.push(`an_users: ${gUsr.data?.length ?? 0}`);
+    }
+    const needed = ['admin', 'accountant', 'approver', 'warehouse'];
+    const missing = needed.filter((u) => !(gUsr.data ?? []).some((x) => x.username === u));
+    if (missing.length) {
+      problems.push(`مستخدمون مفقودون: ${missing.join(', ')}`);
+    }
+    if (problems.length) {
+      const msg = `CRITICAL [trace=${t}] بذر الإقلاع غير مكتمل: ${problems.join(' | ')}`;
+      if (process.env.NODE_ENV === 'production') throw new Error(msg);
+      console.error(msg);
+    }
   } catch (seedErr) {
-    console.error('تنبيه: تعذر إكمال بذر البيانات الأولية تلقائياً:', seedErr);
+    const msg = `CRITICAL [trace=${crypto.randomUUID()}] تعذر إكمال بذر البيانات الأولية تلقائياً: ${seedErr instanceof Error ? seedErr.message : String(seedErr)}`;
+    if (process.env.NODE_ENV === 'production') throw new Error(msg);
+    console.error(msg, seedErr);
   }
 
   app.listen(PORT, '0.0.0.0', () => {

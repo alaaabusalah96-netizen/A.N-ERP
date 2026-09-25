@@ -749,7 +749,7 @@ export interface StoragePort {
 
   // Tenant / Company Aggregates
   getTenant(tenantId: string): Promise<StorageResult<TenantCompany>>;
-  saveTenant(tenant: TenantCompany, idempotencyKey: string): Promise<StorageResult<TenantCompany>>;
+  saveTenant(tenant: TenantCompany, idempotencyKey: string, skipIdempotency?: boolean): Promise<StorageResult<TenantCompany>>;
   listTenants(): Promise<StorageResult<TenantCompany[]>>;
 
   // Users & RBAC
@@ -757,7 +757,7 @@ export interface StoragePort {
   getUserByUsername(tenantId: string, username: string): Promise<StorageResult<User>>;
   getUserById(userId: string): Promise<StorageResult<User>>;
   listUsers(tenantId?: string): Promise<StorageResult<User[]>>;
-  saveUser(user: User, idempotencyKey: string): Promise<StorageResult<User>>;
+  saveUser(user: User, idempotencyKey: string, skipIdempotency?: boolean): Promise<StorageResult<User>>;
   updateUser(userId: string, updates: Partial<User>): Promise<StorageResult<User>>;
 
   // Login Attempts & Security Tracking (Anomaly Detection & Lockout)
@@ -776,7 +776,8 @@ export interface StoragePort {
 
   // Chart of Accounts & Balances
   getAccount(tenantId: string, accountCode: string): Promise<StorageResult<Account>>;
-  saveAccount(tenantId: string, account: Account, idempotencyKey: string): Promise<StorageResult<Account>>;
+  listAccounts?(tenantId: string): Promise<StorageResult<Account[]>>;
+  saveAccount(tenantId: string, account: Account, idempotencyKey: string, skipIdempotency?: boolean): Promise<StorageResult<Account>>;
   getAccountBalance(
     tenantId: string,
     accountCode: string
@@ -916,7 +917,7 @@ export interface StoragePort {
   getCashCustody(tenantId: string, custodyId: string): Promise<StorageResult<CashCustody | null>>;
   listCashCustodies(tenantId: string, filter?: { status?: string; employeeId?: string }): Promise<StorageResult<CashCustody[]>>;
   updateCashCustody(tenantId: string, custodyId: string, updates: Partial<CashCustody>): Promise<StorageResult<CashCustody>>;
-  recordCustodyExpense(tenantId: string, transaction: CashCustodyTransaction, idempotencyKey: string): Promise<StorageResult<CashCustodyTransaction>>;
+  recordCustodyExpense(tenantId: string, transaction: CashCustodyTransaction, idempotencyKey: string, skipBalanceDeduction?: boolean): Promise<StorageResult<CashCustodyTransaction>>;
   listCustodyTransactions(tenantId: string, custodyId?: string): Promise<StorageResult<CashCustodyTransaction[]>>;
   saveCustodySettlement(tenantId: string, settlement: CashCustodySettlement, idempotencyKey: string): Promise<StorageResult<CashCustodySettlement>>;
   listCustodySettlements(tenantId: string, custodyId?: string): Promise<StorageResult<CashCustodySettlement[]>>;
@@ -927,7 +928,7 @@ export interface StoragePort {
   listExpenseRequests(tenantId: string, filter?: { status?: string; employeeId?: string }): Promise<StorageResult<ExpenseRequest[]>>;
   updateExpenseRequestStatus(tenantId: string, requestId: string, updates: Partial<ExpenseRequest>, idempotencyKey: string): Promise<StorageResult<ExpenseRequest>>;
   listExpenseCategories(tenantId: string): Promise<StorageResult<ExpenseCategory[]>>;
-  saveExpenseCategory(tenantId: string, category: ExpenseCategory, idempotencyKey: string): Promise<StorageResult<ExpenseCategory>>;
+  saveExpenseCategory(tenantId: string, category: ExpenseCategory, idempotencyKey: string, skipIdempotency?: boolean): Promise<StorageResult<ExpenseCategory>>;
 
   // Phase 7: Warehouses & Inventory Module Operations (3 of 15 - بند 7)
   saveWarehouse(tenantId: string, warehouse: Warehouse, idempotencyKey: string): Promise<StorageResult<Warehouse>>;
