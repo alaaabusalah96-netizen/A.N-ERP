@@ -47,6 +47,7 @@ async function main() {
   if (!suite.allPassed) {
     process.exit(1);
   }
+  process.exit(0);
 }
 
 main().catch((err) => {

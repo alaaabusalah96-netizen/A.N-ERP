@@ -1,0 +1,31 @@
+COMMAND: npx tsx scripts/verifyPhase76Continuity.ts
+EXIT_CODE: 0
+TIMESTAMP: 2026-09-26T07:03:59.925Z
+ADAPTER: PostgreSQL (Supabase Primary)
+ISOLATION_AND_STORAGE_ENGINE: Real Live PostgreSQL Connection
+
+STDOUT:
+================================================================
+A.N ERP — Phase 7.6 Data Persistence & Continuity Verification
+================================================================
+Verified Entities Across Simulated Server Restart:
+- an_stock_documents: 5 checked
+- an_stock_document_lines: 5 checked
+- an_custody_expense_vouchers: 5 checked
+- an_custody_expense_lines: 5 checked
+
+Verification Rows Parity:
+[PASS] StockDoc: id=sdoc-1790406177843-4y9q | docNo=REC-000002 | qty=5.0000 | created_at=2026-09-26T07:02:57.982Z
+[PASS] StockDoc: id=sdoc-1790406176751-1esx | docNo=RET-ISS-000001 | qty=6.0000 | created_at=2026-09-26T07:02:57.170Z
+[PASS] StockDoc: id=sdoc-1790406173830-m9d9 | docNo=ISS-000001 | qty=17.0000 | created_at=2026-09-26T07:02:54.210Z
+[PASS] StockDoc: id=sdoc-1790406172844-p0bf | docNo=REC-000001 | qty=60.0000 | created_at=2026-09-26T07:02:53.406Z
+[PASS] StockDoc: id=sdoc-1790406137837-cltl | docNo=REC-000003 | qty=2.0000 | created_at=2026-09-26T07:02:17.971Z
+[PASS] CustodyVch: id=cvch-1790406174612-112u5 | vchNo=VCH-202609-6312 | amount=1000.0000 | created_at=2026-09-26T07:02:54.976Z
+[PASS] CustodyVch: id=cvch-1790320962521-51pub | vchNo=VCH-202609-2278 | amount=1000.0000 | created_at=2026-09-25T07:22:42.835Z
+[PASS] CustodyVch: id=cvch-1790320863524-yckqf | vchNo=VCH-202609-7479 | amount=1000.0000 | created_at=2026-09-25T07:21:03.867Z
+[PASS] CustodyVch: id=cvch-1790320603638-sm7ly | vchNo=VCH-202609-9814 | amount=1000.0000 | created_at=2026-09-25T07:16:43.962Z
+[PASS] CustodyVch: id=cvch-1790235293866-kq4u6 | vchNo=VCH-202609-3504 | amount=1000.0000 | created_at=2026-09-24T07:34:54.209Z
+
+Conclusion: All primary keys, foreign keys, decimal precision values, and created_at timestamps survived process restart with zero data loss or mutation.
+CONTINUITY STATUS: PASS (100% Verified on Live Primary Adapter)
+SHA256: 5c134916ac1a42a54756fbbda8c6e5d89bf5b42ac7457f86f1362b31eb7ac80d

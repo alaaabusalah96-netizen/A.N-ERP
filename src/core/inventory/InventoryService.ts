@@ -352,6 +352,14 @@ export class InventoryService {
   // ============================================================================
 
   public async receiveStock(tenantId: string, input: ReceiveStockInput): Promise<ServiceResult<StockDocument>> {
+    const idempotencyKey = input.idempotencyKey || input.header?.idempotencyKey;
+    if (idempotencyKey) {
+      const cached = await this.storage.checkIdempotencyRecord(tenantId, idempotencyKey, 'receiveStock');
+      if (cached.success && cached.data) {
+        return { success: true, data: cached.data };
+      }
+    }
+
     const warehouseId = input.warehouseId || input.header?.warehouseId;
     if (!warehouseId) {
       return {
@@ -439,7 +447,7 @@ export class InventoryService {
       resolvedItems.push({ item: itemRes.data, line });
     }
 
-    const idempotencyKey = input.idempotencyKey || input.header?.idempotencyKey || `rec-${Date.now()}`;
+    const finalIdempotencyKey = idempotencyKey || input.header?.idempotencyKey || `rec-${Date.now()}`;
     const performedBy = input.performedBy || input.header?.performedBy || 'system';
     const performedByName = input.performedByName || input.header?.performedByName || 'أمين المستودع';
     const sourceDocType = input.sourceDocumentType || input.header?.sourceDocumentType || 'PURCHASE_INVOICE';
@@ -448,7 +456,7 @@ export class InventoryService {
     const generalNotes = input.notes || input.header?.notes;
 
     // Generate atomic document number for the entire receipt
-    const seqRes = await this.numberingEngine.generateNumber(tenantId, 'STK-REC', 'REC', idempotencyKey);
+    const seqRes = await this.numberingEngine.generateNumber(tenantId, 'STK-REC', 'REC', finalIdempotencyKey);
     const documentNumber = seqRes.success && seqRes.data ? seqRes.data.formattedCode : `REC-${Date.now()}`;
     const docId = `sdoc-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
 
@@ -565,7 +573,7 @@ export class InventoryService {
       movements,
       performedBy,
       performedByName,
-      idempotencyKey,
+      idempotencyKey: finalIdempotencyKey,
       createdAt: new Date().toISOString(),
       postedAt: new Date().toISOString(),
       // Backward compatibility fields for legacy tests/code
@@ -575,11 +583,23 @@ export class InventoryService {
       unitCost: docLines[0]?.unitCost,
     };
 
-    await this.storage.saveStockDocument(tenantId, stockDoc, idempotencyKey);
-    return { success: true, data: stockDoc };
+    const saveRes = await this.storage.saveStockDocument(tenantId, stockDoc, finalIdempotencyKey);
+    const finalDoc = (saveRes.success && saveRes.data) ? saveRes.data : stockDoc;
+    if (finalIdempotencyKey) {
+      await this.storage.saveIdempotencyRecord(tenantId, finalIdempotencyKey, 'receiveStock', finalDoc);
+    }
+    return { success: true, data: finalDoc };
   }
 
   public async issueStock(tenantId: string, input: IssueStockInput): Promise<ServiceResult<StockDocument>> {
+    const idempotencyKey = input.idempotencyKey || input.header?.idempotencyKey;
+    if (idempotencyKey) {
+      const cached = await this.storage.checkIdempotencyRecord(tenantId, idempotencyKey, 'issueStock');
+      if (cached.success && cached.data) {
+        return { success: true, data: cached.data };
+      }
+    }
+
     const warehouseId = input.warehouseId || input.header?.warehouseId;
     if (!warehouseId) {
       return {
@@ -682,7 +702,7 @@ export class InventoryService {
       resolvedItems.push({ item, line, availableQty, avgCost });
     }
 
-    const idempotencyKey = input.idempotencyKey || input.header?.idempotencyKey || `iss-${Date.now()}`;
+    const finalIdempotencyKey = idempotencyKey || input.header?.idempotencyKey || `iss-${Date.now()}`;
     const performedBy = input.performedBy || input.header?.performedBy || 'system';
     const performedByName = input.performedByName || input.header?.performedByName || 'أمين المستودع';
     const sourceDocType = input.sourceDocumentType || input.header?.sourceDocumentType || 'SALES_DELIVERY';
@@ -691,7 +711,7 @@ export class InventoryService {
     const generalNotes = input.notes || input.header?.notes;
 
     // Generate atomic numbering for the issue document
-    const seqRes = await this.numberingEngine.generateNumber(tenantId, 'STK-ISS', 'ISS', idempotencyKey);
+    const seqRes = await this.numberingEngine.generateNumber(tenantId, 'STK-ISS', 'ISS', finalIdempotencyKey);
     const documentNumber = seqRes.success && seqRes.data ? seqRes.data.formattedCode : `ISS-${Date.now()}`;
     const docId = `sdoc-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
 
@@ -749,10 +769,10 @@ export class InventoryService {
         performedBy,
         performedByName,
         timestamp: new Date().toISOString(),
-        idempotencyKey: `${idempotencyKey}-line-${idx}`,
+        idempotencyKey: `${finalIdempotencyKey}-line-${idx}`,
       };
 
-      const movRes = await this.storage.recordStockMovement(tenantId, movement, `${idempotencyKey}-line-${idx}`);
+      const movRes = await this.storage.recordStockMovement(tenantId, movement, `${finalIdempotencyKey}-line-${idx}`);
       if (!movRes.success) return movRes as any;
       movements.push(movement);
 
@@ -790,7 +810,7 @@ export class InventoryService {
       movements,
       performedBy,
       performedByName,
-      idempotencyKey,
+      idempotencyKey: finalIdempotencyKey,
       createdAt: new Date().toISOString(),
       postedAt: new Date().toISOString(),
       // Backward compatibility fields
@@ -800,8 +820,12 @@ export class InventoryService {
       unitCost: docLines[0]?.unitCost,
     };
 
-    await this.storage.saveStockDocument(tenantId, stockDoc, idempotencyKey);
-    return { success: true, data: stockDoc };
+    const saveRes = await this.storage.saveStockDocument(tenantId, stockDoc, finalIdempotencyKey);
+    const finalDoc = (saveRes.success && saveRes.data) ? saveRes.data : stockDoc;
+    if (finalIdempotencyKey) {
+      await this.storage.saveIdempotencyRecord(tenantId, finalIdempotencyKey, 'issueStock', finalDoc);
+    }
+    return { success: true, data: finalDoc };
   }
 
   // ============================================================================

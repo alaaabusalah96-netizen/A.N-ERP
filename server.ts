@@ -1137,6 +1137,7 @@ async function startServer() {
         branchName: userRecord?.branchName || 'الفرع الرئيسي',
         is2faEnabled: !!userRecord?.twoFactorEnabled,
         emergencyBackupCodesCount: userRecord?.backupCodes?.length || userRecord?.hashedBackupCodes?.length || 0,
+        backupCodesRemaining: userRecord?.backupCodes?.length || userRecord?.hashedBackupCodes?.length || 0,
       },
       session: {
         sessionId: auth.sessionId,
@@ -1338,7 +1339,14 @@ async function startServer() {
     await storage.saveUser(newUser, `create-user-${newId}`);
     await recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'CREATE_USER', 'USER', newUser.id, { username, role }, req.ip || '127.0.0.1', tenantId, storage);
 
-    return res.json({ success: true, data: newUser, message: 'تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام' });
+    // Sanitize user object to prevent leaking hashed secrets or backup code arrays
+    const { passwordHash: _ph, twoFactorSecret: _ts, encryptedPii: _ep, backupCodes: _bc, hashedBackupCodes: _hbc, ...safeUser } = newUser;
+    const userResponse = {
+      ...safeUser,
+      backupCodesRemaining: (_bc?.length || _hbc?.length || 0),
+    };
+
+    return res.json({ success: true, data: userResponse, message: 'تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام' });
   });
 
   // 1L — Invitation Signed Link Generation

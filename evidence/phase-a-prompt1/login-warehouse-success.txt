@@ -1,6 +1,6 @@
 COMMAND: POST /api/auth/login (tenant=MAIN, user=warehouse)
 EXIT_CODE: 0
-TIMESTAMP: 2026-09-25T07:09:00.304Z
+TIMESTAMP: 2026-09-26T07:11:36.535Z
 
 STDOUT:
 === Live Login Verification: Tenant MAIN + User warehouse ===
@@ -25,4 +25,4 @@ Set-Cookie Present: true
 Authenticated Role: warehouse_manager (أمين مستودع)
 Result: SUCCESS (dakhool MAIN + warehouse najah bi-kamal)
 
-SHA256: d5a2efe4bbf177c693d4faf35db0b0fd98c48d238e470f56cd1898598ecf9771
+SHA256: 1071d3ebfb2d921a694c8f625376afc090a1306183428f9f3361fc2ac3206863

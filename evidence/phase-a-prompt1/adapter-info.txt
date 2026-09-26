@@ -1,0 +1,4 @@
+adapterName: PostgreSQL (Supabase Primary)
+adapterType: PostgreSQL (Supabase Primary)
+نوع البطارية: Primary
+استمرارية بعد Restart: نعم
