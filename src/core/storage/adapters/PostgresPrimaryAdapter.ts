@@ -218,11 +218,12 @@ export class PostgresPrimaryAdapter implements StoragePort {
 
       -- Idempotency Records
       CREATE TABLE IF NOT EXISTS an_idempotency_keys (
-        idempotency_key VARCHAR(128) PRIMARY KEY,
+        idempotency_key VARCHAR(128) NOT NULL,
         tenant_id VARCHAR(64) NOT NULL,
         operation VARCHAR(64) NOT NULL,
         response_payload JSONB NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (tenant_id, idempotency_key, operation)
       );
 
       -- Journal Entries
@@ -2753,7 +2754,15 @@ export class PostgresPrimaryAdapter implements StoragePort {
         return res.rows[0].response_payload;
       }
       return null;
-    } catch {
+    } catch (err: any) {
+      console.error('[PostgresPrimaryAdapter] checkIdempotency error:', {
+        level: 'ERROR',
+        op: 'checkIdempotency',
+        tenantId,
+        key,
+        operation,
+        err: err?.message || String(err),
+      });
       return null;
     }
   }
@@ -5395,15 +5404,19 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
-      await client.query('COMMIT');
-
       const savedMovement: StockMovement = {
         ...movement,
         balanceAfterQty: newQty,
         idempotencyKey,
       };
 
-      await this.recordIdempotency(tenantId, idempotencyKey, 'recordStockMovement', savedMovement);
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'recordStockMovement', savedMovement);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        return { success: false, error: idempRes.error };
+      }
+
+      await client.query('COMMIT');
       return { success: true, data: savedMovement };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -6314,8 +6327,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'saveStockDocument', doc);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        return { success: false, error: idempRes.error };
+      }
+
       await client.query('COMMIT');
-      await this.recordIdempotency(tenantId, idempotencyKey, 'saveStockDocument', doc);
       return { success: true, data: doc };
     } catch (err: any) {
       await client.query('ROLLBACK');

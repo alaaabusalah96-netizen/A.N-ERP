@@ -516,10 +516,10 @@ export class InventoryService {
         performedBy,
         performedByName,
         timestamp: new Date().toISOString(),
-        idempotencyKey: `${idempotencyKey}-line-${idx}`,
+        idempotencyKey: `${finalIdempotencyKey}-line-${idx}`,
       };
 
-      const movRes = await this.storage.recordStockMovement(tenantId, movement, `${idempotencyKey}-line-${idx}`);
+      const movRes = await this.storage.recordStockMovement(tenantId, movement, `${finalIdempotencyKey}-line-${idx}`);
       if (!movRes.success) return movRes as any;
       movements.push(movement);
 
