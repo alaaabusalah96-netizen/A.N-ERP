@@ -10,7 +10,7 @@
       "section": "1A (بند 8)",
       "passed": true,
       "evidence": {
-        "familyId": "fam-ce8ab39b-591a-46e1-9850-ce9eb5c9a049",
+        "familyId": "fam-7e62a9c0-5a8b-45db-95da-1658f3ace313",
         "firstRotationSuccess": true,
         "reuseBlockedImmediately": true,
         "familyEntirelyInvalidated": true,
@@ -74,10 +74,10 @@
       "section": "1A & 8",
       "passed": true,
       "evidence": {
-        "idempotencyKey": "idemp-login-1790234063708",
-        "firstReqSessionId": "ses-1790234063709",
+        "idempotencyKey": "idemp-login-1790580695329",
+        "firstReqSessionId": "ses-1790580695329",
         "secondReqIsCached": true,
-        "secondReqSessionId": "ses-1790234063709"
+        "secondReqSessionId": "ses-1790580695329"
       }
     },
     {
@@ -120,8 +120,8 @@
       "evidence": {
         "isAnomalyDetected": true,
         "calculatedDistanceKm": 4939,
-        "calculatedVelocityKmH": 296156,
-        "alertSummary": "تم رصد قفزة جغرافية مستحيلة بسرعة مقدرة 296156 كم/ساعة عبر مسافة 4939 كم. تم فرض التحقق الثنائي فورا."
+        "calculatedVelocityKmH": 296195,
+        "alertSummary": "تم رصد قفزة جغرافية مستحيلة بسرعة مقدرة 296195 كم/ساعة عبر مسافة 4939 كم. تم فرض التحقق الثنائي فورا."
       }
     },
     {
@@ -143,11 +143,11 @@
         "testedAdapter": "PostgreSQL (Supabase Primary)",
         "totalRequests": 25,
         "successRate": "100.0%",
-        "avgLatencyMs": 15.97,
-        "p50LatencyMs": 15.64,
-        "p95LatencyMs": 19.13,
-        "p99LatencyMs": 20.4,
-        "throughputRps": 62.5
+        "avgLatencyMs": 15.23,
+        "p50LatencyMs": 14.85,
+        "p95LatencyMs": 15.21,
+        "p99LatencyMs": 24.39,
+        "throughputRps": 65.62
       }
     }
   ]

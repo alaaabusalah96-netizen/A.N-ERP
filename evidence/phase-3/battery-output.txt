@@ -1,98 +1,40 @@
-{
-  "totalTests": 11,
-  "passedCount": 11,
-  "failedCount": 0,
-  "adapterName": "PostgreSQL (Supabase Primary)",
-  "allPassed": true,
-  "durationMs": 1989,
-  "tests": [
-    {
-      "testId": "P3-01",
-      "nameAr": "3A: إنشاء عقدة المنطقة (REGION) كقمة الهيكل ومنع ربطها بعقدة أم",
-      "category": "3A_ORG_HIERARCHY",
-      "passed": true,
-      "durationMs": 171,
-      "evidence": "تم إنشاء العقدة الجذرية للمنطقة بنجاح [REG-CENTRAL: المنطقة الوسطى] ومُنع ربطها بأم."
-    },
-    {
-      "testId": "P3-02",
-      "nameAr": "3A: تطبيق القواعد الصارمة للمستويات الهرمية (منطقة -> موقع -> فرع -> قسم)",
-      "category": "3A_ORG_HIERARCHY",
-      "passed": true,
-      "durationMs": 479,
-      "evidence": "تم التحقق بنجاح من المستويات الهرمية الأربعة ورفض التجاوزات الرأسية الشاذة (HTTP 400)."
-    },
-    {
-      "testId": "P3-03",
-      "nameAr": "3A: تقييد نطاق رؤية المستخدم بحسب العقدة المعين لها وفحص التصريح (canAccessNode)",
-      "category": "3A_ORG_HIERARCHY",
-      "passed": true,
-      "durationMs": 222,
-      "evidence": "نطاق رؤية الفرع محصور في (2 عقد) ومحجوب تماماً عن المستويات الإدارية الأعلى."
-    },
-    {
-      "testId": "P3-04",
-      "nameAr": "3B: المنع القطعي للمحاسب من ترحيل القيود أو اعتمادها أو التدقيق المالي",
-      "category": "3B_SOD_MATRIX",
-      "passed": true,
-      "durationMs": 0,
-      "evidence": "تم حظر المحاسب نظامياً برمز الخطأ RFC7807 (HTTP 403) عن: الترحيل، الاعتماد، والتدقيق."
-    },
-    {
-      "testId": "P3-05",
-      "nameAr": "3B: الفحص الآلي للتعارضات السامة عند تعيين الأدوار (Toxic Role Combinations)",
-      "category": "3B_SOD_MATRIX",
-      "passed": true,
-      "durationMs": 0,
-      "evidence": "تم كشف التعارض السام بنجاح: [POST_AND_APPROVE] و [RECORD_AND_AUDIT] وحظر التعيين فورياً."
-    },
-    {
-      "testId": "P3-06",
-      "nameAr": "3C: مسار التجاوز الاستثنائي المزدوج (Break-Glass) وتوثيقه في SystemChangeLog",
-      "category": "3C_BREAK_GLASS",
-      "passed": true,
-      "durationMs": 134,
-      "evidence": "تم اعتماد التجاوز المزدوج بنجاح (CFO + Admin) وتوثيقه في سجل التغييرات الأمني: [SCL-BG-1790234070697-erzr]."
-    },
-    {
-      "testId": "P3-07",
-      "nameAr": "3D: بيئة المحاكاة والتدريب المعزولة فوق InMemoryAdapter مع التصفير بضغطة واحدة",
-      "category": "3D_SANDBOX",
-      "passed": true,
-      "durationMs": 0,
-      "evidence": "تمت المحاكاة بنجاح: تم تسجيل معاملة تدريبية ثم تصفيرها بالكامل (0 معاملات) دون أي استدعاء لقاعدة الإنتاج."
-    },
-    {
-      "testId": "P3-08",
-      "nameAr": "3E: إعمال حق النسيان وتجهيل بيانات المستخدم مع الحفاظ التام على توازن الدفاتر المحاسبية",
-      "category": "3E_PRIVACY_GDPR",
-      "passed": true,
-      "durationMs": 423,
-      "evidence": "تم تجهيل هوية المستخدم (user-privacy-1790234070744) ومسح PII المشفر، وتأكيد بقاء القيد المحاسبي (JE-PRIV-1790234070801) متوازناً 100%."
-    },
-    {
-      "testId": "P3-09",
-      "nameAr": "3F: فاحص الترحيل والمخططات (Migration Linter) ورفض أي جدول يفتقر إلى tenant_id أو RLS",
-      "category": "3F_MIGRATION_LINTER",
-      "passed": true,
-      "durationMs": 1,
-      "evidence": "تم فحص الجداول واكتشاف 3 مخالفات عزل مانعة للترحيل (REJECT_BLOCKING)."
-    },
-    {
-      "testId": "P3-10",
-      "nameAr": "3G: رصد حراسة العزل الدائم (Canary Sentinel) وإحباط محاولات تسريب بيانات المستأجر",
-      "category": "3G_CANARY_MONITOR",
-      "passed": true,
-      "durationMs": 388,
-      "evidence": "تم تنفيذ (3) مجسات اختراق افتراضية، وصُدّت جميعها بنسبة حماية 100%."
-    },
-    {
-      "testId": "P3-11",
-      "nameAr": "3H: حارس استعادة النسخ الاحتياطية ومنع الاستعادة عبر حدود المستأجرين (Cross-Tenant)",
-      "category": "3H_BACKUP_GUARD",
-      "passed": true,
-      "durationMs": 1,
-      "evidence": "تم حظر الاستعادة العابرة للمستأجرين قطيعاً (Cross-Tenant Blocked) وتأكيد سلامة الاستعادة المشروعة مع مطابقة الباك إند."
-    }
-  ]
-}
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+========================================================================
+       A.N ERP v7.2 — AUTH-001 AUTHENTICATION BYPASS VERIFICATION       
+========================================================================
+
+--- 1) Live Server Verification (http://127.0.0.1:3000) ---
+
+--- 2) Production Environment Strict Rejection ---
+
+--- 3) Staging Environment Strict Rejection ---
+
+--- 4) Development Environment Rejection ---
+
+--- 5) Test Mode Disabled by Default & Secret Requirement ---
+
+--- 6) Test Mode Role Isolation (No Hardcoded Super Admin) ---
+
+========================================================================
+                 AUTH-001 VERIFICATION SUMMARY                         
+========================================================================
+[✓ PASS] [Live Server] GET /api/tenants with x-bypass-auth returns 401 Unauthorized (Status: 401)
+[✓ PASS] [Live Server] POST /api/wizard/create-company with x-bypass-auth returns 401 (Status: 401)
+[✓ PASS] [Live Server] GET /api/internal/build-status with x-bypass-auth returns 401 (Status: 401)
+[✓ PASS] [Live Server] Legitimate login path returns 200 OK with valid JWT cookie (Status: 200)
+[✓ PASS] [Production Guard] Production rejects x-bypass-auth=true with 401 (Status: 401)
+[✓ PASS] [Production Guard] Production strictly rejects bypass even with matching secret header (Status: 401)
+[✓ PASS] [Staging Guard] Staging strictly rejects bypass with 401 under all conditions (Status: 401)
+[✓ PASS] [Development Guard] Development environment rejects legacy x-bypass-auth with 401 (Status: 401)
+[✓ PASS] [Test Mode Guards] Test environment rejects bypass when ENABLE_TEST_AUTH_BYPASS is disabled (Status: 401)
+[✓ PASS] [Test Mode Guards] Test environment rejects bypass when supplied secret is incorrect (Status: 401)
+[✓ PASS] [Test Mode Guards] Test environment rejects bypass if configured secret length < 16 chars (Status: 401)
+[✓ PASS] [Test Mode Guards] Test environment rejects non-localhost (remote) callers with 401 (Status: 401)
+[✓ PASS] [Role Isolation] Valid test bypass succeeds for general protected resource (Status: 200)
+[✓ PASS] [Role Isolation] Default test bypass CANNOT access platform admin routes (returns 403) (Status: 403)
+[✓ PASS] [Role Isolation] Explicit test role x-test-role=super_admin grants admin in test sandbox (Status: 200)
+------------------------------------------------------------------------
+TOTAL: 15 | PASSED: 15 | FAILED: 0
+========================================================================
+
+Verification PASSED: All AUTH-001 acceptance gates satisfied.

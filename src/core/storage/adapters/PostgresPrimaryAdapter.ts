@@ -1129,6 +1129,16 @@ export class PostgresPrimaryAdapter implements StoragePort {
           EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %I;', tbl);
           EXECUTE format('CREATE POLICY tenant_isolation_policy ON %I FOR ALL USING (tenant_id = current_setting(''app.current_tenant_id'', true)) WITH CHECK (tenant_id = current_setting(''app.current_tenant_id'', true));', tbl);
         END LOOP;
+
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'an_idempotency_keys'::regclass
+            AND conname = 'an_idempotency_keys_pkey'
+            AND pg_get_constraintdef(oid) = 'PRIMARY KEY (idempotency_key)'
+        ) THEN
+          ALTER TABLE an_idempotency_keys DROP CONSTRAINT an_idempotency_keys_pkey;
+          ALTER TABLE an_idempotency_keys ADD CONSTRAINT an_idempotency_keys_pkey PRIMARY KEY (tenant_id, idempotency_key, operation);
+        END IF;
       END $$;
     `;
 
@@ -1863,8 +1873,17 @@ export class PostgresPrimaryAdapter implements StoragePort {
         ]);
       }
 
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'createJournalEntry', entry, client);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'createJournalEntry');
+        if (existing) {
+          return { success: true, data: existing };
+        }
+        return { success: false, error: idempRes.error };
+      }
+
       await client.query('COMMIT');
-      await this.recordIdempotency(tenantId, idempotencyKey, 'createJournalEntry', entry);
       return { success: true, data: entry };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -1918,12 +1937,20 @@ export class PostgresPrimaryAdapter implements StoragePort {
       `;
       await client.query(updateEntryQuery, [postedAt, tenantId, entryId]);
 
-      await client.query('COMMIT');
-
       entry.status = 'POSTED';
       entry.postedAt = postedAt;
 
-      await this.recordIdempotency(tenantId, idempotencyKey, 'postJournalEntry', entry);
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'postJournalEntry', entry, client);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'postJournalEntry');
+        if (existing) {
+          return { success: true, data: existing };
+        }
+        return { success: false, error: idempRes.error };
+      }
+
+      await client.query('COMMIT');
       return { success: true, data: entry };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -2743,10 +2770,11 @@ export class PostgresPrimaryAdapter implements StoragePort {
     return await this.pool.query(text, params);
   }
 
-  private async checkIdempotency(tenantId: string, key: string, operation: string): Promise<any | null> {
+  private async checkIdempotency(tenantId: string, key: string, operation: string, client?: any): Promise<any | null> {
     if (!this.pool || !key) return null;
     try {
-      const res = await this.pool.query(
+      const runner = client || this.asyncLocalStorage.getStore()?.client || this.pool;
+      const res = await runner.query(
         'SELECT response_payload FROM an_idempotency_keys WHERE idempotency_key = $1 AND tenant_id = $2 AND operation = $3',
         [key, tenantId, operation]
       );
@@ -2767,14 +2795,26 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
-  private async recordIdempotency(tenantId: string, key: string, operation: string, payload: any): Promise<StorageResult<boolean>> {
+  private async recordIdempotency(tenantId: string, key: string, operation: string, payload: any, client?: any): Promise<StorageResult<boolean>> {
     if (!this.pool) return this.missingConnError();
     if (!key) return { success: true, data: true };
     try {
-      await this.pool.query(
-        'INSERT INTO an_idempotency_keys (idempotency_key, tenant_id, operation, response_payload) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+      const runner = client || this.asyncLocalStorage.getStore()?.client || this.pool;
+      const res = await runner.query(
+        'INSERT INTO an_idempotency_keys (idempotency_key, tenant_id, operation, response_payload) VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, idempotency_key, operation) DO NOTHING RETURNING idempotency_key',
         [key, tenantId, operation, JSON.stringify(payload)]
       );
+      if (res.rowCount === 0) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/idempotency-conflict',
+            title: 'تعارض في مفتاح العملية',
+            status: 409,
+            detail: `مفتاح العملية ${key} تم تسجيله مسبقاً.`,
+          },
+        };
+      }
       return { success: true, data: true };
     } catch (err: any) {
       return this.dbError(err);
@@ -4124,8 +4164,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         ]
       );
 
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'recordCustodyExpense', transaction, client);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        return { success: false, error: idempRes.error };
+      }
+
       await client.query('COMMIT');
-      await this.recordIdempotency(tenantId, idempotencyKey, 'recordCustodyExpense', transaction);
       return { success: true, data: transaction };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -4246,8 +4291,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         ]
       );
 
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'saveCustodySettlement', settlement, client);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        return { success: false, error: idempRes.error };
+      }
+
       await client.query('COMMIT');
-      await this.recordIdempotency(tenantId, idempotencyKey, 'saveCustodySettlement', settlement);
       return { success: true, data: settlement };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -4416,8 +4466,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'createExpenseRequest', request, client);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        return { success: false, error: idempRes.error };
+      }
+
       await client.query('COMMIT');
-      await this.recordIdempotency(tenantId, idempotencyKey, 'createExpenseRequest', request);
       return { success: true, data: request };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -4738,8 +4793,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotencyKey,
       };
 
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'updateExpenseRequestStatus', updatedRequest, client);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        return { success: false, error: idempRes.error };
+      }
+
       await client.query('COMMIT');
-      await this.recordIdempotency(tenantId, idempotencyKey, 'updateExpenseRequestStatus', updatedRequest);
       return { success: true, data: updatedRequest };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -5410,9 +5470,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotencyKey,
       };
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'recordStockMovement', savedMovement);
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'recordStockMovement', savedMovement, client);
       if (!idempRes.success) {
         await client.query('ROLLBACK');
+        const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'recordStockMovement');
+        if (existing) {
+          return { success: true, data: existing };
+        }
         return { success: false, error: idempRes.error };
       }
 
@@ -5554,8 +5618,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'createStockTransfer', transfer, client);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        return { success: false, error: idempRes.error };
+      }
+
       await client.query('COMMIT');
-      await this.recordIdempotency(tenantId, idempotencyKey, 'createStockTransfer', transfer);
       return { success: true, data: transfer };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -5790,8 +5859,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotencyKey,
       };
 
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'updateStockTransferStatus', updated, client);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        return { success: false, error: idempRes.error };
+      }
+
       await client.query('COMMIT');
-      await this.recordIdempotency(tenantId, idempotencyKey, 'updateStockTransferStatus', updated);
       return { success: true, data: updated };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -5873,8 +5947,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'createStockCount', count, client);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        return { success: false, error: idempRes.error };
+      }
+
       await client.query('COMMIT');
-      await this.recordIdempotency(tenantId, idempotencyKey, 'createStockCount', count);
       return { success: true, data: count };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -6102,10 +6181,15 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotencyKey,
       };
 
-      await client.query('COMMIT');
       if (idempotencyKey) {
-        await this.recordIdempotency(tenantId, idempotencyKey, 'updateStockCountStatus', updated);
+        const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'updateStockCountStatus', updated, client);
+        if (!idempRes.success) {
+          await client.query('ROLLBACK');
+          return { success: false, error: idempRes.error };
+        }
       }
+
+      await client.query('COMMIT');
       return { success: true, data: updated };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -6327,9 +6411,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'saveStockDocument', doc);
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'saveStockDocument', doc, client);
       if (!idempRes.success) {
         await client.query('ROLLBACK');
+        const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'saveStockDocument');
+        if (existing) {
+          return { success: true, data: existing };
+        }
         return { success: false, error: idempRes.error };
       }
 
@@ -6558,8 +6646,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'saveCustodyExpenseVoucher', voucher, client);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        return { success: false, error: idempRes.error };
+      }
+
       await client.query('COMMIT');
-      await this.recordIdempotency(tenantId, idempotencyKey, 'saveCustodyExpenseVoucher', voucher);
       return { success: true, data: voucher };
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -6763,8 +6856,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotencyKey: r.idempotency_key,
       };
 
+      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'reverseCustodyExpenseVoucher', updatedVoucher, client);
+      if (!idempRes.success) {
+        await client.query('ROLLBACK');
+        return { success: false, error: idempRes.error };
+      }
+
       await client.query('COMMIT');
-      await this.recordIdempotency(tenantId, idempotencyKey, 'reverseCustodyExpenseVoucher', updatedVoucher);
       return { success: true, data: updatedVoucher };
     } catch (err: any) {
       await client.query('ROLLBACK');

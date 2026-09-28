@@ -493,42 +493,133 @@ async function startServer() {
     role?: string;
   }
 
+  // =========================================================================
+  // AUTH-001: Strict Test-Only Auth Bypass Isolation
+  //
+  // Architectural Invariants:
+  // 1. Strictly forbidden in production and staging environments under any circumstances.
+  // 2. Only permitted in explicit 'test' environment (NODE_ENV === 'test').
+  // 3. Explicit opt-in flag required: ENABLE_TEST_AUTH_BYPASS === 'true' (disabled by default).
+  // 4. Localhost / loopback socket connection restriction (cannot be invoked remotely).
+  // 5. Shared dynamic test secret required (TEST_AUTH_BYPASS_SECRET, min 16 chars).
+  // 6. No hardcoded super_admin; defaults to least-privilege 'test_user'.
+  // =========================================================================
+  function isLoopbackAddress(addr?: string): boolean {
+    if (!addr) return false;
+    return (
+      addr === '127.0.0.1' ||
+      addr === '::1' ||
+      addr === '::ffff:127.0.0.1' ||
+      addr === 'localhost'
+    );
+  }
+
+  function isTestBypassPermitted(): boolean {
+    const rawEnv = (process.env.NODE_ENV || '').toLowerCase().trim();
+    // 1. Strictly forbidden in production, staging, development, or any environment other than 'test'
+    if (rawEnv === 'production' || rawEnv === 'staging' || rawEnv !== 'test') {
+      return false;
+    }
+    // 2. Explicit opt-in flag required (disabled by default)
+    if (process.env.ENABLE_TEST_AUTH_BYPASS !== 'true') {
+      return false;
+    }
+    // 3. Dynamic test secret required in environment (minimum 16 characters, not hardcoded)
+    const secret = process.env.TEST_AUTH_BYPASS_SECRET;
+    if (!secret || secret.trim().length < 16) {
+      return false;
+    }
+    return true;
+  }
+
+  async function tryIsolatedTestBypass(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<boolean> {
+    // 1. Check if test bypass is permitted by strict environment policy
+    if (!isTestBypassPermitted()) {
+      return false;
+    }
+
+    // 2. Must originate strictly from loopback (localhost)
+    const remoteAddr = req.socket?.remoteAddress || req.ip;
+    if (!isLoopbackAddress(remoteAddr)) {
+      return false;
+    }
+
+    // 3. Check for explicit test bypass header
+    const bypassHeader = req.headers['x-bypass-auth'] || req.headers['x-test-bypass-auth'];
+    if (bypassHeader !== 'true') {
+      return false;
+    }
+
+    // 4. Validate client-supplied secret against configured environment secret using timingSafeEqual
+    const clientSecret = req.headers['x-test-bypass-secret'];
+    const expectedSecret = process.env.TEST_AUTH_BYPASS_SECRET;
+    if (typeof clientSecret !== 'string' || !clientSecret || !expectedSecret) {
+      return false;
+    }
+
+    const clientBuf = Buffer.from(clientSecret);
+    const expectedBuf = Buffer.from(expectedSecret);
+    if (clientBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(clientBuf, expectedBuf)) {
+      return false;
+    }
+
+    // 5. Tenant context is strictly mandatory
+    const devTenantId = req.headers['x-tenant-id'] as string;
+    if (!devTenantId) {
+      res.status(400).json({
+        type: 'https://api.an-erp.local/errors/missing-tenant-id',
+        title: 'معرف المنشأة إلزامي لتجاوز المصادقة الاختباري',
+        status: 400,
+        detail: 'يتطلب تجاوز المصادقة في بيئة الاختبار تمرير الترويسة X-Tenant-Id صراحة دون سقوط صامت.',
+      });
+      return true;
+    }
+
+    const tenantRes = await masterStorage.getTenant(devTenantId);
+    if (!tenantRes.success || !tenantRes.data) {
+      res.status(404).json({
+        type: 'https://api.an-erp.local/errors/tenant-not-found',
+        title: 'المنشأة غير مسجلة',
+        status: 404,
+        detail: `المنشأة (${devTenantId}) غير مسجلة في سجل المستأجرين.`,
+      });
+      return true;
+    }
+
+    const devTenant = tenantRes.data;
+    const devStorage = await globalStorageRouter.resolveAdapterAsync(devTenant);
+
+    // 6. No hardcoded super_admin bypass!
+    // Role must be explicitly specified by test harness or defaults to non-privileged 'test_user'
+    const testRole = (req.headers['x-test-role'] as string) || 'test_user';
+    const testUserId = (req.headers['x-test-user-id'] as string) || 'USR-TEST-RUNNER';
+
+    (req as any).authContext = {
+      tenantId: devTenantId,
+      userId: testUserId,
+      sessionId: 'ses-test-isolated',
+      role: testRole,
+    } as AuthContext;
+    (req as any).storage = devStorage;
+    (req as any).tenant = devTenant;
+    next();
+    return true;
+  }
+
   async function requireAuth(req: Request, res: Response, next: NextFunction) {
     let accessToken = req.cookies['an_access_token'];
     if (!accessToken && req.headers.authorization?.startsWith('Bearer ')) {
       accessToken = req.headers.authorization.split(' ')[1];
     }
     if (!accessToken) {
-      if (process.env.NODE_ENV !== 'production' && req.headers['x-bypass-auth'] === 'true') {
-        const devTenantId = req.headers['x-tenant-id'] as string;
-        if (!devTenantId) {
-          return res.status(400).json({
-            type: 'https://api.an-erp.local/errors/missing-tenant-id',
-            title: 'معرف المنشأة إلزامي لتجاوز المصادقة',
-            status: 400,
-            detail: 'يتطلب تجاوز المصادقة في بيئة التطوير تمرير الترويسة X-Tenant-Id صراحة دون سقوط صامت (البند 4.6A).',
-          });
-        }
-        const tenantRes = await masterStorage.getTenant(devTenantId);
-        if (!tenantRes.success || !tenantRes.data) {
-          return res.status(404).json({
-            type: 'https://api.an-erp.local/errors/tenant-not-found',
-            title: 'المنشأة غير مسجلة',
-            status: 404,
-            detail: `المنشأة (${devTenantId}) غير مسجلة في سجل المستأجرين.`,
-          });
-        }
-        const devTenant = tenantRes.data;
-        const devStorage = await globalStorageRouter.resolveAdapterAsync(devTenant);
-        (req as any).authContext = {
-          tenantId: devTenantId,
-          userId: 'USR-ADMIN',
-          sessionId: 'ses-dev',
-          role: 'super_admin',
-        } as AuthContext;
-        (req as any).storage = devStorage;
-        (req as any).tenant = devTenant;
-        return next();
+      // AUTH-001: Try isolated test-only auth bypass (strictly rejected in prod/staging/dev)
+      const handled = await tryIsolatedTestBypass(req, res, next);
+      if (handled) {
+        return;
       }
       return res.status(401).json({ success: false, message: 'غير مسجل الدخول' });
     }

@@ -4,23 +4,23 @@
   "failedCount": 0,
   "adapterName": "PostgreSQL (Supabase Primary)",
   "allPassed": true,
-  "durationMs": 5163,
+  "durationMs": 5144,
   "tests": [
     {
       "testId": "2A-1",
       "nameAr": "إنشاء شركة سعودية بنسبة ضريبة آلية (15%) والتحقق من قالب النشاط ودليل الحسابات",
       "category": "2A_WIZARD",
       "passed": true,
-      "durationMs": 1639,
-      "evidence": "تم إنشاء الشركة السعودية (CMP-9897) بنجاح. الضريبة: 15%، الحسابات المهيأة: 21، الموديولات: 9"
+      "durationMs": 1631,
+      "evidence": "تم إنشاء الشركة السعودية (CMP-7162) بنجاح. الضريبة: 15%، الحسابات المهيأة: 21، الموديولات: 9"
     },
     {
       "testId": "2A-2",
       "nameAr": "إنشاء شركة مصرية بنسبة ضريبة آلية (14%) وفحص صيغة الرقم الضريبي لـ ETA",
       "category": "2A_WIZARD",
       "passed": true,
-      "durationMs": 1390,
-      "evidence": "تم إنشاء الشركة المصرية (CMP-6524) بنجاح. الضريبة المطبقة: 14% لـ ETA، العملة: EGP"
+      "durationMs": 1385,
+      "evidence": "تم إنشاء الشركة المصرية (CMP-5461) بنجاح. الضريبة المطبقة: 14% لـ ETA، العملة: EGP"
     },
     {
       "testId": "2A-3",
@@ -51,7 +51,7 @@
       "nameAr": "إثبات الفصل التام للبيانات بين شركتين (Shared vs Dedicated) على Primary Adapter",
       "category": "2B_ADAPTER_GOVERNANCE",
       "passed": true,
-      "durationMs": 292,
+      "durationMs": 344,
       "evidence": "تم تأكيد العزل الفعلي للبيانات بنجاح: الحسابات والبيانات معزولة بنسبة 100% ولا يمكن لأي شركة الوصول لبيانات الأخرى."
     },
     {
@@ -67,7 +67,7 @@
       "nameAr": "توليد أرقام تسلسلية ذرية متتالية بدون فجوات (Atomic Gapless Numbering)",
       "category": "2C_NUMBERING",
       "passed": true,
-      "durationMs": 73,
+      "durationMs": 49,
       "evidence": "تم توليد الأرقام الذرية المتتالية: INV-2026-000001, INV-2026-000002, INV-2026-000003 (فجوات: 0)"
     },
     {
@@ -75,7 +75,7 @@
       "nameAr": "إجراء تجاوز يدوي معتمد لترقيم تسلسلي مع اشتراط سبب توثيقي صريح (>= 10 أحرف) وتوثيقه",
       "category": "2C_NUMBERING",
       "passed": true,
-      "durationMs": 48,
+      "durationMs": 47,
       "evidence": "تم التجاوز اليدوي بنجاح إلى الرقم 2500، واستمر الترقيم الذري التالي إلى MANUAL-002501 مع توثيقه في SystemChangeLog"
     },
     {
@@ -83,7 +83,7 @@
       "nameAr": "استعلام الرصيد في تاريخ ماضٍ (As Of) متجاهلاً الحركات المالية اللاحقة",
       "category": "2D_AS_OF",
       "passed": true,
-      "durationMs": 907,
+      "durationMs": 860,
       "evidence": "تم الاستعلام التاريخي بنجاح: الرصيد في 2026-01-31 كان 10,000 ر.س، والرصيد في 2026-03-01 هو 25,000 ر.س (تم استبعاد الحركات اللاحقة بدقة)."
     },
     {
@@ -91,7 +91,7 @@
       "nameAr": "إنشاء سلسلة تدقيق مشفرة (Genesis -> Block) والتحقق الرياضي من سلامة السلسلة",
       "category": "2E_2G_AUDIT_CHAIN",
       "passed": true,
-      "durationMs": 157,
+      "durationMs": 155,
       "evidence": "تم بناء والتحقق من سلسلة التدقيق المشفرة (3 سجلات) بنجاح: 100% تطابق SHA-256 مرتبط بـ Genesis Hash."
     },
     {
@@ -107,7 +107,7 @@
       "nameAr": "إنشاء صنف مخزني بحالة PENDING_APPROVAL ومنع منشئه من اعتماده بنفسه (SoD)",
       "category": "2F_DUAL_CONTROL",
       "passed": true,
-      "durationMs": 80,
+      "durationMs": 79,
       "evidence": "تم تطبيق الرقابة الثنائية (Dual-Control) بنجاح: رُفض اعتماد الصنف ذاتياً بواسطة المحاسب، وتم اعتماده بنجاح بواسطة المدير (المدير المالي عادل)."
     },
     {
@@ -115,7 +115,7 @@
       "nameAr": "إنشاء شريك تجاري (عميل/مورد) بحالة PENDING_APPROVAL والتحقق من موثوقية استخدامه بالمعاملات",
       "category": "2F_DUAL_CONTROL",
       "passed": true,
-      "durationMs": 65,
+      "durationMs": 67,
       "evidence": "تم التحقق بنجاح من دورة حياة الشريك التجاري ومنع استخدام السجلات غير المعتمدة في العمليات المالية."
     },
     {
@@ -123,7 +123,7 @@
       "nameAr": "تفعيل الموديولات تلقائياً حسب القالب دون نسخ كود مع إمكانية التخصيص للمستأجر",
       "category": "2H_MODULE_MANIFEST",
       "passed": true,
-      "durationMs": 319,
+      "durationMs": 332,
       "evidence": "تم تفعيل 7 موديولات أساسية وتخصيص موديول المتجر الإلكتروني للشركة بنجاح عبر Module Manifest."
     }
   ]

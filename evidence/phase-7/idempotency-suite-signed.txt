@@ -1,0 +1,25 @@
+COMMAND: npx tsx scripts/testIdempotencySuite.ts
+EXIT_CODE: 0
+TIMESTAMP: 2026-09-28T07:09:30.948Z
+
+STDOUT:
+================================================================
+A.N ERP — Running Comprehensive Idempotency Suite (INV-001)
+================================================================
+
+--- Idempotency Test Suite Results ---
+[PASS] Test A — Sequential replay
+       Replay identity verified (sdoc-1790579368832-24qs == sdoc-1790579368832-24qs) with single mutation effect (qty=5).
+[PASS] Test B — Concurrent replay
+       Concurrent race resolved cleanly: single mutation effect (qty=8) and identical document id (sdoc-1790579369172-otvl).
+[PASS] Test C — Same key / different payload
+       No secondary mutation executed: stock remained 10, original document id returned without duplicating effect.
+[PASS] Test D — Same key / different tenant
+       Tenant isolation maintained: both tenants processed independently with the same idempotency key without collision.
+[PASS] Test E — Failure recovery
+       Clean failure rollback: failed attempt left no poisoned idempotency record, retry with same key succeeded (stock=20).
+--------------------------------------
+Total: 5 | Passed: 5 | Failed: 0
+
+
+SHA256: 2dd8dd302d5c2fbdac346ba5d1687365d745bd94b2ca87a5bade370f2117f69a

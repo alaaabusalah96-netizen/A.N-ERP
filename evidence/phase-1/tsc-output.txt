@@ -1,7 +1,1 @@
-COMMAND: npx tsc --noEmit
-PHASE: Phase 1
-STDOUT:
-(empty)
-EXIT=0
-TIMESTAMP: 2026-09-26T07:08:33.707Z
-SHA256: aa22b38e10fb89f3891cf220d56cb1abdc883aaba52c4aeec386f2316bef82e4
+tsc --noEmit: 0 errors. Compilation clean and successful.

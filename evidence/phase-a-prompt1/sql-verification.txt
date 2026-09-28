@@ -1,6 +1,6 @@
 COMMAND: psql -c "SELECT id, code, status FROM an_tenants; ..."
 EXIT_CODE: 0
-TIMESTAMP: 2026-09-25T07:08:37.097Z
+TIMESTAMP: 2026-09-28T07:19:22.978Z
 
 STDOUT:
 === 1. SELECT id, code, status FROM an_tenants ===
@@ -151,45 +151,45 @@ count = 5
 === 5. SELECT idempotency_key, operation FROM an_idempotency_keys (Sample) ===
 [
   {
-    "idempotency_key": "test-fixed-idempotency-key-1790320113248",
+    "idempotency_key": "test-fixed-idempotency-key-1790579959091",
     "operation": "saveTenant"
   },
   {
-    "idempotency_key": "test-fixed-idempotency-key",
+    "idempotency_key": "idemp-post-ENTRY-1790579931980",
+    "operation": "postJournalEntry"
+  },
+  {
+    "idempotency_key": "idemp-draft-ENTRY-1790579931980",
+    "operation": "createJournalEntry"
+  },
+  {
+    "idempotency_key": "idemp-tenant-b-931693",
     "operation": "saveTenant"
   },
   {
-    "idempotency_key": "reg-settle-291483",
-    "operation": "saveCustodySettlement"
+    "idempotency_key": "idemp-tenant-a-931693",
+    "operation": "saveTenant"
   },
   {
-    "idempotency_key": "reg-settle-291483-post",
-    "operation": "postJournalEntry"
+    "idempotency_key": "idemp-login-1790579894081-unabg",
+    "operation": "LOGIN"
   },
   {
-    "idempotency_key": "reg-settle-291483-draft",
-    "operation": "createJournalEntry"
+    "idempotency_key": "fail-recovery-key-368486",
+    "operation": "receiveStock"
   },
   {
-    "idempotency_key": "reg-post-291483",
-    "operation": "postJournalEntry"
-  },
-  {
-    "idempotency_key": "reg-draft-291483",
-    "operation": "createJournalEntry"
-  },
-  {
-    "idempotency_key": "legacy-rcpt-291483",
+    "idempotency_key": "fail-recovery-key-368486",
     "operation": "saveStockDocument"
   },
   {
-    "idempotency_key": "legacy-rcpt-291483-line-0",
+    "idempotency_key": "fail-recovery-key-368486-line-0",
     "operation": "recordStockMovement"
   },
   {
-    "idempotency_key": "draft-return-issue-3items-291483",
-    "operation": "createJournalEntry"
+    "idempotency_key": "shared-cross-tenant-key-368486",
+    "operation": "receiveStock"
   }
 ]
 
-SHA256: 5e7733ac0128a5588f40edf9d542407cbd2c82e3e0fd3c8e1d95c8ceb307eb21
+SHA256: b900ef4f559ec476baadd276ee557ffcc7d01f9a6437b3e920bd95d39ceb50fc

@@ -94,6 +94,26 @@ async function runVerification() {
     console.log(`[${passed ? 'PASS' : 'FAIL'}] ${r.method} ${r.path} => ${res.status}`);
   }
 
+  // 2b. AUTH-001: Verification of x-bypass-auth Rejection
+  console.log('\n--- 2b) Verification of AUTH-001 (x-bypass-auth Rejected => 401) ---');
+  for (const r of sensitiveRoutes.slice(0, 4)) {
+    const res = await makeRequest(r.path, {
+      method: r.method,
+      headers: {
+        'x-bypass-auth': 'true',
+        'x-tenant-id': 'tenant-main',
+      },
+      body: r.body,
+    });
+    const passed = res.status === 401;
+    results.push({
+      name: `AUTH-001: x-bypass-auth rejected with 401: ${r.method} ${r.path}`,
+      passed,
+      details: `Returned HTTP status ${res.status}`,
+    });
+    console.log(`[${passed ? 'PASS' : 'FAIL'}] AUTH-001 bypass attempt ${r.method} ${r.path} => ${res.status}`);
+  }
+
   // 3. Sensitive Routes Protection (Unauthorized Role: Accountant => 403)
   console.log('\n--- 3) Verification with Unauthorized Role (Accountant => 403) ---');
   const accountantPass = process.env.INITIAL_USER_PASSWORD || 'TEST_FIXTURE_DO_NOT_USE';
