@@ -4490,13 +4490,20 @@ export class PostgresPrimaryAdapter implements StoragePort {
   ): Promise<StorageResult<ExpenseRequest>> {
     if (!this.pool) return this.missingConnError();
 
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'createExpenseRequest');
-    if (cached) return { success: true, data: cached };
-
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'createExpenseRequest');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
 
       // 1. Insert Request
       await client.query(
@@ -4599,14 +4606,15 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'createExpenseRequest', request, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        return { success: false, error: idempRes.error };
-      }
+      const savedRequest: ExpenseRequest = {
+        ...request,
+        idempotencyKey,
+      };
+
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'createExpenseRequest', savedRequest);
 
       await client.query('COMMIT');
-      return { success: true, data: request };
+      return { success: true, data: savedRequest };
     } catch (err: any) {
       await client.query('ROLLBACK');
       return this.dbError(err);
@@ -4780,13 +4788,20 @@ export class PostgresPrimaryAdapter implements StoragePort {
   ): Promise<StorageResult<ExpenseRequest>> {
     if (!this.pool) return this.missingConnError();
 
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'updateExpenseRequestStatus');
-    if (cached) return { success: true, data: cached };
-
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'updateExpenseRequestStatus');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
 
       const checkRes = await client.query(
         `SELECT * FROM an_expense_requests WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
@@ -4926,11 +4941,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotencyKey,
       };
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'updateExpenseRequestStatus', updatedRequest, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'updateExpenseRequestStatus', updatedRequest);
 
       await client.query('COMMIT');
       return { success: true, data: updatedRequest };
@@ -5455,13 +5466,20 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<StockMovement>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'recordStockMovement');
-    if (cached) return { success: true, data: cached };
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'recordStockMovement');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
 
       // Check warehouse stock row with FOR UPDATE lock
       const stockRes = await client.query(
@@ -5605,15 +5623,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotencyKey,
       };
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'recordStockMovement', savedMovement, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'recordStockMovement');
-        if (existing) {
-          return { success: true, data: existing };
-        }
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'recordStockMovement', savedMovement);
 
       await client.query('COMMIT');
       return { success: true, data: savedMovement };
@@ -5690,13 +5700,20 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<StockTransfer>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'createStockTransfer');
-    if (cached) return { success: true, data: cached };
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'createStockTransfer');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
 
       await client.query(
         `INSERT INTO an_stock_transfers (
@@ -5753,11 +5770,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'createStockTransfer', transfer, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'createStockTransfer', transfer);
 
       await client.query('COMMIT');
       return { success: true, data: transfer };
@@ -5895,13 +5908,20 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<StockTransfer>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'updateStockTransferStatus');
-    if (cached) return { success: true, data: cached };
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'updateStockTransferStatus');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
 
       const selRes = await client.query(
         `SELECT * FROM an_stock_transfers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
@@ -5994,11 +6014,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotencyKey,
       };
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'updateStockTransferStatus', updated, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'updateStockTransferStatus', updated);
 
       await client.query('COMMIT');
       return { success: true, data: updated };
@@ -6017,13 +6033,20 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<StockCount>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'createStockCount');
-    if (cached) return { success: true, data: cached };
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'createStockCount');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
 
       await client.query(
         `INSERT INTO an_stock_counts (
@@ -6082,11 +6105,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'createStockCount', count, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'createStockCount', count);
 
       await client.query('COMMIT');
       return { success: true, data: count };
@@ -6222,15 +6241,22 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey?: string
   ): Promise<StorageResult<StockCount>> {
     if (!this.pool) return this.missingConnError();
-    if (idempotencyKey) {
-      const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'updateStockCountStatus');
-      if (cached) return { success: true, data: cached };
-    }
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      if (idempotencyKey) {
+        const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'updateStockCountStatus');
+        if (reservation.action === 'REPLAY') {
+          await client.query('ROLLBACK');
+          return { success: true, data: reservation.cachedPayload };
+        }
+        if (reservation.action === 'CONFLICT') {
+          await client.query('ROLLBACK');
+          return { success: false, error: reservation.error };
+        }
+      }
 
       const selRes = await client.query(
         `SELECT * FROM an_stock_counts WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
@@ -6317,11 +6343,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
       };
 
       if (idempotencyKey) {
-        const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'updateStockCountStatus', updated, client);
-        if (!idempRes.success) {
-          await client.query('ROLLBACK');
-          return { success: false, error: idempRes.error };
-        }
+        await this.completeIdempotency(client, tenantId, idempotencyKey, 'updateStockCountStatus', updated);
       }
 
       await client.query('COMMIT');
@@ -6482,12 +6504,19 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<StockDocument>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'saveStockDocument');
-    if (cached) return { success: true, data: cached };
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'saveStockDocument');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
       await client.query(
         `INSERT INTO an_stock_documents (
           id, tenant_id, company_id, document_number, document_type,
@@ -6546,15 +6575,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'saveStockDocument', doc, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'saveStockDocument');
-        if (existing) {
-          return { success: true, data: existing };
-        }
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'saveStockDocument', doc);
 
       await client.query('COMMIT');
       return { success: true, data: doc };
