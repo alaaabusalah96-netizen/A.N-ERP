@@ -4236,12 +4236,19 @@ export class PostgresPrimaryAdapter implements StoragePort {
     skipBalanceDeduction: boolean = false
   ): Promise<StorageResult<CashCustodyTransaction>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'recordCustodyExpense');
-    if (cached) return { success: true, data: cached };
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'recordCustodyExpense');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
 
       // 1. Deduct custody balance atomically (skipped if voucher already deducted atomically)
       if (!skipBalanceDeduction) {
@@ -4291,11 +4298,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         ]
       );
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'recordCustodyExpense', transaction, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'recordCustodyExpense', transaction);
 
       await client.query('COMMIT');
       return { success: true, data: transaction };
@@ -4356,12 +4359,19 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<CashCustodySettlement>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'saveCustodySettlement');
-    if (cached) return { success: true, data: cached };
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'saveCustodySettlement');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
 
       // Wave 7.5D & Section 7.1: Adapter-level SoD enforcement on STORED record
       const custodyRes = await client.query(
@@ -4418,11 +4428,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         ]
       );
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'saveCustodySettlement', settlement, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'saveCustodySettlement', settlement);
 
       await client.query('COMMIT');
       return { success: true, data: settlement };
@@ -6708,12 +6714,19 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<CustodyExpenseVoucher>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'saveCustodyExpenseVoucher');
-    if (cached) return { success: true, data: cached };
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'saveCustodyExpenseVoucher');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
 
       // Deduct custody balance atomically
       const deductRes = await client.query(
@@ -6775,11 +6788,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'saveCustodyExpenseVoucher', voucher, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'saveCustodyExpenseVoucher', voucher);
 
       await client.query('COMMIT');
       return { success: true, data: voucher };
@@ -6914,12 +6923,19 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<CustodyExpenseVoucher>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'reverseCustodyExpenseVoucher');
-    if (cached) return { success: true, data: cached };
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'reverseCustodyExpenseVoucher');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
 
       const vRes = await client.query(
         `SELECT * FROM an_custody_expense_vouchers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
@@ -6985,11 +7001,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotencyKey: r.idempotency_key,
       };
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'reverseCustodyExpenseVoucher', updatedVoucher, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'reverseCustodyExpenseVoucher', updatedVoucher);
 
       await client.query('COMMIT');
       return { success: true, data: updatedVoucher };
