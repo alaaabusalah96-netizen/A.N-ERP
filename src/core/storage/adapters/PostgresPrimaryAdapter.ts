@@ -7,6 +7,8 @@
 
 import { Pool, PoolClient } from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import * as crypto from 'node:crypto';
+import { requestContextALS } from '../../context/RequestContext';
 import {
   StoragePort,
   StorageResult,
@@ -221,10 +223,15 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotency_key VARCHAR(128) NOT NULL,
         tenant_id VARCHAR(64) NOT NULL,
         operation VARCHAR(64) NOT NULL,
-        response_payload JSONB NOT NULL,
+        request_hash VARCHAR(64),
+        status VARCHAR(32) NOT NULL DEFAULT 'COMPLETED',
+        response_payload JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (tenant_id, idempotency_key, operation)
       );
+      ALTER TABLE an_idempotency_keys ADD COLUMN IF NOT EXISTS request_hash VARCHAR(64);
+      ALTER TABLE an_idempotency_keys ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'COMPLETED';
+      ALTER TABLE an_idempotency_keys ALTER COLUMN response_payload DROP NOT NULL;
 
       -- Journal Entries
       CREATE TABLE IF NOT EXISTS an_journal_entries (
@@ -1198,66 +1205,63 @@ export class PostgresPrimaryAdapter implements StoragePort {
 
   public async saveTenant(tenant: TenantCompany, idempotencyKey: string, skipIdempotency: boolean = false): Promise<StorageResult<TenantCompany>> {
     if (!this.pool) return this.missingConnError();
-    const existingKey = skipIdempotency ? null : await this.checkIdempotency(tenant.id, idempotencyKey, 'saveTenant');
-    if (existingKey) return { success: true, data: existingKey };
 
-    try {
-      const query = `
-        INSERT INTO an_tenants (id, code, name_ar, name_en, tax_number, backend_config, status, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT (id) DO UPDATE SET
-          name_ar = EXCLUDED.name_ar,
-          name_en = EXCLUDED.name_en,
-          tax_number = EXCLUDED.tax_number,
-          backend_config = EXCLUDED.backend_config,
-          status = EXCLUDED.status
-        RETURNING *;
-      `;
-      const res = await this.pool.query(query, [
-        tenant.id,
-        tenant.code,
-        tenant.nameAr,
-        tenant.nameEn || null,
-        tenant.taxNumber || null,
-        JSON.stringify(tenant.backendConfig),
-        tenant.status,
-        tenant.createdAt || new Date().toISOString(),
-      ]);
+    return this.withTenantScope(tenant.id, async () => {
+      const effKey = skipIdempotency ? undefined : idempotencyKey;
+      return this.runIdempotent(tenant.id, effKey, 'saveTenant', async (client) => {
+        try {
+          const query = `
+            INSERT INTO an_tenants (id, code, name_ar, name_en, tax_number, backend_config, status, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (id) DO UPDATE SET
+              name_ar = EXCLUDED.name_ar,
+              name_en = EXCLUDED.name_en,
+              tax_number = EXCLUDED.tax_number,
+              backend_config = EXCLUDED.backend_config,
+              status = EXCLUDED.status
+            RETURNING *;
+          `;
+          const res = await client.query(query, [
+            tenant.id,
+            tenant.code,
+            tenant.nameAr,
+            tenant.nameEn || null,
+            tenant.taxNumber || null,
+            JSON.stringify(tenant.backendConfig),
+            tenant.status,
+            tenant.createdAt || new Date().toISOString(),
+          ]);
 
-      if (!res || !res.rows || res.rows.length === 0) {
-        return {
-          success: false,
-          error: {
-            type: 'https://api.an-erp.local/errors/tenant-upsert-noop',
-            title: 'فشل إدراج/تحديث المنشأة',
-            status: 500,
-            detail: `لم يُنتج INSERT ... ON CONFLICT (id) صفًا فعليًا للمنشأة ${tenant.id}.`,
-          },
-        };
-      }
+          if (!res || !res.rows || res.rows.length === 0) {
+            return {
+              success: false,
+              error: {
+                type: 'https://api.an-erp.local/errors/tenant-upsert-noop',
+                title: 'فشل إدراج/تحديث المنشأة',
+                status: 500,
+                detail: `لم يُنتج INSERT ... ON CONFLICT (id) صفًا فعليًا للمنشأة ${tenant.id}.`,
+              },
+            };
+          }
 
-      const row = res.rows[0];
-      const savedTenant: TenantCompany = {
-        id: row.id,
-        code: row.code,
-        nameAr: row.name_ar,
-        nameEn: row.name_en,
-        taxNumber: row.tax_number,
-        backendConfig: typeof row.backend_config === 'string' ? JSON.parse(row.backend_config) : row.backend_config,
-        status: row.status,
-        createdAt: row.created_at ? new Date(row.created_at).toISOString() : (tenant.createdAt || new Date().toISOString()),
-      };
+          const row = res.rows[0];
+          const savedTenant: TenantCompany = {
+            id: row.id,
+            code: row.code,
+            nameAr: row.name_ar,
+            nameEn: row.name_en,
+            taxNumber: row.tax_number,
+            backendConfig: typeof row.backend_config === 'string' ? JSON.parse(row.backend_config) : row.backend_config,
+            status: row.status,
+            createdAt: row.created_at ? new Date(row.created_at).toISOString() : (tenant.createdAt || new Date().toISOString()),
+          };
 
-      if (!skipIdempotency) {
-        const idempRes = await this.recordIdempotency(tenant.id, idempotencyKey, 'saveTenant', savedTenant);
-        if (!idempRes.success) {
-          return { success: false, error: idempRes.error };
+          return { success: true, data: savedTenant };
+        } catch (err: any) {
+          return this.dbError(err);
         }
-      }
-      return { success: true, data: savedTenant };
-    } catch (err: any) {
-      return this.dbError(err);
-    }
+      });
+    });
   }
 
   private mapUserRow(r: any): User {
@@ -1834,12 +1838,20 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<JournalEntry>> {
     if (!this.pool) return this.missingConnError();
-    const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'createJournalEntry');
-    if (existing) return { success: true, data: existing };
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'createJournalEntry');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
+
       const entryQuery = `
         INSERT INTO an_journal_entries (id, code, tenant_id, date, type, description, total_amount, status, created_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
@@ -1873,15 +1885,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         ]);
       }
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'createJournalEntry', entry, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'createJournalEntry');
-        if (existing) {
-          return { success: true, data: existing };
-        }
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'createJournalEntry', entry);
 
       await client.query('COMMIT');
       return { success: true, data: entry };
@@ -1900,10 +1904,6 @@ export class PostgresPrimaryAdapter implements StoragePort {
   ): Promise<StorageResult<JournalEntry>> {
     if (!this.pool) return this.missingConnError();
 
-    // Idempotency check: prevent double post
-    const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'postJournalEntry');
-    if (existing) return { success: true, data: existing };
-
     const entryRes = await this.getJournalEntry(tenantId, entryId);
     if (!entryRes.success || !entryRes.data) {
       return { success: false, error: entryRes.error };
@@ -1913,6 +1913,15 @@ export class PostgresPrimaryAdapter implements StoragePort {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'postJournalEntry');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
 
       // 1. Update each account balance
       for (const line of entry.lines) {
@@ -1940,15 +1949,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
       entry.status = 'POSTED';
       entry.postedAt = postedAt;
 
-      const idempRes = await this.recordIdempotency(tenantId, idempotencyKey, 'postJournalEntry', entry, client);
-      if (!idempRes.success) {
-        await client.query('ROLLBACK');
-        const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'postJournalEntry');
-        if (existing) {
-          return { success: true, data: existing };
-        }
-        return { success: false, error: idempRes.error };
-      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'postJournalEntry', entry);
 
       await client.query('COMMIT');
       return { success: true, data: entry };
@@ -2632,10 +2633,15 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotency_key VARCHAR(128) NOT NULL,
         tenant_id VARCHAR(64) NOT NULL,
         operation VARCHAR(64) NOT NULL,
-        response_payload JSONB NOT NULL,
+        request_hash VARCHAR(64),
+        status VARCHAR(32) NOT NULL DEFAULT 'COMPLETED',
+        response_payload JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (tenant_id, idempotency_key, operation)
       );
+      ALTER TABLE an_idempotency_keys ADD COLUMN IF NOT EXISTS request_hash VARCHAR(64);
+      ALTER TABLE an_idempotency_keys ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'COMPLETED';
+      ALTER TABLE an_idempotency_keys ALTER COLUMN response_payload DROP NOT NULL;
 
       CREATE TABLE IF NOT EXISTS an_journal_entries (
         id VARCHAR(64) NOT NULL,
@@ -2819,6 +2825,128 @@ export class PostgresPrimaryAdapter implements StoragePort {
     } catch (err: any) {
       return this.dbError(err);
     }
+  }
+
+  private async runIdempotent<T>(
+    tenantId: string,
+    idempotencyKey: string | undefined | null,
+    operation: string,
+    work: (client: PoolClient) => Promise<StorageResult<T>>
+  ): Promise<StorageResult<T>> {
+    const client = this.asyncLocalStorage.getStore()?.client;
+    if (!client) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/missing-transaction-client',
+          title: 'غياب اتصال المعاملة المحمية',
+          status: 500,
+          detail: `تعذر تنفيذ العملية (${operation}) بإدهنية لعدم وجود اتصال نشط في سياق المعاملة (withTenantScope).`,
+        },
+      };
+    }
+
+    if (!idempotencyKey) {
+      return await work(client);
+    }
+
+    const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, operation);
+    if (reservation.action === 'REPLAY') {
+      return { success: true, data: reservation.cachedPayload };
+    }
+    if (reservation.action === 'CONFLICT') {
+      return { success: false, error: reservation.error };
+    }
+
+    const savepoint = `sp_idem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    await client.query(`SAVEPOINT ${savepoint}`);
+
+    try {
+      const result = await work(client);
+      if (!result.success) {
+        await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        await client.query(
+          `DELETE FROM an_idempotency_keys WHERE tenant_id = $1 AND idempotency_key = $2 AND operation = $3`,
+          [tenantId, idempotencyKey, operation]
+        );
+        return result;
+      }
+
+      await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+      await this.completeIdempotency(client, tenantId, idempotencyKey, operation, result.data);
+      return result;
+    } catch (err: any) {
+      try {
+        await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        await client.query(
+          `DELETE FROM an_idempotency_keys WHERE tenant_id = $1 AND idempotency_key = $2 AND operation = $3`,
+          [tenantId, idempotencyKey, operation]
+        );
+      } catch {}
+      throw err;
+    }
+  }
+
+  private async reserveIdempotency(
+    client: PoolClient,
+    tenantId: string,
+    key: string,
+    operation: string,
+    explicitHash?: string
+  ): Promise<{ action: 'PROCEED' | 'REPLAY' | 'CONFLICT'; cachedPayload?: any; error?: RFC7807Problem }> {
+    if (!key) return { action: 'PROCEED' };
+    const reqHash = explicitHash || requestContextALS.getStore()?.requestHash || null;
+    const res = await client.query(
+      `INSERT INTO an_idempotency_keys (idempotency_key, tenant_id, operation, request_hash, status, response_payload)
+       VALUES ($1, $2, $3, $4, 'IN_PROGRESS', NULL)
+       ON CONFLICT (tenant_id, idempotency_key, operation)
+       DO UPDATE SET idempotency_key = an_idempotency_keys.idempotency_key
+       RETURNING response_payload, request_hash, status, (xmax = 0) AS is_new_insert`,
+      [key, tenantId, operation, reqHash]
+    );
+    const row = res.rows[0];
+    if (row.is_new_insert) {
+      return { action: 'PROCEED' };
+    }
+    if (row.request_hash && reqHash && row.request_hash !== reqHash) {
+      return {
+        action: 'CONFLICT',
+        error: {
+          type: 'https://api.an-erp.local/errors/idempotency-conflict',
+          title: 'تعارض في مفتاح العملية',
+          status: 409,
+          detail: `مفتاح العملية (${key}) مستخدم مسبقاً مع حمولة طلب مختلفة (Same-key different-payload conflict).`,
+        },
+      };
+    }
+    if (row.status !== 'COMPLETED' || row.response_payload === null || row.response_payload === undefined) {
+      return {
+        action: 'CONFLICT',
+        error: {
+          type: 'https://api.an-erp.local/errors/idempotency-in-progress-or-incomplete',
+          title: 'العملية قيد المعالجة أو غير مكتملة',
+          status: 409,
+          detail: `مفتاح العملية (${key}) مرتبط بعملية سابقة لم تكتمل بنجاح (الحالة: ${row.status}).`,
+        },
+      };
+    }
+    return { action: 'REPLAY', cachedPayload: row.response_payload };
+  }
+
+  private async completeIdempotency(
+    client: PoolClient,
+    tenantId: string,
+    key: string,
+    operation: string,
+    payload: any
+  ): Promise<void> {
+    if (!key) return;
+    await client.query(
+      `UPDATE an_idempotency_keys
+       SET response_payload = $1, status = 'COMPLETED'
+       WHERE tenant_id = $2 AND idempotency_key = $3 AND operation = $4`,
+      [JSON.stringify(payload), tenantId, key, operation]
+    );
   }
 
   private missingConnError(): StorageResult<any> {
@@ -3504,41 +3632,40 @@ export class PostgresPrimaryAdapter implements StoragePort {
   // Phase 3A: Organizational Hierarchy
   public async saveOrgNode(tenantId: string, node: OrgNode, idempotencyKey: string): Promise<StorageResult<OrgNode>> {
     if (!this.pool) return this.missingConnError();
-    const existingKey = await this.checkIdempotency(tenantId, idempotencyKey, 'saveOrgNode');
-    if (existingKey) return { success: true, data: existingKey };
 
     return this.withTenantScope(tenantId, async () => {
-      try {
-        const query = `
-          INSERT INTO an_org_nodes (id, tenant_id, type, code, name_ar, name_en, parent_id, manager_user_id, status, created_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-          ON CONFLICT (id) DO UPDATE SET
-            type = EXCLUDED.type,
-            code = EXCLUDED.code,
-            name_ar = EXCLUDED.name_ar,
-            name_en = EXCLUDED.name_en,
-            parent_id = EXCLUDED.parent_id,
-            manager_user_id = EXCLUDED.manager_user_id,
-            status = EXCLUDED.status
-          RETURNING *;
-        `;
-        await this.query(query, [
-          node.id,
-          tenantId,
-          node.type,
-          node.code,
-          node.nameAr,
-          node.nameEn || null,
-          node.parentId || null,
-          node.managerUserId || null,
-          node.status || 'ACTIVE',
-          node.createdAt ? new Date(node.createdAt) : new Date(),
-        ]);
-        await this.recordIdempotency(tenantId, idempotencyKey, 'saveOrgNode', node);
-        return { success: true, data: node };
-      } catch (err: any) {
-        return this.dbError(err);
-      }
+      return this.runIdempotent(tenantId, idempotencyKey, 'saveOrgNode', async (client) => {
+        try {
+          const query = `
+            INSERT INTO an_org_nodes (id, tenant_id, type, code, name_ar, name_en, parent_id, manager_user_id, status, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (id) DO UPDATE SET
+              type = EXCLUDED.type,
+              code = EXCLUDED.code,
+              name_ar = EXCLUDED.name_ar,
+              name_en = EXCLUDED.name_en,
+              parent_id = EXCLUDED.parent_id,
+              manager_user_id = EXCLUDED.manager_user_id,
+              status = EXCLUDED.status
+            RETURNING *;
+          `;
+          await client.query(query, [
+            node.id,
+            tenantId,
+            node.type,
+            node.code,
+            node.nameAr,
+            node.nameEn || null,
+            node.parentId || null,
+            node.managerUserId || null,
+            node.status || 'ACTIVE',
+            node.createdAt ? new Date(node.createdAt) : new Date(),
+          ]);
+          return { success: true, data: node };
+        } catch (err: any) {
+          return this.dbError(err);
+        }
+      });
     });
   }
 
@@ -3719,56 +3846,55 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<{ userId: string; anonymizedAt: string }>> {
     if (!this.pool) return this.missingConnError();
-    const existing = await this.checkIdempotency(tenantId, idempotencyKey, 'anonymizeUserPii');
-    if (existing) return { success: true, data: existing };
 
     return this.withTenantScope(tenantId, async () => {
-      try {
-        const checkUser = await this.query(
-          'SELECT id FROM an_users WHERE tenant_id = $1 AND id = $2',
-          [tenantId, userId]
-        );
-        if (checkUser.rows.length === 0) {
-          return {
-            success: false,
-            error: {
-              type: 'https://api.an-erp.local/errors/user-not-found',
-              title: 'المستخدم غير موجود',
-              status: 404,
-              detail: `تعذر العثور على المستخدم ${userId} ضمن مستأجر ${tenantId}`,
-            },
-          };
+      return this.runIdempotent(tenantId, idempotencyKey, 'anonymizeUserPii', async (client) => {
+        try {
+          const checkUser = await client.query(
+            'SELECT id FROM an_users WHERE tenant_id = $1 AND id = $2',
+            [tenantId, userId]
+          );
+          if (checkUser.rows.length === 0) {
+            return {
+              success: false,
+              error: {
+                type: 'https://api.an-erp.local/errors/user-not-found',
+                title: 'المستخدم غير موجود',
+                status: 404,
+                detail: `تعذر العثور على المستخدم ${userId} ضمن مستأجر ${tenantId}`,
+              },
+            };
+          }
+
+          const timestamp = new Date().toISOString();
+          const scrubbedName = 'مستخدم مجهول (حق النسيان - GDPR/PDPL)';
+          const scrubbedEmail = `anonymized_${userId.slice(-6)}@privacy.an-erp.local`;
+          const scrubbedUsername = `anon_${userId.slice(-6)}`;
+
+          await client.query(
+            `UPDATE an_users
+             SET full_name = $1,
+                 email = $2,
+                 username = $3,
+                 encrypted_pii = NULL,
+                 two_factor_secret = NULL,
+                 two_factor_enabled = false,
+                 backup_codes = NULL,
+                 hashed_backup_codes = NULL,
+                 status = 'INACTIVE'
+             WHERE tenant_id = $4 AND id = $5`,
+            [scrubbedName, scrubbedEmail, scrubbedUsername, tenantId, userId]
+          );
+
+          // Delete active sessions
+          await client.query('DELETE FROM an_active_sessions WHERE user_id = $1', [userId]);
+
+          const resData = { userId, anonymizedAt: timestamp };
+          return { success: true, data: resData };
+        } catch (err: any) {
+          return this.dbError(err);
         }
-
-        const timestamp = new Date().toISOString();
-        const scrubbedName = 'مستخدم مجهول (حق النسيان - GDPR/PDPL)';
-        const scrubbedEmail = `anonymized_${userId.slice(-6)}@privacy.an-erp.local`;
-        const scrubbedUsername = `anon_${userId.slice(-6)}`;
-
-        await this.query(
-          `UPDATE an_users
-           SET full_name = $1,
-               email = $2,
-               username = $3,
-               encrypted_pii = NULL,
-               two_factor_secret = NULL,
-               two_factor_enabled = false,
-               backup_codes = NULL,
-               hashed_backup_codes = NULL,
-               status = 'INACTIVE'
-           WHERE tenant_id = $4 AND id = $5`,
-          [scrubbedName, scrubbedEmail, scrubbedUsername, tenantId, userId]
-        );
-
-        // Delete active sessions
-        await this.query('DELETE FROM an_active_sessions WHERE user_id = $1', [userId]);
-
-        const resData = { userId, anonymizedAt: timestamp };
-        await this.recordIdempotency(tenantId, idempotencyKey, 'anonymizeUserPii', resData);
-        return { success: true, data: resData };
-      } catch (err: any) {
-        return this.dbError(err);
-      }
+      });
     });
   }
 
@@ -3906,47 +4032,48 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<CashCustody>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'createCashCustody');
-    if (cached) return { success: true, data: cached };
 
-    try {
-      await this.query(
-        `INSERT INTO an_cash_custodies (
-          id, tenant_id, company_id, custody_code, employee_id, employee_name,
-          branch_id, branch_name, cost_center_id, cost_center_name, currency,
-          allocated_amount, current_balance, max_limit_per_role, status,
-          opened_by, opened_by_name, opened_at, notes, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
-        [
-          custody.id,
-          tenantId,
-          custody.companyId || tenantId,
-          custody.custodyCode,
-          custody.employeeId,
-          custody.employeeName,
-          custody.branchId || null,
-          custody.branchName || null,
-          custody.costCenterId,
-          custody.costCenterName || null,
-          custody.currency || 'SAR',
-          custody.allocatedAmount,
-          custody.currentBalance,
-          custody.maxLimitPerRole,
-          custody.status || 'OPEN',
-          custody.openedBy,
-          custody.openedByName,
-          custody.openedAt,
-          custody.notes || null,
-          custody.createdAt,
-          custody.updatedAt,
-        ]
-      );
+    return this.withTenantScope(tenantId, async () => {
+      return this.runIdempotent(tenantId, idempotencyKey, 'createCashCustody', async (client) => {
+        try {
+          await client.query(
+            `INSERT INTO an_cash_custodies (
+              id, tenant_id, company_id, custody_code, employee_id, employee_name,
+              branch_id, branch_name, cost_center_id, cost_center_name, currency,
+              allocated_amount, current_balance, max_limit_per_role, status,
+              opened_by, opened_by_name, opened_at, notes, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+            [
+              custody.id,
+              tenantId,
+              custody.companyId || tenantId,
+              custody.custodyCode,
+              custody.employeeId,
+              custody.employeeName,
+              custody.branchId || null,
+              custody.branchName || null,
+              custody.costCenterId,
+              custody.costCenterName || null,
+              custody.currency || 'SAR',
+              custody.allocatedAmount,
+              custody.currentBalance,
+              custody.maxLimitPerRole,
+              custody.status || 'OPEN',
+              custody.openedBy,
+              custody.openedByName,
+              custody.openedAt,
+              custody.notes || null,
+              custody.createdAt,
+              custody.updatedAt,
+            ]
+          );
 
-      await this.recordIdempotency(tenantId, idempotencyKey, 'createCashCustody', custody);
-      return { success: true, data: custody };
-    } catch (err: any) {
-      return this.dbError(err);
-    }
+          return { success: true, data: custody };
+        } catch (err: any) {
+          return this.dbError(err);
+        }
+      });
+    });
   }
 
   public async getCashCustody(
@@ -4885,48 +5012,49 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<Warehouse>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'saveWarehouse');
-    if (cached) return { success: true, data: cached };
 
-    try {
-      await this.query(
-        `INSERT INTO an_warehouses (
-          id, tenant_id, company_id, code, name_ar, name_en,
-          branch_id, branch_name, location, is_default, valuation_method, is_active, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-        ON CONFLICT (tenant_id, code) DO UPDATE SET
-          name_ar = EXCLUDED.name_ar,
-          name_en = EXCLUDED.name_en,
-          branch_id = EXCLUDED.branch_id,
-          branch_name = EXCLUDED.branch_name,
-          location = EXCLUDED.location,
-          is_default = EXCLUDED.is_default,
-          valuation_method = EXCLUDED.valuation_method,
-          is_active = EXCLUDED.is_active,
-          updated_at = EXCLUDED.updated_at`,
-        [
-          warehouse.id,
-          tenantId,
-          warehouse.companyId || tenantId,
-          warehouse.code,
-          warehouse.nameAr,
-          warehouse.nameEn || null,
-          warehouse.branchId || null,
-          warehouse.branchName || null,
-          warehouse.location || null,
-          warehouse.isDefault ?? false,
-          warehouse.valuationMethod || 'WEIGHTED_AVERAGE',
-          warehouse.isActive ?? true,
-          warehouse.createdAt || new Date().toISOString(),
-          new Date().toISOString(),
-        ]
-      );
+    return this.withTenantScope(tenantId, async () => {
+      return this.runIdempotent(tenantId, idempotencyKey, 'saveWarehouse', async (client) => {
+        try {
+          await client.query(
+            `INSERT INTO an_warehouses (
+              id, tenant_id, company_id, code, name_ar, name_en,
+              branch_id, branch_name, location, is_default, valuation_method, is_active, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ON CONFLICT (tenant_id, code) DO UPDATE SET
+              name_ar = EXCLUDED.name_ar,
+              name_en = EXCLUDED.name_en,
+              branch_id = EXCLUDED.branch_id,
+              branch_name = EXCLUDED.branch_name,
+              location = EXCLUDED.location,
+              is_default = EXCLUDED.is_default,
+              valuation_method = EXCLUDED.valuation_method,
+              is_active = EXCLUDED.is_active,
+              updated_at = EXCLUDED.updated_at`,
+            [
+              warehouse.id,
+              tenantId,
+              warehouse.companyId || tenantId,
+              warehouse.code,
+              warehouse.nameAr,
+              warehouse.nameEn || null,
+              warehouse.branchId || null,
+              warehouse.branchName || null,
+              warehouse.location || null,
+              warehouse.isDefault ?? false,
+              warehouse.valuationMethod || 'WEIGHTED_AVERAGE',
+              warehouse.isActive ?? true,
+              warehouse.createdAt || new Date().toISOString(),
+              new Date().toISOString(),
+            ]
+          );
 
-      await this.recordIdempotency(tenantId, idempotencyKey, 'saveWarehouse', warehouse);
-      return { success: true, data: warehouse };
-    } catch (err: any) {
-      return this.dbError(err);
-    }
+          return { success: true, data: warehouse };
+        } catch (err: any) {
+          return this.dbError(err);
+        }
+      });
+    });
   }
 
   public async getWarehouse(tenantId: string, warehouseId: string): Promise<StorageResult<Warehouse | null>> {
@@ -5071,76 +5199,77 @@ export class PostgresPrimaryAdapter implements StoragePort {
     idempotencyKey: string
   ): Promise<StorageResult<StockItem>> {
     if (!this.pool) return this.missingConnError();
-    const cached = await this.checkIdempotency(tenantId, idempotencyKey, 'saveStockItem');
-    if (cached) return { success: true, data: cached };
 
-    try {
-      await this.query(
-        `INSERT INTO an_stock_items (
-          id, tenant_id, company_id, item_code, barcode, name_ar, name_en,
-          category, uom, inventory_account_code, cogs_account_code,
-          adjustment_expense_account_code, adjustment_gain_account_code,
-          valuation_method, standard_cost, average_cost, last_purchase_cost,
-          selling_price, reorder_point, min_stock_level, max_stock_level,
-          track_batch, track_serial, is_active, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
-        ON CONFLICT (tenant_id, item_code) DO UPDATE SET
-          name_ar = EXCLUDED.name_ar,
-          name_en = EXCLUDED.name_en,
-          barcode = EXCLUDED.barcode,
-          category = EXCLUDED.category,
-          uom = EXCLUDED.uom,
-          inventory_account_code = EXCLUDED.inventory_account_code,
-          cogs_account_code = EXCLUDED.cogs_account_code,
-          adjustment_expense_account_code = EXCLUDED.adjustment_expense_account_code,
-          adjustment_gain_account_code = EXCLUDED.adjustment_gain_account_code,
-          valuation_method = EXCLUDED.valuation_method,
-          standard_cost = EXCLUDED.standard_cost,
-          average_cost = EXCLUDED.average_cost,
-          last_purchase_cost = EXCLUDED.last_purchase_cost,
-          selling_price = EXCLUDED.selling_price,
-          reorder_point = EXCLUDED.reorder_point,
-          min_stock_level = EXCLUDED.min_stock_level,
-          max_stock_level = EXCLUDED.max_stock_level,
-          track_batch = EXCLUDED.track_batch,
-          track_serial = EXCLUDED.track_serial,
-          is_active = EXCLUDED.is_active,
-          updated_at = EXCLUDED.updated_at`,
-        [
-          item.id,
-          tenantId,
-          item.companyId || tenantId,
-          item.itemCode,
-          item.barcode || null,
-          item.nameAr,
-          item.nameEn || null,
-          item.category || 'GENERAL',
-          item.uom || 'حبة',
-          item.inventoryAccountCode || '1050',
-          item.cogsAccountCode || '5010',
-          item.adjustmentExpenseAccountCode || '5090',
-          item.adjustmentGainAccountCode || '4090',
-          item.valuationMethod || 'WEIGHTED_AVERAGE',
-          item.standardCost || 0,
-          item.averageCost || 0,
-          item.lastPurchaseCost || 0,
-          item.sellingPrice || 0,
-          item.reorderPoint || 10,
-          item.minStockLevel || 5,
-          item.maxStockLevel || 1000,
-          item.trackBatch ?? false,
-          item.trackSerial ?? false,
-          item.isActive ?? true,
-          item.createdAt || new Date().toISOString(),
-          new Date().toISOString(),
-        ]
-      );
+    return this.withTenantScope(tenantId, async () => {
+      return this.runIdempotent(tenantId, idempotencyKey, 'saveStockItem', async (client) => {
+        try {
+          await client.query(
+            `INSERT INTO an_stock_items (
+              id, tenant_id, company_id, item_code, barcode, name_ar, name_en,
+              category, uom, inventory_account_code, cogs_account_code,
+              adjustment_expense_account_code, adjustment_gain_account_code,
+              valuation_method, standard_cost, average_cost, last_purchase_cost,
+              selling_price, reorder_point, min_stock_level, max_stock_level,
+              track_batch, track_serial, is_active, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+            ON CONFLICT (tenant_id, item_code) DO UPDATE SET
+              name_ar = EXCLUDED.name_ar,
+              name_en = EXCLUDED.name_en,
+              barcode = EXCLUDED.barcode,
+              category = EXCLUDED.category,
+              uom = EXCLUDED.uom,
+              inventory_account_code = EXCLUDED.inventory_account_code,
+              cogs_account_code = EXCLUDED.cogs_account_code,
+              adjustment_expense_account_code = EXCLUDED.adjustment_expense_account_code,
+              adjustment_gain_account_code = EXCLUDED.adjustment_gain_account_code,
+              valuation_method = EXCLUDED.valuation_method,
+              standard_cost = EXCLUDED.standard_cost,
+              average_cost = EXCLUDED.average_cost,
+              last_purchase_cost = EXCLUDED.last_purchase_cost,
+              selling_price = EXCLUDED.selling_price,
+              reorder_point = EXCLUDED.reorder_point,
+              min_stock_level = EXCLUDED.min_stock_level,
+              max_stock_level = EXCLUDED.max_stock_level,
+              track_batch = EXCLUDED.track_batch,
+              track_serial = EXCLUDED.track_serial,
+              is_active = EXCLUDED.is_active,
+              updated_at = EXCLUDED.updated_at`,
+            [
+              item.id,
+              tenantId,
+              item.companyId || tenantId,
+              item.itemCode,
+              item.barcode || null,
+              item.nameAr,
+              item.nameEn || null,
+              item.category || 'GENERAL',
+              item.uom || 'حبة',
+              item.inventoryAccountCode || '1050',
+              item.cogsAccountCode || '5010',
+              item.adjustmentExpenseAccountCode || '5090',
+              item.adjustmentGainAccountCode || '4090',
+              item.valuationMethod || 'WEIGHTED_AVERAGE',
+              item.standardCost || 0,
+              item.averageCost || 0,
+              item.lastPurchaseCost || 0,
+              item.sellingPrice || 0,
+              item.reorderPoint || 10,
+              item.minStockLevel || 5,
+              item.maxStockLevel || 1000,
+              item.trackBatch ?? false,
+              item.trackSerial ?? false,
+              item.isActive ?? true,
+              item.createdAt || new Date().toISOString(),
+              new Date().toISOString(),
+            ]
+          );
 
-      await this.recordIdempotency(tenantId, idempotencyKey, 'saveStockItem', item);
-      return { success: true, data: item };
-    } catch (err: any) {
-      return this.dbError(err);
-    }
+          return { success: true, data: item };
+        } catch (err: any) {
+          return this.dbError(err);
+        }
+      });
+    });
   }
 
   public async getStockItem(tenantId: string, itemId: string): Promise<StorageResult<StockItem | null>> {

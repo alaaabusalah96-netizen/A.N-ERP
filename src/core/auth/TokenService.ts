@@ -33,10 +33,7 @@ export class TokenService {
    */
   private getSecret(): string {
     const secret = process.env.JWT_SECRET;
-    if (!secret) {
-      if (process.env.NODE_ENV !== 'production') {
-        return 'dev-ephemeral-jwt-secret-key-for-local-development-mode-2026';
-      }
+    if (!secret || secret.trim() === '') {
       throw new Error('JWT_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
     }
     return secret;

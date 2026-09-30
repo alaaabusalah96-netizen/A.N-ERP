@@ -55,6 +55,7 @@ import { AccountingService } from './src/core/accounting/AccountingService';
 import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
 import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
 import { requirePermission } from './src/core/auth/PermissionMatrix';
+import { requestContextALS } from './src/core/context/RequestContext';
 
 // Wave 0: Security Hardening — Strict Environment Secrets Enforcement
 export function requireEnv(name: string): string {
@@ -84,11 +85,13 @@ export function resolveCookieSameSite(req: Request): 'strict' | 'none' {
   return 'strict';
 }
 
-// Ensure all 4 mandatory security secrets are strictly provided at server boot
+// Ensure all 6 mandatory security secrets are strictly provided at server boot
 requireEnv('SEED_ADMIN_PASSWORD');
 requireEnv('INITIAL_USER_PASSWORD');
 requireEnv('RESET_USER_PASSWORD');
 requireEnv('E2E_TEST_PASSWORD');
+requireEnv('JWT_SECRET');
+requireEnv('PII_ENCRYPTION_SECRET');
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -240,22 +243,6 @@ async function initSeedUsers(storage: StoragePort, tenantId: string = companyPro
 }
 
 async function startServer() {
-  // Section B.4: In production, enforce secrets; in dev, provide safe defaults
-  if (!process.env.JWT_SECRET) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('JWT_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
-    } else {
-      process.env.JWT_SECRET = 'dev-ephemeral-jwt-secret-key-for-local-development-mode-2026';
-    }
-  }
-  if (!process.env.PII_ENCRYPTION_SECRET) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('PII_ENCRYPTION_SECRET غير معرَّف في متغيرات البيئة — لا يمكن تشغيل السيرفر بدونه');
-    } else {
-      process.env.PII_ENCRYPTION_SECRET = 'dev-ephemeral-pii-secret-key-for-local-development-mode-2026';
-    }
-  }
-
   const masterStorage: StoragePort = process.env.DATABASE_URL
     ? globalStorageRouter.getPrimaryAdapter()
     : globalStorageRouter.getDevInMemoryAdapter();
@@ -292,6 +279,25 @@ async function startServer() {
 
   app.use(express.json());
   app.use(cookieParser());
+
+  // INV-001: Request Context ALS for Idempotency Request Hash computation
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const idempotencyKey = (req.headers['idempotency-key'] as string | undefined) || req.body?.idempotencyKey;
+    if (!idempotencyKey) {
+      return next();
+    }
+    const sortKeys = (obj: any): any => {
+      if (obj === null || typeof obj !== 'object') return obj;
+      if (Array.isArray(obj)) return obj.map(sortKeys);
+      return Object.keys(obj).sort().reduce((acc: any, k) => {
+        acc[k] = sortKeys(obj[k]);
+        return acc;
+      }, {});
+    };
+    const canonical = JSON.stringify(sortKeys(req.body || {})) + ':' + req.method + ':' + (req.baseUrl || '') + req.path;
+    const hash = crypto.createHash('sha256').update(canonical).digest('hex');
+    requestContextALS.run({ requestHash: hash }, () => next());
+  });
 
   // 4.5G — Rate Limiting Configuration
   const apiRateLimiter = rateLimit({
