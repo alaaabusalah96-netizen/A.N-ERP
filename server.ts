@@ -671,6 +671,17 @@ async function startServer() {
         return res.status(401).json({ success: false, message: ver.error || 'جلسة غير صالحة' });
       }
 
+      // Phase 3 (I2/I7): Verify user membership is ACTIVE in tenant
+      const userCheck = await tenantStorage.getUserById(ver.payload.sub);
+      if (userCheck.success && userCheck.data && userCheck.data.status !== 'ACTIVE') {
+        return res.status(403).json({
+          type: 'https://api.an-erp.local/errors/inactive-membership',
+          title: 'عضوية معطلة',
+          status: 403,
+          detail: 'عضوية المستخدم في هذه المنشأة غير نشطة أو تم إيقافها.',
+        });
+      }
+
       (req as any).authContext = {
         tenantId: ver.payload.tenantId,
         userId: ver.payload.sub,
@@ -779,7 +790,7 @@ async function startServer() {
       return res.status(423).json(problem);
     }
 
-    if (!user || !user.passwordHash) {
+    if (!user || !user.passwordHash || user.status !== 'ACTIVE') {
       const failedState = await anomalyDetector.recordFailedAttempt(username);
       await recordAudit(
         username,
