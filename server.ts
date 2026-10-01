@@ -745,14 +745,6 @@ async function startServer() {
     const targetTenant = tenantResolution.tenant;
     const targetStorage = await globalStorageRouter.resolveAdapterAsync(targetTenant);
 
-    const idempotencyKey = req.headers['idempotency-key'] as string;
-    if (idempotencyKey) {
-      const cached = await targetStorage.checkIdempotencyRecord(targetTenant.id, idempotencyKey, 'LOGIN');
-      if (cached.success && cached.data) {
-        return res.json(cached.data);
-      }
-    }
-
     const { username, password, twoFactorCode, backupCode, forceTerminateOldest, clientGeo } = req.body;
 
     if (!username || !password) {
@@ -1085,10 +1077,6 @@ async function startServer() {
       calendar: DualCalendar.format(),
     };
 
-    if (idempotencyKey) {
-      await targetStorage.saveIdempotencyRecord(userTenantId, idempotencyKey, 'LOGIN', responsePayload);
-    }
-
     return res.json(responsePayload);
   });
 
@@ -1308,7 +1296,7 @@ async function startServer() {
     return res.json({ success: true, data: tenant });
   });
 
-  app.put('/api/company', requireAuth, async (req: Request, res: Response) => {
+  app.put('/api/company', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
     const { nameAr, nameEn, crNumber, taxNumber, baseCurrency, auditRetentionPolicyYears } = req.body;
     const tenant = getRequestTenant(req, res);
     if (!tenant) return;
@@ -1540,7 +1528,7 @@ async function startServer() {
     return res.json({ success: true, data });
   });
 
-  app.post('/api/custom-fields', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/custom-fields', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const storage = getRequestStorage(req, res);
     if (!storage) return;
@@ -1567,7 +1555,7 @@ async function startServer() {
   });
 
   // 1E — Operational Audit Trail
-  app.get('/api/audit-trail', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/audit-trail', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const storage = getRequestStorage(req, res);
     if (!storage) return;
@@ -1577,7 +1565,7 @@ async function startServer() {
   });
 
   // 1F — Domain Events Stream
-  app.get('/api/domain-events', requireAuth, (req: Request, res: Response) => {
+  app.get('/api/domain-events', requireAuth, requirePermission('AUDIT_LOG_VIEW'), (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const events = DomainEventBus.getRecentEvents(tenantId);
     return res.json({ success: true, data: events });
@@ -1817,7 +1805,7 @@ async function startServer() {
   });
 
   // 2C: Numbering Sequence Manual Override with Mandatory Audit Justification
-  app.post('/api/numbering/override', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/numbering/override', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const { sequenceKey, targetSequence, justificationAr, authorizedBy, idempotencyKey } = req.body;
@@ -1969,7 +1957,7 @@ async function startServer() {
   });
 
   // 2E & 2G: SHA-256 Tamper-Evident Hash Chain Audit
-  app.get('/api/audit-chain', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/audit-chain', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const storage = getRequestStorage(req, res);
     if (!storage) return;
@@ -1980,7 +1968,7 @@ async function startServer() {
     return res.json(result);
   });
 
-  app.post('/api/audit-chain/verify', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/audit-chain/verify', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const storage = getRequestStorage(req, res);
     if (!storage) return;
@@ -2179,7 +2167,7 @@ async function startServer() {
   });
 
   // 4B: القيود اليومية (Manual Journal Entries with PostingEngine)
-  app.get('/api/accounting/journal-entries', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/accounting/journal-entries', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const primary: any = getRequestStorage(req, res);
@@ -2274,7 +2262,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/accounting/dimensions', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/accounting/dimensions', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getAccountingService(req, res);
@@ -2286,7 +2274,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/accounting/dimensions/analytics', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/accounting/dimensions/analytics', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const type = (req.query.type as any) || 'COST_CENTER';
@@ -2324,7 +2312,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/accounting/items', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/accounting/items', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getAccountingService(req, res);
@@ -2405,7 +2393,7 @@ async function startServer() {
   });
 
   // 4G: الاستيراد القياسي (Import)
-  app.post('/api/accounting/import/validate', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/accounting/import/validate', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getAccountingService(req, res);
@@ -2418,7 +2406,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/accounting/import/execute', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/accounting/import/execute', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId;
@@ -2435,7 +2423,7 @@ async function startServer() {
   });
 
   // 4H: الموازنات والقيود الدورية (Budgets & Recurring)
-  app.get('/api/accounting/budgets', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/accounting/budgets', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const year = req.query.year ? Number(req.query.year) : 2026;
@@ -2448,7 +2436,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/accounting/budgets', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/accounting/budgets', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getAccountingService(req, res);
@@ -2460,7 +2448,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/accounting/recurring', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/accounting/recurring', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getAccountingService(req, res);
@@ -2472,7 +2460,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/accounting/recurring/:id/run', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/accounting/recurring/:id/run', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId;
@@ -2497,7 +2485,7 @@ async function startServer() {
   });
 
   // 4J: فاحص التوازن المستمر (Continuous Trial Balance Checker)
-  app.get('/api/accounting/balance-checker/run', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/accounting/balance-checker/run', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const simulate = req.query.simulate === 'true';
@@ -2510,7 +2498,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/accounting/balance-checker/history', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/accounting/balance-checker/history', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getAccountingService(req, res);
@@ -2523,7 +2511,7 @@ async function startServer() {
   });
 
   // 4K: اختبار الخصائص العشوائي على PostingEngine ضد PostgreSQL
-  app.post('/api/accounting/fuzz-test', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/accounting/fuzz-test', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const iterations = req.body.iterations ? Number(req.body.iterations) : 1000;
@@ -3029,7 +3017,7 @@ async function startServer() {
   });
 
   // 7A: Warehouses List
-  app.get('/api/inventory/warehouses', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3063,7 +3051,7 @@ async function startServer() {
   });
 
   // 7A: Warehouse Bins
-  app.get('/api/inventory/warehouses/:id/bins', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/warehouses/:id/bins', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3090,7 +3078,7 @@ async function startServer() {
   });
 
   // 7A: Items List & Card
-  app.get('/api/inventory/items', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/items', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3123,7 +3111,7 @@ async function startServer() {
   });
 
   // 7B: Stock Balances & Real-Time Levels
-  app.get('/api/inventory/stock', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3139,7 +3127,7 @@ async function startServer() {
   });
 
   // 7B: Stock Movements
-  app.get('/api/inventory/movements', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/movements', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3207,7 +3195,7 @@ async function startServer() {
   });
 
   // 7A: Transfers Between Warehouses
-  app.get('/api/inventory/transfers', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/transfers', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3247,7 +3235,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/inventory/transfers/:id', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/transfers/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3299,7 +3287,7 @@ async function startServer() {
   });
 
   // 7C: Inventory Counts (الجرد الفعلي والتسويات)
-  app.get('/api/inventory/counts', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/counts', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3339,7 +3327,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/inventory/counts/:id', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/counts/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3382,7 +3370,7 @@ async function startServer() {
   // =========================================================================
 
   // 7.6A: Stock Documents List (Multi-line Receipts, Issues, Returns)
-  app.get('/api/inventory/documents', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/documents', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
@@ -3401,7 +3389,7 @@ async function startServer() {
   });
 
   // 7.6A: Stock Document Detail
-  app.get('/api/inventory/documents/:id', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/documents/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
@@ -3440,7 +3428,7 @@ async function startServer() {
   });
 
   // 7.6E: Item Ledger / Stock Card (كارت الصنف)
-  app.get('/api/inventory/items/:id/ledger', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/items/:id/ledger', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3463,7 +3451,7 @@ async function startServer() {
   });
 
   // 7.6F: Item Prices (قوائم أسعار الصنف)
-  app.get('/api/inventory/items/:id/prices', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/items/:id/prices', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3497,7 +3485,7 @@ async function startServer() {
   });
 
   // 7.6F: Barcode Lookup & SVG
-  app.get('/api/inventory/items/search/barcode', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/items/search/barcode', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3512,7 +3500,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/inventory/items/:id/barcode-svg', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/inventory/items/:id/barcode-svg', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
