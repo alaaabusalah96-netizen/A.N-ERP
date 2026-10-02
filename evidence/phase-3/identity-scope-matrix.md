@@ -9,7 +9,7 @@
 | I5 — OrgNode Authority | src/core/storage/adapters/PostgresPrimaryAdapter.ts (an_org_nodes & recursive CTE) | ALREADY_APPLIED | TEST-09 | PASS | 3 |
 | I6 — Tenant Isolation | server.ts (strictly tenant-scoped handlers) & PostgresPrimaryAdapter.ts | ALREADY_APPLIED | TEST-07 | PASS | 3 |
 | I7 — Zero Access | server.ts (requireAuth + requirePermission deny by default without active role/membership) | PATCHED | TEST-01, TEST-02 | PASS | 3 |
-| I8 — Seed | src/core/seed/seedOnly.ts & server.ts (initSeedUsers idempotency checks) | ALREADY_APPLIED | TEST-08 | PASS | 3 |
+| I8 — Seed | server.ts (initSeedUsers idempotency checks) & PostgresPrimaryAdapter.ts | ALREADY_APPLIED | TEST-08 | PASS | 3 |
 
 TOTAL_INVARIANTS=8
 PASS=8

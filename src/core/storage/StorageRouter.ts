@@ -218,8 +218,11 @@ export class StorageRouter {
         initPromise = (adapter as any).initializeSchema().then(() => {
           if (entry) entry.initialized = true;
         }).catch((err: any) => {
-          console.error(`[StorageRouter] Error initializing schema for dedicated tenant ${tenantId}:`, err);
+          this.dedicatedAdapters.delete(key);
+          console.error(`[StorageRouter] Error initializing schema for dedicated tenant ${tenantId}: ${err?.message || err}`);
+          throw err;
         });
+        initPromise.catch(() => {}); // intentional: يمنع unhandledRejection؛ المنتظرون على initPromise يستلمون الرفض
       }
 
       entry = {
@@ -247,8 +250,13 @@ export class StorageRouter {
         if (entry.initPromise && !entry.initialized) {
           await entry.initPromise;
         } else if (!entry.initialized && typeof (adapter as any).initializeSchema === 'function') {
-          await (adapter as any).initializeSchema();
-          entry.initialized = true;
+          try {
+            await (adapter as any).initializeSchema();
+            entry.initialized = true;
+          } catch (err: any) {
+            this.dedicatedAdapters.delete(key);
+            throw err;
+          }
         }
       }
     }

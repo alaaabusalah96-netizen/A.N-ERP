@@ -93,13 +93,14 @@ requireEnv('E2E_TEST_PASSWORD');
 requireEnv('JWT_SECRET');
 requireEnv('PII_ENCRYPTION_SECRET');
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = 3000;
 
 // Initial company seed settings for primary setup (Phase 0 / Phase 1)
 const companyProfile: TenantCompany = SEED_COMPANY_PROFILE;
 
 // Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing directly via StoragePort
 async function initSeedUsers(storage: StoragePort, tenantId: string = companyProfile.id) {
+  const seedForceReset = process.env.SEED_FORCE_RESET === 'true';
   const seedAdminPass = requireEnv('SEED_ADMIN_PASSWORD');
   const adminHash = await argon2.hash(seedAdminPass, { type: argon2.argon2id });
   const adminTotpSecret = generateSecret();
@@ -131,23 +132,14 @@ async function initSeedUsers(storage: StoragePort, tenantId: string = companyPro
 
     await storage.saveUser(adminUser, seedKey('admin'), true);
 
-    console.log('\n============================================================');
-    console.log('[A.N ERP v7.1] Initial Setup — Seed Administrator Created');
-    console.log('Username: admin');
-    console.log(`Generated Password: ${seedAdminPass}`);
-    console.log(`TOTP Secret (Base32): ${adminTotpSecret}`);
-    console.log(`Emergency Backup Codes: ${adminBackupCodes.plainCodes.join(', ')}`);
-    console.log('(Credentials saved in database via Argon2id. Use these for login & 2FA.)');
-    console.log('============================================================\n');
+    console.log('[seed] admin created from environment credentials; 2FA is not enabled');
   } else {
-    const adminMatches = existingAdmin.data.passwordHash
-      ? await argon2.verify(existingAdmin.data.passwordHash, seedAdminPass).catch(() => false)
-      : false;
-    if (!adminMatches) {
+    if (seedForceReset) {
       await storage.updateUser(existingAdmin.data.id, {
         passwordHash: adminHash,
         status: 'ACTIVE',
       });
+      console.log('[seed] admin reset by SEED_FORCE_RESET');
     }
   }
 
@@ -229,14 +221,12 @@ async function initSeedUsers(storage: StoragePort, tenantId: string = companyPro
     if (!check.success || !check.data) {
       await storage.saveUser(u, seedKey(`user-${u.id}`), true);
     } else {
-      const standardMatches = check.data.passwordHash
-        ? await argon2.verify(check.data.passwordHash, standardPass).catch(() => false)
-        : false;
-      if (!standardMatches) {
+      if (seedForceReset) {
         await storage.updateUser(check.data.id, {
           passwordHash: u.passwordHash,
           status: 'ACTIVE',
         });
+        console.log(`[seed] ${u.username} reset by SEED_FORCE_RESET`);
       }
     }
   }
@@ -671,14 +661,17 @@ async function startServer() {
         return res.status(401).json({ success: false, message: ver.error || 'جلسة غير صالحة' });
       }
 
-      // Phase 3 (I2/I7): Verify user membership is ACTIVE in tenant
-      const userCheck = await tenantStorage.getUserById(ver.payload.sub);
-      if (userCheck.success && userCheck.data && userCheck.data.status !== 'ACTIVE') {
+      // Phase 3 (I2/I3/I7): Verify user membership exists and is ACTIVE in tenant
+      const userCheck = typeof (tenantStorage as any).getUser === 'function'
+        ? await (tenantStorage as any).getUser(ver.payload.tenantId, ver.payload.sub)
+        : await tenantStorage.getUserById(ver.payload.sub);
+
+      if (!userCheck.success || !userCheck.data || (userCheck.data.tenantId && userCheck.data.tenantId !== ver.payload.tenantId) || userCheck.data.status !== 'ACTIVE') {
         return res.status(403).json({
           type: 'https://api.an-erp.local/errors/inactive-membership',
-          title: 'عضوية معطلة',
+          title: 'عضوية غير صالحة أو معطلة',
           status: 403,
-          detail: 'عضوية المستخدم في هذه المنشأة غير نشطة أو تم إيقافها.',
+          detail: 'المستخدم لا يملك عضوية نشطة في هذه المنشأة.',
         });
       }
 
@@ -686,7 +679,8 @@ async function startServer() {
         tenantId: ver.payload.tenantId,
         userId: ver.payload.sub,
         sessionId: ver.payload.sessionId,
-        role: ver.payload.role,
+        role: userCheck.data.role || '',
+        orgNodeId: (userCheck.data as any).assignedNodeId || (userCheck.data as any).orgNodeId,
       } as AuthContext;
       (req as any).storage = tenantStorage;
       (req as any).tenant = tenant;
@@ -1372,10 +1366,14 @@ async function startServer() {
       try {
         if (u.encryptedPii) {
           const rawPii = typeof u.encryptedPii === 'string' ? u.encryptedPii : JSON.stringify(u.encryptedPii);
-          decryptedPii = EncryptionService.decryptPII<any>(rawPii);
+          decryptedPii = EncryptionService.decryptPII<any>(rawPii) || {};
         }
       } catch (e) {
         console.error(JSON.stringify({ level: 'CRITICAL', op: 'list_users_decrypt_pii', trace: crypto.randomUUID(), err: String(e) }));
+        decryptedPii = {};
+      }
+      if (!decryptedPii || typeof decryptedPii !== 'object') {
+        decryptedPii = {};
       }
       return {
         id: u.id,
