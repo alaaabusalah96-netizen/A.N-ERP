@@ -1,0 +1,137 @@
+--- /tmp/orig_phase-2/src/core/storage/StoragePort.ts	2026-10-03 07:12:46.273966813 +0000
++++ src/core/storage/StoragePort.ts	2026-10-03 07:14:07.211593942 +0000
+@@ -865,6 +865,7 @@
+   saveRefreshToken(record: RefreshTokenRecord): Promise<StorageResult<RefreshTokenRecord>>;
+   getRefreshToken(tokenHash: string): Promise<StorageResult<RefreshTokenRecord>>;
+   updateRefreshToken(record: RefreshTokenRecord): Promise<StorageResult<RefreshTokenRecord>>;
++  consumeRefreshToken(tokenHash: string, revokedAt: number): Promise<StorageResult<boolean>>;
+   invalidateTokenFamily(familyId: string, reason: string): Promise<StorageResult<boolean>>;
+ 
+   // Phase 2: Module Manifest Management (2H)
+--- /tmp/orig_phase-2/src/core/storage/adapters/PostgresPrimaryAdapter.ts	2026-10-03 07:12:46.274327741 +0000
++++ src/core/storage/adapters/PostgresPrimaryAdapter.ts	2026-10-03 07:14:13.628724804 +0000
+@@ -2536,6 +2536,19 @@
+     });
+   }
+ 
++  public async consumeRefreshToken(tokenHash: string, revokedAt: number): Promise<StorageResult<boolean>> {
++    if (!this.pool) return this.missingConnError();
++    try {
++      const res = await this.query(
++        'UPDATE an_refresh_tokens SET is_used = TRUE, revoked_at = $2 WHERE token_hash = $1 AND is_used = FALSE',
++        [tokenHash, revokedAt]
++      );
++      return { success: true, data: res.rowCount === 1 };
++    } catch (err: any) {
++      return this.dbError(err);
++    }
++  }
++
+   public async invalidateTokenFamily(familyId: string, reason: string): Promise<StorageResult<boolean>> {
+     if (!this.pool) return this.missingConnError();
+     try {
+--- /tmp/orig_phase-2/src/core/storage/adapters/InMemoryAdapter.ts	2026-10-03 07:12:46.274499949 +0000
++++ src/core/storage/adapters/InMemoryAdapter.ts	2026-10-03 07:14:22.573394425 +0000
+@@ -810,6 +810,14 @@
+     return { success: true, data: record };
+   }
+ 
++  public async consumeRefreshToken(tokenHash: string, revokedAt: number): Promise<StorageResult<boolean>> {
++    const rec = this.refreshTokens.get(tokenHash);
++    if (!rec || rec.isUsed) return { success: true, data: false };
++    rec.isUsed = true;
++    rec.revokedAt = revokedAt;
++    return { success: true, data: true };
++  }
++
+   public async invalidateTokenFamily(familyId: string, reason: string): Promise<StorageResult<boolean>> {
+     const family = this.tokenFamilies.get(familyId);
+     if (family) {
+--- /tmp/orig_phase-2/src/core/storage/adapters/MongoDBSmokeAdapter.ts	2026-10-03 07:12:46.274608669 +0000
++++ src/core/storage/adapters/MongoDBSmokeAdapter.ts	2026-10-03 07:14:28.770341761 +0000
+@@ -94,6 +94,7 @@
+   saveRefreshToken(record: RefreshTokenRecord) { return this.smokeOnlyError<RefreshTokenRecord>('saveRefreshToken'); }
+   getRefreshToken(tokenHash: string) { return this.smokeOnlyError<RefreshTokenRecord>('getRefreshToken'); }
+   updateRefreshToken(record: RefreshTokenRecord) { return this.smokeOnlyError<RefreshTokenRecord>('updateRefreshToken'); }
++  consumeRefreshToken(tokenHash: string, revokedAt: number) { return this.smokeOnlyError<boolean>('consumeRefreshToken'); }
+   invalidateTokenFamily(familyId: string, reason: string) { return this.smokeOnlyError<boolean>('invalidateTokenFamily'); }
+   getTenantModules(tenantId: string) { return this.smokeOnlyError<TenantModuleManifest[]>('getTenantModules'); }
+   enableTenantModules(tenantId: string, modules: TenantModuleManifest[], idempotencyKey: string) { return this.smokeOnlyError<TenantModuleManifest[]>('enableTenantModules'); }
+--- /tmp/orig_phase-2/src/core/storage/adapters/FirebaseSmokeAdapter.ts	2026-10-03 07:12:46.274709228 +0000
++++ src/core/storage/adapters/FirebaseSmokeAdapter.ts	2026-10-03 07:14:33.376766689 +0000
+@@ -96,6 +96,7 @@
+   saveRefreshToken(record: RefreshTokenRecord) { return this.smokeOnlyError<RefreshTokenRecord>('saveRefreshToken'); }
+   getRefreshToken(tokenHash: string) { return this.smokeOnlyError<RefreshTokenRecord>('getRefreshToken'); }
+   updateRefreshToken(record: RefreshTokenRecord) { return this.smokeOnlyError<RefreshTokenRecord>('updateRefreshToken'); }
++  consumeRefreshToken(tokenHash: string, revokedAt: number) { return this.smokeOnlyError<boolean>('consumeRefreshToken'); }
+   invalidateTokenFamily(familyId: string, reason: string) { return this.smokeOnlyError<boolean>('invalidateTokenFamily'); }
+   getTenantModules(tenantId: string) { return this.smokeOnlyError<TenantModuleManifest[]>('getTenantModules'); }
+   enableTenantModules(tenantId: string, modules: TenantModuleManifest[], idempotencyKey: string) { return this.smokeOnlyError<TenantModuleManifest[]>('enableTenantModules'); }
+--- /tmp/orig_phase-2/src/core/storage/adapters/MySQLSmokeAdapter.ts	2026-10-03 07:12:46.274817267 +0000
++++ src/core/storage/adapters/MySQLSmokeAdapter.ts	2026-10-03 07:14:39.128921717 +0000
+@@ -112,6 +112,7 @@
+   saveRefreshToken(record: RefreshTokenRecord) { return this.smokeOnlyError<RefreshTokenRecord>('saveRefreshToken'); }
+   getRefreshToken(tokenHash: string) { return this.smokeOnlyError<RefreshTokenRecord>('getRefreshToken'); }
+   updateRefreshToken(record: RefreshTokenRecord) { return this.smokeOnlyError<RefreshTokenRecord>('updateRefreshToken'); }
++  consumeRefreshToken(tokenHash: string, revokedAt: number) { return this.smokeOnlyError<boolean>('consumeRefreshToken'); }
+   invalidateTokenFamily(familyId: string, reason: string) { return this.smokeOnlyError<boolean>('invalidateTokenFamily'); }
+   getTenantModules(tenantId: string) { return this.smokeOnlyError<TenantModuleManifest[]>('getTenantModules'); }
+   enableTenantModules(tenantId: string, modules: TenantModuleManifest[], idempotencyKey: string) { return this.smokeOnlyError<TenantModuleManifest[]>('enableTenantModules'); }
+--- /tmp/orig_phase-2/src/core/auth/TokenService.ts	2026-10-03 07:12:46.273806215 +0000
++++ src/core/auth/TokenService.ts	2026-10-03 07:14:52.977390593 +0000
+@@ -147,7 +147,10 @@
+     sessionId: string
+   ): Promise<string> {
+     const randomHex = crypto.randomBytes(32).toString('hex');
+-    const plainToken = `rt.${tenantId}.${familyId}.${sequence}.${randomHex}`;
++    const payloadB64 = Buffer.from(
++      JSON.stringify({ tenantId, familyId, sequence, userId, sessionId })
++    ).toString('base64url');
++    const plainToken = `rt.${payloadB64}.${randomHex}`;
+     const tokenHash = crypto.createHash('sha256').update(plainToken).digest('hex');
+ 
+     const record: RefreshTokenRecord = {
+@@ -191,7 +194,15 @@
+         error: 'رمز التحديث فاقد لمعرّف المنشأة الصريح — تم رفض التجديد لعدم وجود نطاق معتمد (بند 5.4)',
+       };
+     }
+-    const tenantId = parts[1];
++    let tenantId = parts[1];
++    if (parts.length === 3) {
++      try {
++        const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
++        if (decoded?.tenantId) {
++          tenantId = decoded.tenantId;
++        }
++      } catch {}
++    }
+ 
+     return this.storage.withTenantScope(tenantId, async () => {
+       const tokenHash = crypto.createHash('sha256').update(oldPlainToken).digest('hex');
+@@ -233,10 +244,22 @@
+         return { success: false, error: 'انتهت صلاحية رمز التحديث' };
+       }
+ 
+-      // Mark current token as used
+-      record.isUsed = true;
+-      record.revokedAt = Date.now();
+-      await this.storage.updateRefreshToken(record);
++      // Mark current token as used atomically (exactly one concurrent caller wins)
++      const consumed = await this.storage.consumeRefreshToken(tokenHash, Date.now());
++      if (!consumed.success) {
++        return { success: false, error: 'رمز التحديث غير معروف أو غير صالح' };
++      }
++      if (consumed.data === false) {
++        await this.storage.invalidateTokenFamily(
++          record.familyId,
++          `DETECTED_REUSE_OF_TOKEN_SEQ_${record.sequence}`
++        );
++        return {
++          success: false,
++          error: 'تم اكتشاف محاولة إعادة استخدام رمز جلسة قديم — تم إبطال سلسلة التوكن بالكامل فوراً',
++          familyRevoked: true,
++        };
++      }
+ 
+       // Rotate: Issue new refresh token & access token in same family
+       const nextSeq = record.sequence + 1;

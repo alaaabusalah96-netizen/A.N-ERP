@@ -810,6 +810,14 @@ export class InMemoryAdapter implements StoragePort {
     return { success: true, data: record };
   }
 
+  public async consumeRefreshToken(tokenHash: string, revokedAt: number): Promise<StorageResult<boolean>> {
+    const rec = this.refreshTokens.get(tokenHash);
+    if (!rec || rec.isUsed) return { success: true, data: false };
+    rec.isUsed = true;
+    rec.revokedAt = revokedAt;
+    return { success: true, data: true };
+  }
+
   public async invalidateTokenFamily(familyId: string, reason: string): Promise<StorageResult<boolean>> {
     const family = this.tokenFamilies.get(familyId);
     if (family) {

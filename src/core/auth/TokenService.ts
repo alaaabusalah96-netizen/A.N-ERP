@@ -147,7 +147,10 @@ export class TokenService {
     sessionId: string
   ): Promise<string> {
     const randomHex = crypto.randomBytes(32).toString('hex');
-    const plainToken = `rt.${tenantId}.${familyId}.${sequence}.${randomHex}`;
+    const payloadB64 = Buffer.from(
+      JSON.stringify({ tenantId, familyId, sequence, userId, sessionId })
+    ).toString('base64url');
+    const plainToken = `rt.${payloadB64}.${randomHex}`;
     const tokenHash = crypto.createHash('sha256').update(plainToken).digest('hex');
 
     const record: RefreshTokenRecord = {
@@ -191,7 +194,15 @@ export class TokenService {
         error: 'رمز التحديث فاقد لمعرّف المنشأة الصريح — تم رفض التجديد لعدم وجود نطاق معتمد (بند 5.4)',
       };
     }
-    const tenantId = parts[1];
+    let tenantId = parts[1];
+    if (parts.length === 3) {
+      try {
+        const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+        if (decoded?.tenantId) {
+          tenantId = decoded.tenantId;
+        }
+      } catch {}
+    }
 
     return this.storage.withTenantScope(tenantId, async () => {
       const tokenHash = crypto.createHash('sha256').update(oldPlainToken).digest('hex');
@@ -233,10 +244,22 @@ export class TokenService {
         return { success: false, error: 'انتهت صلاحية رمز التحديث' };
       }
 
-      // Mark current token as used
-      record.isUsed = true;
-      record.revokedAt = Date.now();
-      await this.storage.updateRefreshToken(record);
+      // Mark current token as used atomically (exactly one concurrent caller wins)
+      const consumed = await this.storage.consumeRefreshToken(tokenHash, Date.now());
+      if (!consumed.success) {
+        return { success: false, error: 'رمز التحديث غير معروف أو غير صالح' };
+      }
+      if (consumed.data === false) {
+        await this.storage.invalidateTokenFamily(
+          record.familyId,
+          `DETECTED_REUSE_OF_TOKEN_SEQ_${record.sequence}`
+        );
+        return {
+          success: false,
+          error: 'تم اكتشاف محاولة إعادة استخدام رمز جلسة قديم — تم إبطال سلسلة التوكن بالكامل فوراً',
+          familyRevoked: true,
+        };
+      }
 
       // Rotate: Issue new refresh token & access token in same family
       const nextSeq = record.sequence + 1;

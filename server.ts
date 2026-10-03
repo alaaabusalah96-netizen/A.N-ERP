@@ -54,7 +54,7 @@ import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/co
 import { AccountingService } from './src/core/accounting/AccountingService';
 import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
 import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
-import { requirePermission } from './src/core/auth/PermissionMatrix';
+import { requirePermission, hasPermission, PermissionGroup } from './src/core/auth/PermissionMatrix';
 import { requestContextALS } from './src/core/context/RequestContext';
 
 // Wave 0: Security Hardening — Strict Environment Secrets Enforcement
@@ -93,7 +93,7 @@ requireEnv('E2E_TEST_PASSWORD');
 requireEnv('JWT_SECRET');
 requireEnv('PII_ENCRYPTION_SECRET');
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Initial company seed settings for primary setup (Phase 0 / Phase 1)
 const companyProfile: TenantCompany = SEED_COMPANY_PROFILE;
@@ -587,7 +587,19 @@ async function startServer() {
     }
 
     const devTenant = tenantRes.data;
-    const devStorage = await globalStorageRouter.resolveAdapterAsync(devTenant);
+    let devStorage: StoragePort;
+    try {
+      devStorage = await globalStorageRouter.resolveAdapterAsync(devTenant);
+    } catch (err: any) {
+      console.error(`[tryIsolatedTestBypass] tenant storage unavailable tenant=${devTenant.id}: ${err?.message}`);
+      res.status(503).json({
+        type: 'https://api.an-erp.local/errors/storage-unavailable',
+        title: 'مخزن بيانات المنشأة غير متاح',
+        status: 503,
+        detail: 'تعذر الاتصال بمخزن بيانات هذه المنشأة. حاول لاحقًا أو تواصل مع مدير النظام.',
+      });
+      return true;
+    }
 
     // 6. No hardcoded super_admin bypass!
     // Role must be explicitly specified by test harness or defaults to non-privileged 'test_user'
@@ -748,7 +760,18 @@ async function startServer() {
       return res.status(tenantResolution.error?.status || 400).json(tenantResolution.error);
     }
     const targetTenant = tenantResolution.tenant;
-    const targetStorage = await globalStorageRouter.resolveAdapterAsync(targetTenant);
+    let targetStorage: StoragePort;
+    try {
+      targetStorage = await globalStorageRouter.resolveAdapterAsync(targetTenant);
+    } catch (err: any) {
+      console.error(`[auth/login] tenant storage unavailable tenant=${targetTenant.id}: ${err?.message}`);
+      return res.status(503).json({
+        type: 'https://api.an-erp.local/errors/storage-unavailable',
+        title: 'مخزن بيانات المنشأة غير متاح',
+        status: 503,
+        detail: 'تعذر الاتصال بمخزن بيانات هذه المنشأة. حاول لاحقًا أو تواصل مع مدير النظام.',
+      });
+    }
 
     const { username, password, twoFactorCode, backupCode, forceTerminateOldest, clientGeo } = req.body;
 
@@ -2089,8 +2112,24 @@ async function startServer() {
     return key.trim();
   };
 
+  function denyForbidden(res: Response, role: string | undefined, permission: string) {
+    return res.status(403).json({
+      type: 'https://api.an-erp.local/errors/forbidden',
+      title: 'صلاحيات غير كافية',
+      status: 403,
+      detail: `دور المستخدم (${role || 'غير محدد'}) لا يملك صلاحية تنفيذ هذه العملية (${permission}).`,
+    });
+  }
+
+  function expenseAccess(req: Request) {
+    const role = (req as any).authContext?.role as string | undefined;
+    const canViewAll = hasPermission(role, 'EXPENSE_APPROVE') || hasPermission(role, 'FINANCIAL_REPORTS');
+    const isSubmitter = hasPermission(role, 'EXPENSE_SUBMIT');
+    return { role, canViewAll, isSubmitter };
+  }
+
   // 4A: دليل الحسابات (Chart of Accounts)
-  app.get('/api/accounting/accounts', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/accounting/accounts', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getAccountingService(req, res);
@@ -2131,7 +2170,7 @@ async function startServer() {
   });
 
   // 4B: الفترات المحاسبية (Fiscal Periods)
-  app.get('/api/accounting/periods', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/accounting/periods', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getAccountingService(req, res);
@@ -2258,7 +2297,7 @@ async function startServer() {
   });
 
   // 4C: الأبعاد المحاسبية (Dimensions)
-  app.get('/api/accounting/dimensions', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/accounting/dimensions', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const type = req.query.type as any;
@@ -2309,7 +2348,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/accounting/items', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/accounting/items', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getAccountingService(req, res);
@@ -2550,7 +2589,7 @@ async function startServer() {
   });
 
   // 5A: عرض قائمة العهد النقدية للمنشأة
-  app.get('/api/custody/custodies', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/custody/custodies', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
@@ -2568,7 +2607,7 @@ async function startServer() {
   });
 
   // 5A: جلب تفاصيل عهدة واحدة
-  app.get('/api/custody/custodies/:id', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/custody/custodies/:id', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
@@ -2641,7 +2680,7 @@ async function startServer() {
   });
 
   // 5B: جلب قائمة مصروفات العهدة
-  app.get('/api/custody/expenses', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/custody/expenses', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
@@ -2689,7 +2728,7 @@ async function startServer() {
   });
 
   // 5C: قائمة تسويات العهدة
-  app.get('/api/custody/settlements', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/custody/settlements', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
@@ -2704,7 +2743,7 @@ async function startServer() {
   });
 
   // 5D: فحص إخلاء طرف الموظف للعهد النقدية (HR Clearance Check)
-  app.get('/api/custody/hr-clearance/:employeeId', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/custody/hr-clearance/:employeeId', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getCustodyService(req, res);

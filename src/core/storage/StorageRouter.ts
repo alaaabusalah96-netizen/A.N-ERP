@@ -215,14 +215,18 @@ export class StorageRouter {
       // 4.6D: Auto-trigger initializeSchema upon first resolution
       let initPromise: Promise<any> | undefined;
       if (typeof (adapter as any).initializeSchema === 'function') {
-        initPromise = (adapter as any).initializeSchema().then(() => {
+        initPromise = Promise.resolve().then(() => (adapter as any).initializeSchema()).then((res: any) => {
+          if (res && res.success === false) {
+            throw new Error(res.error?.detail || res.error?.title || 'schema initialization failed');
+          }
           if (entry) entry.initialized = true;
         }).catch((err: any) => {
-          this.dedicatedAdapters.delete(key);
-          console.error(`[StorageRouter] Error initializing schema for dedicated tenant ${tenantId}: ${err?.message || err}`);
+          if (this.dedicatedAdapters.get(key) === entry) this.dedicatedAdapters.delete(key);
+          Promise.resolve().then(() => (adapter as any).close?.()).catch(() => {}); // intentional: best-effort cleanup of the failed adapter
+          console.error(`[StorageRouter] dedicated schema init failed tenant=${tenantId}: ${err?.message}`);
           throw err;
         });
-        initPromise.catch(() => {}); // intentional: يمنع unhandledRejection؛ المنتظرون على initPromise يستلمون الرفض
+        initPromise.catch(() => {}); // intentional: prevents unhandledRejection; awaiting callers still receive the rejection
       }
 
       entry = {
@@ -251,10 +255,14 @@ export class StorageRouter {
           await entry.initPromise;
         } else if (!entry.initialized && typeof (adapter as any).initializeSchema === 'function') {
           try {
-            await (adapter as any).initializeSchema();
+            const res = await (adapter as any).initializeSchema();
+            if (res && res.success === false) {
+              throw new Error(res.error?.detail || res.error?.title || 'schema initialization failed');
+            }
             entry.initialized = true;
           } catch (err: any) {
-            this.dedicatedAdapters.delete(key);
+            if (this.dedicatedAdapters.get(key) === entry) this.dedicatedAdapters.delete(key);
+            Promise.resolve().then(() => (adapter as any).close?.()).catch(() => {}); // intentional: best-effort cleanup of the failed adapter
             throw err;
           }
         }

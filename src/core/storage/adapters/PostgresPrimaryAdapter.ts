@@ -2536,6 +2536,19 @@ export class PostgresPrimaryAdapter implements StoragePort {
     });
   }
 
+  public async consumeRefreshToken(tokenHash: string, revokedAt: number): Promise<StorageResult<boolean>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        'UPDATE an_refresh_tokens SET is_used = TRUE, revoked_at = $2 WHERE token_hash = $1 AND is_used = FALSE',
+        [tokenHash, revokedAt]
+      );
+      return { success: true, data: res.rowCount === 1 };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
   public async invalidateTokenFamily(familyId: string, reason: string): Promise<StorageResult<boolean>> {
     if (!this.pool) return this.missingConnError();
     try {

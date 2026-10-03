@@ -865,6 +865,7 @@ export interface StoragePort {
   saveRefreshToken(record: RefreshTokenRecord): Promise<StorageResult<RefreshTokenRecord>>;
   getRefreshToken(tokenHash: string): Promise<StorageResult<RefreshTokenRecord>>;
   updateRefreshToken(record: RefreshTokenRecord): Promise<StorageResult<RefreshTokenRecord>>;
+  consumeRefreshToken(tokenHash: string, revokedAt: number): Promise<StorageResult<boolean>>;
   invalidateTokenFamily(familyId: string, reason: string): Promise<StorageResult<boolean>>;
 
   // Phase 2: Module Manifest Management (2H)
