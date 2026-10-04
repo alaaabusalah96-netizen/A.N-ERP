@@ -382,6 +382,33 @@ export class InMemoryAdapter implements StoragePort {
     return this.saveUser(merged, `inmem-upd-${userId}-${Date.now()}`);
   }
 
+  // Phase 4 (IDENT-001): membership is derived from the user; overrides come from setMembershipStatus
+  private membershipStatusOverrides: Map<string, 'ACTIVE' | 'SUSPENDED' | 'REVOKED'> = new Map();
+
+  public async getMembershipContext(tenantId: string, userId: string): Promise<StorageResult<{ membershipId: string; status: string; role: string | null; scopes: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[] } | null>> {
+    const res = await this.getUser(tenantId, userId);
+    if (!res.success || !res.data) return { success: true, data: null };
+    const u = res.data;
+    const override = this.membershipStatusOverrides.get(`${tenantId}:${u.id}`);
+    const status = override || (u.status === 'ACTIVE' ? 'ACTIVE' : 'SUSPENDED');
+    return {
+      success: true,
+      data: {
+        membershipId: `mbr-${u.id}`,
+        status,
+        role: u.role || null,
+        scopes: [{ type: 'TENANT' }],
+      },
+    };
+  }
+
+  public async setMembershipStatus(tenantId: string, userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED'): Promise<StorageResult<boolean>> {
+    const res = await this.getUser(tenantId, userId);
+    if (!res.success || !res.data) return { success: true, data: false };
+    this.membershipStatusOverrides.set(`${tenantId}:${res.data.id}`, status);
+    return { success: true, data: true };
+  }
+
   // Login Attempts & Security Tracking (Anomaly Detection & Lockout)
   public async getLastSuccessfulLogin(userId: string): Promise<StorageResult<LoginAttemptRecord | null>> {
     return { success: true, data: this.lastLogins.get(userId) || null };

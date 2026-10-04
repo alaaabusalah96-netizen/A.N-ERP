@@ -487,6 +487,7 @@ async function startServer() {
     userId: string;
     sessionId: string;
     role?: string;
+    scopes?: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[];
   }
 
   // =========================================================================
@@ -687,11 +688,23 @@ async function startServer() {
         });
       }
 
+      // Phase 4 (IDENT-001): membership + DB-authoritative role + scopes
+      const mem = await tenantStorage.getMembershipContext(ver.payload.tenantId, userCheck.data.id);
+      if (!mem.success || !mem.data || mem.data.status !== 'ACTIVE' || !mem.data.role) {
+        return res.status(403).json({
+          type: 'https://api.an-erp.local/errors/inactive-membership',
+          title: 'عضوية غير نشطة',
+          status: 403,
+          detail: 'لا توجد عضوية نشطة بدور محدد لهذا المستخدم في هذه المنشأة.',
+        });
+      }
+
       (req as any).authContext = {
         tenantId: ver.payload.tenantId,
         userId: ver.payload.sub,
         sessionId: ver.payload.sessionId,
-        role: userCheck.data.role || '',
+        role: mem.data.role,
+        scopes: mem.data.scopes,
         orgNodeId: (userCheck.data as any).assignedNodeId || (userCheck.data as any).orgNodeId,
       } as AuthContext;
       (req as any).storage = tenantStorage;
@@ -3587,27 +3600,63 @@ async function startServer() {
     }
   });
 
+  // P3 (AUTHZ-002): attachment / print authorization maps (local, reuse existing PermissionGroup + hasPermission)
+  const EXPENSE_DOC_TYPES = new Set<string>(['EXPENSE_CLAIM', 'EXPENSE_REQUEST']);
+  const ATTACHMENT_READ_PERMISSION: Record<string, PermissionGroup> = {
+    STOCK_RECEIPT: 'STOCK_VIEW',
+    RECEIPT: 'STOCK_VIEW',
+    STOCK_ISSUE: 'STOCK_VIEW',
+    ISSUE: 'STOCK_VIEW',
+    STOCK_TRANSFER: 'STOCK_VIEW',
+    STOCK_COUNT: 'STOCK_VIEW',
+    STOCK_RETURN: 'STOCK_VIEW',
+    JOURNAL_ENTRY: 'ENTRY_VIEW',
+    CUSTODY_VOUCHER: 'CUSTODY_VIEW',
+    CUSTODY_SETTLEMENT: 'CUSTODY_VIEW',
+  };
+  const ATTACHMENT_WRITE_PERMISSION: Record<string, PermissionGroup> = {
+    EXPENSE_CLAIM: 'EXPENSE_SUBMIT',
+    EXPENSE_REQUEST: 'EXPENSE_SUBMIT',
+    STOCK_RECEIPT: 'STOCK_RECEIVE',
+    RECEIPT: 'STOCK_RECEIVE',
+    STOCK_ISSUE: 'STOCK_ISSUE',
+    ISSUE: 'STOCK_ISSUE',
+    STOCK_TRANSFER: 'STOCK_TRANSFER',
+    STOCK_COUNT: 'STOCK_COUNT_APPROVE',
+    STOCK_RETURN: 'STOCK_RETURN',
+    JOURNAL_ENTRY: 'ENTRY_CREATE',
+    CUSTODY_VOUCHER: 'CUSTODY_EXPENSE_RECORD',
+    CUSTODY_SETTLEMENT: 'CUSTODY_SETTLE',
+  };
+  const PRINT_PERMISSION: Record<string, PermissionGroup> = {
+    'journal-entry': 'ENTRY_VIEW',
+    'custody-voucher': 'CUSTODY_VIEW',
+    'custody-settlement': 'CUSTODY_VIEW',
+    'stock-receipt': 'STOCK_VIEW',
+    'stock-issue': 'STOCK_VIEW',
+    'stock-transfer': 'STOCK_VIEW',
+    'stock-count': 'STOCK_VIEW',
+    'stock-card': 'STOCK_VIEW',
+    'item-ledger': 'STOCK_VIEW',
+  };
+
   // 7.6G: Document Attachments (مرفقات المستندات 4–7)
   app.get('/api/attachments', requireAuth, async (req: Request, res: Response) => {
     try {
       const docType = req.query.documentType as string;
       const docId = req.query.documentId as string;
       if (!docType || !docId) return res.status(400).json({ error: 'documentType و documentId مطلوبان' });
-
-      const role = (req as any).authContext?.role as string | undefined;
-      if (docType === 'EXPENSE_REQUEST') {
-        const { canViewAll, isSubmitter } = expenseAccess(req);
-        if (!canViewAll && !isSubmitter) {
-          return denyForbidden(res, role, 'EXPENSE_SUBMIT');
+      {
+        const role = (req as any).authContext?.role as string | undefined;
+        if (EXPENSE_DOC_TYPES.has(docType)) {
+          const { canViewAll, isSubmitter } = expenseAccess(req);
+          if (!canViewAll && !isSubmitter) return denyForbidden(res, role, 'EXPENSE_SUBMIT');
+        } else {
+          const needed = ATTACHMENT_READ_PERMISSION[docType];
+          if (!needed) return res.status(400).json({ error: `نوع المستند (${docType}) غير مدعوم للمرفقات` });
+          if (!hasPermission(role, needed)) return denyForbidden(res, role, needed);
         }
-      } else if (docType === 'ISSUE' || docType === 'RECEIPT') {
-        if (!hasPermission(role, 'STOCK_VIEW')) {
-          return denyForbidden(res, role, 'STOCK_VIEW');
-        }
-      } else {
-        return res.status(400).json({ error: `نوع المستند غير مدعوم للمرفقات: ${docType}` });
       }
-
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
       if (!storage) return;
@@ -3621,26 +3670,14 @@ async function startServer() {
 
   app.post('/api/attachments', requireAuth, async (req: Request, res: Response) => {
     try {
-      const docType = req.body.documentType as string;
-      const role = (req as any).authContext?.role as string | undefined;
-      if (docType === 'EXPENSE_REQUEST') {
-        if (!hasPermission(role, 'EXPENSE_SUBMIT')) {
-          return denyForbidden(res, role, 'EXPENSE_SUBMIT');
-        }
-      } else if (docType === 'ISSUE') {
-        if (!hasPermission(role, 'STOCK_ISSUE')) {
-          return denyForbidden(res, role, 'STOCK_ISSUE');
-        }
-      } else if (docType === 'RECEIPT') {
-        if (!hasPermission(role, 'STOCK_RECEIVE')) {
-          return denyForbidden(res, role, 'STOCK_RECEIVE');
-        }
-      } else {
-        return res.status(400).json({ error: `نوع المستند غير مدعوم للمرفقات: ${docType}` });
-      }
-
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId || 'usr-uploader';
+      {
+        const role = (req as any).authContext?.role as string | undefined;
+        const needed = ATTACHMENT_WRITE_PERMISSION[req.body?.documentType as string];
+        if (!needed) return res.status(400).json({ error: `نوع المستند (${req.body?.documentType}) غير مدعوم للمرفقات` });
+        if (!hasPermission(role, needed)) return denyForbidden(res, role, needed);
+      }
       const key = requireIdempotencyKey(req, res, 'إضافة مرفق مستند');
       if (!key) return;
       const storage = getRequestStorage(req, res);
@@ -3752,40 +3789,23 @@ async function startServer() {
   // 7.6C: Unified Print Service Endpoint (HTML + Print View)
   app.get('/api/print/:docType/:docId', requireAuth, async (req: Request, res: Response) => {
     try {
-      const { docType, docId } = req.params;
-      const role = (req as any).authContext?.role as string | undefined;
-
-      if (docType === 'journal-entry') {
-        if (!hasPermission(role, 'ENTRY_VIEW')) {
-          return denyForbidden(res, role, 'ENTRY_VIEW');
-        }
-      } else if (docType === 'custody-voucher' || docType === 'custody-settlement') {
-        if (!hasPermission(role, 'CUSTODY_VIEW')) {
-          return denyForbidden(res, role, 'CUSTODY_VIEW');
-        }
-      } else if (docType === 'expense-request') {
-        const { canViewAll, isSubmitter } = expenseAccess(req);
-        if (!canViewAll && !isSubmitter) {
-          return denyForbidden(res, role, 'EXPENSE_SUBMIT');
-        }
-      } else if (
-        docType === 'stock-receipt' ||
-        docType === 'stock-issue' ||
-        docType === 'stock-transfer' ||
-        docType === 'stock-count' ||
-        docType === 'stock-card' ||
-        docType === 'item-ledger'
-      ) {
-        if (!hasPermission(role, 'STOCK_VIEW')) {
-          return denyForbidden(res, role, 'STOCK_VIEW');
-        }
-      }
-
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
       if (!storage) return;
 
       const printService = new UnifiedPrintService(storage);
+      const { docType, docId } = req.params;
+
+      {
+        const role = (req as any).authContext?.role as string | undefined;
+        if (docType === 'expense-request') {
+          const { canViewAll, isSubmitter } = expenseAccess(req);
+          if (!canViewAll && !isSubmitter) return denyForbidden(res, role, 'EXPENSE_SUBMIT');
+        } else {
+          const needed = PRINT_PERMISSION[docType];
+          if (needed && !hasPermission(role, needed)) return denyForbidden(res, role, needed);
+        }
+      }
 
       let html: string | null = null;
       switch (docType) {

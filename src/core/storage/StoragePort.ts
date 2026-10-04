@@ -759,6 +759,9 @@ export interface StoragePort {
   listUsers(tenantId?: string): Promise<StorageResult<User[]>>;
   saveUser(user: User, idempotencyKey: string, skipIdempotency?: boolean): Promise<StorageResult<User>>;
   updateUser(userId: string, updates: Partial<User>): Promise<StorageResult<User>>;
+  // Phase 4 (IDENT-001): membership / role / scope layer
+  getMembershipContext(tenantId: string, userId: string): Promise<StorageResult<{ membershipId: string; status: string; role: string | null; scopes: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[] } | null>>;
+  setMembershipStatus(tenantId: string, userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED'): Promise<StorageResult<boolean>>;
 
   // Login Attempts & Security Tracking (Anomaly Detection & Lockout)
   getLastSuccessfulLogin(userId: string): Promise<StorageResult<LoginAttemptRecord | null>>;

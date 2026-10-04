@@ -1,5 +1,5 @@
 --- /tmp/orig_phase-3/server.ts	2026-10-04 07:01:27.013563083 +0000
-+++ server.ts	2026-10-04 07:02:31.921600188 +0000
++++ server.ts	2026-10-04 09:00:43.926766102 +0000
 @@ -2880,6 +2880,11 @@
    // 6A: استعلام طلبات الصرف مع الفلترة
    app.get('/api/expenses/requests', requireAuth, async (req: Request, res: Response) => {
@@ -51,7 +51,50 @@
        return res.json({ success: true, data: result.data });
      } catch (err: any) {
        return res.status(500).json({ success: false, error: err.message });
-@@ -3568,12 +3590,27 @@
+@@ -3565,15 +3587,66 @@
+     }
+   });
+ 
++  // P3 (AUTHZ-002): attachment / print authorization maps (local, reuse existing PermissionGroup + hasPermission)
++  const EXPENSE_DOC_TYPES = new Set<string>(['EXPENSE_CLAIM', 'EXPENSE_REQUEST']);
++  const ATTACHMENT_READ_PERMISSION: Record<string, PermissionGroup> = {
++    STOCK_RECEIPT: 'STOCK_VIEW',
++    RECEIPT: 'STOCK_VIEW',
++    STOCK_ISSUE: 'STOCK_VIEW',
++    ISSUE: 'STOCK_VIEW',
++    STOCK_TRANSFER: 'STOCK_VIEW',
++    STOCK_COUNT: 'STOCK_VIEW',
++    STOCK_RETURN: 'STOCK_VIEW',
++    JOURNAL_ENTRY: 'ENTRY_VIEW',
++    CUSTODY_VOUCHER: 'CUSTODY_VIEW',
++    CUSTODY_SETTLEMENT: 'CUSTODY_VIEW',
++  };
++  const ATTACHMENT_WRITE_PERMISSION: Record<string, PermissionGroup> = {
++    EXPENSE_CLAIM: 'EXPENSE_SUBMIT',
++    EXPENSE_REQUEST: 'EXPENSE_SUBMIT',
++    STOCK_RECEIPT: 'STOCK_RECEIVE',
++    RECEIPT: 'STOCK_RECEIVE',
++    STOCK_ISSUE: 'STOCK_ISSUE',
++    ISSUE: 'STOCK_ISSUE',
++    STOCK_TRANSFER: 'STOCK_TRANSFER',
++    STOCK_COUNT: 'STOCK_COUNT_APPROVE',
++    STOCK_RETURN: 'STOCK_RETURN',
++    JOURNAL_ENTRY: 'ENTRY_CREATE',
++    CUSTODY_VOUCHER: 'CUSTODY_EXPENSE_RECORD',
++    CUSTODY_SETTLEMENT: 'CUSTODY_SETTLE',
++  };
++  const PRINT_PERMISSION: Record<string, PermissionGroup> = {
++    'journal-entry': 'ENTRY_VIEW',
++    'custody-voucher': 'CUSTODY_VIEW',
++    'custody-settlement': 'CUSTODY_VIEW',
++    'stock-receipt': 'STOCK_VIEW',
++    'stock-issue': 'STOCK_VIEW',
++    'stock-transfer': 'STOCK_VIEW',
++    'stock-count': 'STOCK_VIEW',
++    'stock-card': 'STOCK_VIEW',
++    'item-ledger': 'STOCK_VIEW',
++  };
++
    // 7.6G: Document Attachments (مرفقات المستندات 4–7)
    app.get('/api/attachments', requireAuth, async (req: Request, res: Response) => {
      try {
@@ -61,53 +104,37 @@
        const docType = req.query.documentType as string;
        const docId = req.query.documentId as string;
        if (!docType || !docId) return res.status(400).json({ error: 'documentType و documentId مطلوبان' });
-+
-+      const role = (req as any).authContext?.role as string | undefined;
-+      if (docType === 'EXPENSE_REQUEST') {
-+        const { canViewAll, isSubmitter } = expenseAccess(req);
-+        if (!canViewAll && !isSubmitter) {
-+          return denyForbidden(res, role, 'EXPENSE_SUBMIT');
++      {
++        const role = (req as any).authContext?.role as string | undefined;
++        if (EXPENSE_DOC_TYPES.has(docType)) {
++          const { canViewAll, isSubmitter } = expenseAccess(req);
++          if (!canViewAll && !isSubmitter) return denyForbidden(res, role, 'EXPENSE_SUBMIT');
++        } else {
++          const needed = ATTACHMENT_READ_PERMISSION[docType];
++          if (!needed) return res.status(400).json({ error: `نوع المستند (${docType}) غير مدعوم للمرفقات` });
++          if (!hasPermission(role, needed)) return denyForbidden(res, role, needed);
 +        }
-+      } else if (docType === 'ISSUE' || docType === 'RECEIPT') {
-+        if (!hasPermission(role, 'STOCK_VIEW')) {
-+          return denyForbidden(res, role, 'STOCK_VIEW');
-+        }
-+      } else {
-+        return res.status(400).json({ error: `نوع المستند غير مدعوم للمرفقات: ${docType}` });
 +      }
-+
 +      const tenantId = (req as any).authContext.tenantId;
 +      const storage = getRequestStorage(req, res);
 +      if (!storage) return;
        const result = await storage.listDocumentAttachments(tenantId, docType, docId);
        if (!result.success) return res.status(500).json(result.error);
        return res.json({ success: true, data: result.data });
-@@ -3584,6 +3621,24 @@
- 
-   app.post('/api/attachments', requireAuth, async (req: Request, res: Response) => {
+@@ -3586,6 +3659,12 @@
      try {
-+      const docType = req.body.documentType as string;
-+      const role = (req as any).authContext?.role as string | undefined;
-+      if (docType === 'EXPENSE_REQUEST') {
-+        if (!hasPermission(role, 'EXPENSE_SUBMIT')) {
-+          return denyForbidden(res, role, 'EXPENSE_SUBMIT');
-+        }
-+      } else if (docType === 'ISSUE') {
-+        if (!hasPermission(role, 'STOCK_ISSUE')) {
-+          return denyForbidden(res, role, 'STOCK_ISSUE');
-+        }
-+      } else if (docType === 'RECEIPT') {
-+        if (!hasPermission(role, 'STOCK_RECEIVE')) {
-+          return denyForbidden(res, role, 'STOCK_RECEIVE');
-+        }
-+      } else {
-+        return res.status(400).json({ error: `نوع المستند غير مدعوم للمرفقات: ${docType}` });
-+      }
-+
        const tenantId = (req as any).authContext.tenantId;
        const userId = (req as any).authContext.userId || 'usr-uploader';
++      {
++        const role = (req as any).authContext?.role as string | undefined;
++        const needed = ATTACHMENT_WRITE_PERMISSION[req.body?.documentType as string];
++        if (!needed) return res.status(400).json({ error: `نوع المستند (${req.body?.documentType}) غير مدعوم للمرفقات` });
++        if (!hasPermission(role, needed)) return denyForbidden(res, role, needed);
++      }
        const key = requireIdempotencyKey(req, res, 'إضافة مرفق مستند');
-@@ -3616,7 +3671,7 @@
+       if (!key) return;
+       const storage = getRequestStorage(req, res);
+@@ -3616,7 +3695,7 @@
    });
  
    // 7.6B: Custody Expense Vouchers (سندات صرف العهدة متعددة البنود)
@@ -116,7 +143,7 @@
      try {
        const tenantId = (req as any).authContext.tenantId;
        const storage = getRequestStorage(req, res);
-@@ -3630,7 +3685,7 @@
+@@ -3630,7 +3709,7 @@
      }
    });
  
@@ -125,45 +152,21 @@
      try {
        const tenantId = (req as any).authContext.tenantId;
        const storage = getRequestStorage(req, res);
-@@ -3697,12 +3752,40 @@
-   // 7.6C: Unified Print Service Endpoint (HTML + Print View)
-   app.get('/api/print/:docType/:docId', requireAuth, async (req: Request, res: Response) => {
-     try {
-+      const { docType, docId } = req.params;
-+      const role = (req as any).authContext?.role as string | undefined;
-+
-+      if (docType === 'journal-entry') {
-+        if (!hasPermission(role, 'ENTRY_VIEW')) {
-+          return denyForbidden(res, role, 'ENTRY_VIEW');
-+        }
-+      } else if (docType === 'custody-voucher' || docType === 'custody-settlement') {
-+        if (!hasPermission(role, 'CUSTODY_VIEW')) {
-+          return denyForbidden(res, role, 'CUSTODY_VIEW');
-+        }
-+      } else if (docType === 'expense-request') {
-+        const { canViewAll, isSubmitter } = expenseAccess(req);
-+        if (!canViewAll && !isSubmitter) {
-+          return denyForbidden(res, role, 'EXPENSE_SUBMIT');
-+        }
-+      } else if (
-+        docType === 'stock-receipt' ||
-+        docType === 'stock-issue' ||
-+        docType === 'stock-transfer' ||
-+        docType === 'stock-count' ||
-+        docType === 'stock-card' ||
-+        docType === 'item-ledger'
-+      ) {
-+        if (!hasPermission(role, 'STOCK_VIEW')) {
-+          return denyForbidden(res, role, 'STOCK_VIEW');
+@@ -3704,6 +3783,17 @@
+       const printService = new UnifiedPrintService(storage);
+       const { docType, docId } = req.params;
+ 
++      {
++        const role = (req as any).authContext?.role as string | undefined;
++        if (docType === 'expense-request') {
++          const { canViewAll, isSubmitter } = expenseAccess(req);
++          if (!canViewAll && !isSubmitter) return denyForbidden(res, role, 'EXPENSE_SUBMIT');
++        } else {
++          const needed = PRINT_PERMISSION[docType];
++          if (needed && !hasPermission(role, needed)) return denyForbidden(res, role, needed);
 +        }
 +      }
 +
-       const tenantId = (req as any).authContext.tenantId;
-       const storage = getRequestStorage(req, res);
-       if (!storage) return;
- 
-       const printService = new UnifiedPrintService(storage);
--      const { docType, docId } = req.params;
- 
        let html: string | null = null;
        switch (docType) {
+         case 'journal-entry':

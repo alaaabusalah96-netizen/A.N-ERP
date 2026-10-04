@@ -1,0 +1,326 @@
+diff -ruN a/server.ts b/server.ts
+--- a/server.ts	2026-10-03 21:25:09.812544749 +0000
++++ b/server.ts	2026-10-03 21:25:09.813794487 +0000
+@@ -487,6 +487,7 @@
+     userId: string;
+     sessionId: string;
+     role?: string;
++    scopes?: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[];
+   }
+ 
+   // =========================================================================
+@@ -687,11 +688,23 @@
+         });
+       }
+ 
++      // Phase 4 (IDENT-001): membership + DB-authoritative role + scopes
++      const mem = await tenantStorage.getMembershipContext(ver.payload.tenantId, userCheck.data.id);
++      if (!mem.success || !mem.data || mem.data.status !== 'ACTIVE' || !mem.data.role) {
++        return res.status(403).json({
++          type: 'https://api.an-erp.local/errors/inactive-membership',
++          title: 'عضوية غير نشطة',
++          status: 403,
++          detail: 'لا توجد عضوية نشطة بدور محدد لهذا المستخدم في هذه المنشأة.',
++        });
++      }
++
+       (req as any).authContext = {
+         tenantId: ver.payload.tenantId,
+         userId: ver.payload.sub,
+         sessionId: ver.payload.sessionId,
+-        role: userCheck.data.role || '',
++        role: mem.data.role,
++        scopes: mem.data.scopes,
+         orgNodeId: (userCheck.data as any).assignedNodeId || (userCheck.data as any).orgNodeId,
+       } as AuthContext;
+       (req as any).storage = tenantStorage;
+diff -ruN a/src/core/storage/StoragePort.ts b/src/core/storage/StoragePort.ts
+--- a/src/core/storage/StoragePort.ts	2026-10-03 21:25:09.817815164 +0000
++++ b/src/core/storage/StoragePort.ts	2026-10-03 21:25:09.818985886 +0000
+@@ -759,6 +759,9 @@
+   listUsers(tenantId?: string): Promise<StorageResult<User[]>>;
+   saveUser(user: User, idempotencyKey: string, skipIdempotency?: boolean): Promise<StorageResult<User>>;
+   updateUser(userId: string, updates: Partial<User>): Promise<StorageResult<User>>;
++  // Phase 4 (IDENT-001): membership / role / scope layer
++  getMembershipContext(tenantId: string, userId: string): Promise<StorageResult<{ membershipId: string; status: string; role: string | null; scopes: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[] } | null>>;
++  setMembershipStatus(tenantId: string, userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED'): Promise<StorageResult<boolean>>;
+ 
+   // Login Attempts & Security Tracking (Anomaly Detection & Lockout)
+   getLastSuccessfulLogin(userId: string): Promise<StorageResult<LoginAttemptRecord | null>>;
+diff -ruN a/src/core/storage/adapters/FirebaseSmokeAdapter.ts b/src/core/storage/adapters/FirebaseSmokeAdapter.ts
+--- a/src/core/storage/adapters/FirebaseSmokeAdapter.ts	2026-10-03 21:25:09.836948490 +0000
++++ b/src/core/storage/adapters/FirebaseSmokeAdapter.ts	2026-10-03 21:25:09.837953047 +0000
+@@ -63,6 +63,8 @@
+   listUsers(tenantId?: string) { return this.smokeOnlyError<User[]>('listUsers'); }
+   saveUser(user: User, idempotencyKey: string) { return this.smokeOnlyError<User>('saveUser'); }
+   updateUser(userId: string, updates: Partial<User>) { return this.smokeOnlyError<User>('updateUser'); }
++  getMembershipContext(tenantId: string, userId: string) { return this.smokeOnlyError<{ membershipId: string; status: string; role: string | null; scopes: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[] } | null>('getMembershipContext'); }
++  setMembershipStatus(tenantId: string, userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED') { return this.smokeOnlyError<boolean>('setMembershipStatus'); }
+   getLastSuccessfulLogin(userId: string) { return this.smokeOnlyError<LoginAttemptRecord | null>('getLastSuccessfulLogin'); }
+   recordSuccessfulLogin(record: LoginAttemptRecord) { return this.smokeOnlyError<void>('recordSuccessfulLogin'); }
+   getFailedLoginAttempts(userId: string) { return this.smokeOnlyError<FailedAttemptRecord | null>('getFailedLoginAttempts'); }
+diff -ruN a/src/core/storage/adapters/InMemoryAdapter.ts b/src/core/storage/adapters/InMemoryAdapter.ts
+--- a/src/core/storage/adapters/InMemoryAdapter.ts	2026-10-03 21:25:09.827437026 +0000
++++ b/src/core/storage/adapters/InMemoryAdapter.ts	2026-10-03 21:25:09.828497230 +0000
+@@ -382,6 +382,33 @@
+     return this.saveUser(merged, `inmem-upd-${userId}-${Date.now()}`);
+   }
+ 
++  // Phase 4 (IDENT-001): membership is derived from the user; overrides come from setMembershipStatus
++  private membershipStatusOverrides: Map<string, 'ACTIVE' | 'SUSPENDED' | 'REVOKED'> = new Map();
++
++  public async getMembershipContext(tenantId: string, userId: string): Promise<StorageResult<{ membershipId: string; status: string; role: string | null; scopes: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[] } | null>> {
++    const res = await this.getUser(tenantId, userId);
++    if (!res.success || !res.data) return { success: true, data: null };
++    const u = res.data;
++    const override = this.membershipStatusOverrides.get(`${tenantId}:${u.id}`);
++    const status = override || (u.status === 'ACTIVE' ? 'ACTIVE' : 'SUSPENDED');
++    return {
++      success: true,
++      data: {
++        membershipId: `mbr-${u.id}`,
++        status,
++        role: u.role || null,
++        scopes: [{ type: 'TENANT' }],
++      },
++    };
++  }
++
++  public async setMembershipStatus(tenantId: string, userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED'): Promise<StorageResult<boolean>> {
++    const res = await this.getUser(tenantId, userId);
++    if (!res.success || !res.data) return { success: true, data: false };
++    this.membershipStatusOverrides.set(`${tenantId}:${res.data.id}`, status);
++    return { success: true, data: true };
++  }
++
+   // Login Attempts & Security Tracking (Anomaly Detection & Lockout)
+   public async getLastSuccessfulLogin(userId: string): Promise<StorageResult<LoginAttemptRecord | null>> {
+     return { success: true, data: this.lastLogins.get(userId) || null };
+diff -ruN a/src/core/storage/adapters/MongoDBSmokeAdapter.ts b/src/core/storage/adapters/MongoDBSmokeAdapter.ts
+--- a/src/core/storage/adapters/MongoDBSmokeAdapter.ts	2026-10-03 21:25:09.832267280 +0000
++++ b/src/core/storage/adapters/MongoDBSmokeAdapter.ts	2026-10-03 21:25:09.833300476 +0000
+@@ -61,6 +61,8 @@
+   listUsers(tenantId?: string) { return this.smokeOnlyError<User[]>('listUsers'); }
+   saveUser(user: User, idempotencyKey: string) { return this.smokeOnlyError<User>('saveUser'); }
+   updateUser(userId: string, updates: Partial<User>) { return this.smokeOnlyError<User>('updateUser'); }
++  getMembershipContext(tenantId: string, userId: string) { return this.smokeOnlyError<{ membershipId: string; status: string; role: string | null; scopes: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[] } | null>('getMembershipContext'); }
++  setMembershipStatus(tenantId: string, userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED') { return this.smokeOnlyError<boolean>('setMembershipStatus'); }
+   getLastSuccessfulLogin(userId: string) { return this.smokeOnlyError<LoginAttemptRecord | null>('getLastSuccessfulLogin'); }
+   recordSuccessfulLogin(record: LoginAttemptRecord) { return this.smokeOnlyError<void>('recordSuccessfulLogin'); }
+   getFailedLoginAttempts(userId: string) { return this.smokeOnlyError<FailedAttemptRecord | null>('getFailedLoginAttempts'); }
+diff -ruN a/src/core/storage/adapters/MySQLSmokeAdapter.ts b/src/core/storage/adapters/MySQLSmokeAdapter.ts
+--- a/src/core/storage/adapters/MySQLSmokeAdapter.ts	2026-10-03 21:25:09.841619714 +0000
++++ b/src/core/storage/adapters/MySQLSmokeAdapter.ts	2026-10-03 21:25:09.842640216 +0000
+@@ -79,6 +79,8 @@
+   listUsers(tenantId?: string) { return this.smokeOnlyError<User[]>('listUsers'); }
+   saveUser(user: User, idempotencyKey: string) { return this.smokeOnlyError<User>('saveUser'); }
+   updateUser(userId: string, updates: Partial<User>) { return this.smokeOnlyError<User>('updateUser'); }
++  getMembershipContext(tenantId: string, userId: string) { return this.smokeOnlyError<{ membershipId: string; status: string; role: string | null; scopes: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[] } | null>('getMembershipContext'); }
++  setMembershipStatus(tenantId: string, userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED') { return this.smokeOnlyError<boolean>('setMembershipStatus'); }
+   getLastSuccessfulLogin(userId: string) { return this.smokeOnlyError<LoginAttemptRecord | null>('getLastSuccessfulLogin'); }
+   recordSuccessfulLogin(record: LoginAttemptRecord) { return this.smokeOnlyError<void>('recordSuccessfulLogin'); }
+   getFailedLoginAttempts(userId: string) { return this.smokeOnlyError<FailedAttemptRecord | null>('getFailedLoginAttempts'); }
+diff -ruN a/src/core/storage/adapters/PostgresPrimaryAdapter.ts b/src/core/storage/adapters/PostgresPrimaryAdapter.ts
+--- a/src/core/storage/adapters/PostgresPrimaryAdapter.ts	2026-10-03 21:25:09.822570051 +0000
++++ b/src/core/storage/adapters/PostgresPrimaryAdapter.ts	2026-10-03 21:25:09.823716186 +0000
+@@ -443,6 +443,36 @@
+       CREATE INDEX IF NOT EXISTS idx_an_org_nodes_tenant ON an_org_nodes(tenant_id);
+       CREATE INDEX IF NOT EXISTS idx_an_org_nodes_parent ON an_org_nodes(parent_id);
+ 
++      -- Phase 4 (IDENT-001): Membership / Role / Scope layer
++      CREATE TABLE IF NOT EXISTS an_memberships (
++        id VARCHAR(80) PRIMARY KEY,
++        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
++        user_id VARCHAR(64) NOT NULL REFERENCES an_users(id),
++        status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','SUSPENDED','REVOKED')),
++        created_by VARCHAR(64),
++        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
++        UNIQUE (tenant_id, user_id)
++      );
++      CREATE TABLE IF NOT EXISTS an_role_assignments (
++        id VARCHAR(90) PRIMARY KEY,
++        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
++        membership_id VARCHAR(80) NOT NULL REFERENCES an_memberships(id),
++        role VARCHAR(64) NOT NULL,
++        status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','REVOKED')),
++        created_by VARCHAR(64),
++        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
++      );
++      CREATE UNIQUE INDEX IF NOT EXISTS uq_an_role_assignment_active ON an_role_assignments(membership_id) WHERE status = 'ACTIVE';
++      CREATE TABLE IF NOT EXISTS an_membership_scopes (
++        id VARCHAR(90) PRIMARY KEY,
++        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
++        membership_id VARCHAR(80) NOT NULL REFERENCES an_memberships(id),
++        scope_type VARCHAR(16) NOT NULL CHECK (scope_type IN ('TENANT','NODE')),
++        org_node_id VARCHAR(64) REFERENCES an_org_nodes(id),
++        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
++        CHECK ((scope_type = 'NODE' AND org_node_id IS NOT NULL) OR (scope_type = 'TENANT' AND org_node_id IS NULL))
++      );
++
+       -- Schema migrations for Phase 3 fields
+       ALTER TABLE an_users ADD COLUMN IF NOT EXISTS assigned_node_id VARCHAR(64);
+       ALTER TABLE an_approval_requests ADD COLUMN IF NOT EXISTS break_glass JSONB;
+@@ -1127,7 +1157,10 @@
+           'an_custody_expense_vouchers',
+           'an_custody_expense_lines',
+           'an_document_attachments',
+-          'an_item_prices'
++          'an_item_prices',
++          'an_memberships',
++          'an_role_assignments',
++          'an_membership_scopes'
+         ];
+       BEGIN
+         FOREACH tbl IN ARRAY tables LOOP
+@@ -1151,8 +1184,12 @@
+ 
+     try {
+       const client = await this.pool.connect();
+-      await client.query(ddl);
+-      client.release();
++      try {
++        await client.query(ddl);
++        await this.backfillMemberships(client);
++      } finally {
++        client.release();
++      }
+       this.isInitialized = true;
+       return { success: true, data: true };
+     } catch (err: any) {
+@@ -1168,6 +1205,58 @@
+     }
+   }
+ 
++  // Phase 4 (IDENT-001): idempotent membership / role / scope SQL (one statement per table)
++  private static membershipBackfillSql(scope: 'ALL' | 'TENANT' | 'USER'): string[] {
++    const userCond = scope === 'USER' ? 'u.id = $1 AND ' : '';
++    const tenantCondU = scope === 'TENANT' ? ' AND u.tenant_id = $1' : '';
++    const extra = scope === 'USER' ? ' AND u.id = $1' : scope === 'TENANT' ? ' AND m.tenant_id = $1' : '';
++    return [
++      `INSERT INTO an_memberships (id, tenant_id, user_id, status, created_by)
++       SELECT 'mbr-' || u.id, u.tenant_id, u.id, 'ACTIVE', 'BACKFILL' FROM an_users u
++       WHERE ${userCond}NOT EXISTS (SELECT 1 FROM an_memberships m WHERE m.tenant_id = u.tenant_id AND m.user_id = u.id)${tenantCondU}`,
++      `INSERT INTO an_role_assignments (id, tenant_id, membership_id, role, status, created_by)
++       SELECT 'ra-' || m.id, m.tenant_id, m.id, u.role, 'ACTIVE', 'BACKFILL'
++       FROM an_memberships m JOIN an_users u ON u.id = m.user_id AND u.tenant_id = m.tenant_id
++       WHERE NOT EXISTS (SELECT 1 FROM an_role_assignments r WHERE r.membership_id = m.id)${extra}`,
++      `INSERT INTO an_membership_scopes (id, tenant_id, membership_id, scope_type, org_node_id)
++       SELECT 'ms-' || m.id, m.tenant_id, m.id, CASE WHEN n.id IS NULL THEN 'TENANT' ELSE 'NODE' END, n.id
++       FROM an_memberships m JOIN an_users u ON u.id = m.user_id AND u.tenant_id = m.tenant_id
++       LEFT JOIN an_org_nodes n ON n.id = u.assigned_node_id AND n.tenant_id = u.tenant_id
++       WHERE NOT EXISTS (SELECT 1 FROM an_membership_scopes s WHERE s.membership_id = m.id)${extra}`,
++    ];
++  }
++
++  // Phase 4 (IDENT-001): backfill memberships for existing users, respecting RLS.
++  // DECISION: if the DB role bypasses RLS (rolbypassrls or superuser) -> one global pass.
++  //           otherwise -> one transaction per tenant with app.current_tenant_id set (tenant isolation preserved).
++  private async backfillMemberships(client: PoolClient): Promise<void> {
++    const roleRes = await client.query('SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user');
++    const bypass = !!(roleRes.rows[0]?.rolbypassrls || roleRes.rows[0]?.rolsuper);
++    const countMissing = `SELECT count(*)::int AS n FROM an_users u WHERE NOT EXISTS (SELECT 1 FROM an_memberships m WHERE m.tenant_id = u.tenant_id AND m.user_id = u.id)`;
++    let missing = 0;
++    if (bypass) {
++      console.log('[phase-4] DECISION: DB role bypasses RLS -> global membership backfill');
++      for (const sql of PostgresPrimaryAdapter.membershipBackfillSql('ALL')) await client.query(sql);
++      missing = (await client.query(countMissing)).rows[0].n;
++    } else {
++      console.log('[phase-4] DECISION: DB role does NOT bypass RLS -> per-tenant membership backfill');
++      const tenants = await client.query('SELECT id FROM an_tenants');
++      for (const t of tenants.rows) {
++        try {
++          await client.query('BEGIN');
++          await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [t.id]);
++          for (const sql of PostgresPrimaryAdapter.membershipBackfillSql('TENANT')) await client.query(sql, [t.id]);
++          missing += (await client.query(countMissing + ' AND u.tenant_id = $1', [t.id])).rows[0].n;
++          await client.query('COMMIT');
++        } catch (e) {
++          try { await client.query('ROLLBACK'); } catch {}
++          throw e;
++        }
++      }
++    }
++    if (missing > 0) console.error(`[phase-4] users without membership: ${missing}`);
++  }
++
+   // Tenant operations
+   public async getTenant(tenantId: string): Promise<StorageResult<TenantCompany>> {
+     if (!this.pool) return this.missingConnError();
+@@ -1437,6 +1526,8 @@
+     const effectiveTenantId = user.tenantId;
+     return this.withTenantScope(effectiveTenantId, async () => {
+       try {
++        const prevRoleRes = await this.query('SELECT role FROM an_users WHERE id = $1', [user.id]);
++        const prevRole: string | null = prevRoleRes.rows.length > 0 ? prevRoleRes.rows[0].role : null;
+         const query = `
+           INSERT INTO an_users (
+             id, tenant_id, username, full_name, email, role, status,
+@@ -1485,6 +1576,17 @@
+           user.assignedNodeId || null,
+           user.createdAt ? new Date(user.createdAt) : new Date(),
+         ]);
++        // Phase 4 (IDENT-001): keep membership/role/scope in the same transaction.
++        // Sync the active role assignment ONLY when the role actually changed.
++        if (prevRole !== null && prevRole !== user.role) {
++          await this.query(
++            `UPDATE an_role_assignments SET role = $2 WHERE membership_id = 'mbr-' || $1 AND status = 'ACTIVE'`,
++            [user.id, user.role]
++          );
++        }
++        for (const sql of PostgresPrimaryAdapter.membershipBackfillSql('USER')) {
++          await this.query(sql, [user.id]);
++        }
+         return { success: true, data: user };
+       } catch (err: any) {
+         return this.dbError(err);
+@@ -1507,6 +1609,50 @@
+     }
+   }
+ 
++  // Phase 4 (IDENT-001): membership context (role authority + scopes) from the DB
++  public async getMembershipContext(tenantId: string, userId: string): Promise<StorageResult<{ membershipId: string; status: string; role: string | null; scopes: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[] } | null>> {
++    if (!this.pool) return this.missingConnError();
++    return this.withTenantScope(tenantId, async () => {
++      try {
++        const m = await this.query(
++          `SELECT m.id AS membership_id, m.status, r.role
++           FROM an_memberships m
++           LEFT JOIN an_role_assignments r ON r.membership_id = m.id AND r.status = 'ACTIVE'
++           WHERE m.tenant_id = $1 AND m.user_id = $2`,
++          [tenantId, userId]
++        );
++        if (m.rows.length === 0) return { success: true as const, data: null };
++        const row = m.rows[0];
++        const sc = await this.query(
++          `SELECT scope_type, org_node_id FROM an_membership_scopes WHERE tenant_id = $1 AND membership_id = $2 ORDER BY created_at, id`,
++          [tenantId, row.membership_id]
++        );
++        const scopes = sc.rows.map((x: any) => ({
++          type: x.scope_type as 'TENANT' | 'NODE',
++          ...(x.org_node_id ? { orgNodeId: x.org_node_id as string } : {}),
++        }));
++        return { success: true as const, data: { membershipId: row.membership_id as string, status: row.status as string, role: (row.role as string | null) ?? null, scopes } };
++      } catch (err: any) {
++        return this.dbError(err);
++      }
++    });
++  }
++
++  public async setMembershipStatus(tenantId: string, userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED'): Promise<StorageResult<boolean>> {
++    if (!this.pool) return this.missingConnError();
++    return this.withTenantScope(tenantId, async () => {
++      try {
++        const res = await this.query(
++          `UPDATE an_memberships SET status = $3 WHERE tenant_id = $1 AND user_id = $2`,
++          [tenantId, userId, status]
++        );
++        return { success: true as const, data: (res.rowCount ?? 0) > 0 };
++      } catch (err: any) {
++        return this.dbError(err);
++      }
++    });
++  }
++
+   // Login Attempts & Security Tracking (Anomaly Detection & Lockout)
+   public async getLastSuccessfulLogin(userId: string): Promise<StorageResult<LoginAttemptRecord | null>> {
+     if (!this.pool) return this.missingConnError();
