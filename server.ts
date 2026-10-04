@@ -2880,6 +2880,11 @@ async function startServer() {
   // 6A: استعلام طلبات الصرف مع الفلترة
   app.get('/api/expenses/requests', requireAuth, async (req: Request, res: Response) => {
     try {
+      const { role, canViewAll, isSubmitter } = expenseAccess(req);
+      if (!canViewAll && !isSubmitter) {
+        return denyForbidden(res, role, 'EXPENSE_SUBMIT');
+      }
+
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
       if (!storage) return;
@@ -2890,7 +2895,13 @@ async function startServer() {
       };
       const result = await storage.listExpenseRequests(tenantId, filter);
       if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
+
+      let items = result.data || [];
+      if (!canViewAll) {
+        const userId = (req as any).authContext?.userId;
+        items = items.filter((x: any) => x.submittedBy === userId);
+      }
+      return res.json({ success: true, data: items });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -2899,12 +2910,23 @@ async function startServer() {
   // 6A: تفاصيل طلب صرف واحد مع البنود والمرفقات
   app.get('/api/expenses/requests/:id', requireAuth, async (req: Request, res: Response) => {
     try {
+      const { role, canViewAll, isSubmitter } = expenseAccess(req);
+      if (!canViewAll && !isSubmitter) {
+        return denyForbidden(res, role, 'EXPENSE_SUBMIT');
+      }
+
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
       if (!storage) return;
       const result = await storage.getExpenseRequest(tenantId, req.params.id);
       if (!result.success) return res.status(500).json(result.error);
       if (!result.data) return res.status(404).json({ error: 'طلب المصروفات غير موجود' });
+
+      const submittedBy = (result.data as any).request?.submittedBy || (result.data as any).submittedBy;
+      if (!canViewAll && submittedBy !== (req as any).authContext?.userId) {
+        return res.status(404).json({ error: 'طلب المصروفات غير موجود' });
+      }
+
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -3568,12 +3590,27 @@ async function startServer() {
   // 7.6G: Document Attachments (مرفقات المستندات 4–7)
   app.get('/api/attachments', requireAuth, async (req: Request, res: Response) => {
     try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
       const docType = req.query.documentType as string;
       const docId = req.query.documentId as string;
       if (!docType || !docId) return res.status(400).json({ error: 'documentType و documentId مطلوبان' });
+
+      const role = (req as any).authContext?.role as string | undefined;
+      if (docType === 'EXPENSE_REQUEST') {
+        const { canViewAll, isSubmitter } = expenseAccess(req);
+        if (!canViewAll && !isSubmitter) {
+          return denyForbidden(res, role, 'EXPENSE_SUBMIT');
+        }
+      } else if (docType === 'ISSUE' || docType === 'RECEIPT') {
+        if (!hasPermission(role, 'STOCK_VIEW')) {
+          return denyForbidden(res, role, 'STOCK_VIEW');
+        }
+      } else {
+        return res.status(400).json({ error: `نوع المستند غير مدعوم للمرفقات: ${docType}` });
+      }
+
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
       const result = await storage.listDocumentAttachments(tenantId, docType, docId);
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
@@ -3584,6 +3621,24 @@ async function startServer() {
 
   app.post('/api/attachments', requireAuth, async (req: Request, res: Response) => {
     try {
+      const docType = req.body.documentType as string;
+      const role = (req as any).authContext?.role as string | undefined;
+      if (docType === 'EXPENSE_REQUEST') {
+        if (!hasPermission(role, 'EXPENSE_SUBMIT')) {
+          return denyForbidden(res, role, 'EXPENSE_SUBMIT');
+        }
+      } else if (docType === 'ISSUE') {
+        if (!hasPermission(role, 'STOCK_ISSUE')) {
+          return denyForbidden(res, role, 'STOCK_ISSUE');
+        }
+      } else if (docType === 'RECEIPT') {
+        if (!hasPermission(role, 'STOCK_RECEIVE')) {
+          return denyForbidden(res, role, 'STOCK_RECEIVE');
+        }
+      } else {
+        return res.status(400).json({ error: `نوع المستند غير مدعوم للمرفقات: ${docType}` });
+      }
+
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId || 'usr-uploader';
       const key = requireIdempotencyKey(req, res, 'إضافة مرفق مستند');
@@ -3616,7 +3671,7 @@ async function startServer() {
   });
 
   // 7.6B: Custody Expense Vouchers (سندات صرف العهدة متعددة البنود)
-  app.get('/api/custody/vouchers', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/custody/vouchers', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
@@ -3630,7 +3685,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/custody/vouchers/:id', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/custody/vouchers/:id', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
@@ -3697,12 +3752,40 @@ async function startServer() {
   // 7.6C: Unified Print Service Endpoint (HTML + Print View)
   app.get('/api/print/:docType/:docId', requireAuth, async (req: Request, res: Response) => {
     try {
+      const { docType, docId } = req.params;
+      const role = (req as any).authContext?.role as string | undefined;
+
+      if (docType === 'journal-entry') {
+        if (!hasPermission(role, 'ENTRY_VIEW')) {
+          return denyForbidden(res, role, 'ENTRY_VIEW');
+        }
+      } else if (docType === 'custody-voucher' || docType === 'custody-settlement') {
+        if (!hasPermission(role, 'CUSTODY_VIEW')) {
+          return denyForbidden(res, role, 'CUSTODY_VIEW');
+        }
+      } else if (docType === 'expense-request') {
+        const { canViewAll, isSubmitter } = expenseAccess(req);
+        if (!canViewAll && !isSubmitter) {
+          return denyForbidden(res, role, 'EXPENSE_SUBMIT');
+        }
+      } else if (
+        docType === 'stock-receipt' ||
+        docType === 'stock-issue' ||
+        docType === 'stock-transfer' ||
+        docType === 'stock-count' ||
+        docType === 'stock-card' ||
+        docType === 'item-ledger'
+      ) {
+        if (!hasPermission(role, 'STOCK_VIEW')) {
+          return denyForbidden(res, role, 'STOCK_VIEW');
+        }
+      }
+
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
       if (!storage) return;
 
       const printService = new UnifiedPrintService(storage);
-      const { docType, docId } = req.params;
 
       let html: string | null = null;
       switch (docType) {

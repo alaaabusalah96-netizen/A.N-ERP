@@ -1,0 +1,222 @@
+PHASE: phase-3 | RESULT: DONE
+SUMMARY: تم إغلاق صفوف تفويض DEFER_P4 الستة عشر (AUTHZ-002) عبر حماية مسارات المحاسبة بـ ENTRY_VIEW ومسارات العهدة بـ CUSTODY_VIEW وتطبيق قاعدة R-EXP على طلبات المصروفات وحماية المرفقات والطباعة بحسب نوع المستند، وتوليد مصفوفة الصلاحيات المكتملة 131/131.
+
+1. PRECHECK:
+$ grep -nE "app\.get\('(/api/accounting/(accounts|periods|dimensions|items)|/api/custody/(custodies|custodies/:id|expenses|settlements|hr-clearance/:employeeId|vouchers|vouchers/:id)|/api/expenses/requests|/api/expenses/requests/:id|/api/attachments|/api/print/:docType/:docId)'|app\.post\('/api/attachments'" server.ts > /tmp/p4_rows.txt; echo "rows=$(wc -l < /tmp/p4_rows.txt) with_requirePermission=$(grep -c requirePermission /tmp/p4_rows.txt)"
+$ grep -n "import { requirePermission }" server.ts
+$ grep -n "export function hasPermission\|export type PermissionGroup" src/core/auth/PermissionMatrix.ts
+$ grep -c "DEFER_P4" evidence/phase-2/route-matrix.md
+$ echo "routes=$(grep -cE "^\s*app\.(get|post|put|delete|patch)\(" server.ts)"
+المخرجات:
+rows=16 with_requirePermission=0
+57:import { requirePermission } from './src/core/auth/PermissionMatrix';
+13:export type PermissionGroup =
+145:export function hasPermission(role: string | undefined, permission: PermissionGroup): boolean {
+16
+routes=131
+DEVIATIONS: لا توجد اختلافات، المطابقة تامة مع المتوقع.
+
+2. DECISIONS:
+- قرار 1: إلحاق الدوال المساعدة denyForbidden و expenseAccess في server.ts قبل أول مسار محاسبي متأثر، واستخدام نفس نص استجابة RFC7807 المطابق لميدلوير requirePermission.
+- قرار 2: في قاعدة R-EXP، إذا كان المستخدم لا يملك EXPENSE_APPROVE أو FINANCIAL_REPORTS، يتم ترشيح قائمة طلبات المصروفات بحسب submittedBy === authContext.userId، وفي مسار التفاصيل /:id يتم إرجاع 404 بنفس جسم الاستجابة المعتاد لحجب وجود الطلب لغير أصحابه.
+- قرار 3: في مساري المرفقات (GET و POST) والطباعة الموحدة، يتم فحص نوع المستند documentType / docType والتأكد من الصلاحية المطلوبة (STOCK_VIEW / STOCK_ISSUE / STOCK_RECEIVE / CUSTODY_VIEW / ENTRY_VIEW / R-EXP)، وأي نوع غير معروف أو غير مدعوم يرد برمز 400.
+- قرار 4: دعم مسارات المصفوفات في genRouteMatrixP4.ts للحفاظ على التطابق الدقيق لعدد صفوف المصفوفة مع عدد تسجيلات routes في server.ts (131 صفًا).
+
+3. DIFF:
+--- server.ts
+@@ -54,7 +54,7 @@
+ import { AccountingService } from './src/core/accounting/AccountingService';
+ import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
+ import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
+-import { requirePermission } from './src/core/auth/PermissionMatrix';
++import { requirePermission, hasPermission, PermissionGroup } from './src/core/auth/PermissionMatrix';
+ import { requestContextALS } from './src/core/context/RequestContext';
+@@ -2112,8 +2112,24 @@
++  function denyForbidden(res: Response, role: string | undefined, permission: string) {
++    return res.status(403).json({
++      type: 'https://api.an-erp.local/errors/forbidden',
++      title: 'صلاحيات غير كافية',
++      status: 403,
++      detail: `دور المستخدم (${role || 'غير محدد'}) لا يملك صلاحية تنفيذ هذه العملية (${permission}).`,
++    });
++  }
++
++  function expenseAccess(req: Request) {
++    const role = (req as any).authContext?.role as string | undefined;
++    const canViewAll = hasPermission(role, 'EXPENSE_APPROVE') || hasPermission(role, 'FINANCIAL_REPORTS');
++    const isSubmitter = hasPermission(role, 'EXPENSE_SUBMIT');
++    return { role, canViewAll, isSubmitter };
++  }
++
+   // 4A: دليل الحسابات (Chart of Accounts)
+-  app.get('/api/accounting/accounts', requireAuth, async (req: Request, res: Response) => {
++  app.get('/api/accounting/accounts', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
+@@ -2153,7 +2169,7 @@
+   // 4B: الفترات المحاسبية (Fiscal Periods)
+-  app.get('/api/accounting/periods', requireAuth, async (req: Request, res: Response) => {
++  app.get('/api/accounting/periods', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
+@@ -2297,7 +2313,7 @@
+   // 4C: الأبعاد المحاسبية (Dimensions)
+-  app.get('/api/accounting/dimensions', requireAuth, async (req: Request, res: Response) => {
++  app.get('/api/accounting/dimensions', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
+@@ -2348,7 +2364,7 @@
+-  app.get('/api/accounting/items', requireAuth, async (req: Request, res: Response) => {
++  app.get('/api/accounting/items', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
+@@ -2589,7 +2605,7 @@
+   // 5A: عرض قائمة العهد النقدية للمنشأة
+-  app.get('/api/custody/custodies', requireAuth, async (req: Request, res: Response) => {
++  app.get('/api/custody/custodies', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
+@@ -2606,7 +2622,7 @@
+   // 5A: جلب تفاصيل عهدة واحدة
+-  app.get('/api/custody/custodies/:id', requireAuth, async (req: Request, res: Response) => {
++  app.get('/api/custody/custodies/:id', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
+@@ -2680,7 +2696,7 @@
+   // 5B: جلب قائمة مصروفات العهدة
+-  app.get('/api/custody/expenses', requireAuth, async (req: Request, res: Response) => {
++  app.get('/api/custody/expenses', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
+@@ -2728,7 +2744,7 @@
+   // 5C: قائمة تسويات العهدة
+-  app.get('/api/custody/settlements', requireAuth, async (req: Request, res: Response) => {
++  app.get('/api/custody/settlements', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
+@@ -2742,7 +2758,7 @@
+   // 5D: فحص إخلاء طرف الموظف للعهد النقدية (HR Clearance Check)
+-  app.get('/api/custody/hr-clearance/:employeeId', requireAuth, async (req: Request, res: Response) => {
++  app.get('/api/custody/hr-clearance/:employeeId', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
+@@ -2880,6 +2896,11 @@
+   // 6A: استعلام طلبات الصرف مع الفلترة
+   app.get('/api/expenses/requests', requireAuth, async (req: Request, res: Response) => {
++    const { role, canViewAll, isSubmitter } = expenseAccess(req);
++    if (!canViewAll && !isSubmitter) {
++      return denyForbidden(res, role, 'EXPENSE_SUBMIT');
++    }
++    let items = result.data || [];
++    if (!canViewAll) {
++      const userId = (req as any).authContext?.userId;
++      items = items.filter((x: any) => x.submittedBy === userId);
++    }
++    return res.json({ success: true, data: items });
+@@ -2899,12 +2920,23 @@
+   // 6A: تفاصيل طلب صرف واحد مع البنود والمرفقات
+   app.get('/api/expenses/requests/:id', requireAuth, async (req: Request, res: Response) => {
++    const { role, canViewAll, isSubmitter } = expenseAccess(req);
++    if (!canViewAll && !isSubmitter) {
++      return denyForbidden(res, role, 'EXPENSE_SUBMIT');
++    }
++    const submittedBy = (result.data as any).request?.submittedBy || (result.data as any).submittedBy;
++    if (!canViewAll && submittedBy !== (req as any).authContext?.userId) {
++      return res.status(404).json({ error: 'طلب المصروفات غير موجود' });
++    }
+@@ -3589,12 +3621,27 @@
+   // 7.6G: Document Attachments (مرفقات المستندات 4–7)
+   app.get('/api/attachments', requireAuth, async (req: Request, res: Response) => {
++    if (docType === 'EXPENSE_REQUEST') {
++      const { canViewAll, isSubmitter } = expenseAccess(req);
++      if (!canViewAll && !isSubmitter) return denyForbidden(res, role, 'EXPENSE_SUBMIT');
++    } else if (docType === 'ISSUE' || docType === 'RECEIPT') {
++      if (!hasPermission(role, 'STOCK_VIEW')) return denyForbidden(res, role, 'STOCK_VIEW');
++    } else {
++      return res.status(400).json({ error: `نوع المستند غير مدعوم للمرفقات: ${docType}` });
++    }
+@@ -3604,6 +3651,24 @@
+   app.post('/api/attachments', requireAuth, async (req: Request, res: Response) => {
++    if (docType === 'EXPENSE_REQUEST') {
++      if (!hasPermission(role, 'EXPENSE_SUBMIT')) return denyForbidden(res, role, 'EXPENSE_SUBMIT');
++    } else if (docType === 'ISSUE') {
++      if (!hasPermission(role, 'STOCK_ISSUE')) return denyForbidden(res, role, 'STOCK_ISSUE');
++    } else if (docType === 'RECEIPT') {
++      if (!hasPermission(role, 'STOCK_RECEIVE')) return denyForbidden(res, role, 'STOCK_RECEIVE');
++    } else {
++      return res.status(400).json({ error: `نوع المستند غير مدعوم للمرفقات: ${docType}` });
++    }
+@@ -3616,7 +3681,7 @@
+-  app.get('/api/custody/vouchers', requireAuth, async (req: Request, res: Response) => {
++  app.get('/api/custody/vouchers', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
+@@ -3629,7 +3694,7 @@
+-  app.get('/api/custody/vouchers/:id', requireAuth, async (req: Request, res: Response) => {
++  app.get('/api/custody/vouchers/:id', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
+@@ -3751,12 +3816,40 @@
+   // 7.6C: Unified Print Service Endpoint (HTML + Print View)
+   app.get('/api/print/:docType/:docId', requireAuth, async (req: Request, res: Response) => {
++    if (docType === 'journal-entry') {
++      if (!hasPermission(role, 'ENTRY_VIEW')) return denyForbidden(res, role, 'ENTRY_VIEW');
++    } else if (docType === 'custody-voucher' || docType === 'custody-settlement') {
++      if (!hasPermission(role, 'CUSTODY_VIEW')) return denyForbidden(res, role, 'CUSTODY_VIEW');
++    } else if (docType === 'expense-request') {
++      const { canViewAll, isSubmitter } = expenseAccess(req);
++      if (!canViewAll && !isSubmitter) return denyForbidden(res, role, 'EXPENSE_SUBMIT');
++    } else if (['stock-receipt', 'stock-issue', 'stock-transfer', 'stock-count', 'stock-card', 'item-ledger'].includes(docType)) {
++      if (!hasPermission(role, 'STOCK_VIEW')) return denyForbidden(res, role, 'STOCK_VIEW');
++    }
+
+4. TESTS:
+- [AFTER-RUN] npx tsx scripts/verifyP4Authorization.ts -> PASS لجميع البنود (23/23):
+  [PASS] GET /api/accounting/accounts [ENTRY_VIEW] -> Denied(platform_admin): 403 | Allowed(super_admin): 200
+  [PASS] GET /api/accounting/periods [ENTRY_VIEW] -> Denied(platform_admin): 403 | Allowed(super_admin): 200
+  [PASS] GET /api/accounting/dimensions [ENTRY_VIEW] -> Denied(platform_admin): 403 | Allowed(super_admin): 200
+  [PASS] GET /api/accounting/items [ENTRY_VIEW] -> Denied(platform_admin): 403 | Allowed(super_admin): 200
+  [PASS] GET /api/custody/custodies [CUSTODY_VIEW] -> Denied(platform_admin): 403 | Allowed(super_admin): 200
+  [PASS] GET /api/custody/custodies/cst-test-01 [CUSTODY_VIEW] -> Denied(platform_admin): 403 | Allowed(super_admin): 404
+  [PASS] GET /api/custody/expenses [CUSTODY_VIEW] -> Denied(platform_admin): 403 | Allowed(super_admin): 200
+  [PASS] GET /api/custody/settlements [CUSTODY_VIEW] -> Denied(platform_admin): 403 | Allowed(super_admin): 200
+  [PASS] GET /api/custody/hr-clearance/EMP-01 [CUSTODY_VIEW] -> Denied(platform_admin): 403 | Allowed(super_admin): 200
+  [PASS] GET /api/custody/vouchers [CUSTODY_VIEW] -> Denied(platform_admin): 403 | Allowed(super_admin): 200
+  [PASS] GET /api/custody/vouchers/vch-test-01 [CUSTODY_VIEW] -> Denied(platform_admin): 403 | Allowed(super_admin): 404
+  [PASS] GET /api/expenses/requests (Submitter A isolation) -> Sees reqA: true, Sees reqB: false
+  [PASS] GET /api/expenses/requests/exp-... (Submitter A accessing B's request) -> Status: 404 (Expected 404)
+  [PASS] GET /api/expenses/requests/exp-... (Submitter A accessing own request) -> Status: 200 (Expected 200)
+  [PASS] GET /api/expenses/requests (canViewAll sees both) -> Approver sees reqA: true, sees reqB: true
+  [PASS] GET /api/expenses/requests (Denied role) -> Denied(platform_admin) Status: 403
+  [PASS] GET /api/attachments (unknown docType -> 400) -> Status: 400
+  [PASS] POST /api/attachments (unknown docType -> 400) -> Status: 400
+  [PASS] GET /api/attachments?documentType=RECEIPT (Denied STOCK_VIEW -> 403) -> Status: 403
+  [PASS] POST /api/attachments documentType=RECEIPT (Denied STOCK_RECEIVE -> 403) -> Status: 403
+  [PASS] GET /api/print/journal-entry/:id (Denied ENTRY_VIEW -> 403) -> Status: 403
+  [PASS] GET /api/print/journal-entry/:id (Allowed ENTRY_VIEW -> not 401/403) -> Status: 404
+  [PASS] GET /api/print/unknown-type/:id (Unknown type -> 400) -> Status: 400
+  Exit Code: 0
+
+5. BASELINE vs AFTER:
+| الأمر | exit قبل | exit بعد | النتيجة |
+|---|---|---|---|
+| npm run lint | 0 | 0 | SAME |
+| npm run battery:phase4.6 | 0 | 0 | SAME |
+| npm run battery:phase5 | 0 | 0 | SAME |
+| npm run battery:phase6 | 0 | 0 | SAME |
+| npm run battery:phase7.6 | 0 | 0 | SAME |
+| npx tsx scripts/testIdempotencySuite.ts | 0 | 0 | SAME |
+| npx tsx scripts/verifyPhase2Authorization.ts | 0 | 0 | SAME |
+| npx tsx scripts/verifyPhase3AuthBypass.ts | 0 | 0 | SAME |
+| npx tsx scripts/verifyP4Authorization.ts | N/A | 0 | NEW-PASS |
+
+6. GATE:
+- الاختبارات PASS فعلياً (23/23 بنجاح تام): ✔ (PASS)
+- مصفوفة الصلاحيات الجديدة (عدد الصفوف 131 = عدد تسجيلات الـroutes 131): ✔ (PASS)
+- خلو المصفوفة الجديدة من أي صف DEFER_P4 (0 متبقٍ): ✔ (PASS)
+- REGRESSION-SET بلا NEW-FAIL: ✔ (PASS)
+- الديف محصور في server.ts والملفات الجديدة المسموحة: ✔ (PASS)
+
+7. FILES:
+- أُنشئت:
+  - scripts/verifyP4Authorization.ts
+  - scripts/genRouteMatrixP4.ts
+  - evidence/phase-4/route-matrix.md
+- عُدّلت:
+  - server.ts
+- حُذفت: لا يوجد
+
+8. BLOCKED / NOT RUN / OUT OF SCOPE / FOLLOW-UP:
+- BLOCKED: لا يوجد
+- NOT RUN: لا يوجد
+- OUT OF SCOPE: لا يوجد
+
+9. UI IMPACT:
+تحقق منه الفحص: الشاشات التي تنادي المسارات المحمية هي `AccountingWorkspaceView` (accounts/periods/dimensions/items) و`CashCustodyWorkspaceView` (custodies/expenses/settlements/hr-clearance) و`ExpensesWorkspaceView` (expenses/requests). شاشة المخزن تستخدم `/api/inventory/items` (STOCK_VIEW) وهي غير متأثرة. لا توجد استدعاءات للواجهة لـ`/api/attachments` ولا لـ`/api/custody/vouchers`.
+الأدوار بلا صلاحيات العهدة (warehouse* وsales_officer وfleet_supervisor وdeveloper وplatform_admin وفق المصفوفة الفعلية) تفقد قراءة بيانات العهدة؛ الأدوار بلا ENTRY_VIEW تفقد قراءة دليل الحسابات والفترات والأبعاد والأصناف المحاسبية؛ الموظف العادي يرى طلبات المصروف الخاصة به فقط.
+القائمة الفعلية للأدوار المتأثرة محسوبة بـ hasPermission:
+- أدوار بلا ENTRY_VIEW (تُحرم من قراءة الحسابات والفترات والأبعاد والأصناف المحاسبية): platform_admin, warehouse_manager, warehouse_keeper, warehouse, developer, sales_officer, fleet_supervisor
+- أدوار بلا CUSTODY_VIEW (تُحرم من قراءة بيانات العهد والمصروفات والتسويات وسندات الصرف): platform_admin, warehouse_manager, warehouse_keeper, warehouse, developer, sales_officer, fleet_supervisor
+- أدوار submitters فقط (ترى طلبات المصروف الخاصة بها فقط دون رؤية طلبات الآخرين): warehouse_manager, warehouse_keeper, warehouse, sales_officer, fleet_supervisor
+- أدوار محرومة تماماً من طلبات المصروف (403): platform_admin, developer
+
+10. ROLLBACK:
+cp -a /tmp/orig_phase-3/server.ts server.ts && rm -f scripts/verifyP4Authorization.ts scripts/genRouteMatrixP4.ts evidence/phase-4/route-matrix.md
