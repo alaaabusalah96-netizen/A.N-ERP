@@ -95,7 +95,13 @@ export class FirebaseSmokeAdapter implements StoragePort {
   nextSequence(tenantId: string, sequenceKey: string, prefix: string, idempotencyKey: string) { return this.smokeOnlyError<SequenceResult>('nextSequence'); }
   overrideSequence(tenantId: string, sequenceKey: string, manualNumber: number, reason: string, authorizedBy: string, idempotencyKey: string) { return this.smokeOnlyError<SequenceResult>('overrideSequence'); }
   createApprovalRequest(tenantId: string, request: ApprovalRequest, idempotencyKey: string) { return this.smokeOnlyError<ApprovalRequest>('createApprovalRequest'); }
-  approveStep(tenantId: string, requestId: string, approverId: string, idempotencyKey: string) { return this.smokeOnlyError<ApprovalRequest>('approveStep'); }
+  approveStep(tenantId: string, requestId: string, approverId: string, idempotencyKey: string, approverRole?: string) { return this.smokeOnlyError<ApprovalRequest>('approveStep'); }
+  rejectApprovalStep(tenantId: string, requestId: string, approverId: string, approverRole: string, reason: string, idempotencyKey: string) { return this.smokeOnlyError<any>('rejectApprovalStep'); }
+  getApprovalRequest(tenantId: string, id: string) { return this.smokeOnlyError<any>('getApprovalRequest'); }
+  listApprovalRequests(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listApprovalRequests'); }
+  getApprovalPolicy(tenantId: string, documentType: any) { return this.smokeOnlyError<any>('getApprovalPolicy'); }
+  listApprovalPolicies(tenantId: string) { return this.smokeOnlyError<any[]>('listApprovalPolicies'); }
+  saveApprovalPolicy(tenantId: string, policy: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveApprovalPolicy'); }
   appendSystemChangeLog(entry: SystemChangeLogEntry) { return this.smokeOnlyError<SystemChangeLogEntry>('appendSystemChangeLog'); }
   getSystemChangeLogs() { return this.smokeOnlyError<SystemChangeLogEntry[]>('getSystemChangeLogs'); }
   saveTokenFamily(family: TokenFamily) { return this.smokeOnlyError<TokenFamily>('saveTokenFamily'); }
@@ -162,6 +168,7 @@ export class FirebaseSmokeAdapter implements StoragePort {
   recordStockMovement(tenantId: string, movement: any, idempotencyKey: string) { return this.smokeOnlyError<any>('recordStockMovement'); }
   listStockMovements(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listStockMovements'); }
   createStockTransfer(tenantId: string, transfer: any, lines: any[], idempotencyKey: string) { return this.smokeOnlyError<any>('createStockTransfer'); }
+  postStockTransferAtomic(tenantId: string, input: any, idempotencyKey: string) { return this.smokeOnlyError<any>('postStockTransferAtomic'); }
   getStockTransfer(tenantId: string, transferId: string) { return this.smokeOnlyError<any>('getStockTransfer'); }
   listStockTransfers(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listStockTransfers'); }
   updateStockTransferStatus(tenantId: string, transferId: string, status: any, actorId: string, actorName: string, idempotencyKey: string) { return this.smokeOnlyError<any>('updateStockTransferStatus'); }
@@ -174,6 +181,7 @@ export class FirebaseSmokeAdapter implements StoragePort {
   saveItemSerial(tenantId: string, serial: any) { return this.smokeOnlyError<any>('saveItemSerial'); }
   listItemSerials(tenantId: string, itemId?: string, warehouseId?: string) { return this.smokeOnlyError<any[]>('listItemSerials'); }
   saveStockDocument(tenantId: string, doc: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveStockDocument'); }
+  postStockDocumentAtomic(tenantId: string, input: any, idempotencyKey: string) { return this.smokeOnlyError<any>('postStockDocumentAtomic'); }
   getStockDocument(tenantId: string, documentId: string) { return this.smokeOnlyError<any>('getStockDocument'); }
   listStockDocuments(tenantId: string, filter?: any) { return this.smokeOnlyError<any[]>('listStockDocuments'); }
   saveCustodyExpenseVoucher(tenantId: string, voucher: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveCustodyExpenseVoucher'); }

@@ -220,6 +220,27 @@ export interface ApprovalStep {
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   actionTimestamp?: string;
   comment?: string;
+  // Phase 12 (APR-001): configurable steps (all optional; requests without approverType keep the legacy lenient behavior)
+  approverType?: 'ROLE' | 'USER';
+  approverRef?: string;                    // role name or user id
+  label?: string;                          // step name in Arabic
+  stepKind?: 'ARRIVAL_CONFIRM' | 'TECHNICAL_INSPECTION' | 'FINAL_CONFIRM' | 'REVIEW' | 'GENERAL';
+  rejectReason?: string;
+}
+
+export type ApprovalDocumentType = 'GOODS_RECEIPT_SUPPLIER' | 'STOCK_ISSUE' | 'STOCK_TRANSFER_RECEIPT';
+
+export interface ApprovalPolicy {
+  id: string;
+  tenantId: string;
+  documentType: ApprovalDocumentType;
+  mode: 'DIRECT' | 'STEPS';
+  steps: Array<{ label: string; approverType: 'ROLE' | 'USER'; approverRef: string; stepKind: NonNullable<ApprovalStep['stepKind']> }>;
+  enforceDistinctApprovers: boolean;
+  isActive: boolean;
+  version: number;
+  updatedBy: string;
+  updatedAt: string;
 }
 
 export interface BreakGlassDetails {
@@ -244,6 +265,10 @@ export interface ApprovalRequest {
   steps: ApprovalStep[];
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   createdAt: string;
+  // Phase 12 (APR-001)
+  enforceDistinctApprovers?: boolean;     // snapshot of the policy at creation time
+  rejectReason?: string;
+  rejectedStep?: number;
   breakGlass?: BreakGlassDetails;
 }
 
@@ -575,6 +600,9 @@ export interface StockTransferLine {
   totalCost: number;
   batchNumber?: string;
   serialNumber?: string;
+  lineNumber?: number;
+  uom?: string;
+  notes?: string;
 }
 
 export interface StockTransfer {
@@ -881,8 +909,24 @@ export interface StoragePort {
     tenantId: string,
     requestId: string,
     approverId: string,
+    idempotencyKey: string,
+    approverRole?: string
+  ): Promise<StorageResult<ApprovalRequest>>;
+
+  // Phase 12 (APR-001): reject, read, list, and per-tenant policies
+  rejectApprovalStep(
+    tenantId: string,
+    requestId: string,
+    approverId: string,
+    approverRole: string,
+    reason: string,
     idempotencyKey: string
   ): Promise<StorageResult<ApprovalRequest>>;
+  getApprovalRequest(tenantId: string, id: string): Promise<StorageResult<ApprovalRequest | null>>;
+  listApprovalRequests(tenantId: string, filter?: { status?: string; documentType?: string; documentId?: string }): Promise<StorageResult<ApprovalRequest[]>>;
+  getApprovalPolicy(tenantId: string, documentType: ApprovalDocumentType): Promise<StorageResult<ApprovalPolicy | null>>;
+  listApprovalPolicies(tenantId: string): Promise<StorageResult<ApprovalPolicy[]>>;
+  saveApprovalPolicy(tenantId: string, policy: ApprovalPolicy, idempotencyKey: string): Promise<StorageResult<ApprovalPolicy>>;
 
   // System Change Log (Immutable Ledger on Primary)
   appendSystemChangeLog(entry: SystemChangeLogEntry): Promise<StorageResult<SystemChangeLogEntry>>;
@@ -979,6 +1023,7 @@ export interface StoragePort {
   listStockMovements(tenantId: string, filter?: { warehouseId?: string; itemId?: string; movementType?: string; limit?: number }): Promise<StorageResult<StockMovement[]>>;
   
   createStockTransfer(tenantId: string, transfer: StockTransfer, lines: StockTransferLine[], idempotencyKey: string): Promise<StorageResult<StockTransfer>>;
+  postStockTransferAtomic(tenantId: string, input: PostStockTransferAtomicInput, idempotencyKey: string): Promise<StorageResult<StockTransfer>>;
   getStockTransfer(tenantId: string, transferId: string): Promise<StorageResult<{ transfer: StockTransfer; lines: StockTransferLine[] } | null>>;
   listStockTransfers(tenantId: string, filter?: { status?: string; warehouseId?: string }): Promise<StorageResult<StockTransfer[]>>;
   updateStockTransferStatus(tenantId: string, transferId: string, status: StockTransferStatus, actorId: string, actorName: string, idempotencyKey: string): Promise<StorageResult<StockTransfer>>;
@@ -998,6 +1043,7 @@ export interface StoragePort {
   // Phase 7.6: Multi-Line Upgrades, Print, Returns, Stock Cards, Attachments & Barcodes
   // ============================================================================
   saveStockDocument(tenantId: string, doc: StockDocument, idempotencyKey: string): Promise<StorageResult<StockDocument>>;
+  postStockDocumentAtomic(tenantId: string, input: PostStockDocumentAtomicInput, idempotencyKey: string): Promise<StorageResult<StockDocument>>;
   getStockDocument(tenantId: string, docId: string): Promise<StorageResult<StockDocument | null>>;
   listStockDocuments(tenantId: string, filter?: { warehouseId?: string; documentType?: StockDocumentType; limit?: number }): Promise<StorageResult<StockDocument[]>>;
 
@@ -1038,6 +1084,27 @@ export interface StockDocumentLine {
   serialNumber?: string;
   expiryDate?: string;
   notes?: string;
+}
+
+// Phase 10 (STK-ATOMIC-001): everything needed to post one stock document in a single all-or-nothing transaction
+export interface PostStockDocumentAtomicInput {
+  doc: StockDocument;            // doc.lines and doc.movements are filled, same order and count (line <-> movement)
+  movements: StockMovement[];    // same elements as doc.movements
+  batches?: ItemBatch[];
+  serials?: ItemSerial[];
+  allowNegative?: boolean;       // default false: an outgoing movement that would make the balance negative is rejected (422)
+  // Deviation from the spec text (needed by returnStock): record the movement cost AS PROVIDED instead of the locked
+  // weighted-average cost. The stock VALUE math is unchanged either way (it always uses the locked average).
+  useProvidedCost?: boolean;
+}
+
+// Phase 11 (STK-ATOMIC-002): one all-or-nothing transfer step (send or receive)
+export interface PostStockTransferAtomicInput {
+  mode: 'DISPATCH' | 'RECEIVE';
+  transfer: StockTransfer;       // DISPATCH: status IN_TRANSIT; RECEIVE: only transfer.id is used (the row is re-read under lock)
+  lines: StockTransferLine[];    // DISPATCH: the new lines; RECEIVE: ignored (lines are read inside the transaction)
+  actorId: string;
+  actorName: string;
 }
 
 export interface StockDocument {

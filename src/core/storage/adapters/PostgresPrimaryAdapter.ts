@@ -11,6 +11,10 @@ import * as crypto from 'node:crypto';
 import { requestContextALS } from '../../context/RequestContext';
 import {
   StoragePort,
+  ApprovalPolicy,
+  ApprovalDocumentType,
+  PostStockDocumentAtomicInput,
+  PostStockTransferAtomicInput,
   StorageResult,
   AccountingPeriod,
   AccountingPeriodStatus,
@@ -493,6 +497,23 @@ export class PostgresPrimaryAdapter implements StoragePort {
       -- Schema migrations for Phase 3 fields
       ALTER TABLE an_users ADD COLUMN IF NOT EXISTS assigned_node_id VARCHAR(64);
       ALTER TABLE an_approval_requests ADD COLUMN IF NOT EXISTS break_glass JSONB;
+      -- Phase 12 (APR-001): snapshot of the policy flag + rejection data on the request
+      ALTER TABLE an_approval_requests ADD COLUMN IF NOT EXISTS enforce_distinct BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE an_approval_requests ADD COLUMN IF NOT EXISTS reject_reason TEXT;
+      ALTER TABLE an_approval_requests ADD COLUMN IF NOT EXISTS rejected_step INT;
+      CREATE TABLE IF NOT EXISTS an_approval_policies (
+        id VARCHAR(80) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        document_type VARCHAR(64) NOT NULL,
+        mode VARCHAR(8) NOT NULL CHECK (mode IN ('DIRECT','STEPS')),
+        steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+        enforce_distinct BOOLEAN NOT NULL DEFAULT TRUE,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        version INT NOT NULL DEFAULT 1,
+        updated_by VARCHAR(64) NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, document_type)
+      );
       ALTER TABLE an_system_changelog ALTER COLUMN actor TYPE VARCHAR(255);
 
       -- Schema migrations for Phase 4 (Accounting Core)
@@ -1178,7 +1199,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_memberships',
           'an_role_assignments',
           'an_membership_scopes',
-          'an_invitations'
+          'an_invitations',
+          'an_approval_policies'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -2485,8 +2507,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
     if (!this.pool) return this.missingConnError();
     try {
       const query = `
-        INSERT INTO an_approval_requests (id, tenant_id, document_type, document_id, document_code, initiator_id, current_step, steps, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO an_approval_requests (id, tenant_id, document_type, document_id, document_code, initiator_id, current_step, steps, status, enforce_distinct)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING *;
       `;
       await this.pool.query(query, [
@@ -2499,6 +2521,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         request.currentStep,
         JSON.stringify(request.steps),
         request.status,
+        request.enforceDistinctApprovers === true,
       ]);
       return { success: true, data: request };
     } catch (err: any) {
@@ -2506,71 +2529,277 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
+  // Phase 12 (APR-001): row -> ApprovalRequest
+  private mapApprovalRow(row: any): ApprovalRequest {
+    const steps = typeof row.steps === 'string' ? JSON.parse(row.steps) : row.steps;
+    return {
+      id: row.id,
+      tenantId: row.tenant_id,
+      documentType: row.document_type,
+      documentId: row.document_id,
+      documentCode: row.document_code,
+      initiatorId: row.initiator_id,
+      currentStep: row.current_step,
+      steps,
+      status: row.status,
+      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+      enforceDistinctApprovers: row.enforce_distinct === true,
+      rejectReason: row.reject_reason || undefined,
+      rejectedStep: row.rejected_step ?? undefined,
+    };
+  }
+
+  private approvalProblem(status: number, type: string, title: string, detail: string): RFC7807Problem {
+    return { type: `https://api.an-erp.local/errors/${type}`, title, status, detail };
+  }
+
+  // Same rules as the InMemory adapter (contract parity): state, separation of duties, current step, assignee, distinct approvers.
+  private evaluateApprovalAction(
+    req: ApprovalRequest,
+    approverId: string,
+    approverRole: string | undefined
+  ): { ok: true; index: number } | { ok: false; error: RFC7807Problem } {
+    if (req.status !== 'PENDING') {
+      return { ok: false, error: this.approvalProblem(409, 'request-not-pending', 'طلب الاعتماد ليس قيد الانتظار', `حالة الطلب الحالية (${req.status}) لا تسمح بأي إجراء.`) };
+    }
+    if (req.initiatorId === approverId) {
+      return { ok: false, error: this.approvalProblem(403, 'sod-violation', 'تعارض مصالح - فصل الصلاحيات والواجبات', 'ممنوع نظامياً: لا يجوز لمنشئ المستند اعتماده بنفسه (قاعدة فصل المهام والرقابة الثنائية).') };
+    }
+    let index = -1;
+    req.steps.forEach((st, i) => {
+      if (st.status === 'PENDING' && (index < 0 || st.stepNumber < req.steps[index].stepNumber)) index = i;
+    });
+    if (index < 0) {
+      return { ok: false, error: this.approvalProblem(409, 'request-not-pending', 'طلب الاعتماد ليس قيد الانتظار', 'لا توجد خطوة معلّقة في هذا الطلب.') };
+    }
+    const step = req.steps[index];
+    if (step.approverType) {
+      if (step.approverType === 'USER') {
+        if (approverId !== step.approverRef) {
+          return { ok: false, error: this.approvalProblem(403, 'not-assigned-approver', 'المستخدم غير مكلّف بهذه الخطوة', 'هذه الخطوة مخصصة لمستخدم آخر.') };
+        }
+      } else if (!approverRole || approverRole.toLowerCase() !== (step.approverRef || '').toLowerCase()) {
+        return { ok: false, error: this.approvalProblem(403, 'role-not-allowed', 'دور المستخدم لا يسمح بهذه الخطوة', 'دور المستخدم الحالي لا يطابق الدور المطلوب لهذه الخطوة.') };
+      }
+      if (req.enforceDistinctApprovers && req.steps.some(x => x.status === 'APPROVED' && x.approverId === approverId)) {
+        return { ok: false, error: this.approvalProblem(403, 'duplicate-approver', 'لا يجوز لنفس الشخص اعتماد أكثر من خطوة', 'السياسة تشترط أن يكون لكل خطوة موافق مختلف.') };
+      }
+    }
+    return { ok: true, index };
+  }
+
+  // One locked transaction for approve / reject. action='APPROVE' | 'REJECT'
+  private async actOnApprovalStep(
+    tenantId: string,
+    requestId: string,
+    approverId: string,
+    approverRole: string | undefined,
+    idempotencyKey: string,
+    action: 'APPROVE' | 'REJECT',
+    reason?: string
+  ): Promise<StorageResult<ApprovalRequest>> {
+    if (!this.pool) return this.missingConnError();
+    const operation = action === 'APPROVE' ? 'approveStep' : 'rejectApprovalStep';
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, operation);
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
+      const sel = await client.query(
+        'SELECT * FROM an_approval_requests WHERE tenant_id = $1 AND id = $2 FOR UPDATE',
+        [tenantId, requestId]
+      );
+      if (sel.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return { success: false, error: this.approvalProblem(404, 'request-not-found', 'طلب الاعتماد غير موجود', `تعذر العثور على طلب الاعتماد ${requestId}`) };
+      }
+      const req = this.mapApprovalRow(sel.rows[0]);
+      const ev = this.evaluateApprovalAction(req, approverId, approverRole);
+      if (!ev.ok) {
+        await client.query('ROLLBACK');
+        return { success: false, error: (ev as any).error };
+      }
+      const steps = req.steps.map(x => ({ ...x }));
+      steps[ev.index].approverId = approverId;
+      steps[ev.index].actionTimestamp = new Date().toISOString();
+      let updated: ApprovalRequest;
+      if (action === 'APPROVE') {
+        steps[ev.index].status = 'APPROVED';
+        const pending = steps.filter(x => x.status === 'PENDING').sort((x, y) => x.stepNumber - y.stepNumber);
+        const status: 'PENDING' | 'APPROVED' = pending.length > 0 ? 'PENDING' : 'APPROVED';
+        const currentStep = pending.length > 0 ? pending[0].stepNumber : req.currentStep;
+        await client.query(
+          'UPDATE an_approval_requests SET status = $1, steps = $2, current_step = $3 WHERE tenant_id = $4 AND id = $5',
+          [status, JSON.stringify(steps), currentStep, tenantId, requestId]
+        );
+        updated = { ...req, steps, status, currentStep };
+      } else {
+        steps[ev.index].status = 'REJECTED';
+        steps[ev.index].rejectReason = reason;
+        const rejectedStep = steps[ev.index].stepNumber;
+        await client.query(
+          "UPDATE an_approval_requests SET status = 'REJECTED', steps = $1, reject_reason = $2, rejected_step = $3 WHERE tenant_id = $4 AND id = $5",
+          [JSON.stringify(steps), reason, rejectedStep, tenantId, requestId]
+        );
+        updated = { ...req, steps, status: 'REJECTED', rejectReason: reason, rejectedStep };
+      }
+      await this.completeIdempotency(client, tenantId, idempotencyKey, operation, updated);
+      await client.query('COMMIT');
+      return { success: true, data: updated };
+    } catch (err: any) {
+      try { await client.query('ROLLBACK'); } catch (rbErr: any) { console.warn('[PostgresPrimaryAdapter] approval ROLLBACK failed:', rbErr?.message); }
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
   public async approveStep(
     tenantId: string,
     requestId: string,
     approverId: string,
+    idempotencyKey: string,
+    approverRole?: string
+  ): Promise<StorageResult<ApprovalRequest>> {
+    return this.actOnApprovalStep(tenantId, requestId, approverId, approverRole, idempotencyKey, 'APPROVE');
+  }
+
+  public async rejectApprovalStep(
+    tenantId: string,
+    requestId: string,
+    approverId: string,
+    approverRole: string,
+    reason: string,
     idempotencyKey: string
   ): Promise<StorageResult<ApprovalRequest>> {
+    const cleanReason = (reason || '').trim();
+    if (cleanReason.length < 3 || cleanReason.length > 500) {
+      return { success: false, error: this.approvalProblem(400, 'invalid-reject-reason', 'سبب الرفض مطلوب', 'سبب الرفض إلزامي ويجب أن يتراوح بين 3 و500 حرف.') };
+    }
+    return this.actOnApprovalStep(tenantId, requestId, approverId, approverRole, idempotencyKey, 'REJECT', cleanReason);
+  }
+
+  public async getApprovalRequest(tenantId: string, id: string): Promise<StorageResult<ApprovalRequest | null>> {
     if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const res = await this.query('SELECT * FROM an_approval_requests WHERE tenant_id = $1 AND id = $2', [tenantId, id]);
+        return { success: true as const, data: res.rows.length ? this.mapApprovalRow(res.rows[0]) : null };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async listApprovalRequests(
+    tenantId: string,
+    filter?: { status?: string; documentType?: string; documentId?: string }
+  ): Promise<StorageResult<ApprovalRequest[]>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const where: string[] = ['tenant_id = $1'];
+        const params: any[] = [tenantId];
+        if (filter?.status) { params.push(filter.status); where.push(`status = $${params.length}`); }
+        if (filter?.documentType) { params.push(filter.documentType); where.push(`document_type = $${params.length}`); }
+        if (filter?.documentId) { params.push(filter.documentId); where.push(`document_id = $${params.length}`); }
+        const res = await this.query(
+          `SELECT * FROM an_approval_requests WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT 500`,
+          params
+        );
+        return { success: true as const, data: res.rows.map((r: any) => this.mapApprovalRow(r)) };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  private mapPolicyRow(r: any): ApprovalPolicy {
+    return {
+      id: r.id,
+      tenantId: r.tenant_id,
+      documentType: r.document_type,
+      mode: r.mode,
+      steps: typeof r.steps === 'string' ? JSON.parse(r.steps) : r.steps,
+      enforceDistinctApprovers: r.enforce_distinct === true,
+      isActive: r.is_active === true,
+      version: r.version,
+      updatedBy: r.updated_by,
+      updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : r.updated_at,
+    };
+  }
+
+  public async getApprovalPolicy(tenantId: string, documentType: ApprovalDocumentType): Promise<StorageResult<ApprovalPolicy | null>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const res = await this.query('SELECT * FROM an_approval_policies WHERE tenant_id = $1 AND document_type = $2', [tenantId, documentType]);
+        return { success: true as const, data: res.rows.length ? this.mapPolicyRow(res.rows[0]) : null };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async listApprovalPolicies(tenantId: string): Promise<StorageResult<ApprovalPolicy[]>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const res = await this.query('SELECT * FROM an_approval_policies WHERE tenant_id = $1 ORDER BY document_type', [tenantId]);
+        return { success: true as const, data: res.rows.map((r: any) => this.mapPolicyRow(r)) };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  // Upsert on (tenant_id, document_type); the version increments atomically inside the statement.
+  public async saveApprovalPolicy(tenantId: string, policy: ApprovalPolicy, idempotencyKey: string): Promise<StorageResult<ApprovalPolicy>> {
+    if (!this.pool) return this.missingConnError();
+    const client = await this.pool.connect();
     try {
-      const res = await this.pool.query(
-        'SELECT * FROM an_approval_requests WHERE tenant_id = $1 AND id = $2',
-        [tenantId, requestId]
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'saveApprovalPolicy');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
+      const res = await client.query(
+        `INSERT INTO an_approval_policies (id, tenant_id, document_type, mode, steps, enforce_distinct, is_active, version, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, 1, $8, NOW())
+         ON CONFLICT (tenant_id, document_type) DO UPDATE SET
+           mode = EXCLUDED.mode,
+           steps = EXCLUDED.steps,
+           enforce_distinct = EXCLUDED.enforce_distinct,
+           is_active = EXCLUDED.is_active,
+           version = an_approval_policies.version + 1,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = NOW()
+         RETURNING *`,
+        [policy.id, tenantId, policy.documentType, policy.mode, JSON.stringify(policy.steps), policy.enforceDistinctApprovers, policy.isActive, policy.updatedBy]
       );
-      if (res.rows.length === 0) {
-        return {
-          success: false,
-          error: {
-            type: 'https://api.an-erp.local/errors/request-not-found',
-            title: 'طلب الاعتماد غير موجود',
-            status: 404,
-            detail: `تعذر العثور على طلب الاعتماد ${requestId}`,
-          },
-        };
-      }
-      const req = res.rows[0];
-      const initiatorId = req.initiator_id;
-      if (initiatorId === approverId) {
-        return {
-          success: false,
-          error: {
-            type: 'https://api.an-erp.local/errors/sod-violation',
-            title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
-            status: 403,
-            detail: 'ممنوع نظامياً: لا يجوز لمنشئ المستند اعتماده بنفسه (قاعدة فصل المهام والرقابة الثنائية).',
-          },
-        };
-      }
-      const steps = req.steps;
-      if (steps[0]) {
-        steps[0].status = 'APPROVED';
-        steps[0].approverId = approverId;
-        steps[0].actionTimestamp = new Date().toISOString();
-      }
-
-      await this.pool.query(
-        "UPDATE an_approval_requests SET status = 'APPROVED', steps = $1 WHERE tenant_id = $2 AND id = $3",
-        [JSON.stringify(steps), tenantId, requestId]
-      );
-
-      return {
-        success: true,
-        data: {
-          id: req.id,
-          tenantId: req.tenant_id,
-          documentType: req.document_type,
-          documentId: req.document_id,
-          documentCode: req.document_code,
-          initiatorId: req.initiator_id,
-          currentStep: req.current_step,
-          steps,
-          status: 'APPROVED',
-          createdAt: req.created_at.toISOString(),
-        },
-      };
+      const saved = this.mapPolicyRow(res.rows[0]);
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'saveApprovalPolicy', saved);
+      await client.query('COMMIT');
+      return { success: true, data: saved };
     } catch (err: any) {
+      try { await client.query('ROLLBACK'); } catch (rbErr: any) { console.warn('[PostgresPrimaryAdapter] saveApprovalPolicy ROLLBACK failed:', rbErr?.message); }
       return this.dbError(err);
+    } finally {
+      client.release();
     }
   }
 
@@ -5701,27 +5930,16 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
-  public async recordStockMovement(
+  // Phase 10 (STK-ATOMIC-001): the single source of the stock-movement math and SQL. Runs inside the caller's transaction
+  // (the caller owns BEGIN/COMMIT/ROLLBACK, the tenant GUC and the idempotency reservation).
+  // Default options reproduce exactly what recordStockMovement did before this refactor.
+  private async applyMovementInTx(
+    client: PoolClient,
     tenantId: string,
     movement: StockMovement,
-    idempotencyKey: string
-  ): Promise<StorageResult<StockMovement>> {
-    if (!this.pool) return this.missingConnError();
-
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
-      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'recordStockMovement');
-      if (reservation.action === 'REPLAY') {
-        await client.query('ROLLBACK');
-        return { success: true, data: reservation.cachedPayload };
-      }
-      if (reservation.action === 'CONFLICT') {
-        await client.query('ROLLBACK');
-        return { success: false, error: reservation.error };
-      }
-
+    idempotencyKey: string,
+    opts?: { lockedOutgoingCost?: boolean; rejectNegative?: boolean }
+  ): Promise<{ ok: true; newQty: number; unitCostUsed: number; totalCostUsed: number; saved: StockMovement } | { ok: false; error: RFC7807Problem }> {
       // Check warehouse stock row with FOR UPDATE lock
       const stockRes = await client.query(
         `SELECT * FROM an_warehouse_stock WHERE tenant_id = $1 AND warehouse_id = $2 AND item_id = $3 FOR UPDATE`,
@@ -5858,11 +6076,41 @@ export class PostgresPrimaryAdapter implements StoragePort {
         );
       }
 
-      const savedMovement: StockMovement = {
+      const saved: StockMovement = {
         ...movement,
         balanceAfterQty: newQty,
         idempotencyKey,
       };
+      return { ok: true, newQty, unitCostUsed: movement.unitCost, totalCostUsed: movement.totalCost, saved };
+  }
+
+  public async recordStockMovement(
+    tenantId: string,
+    movement: StockMovement,
+    idempotencyKey: string
+  ): Promise<StorageResult<StockMovement>> {
+    if (!this.pool) return this.missingConnError();
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'recordStockMovement');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
+
+      const applied = await this.applyMovementInTx(client, tenantId, movement, idempotencyKey);
+      if (!applied.ok) {
+        await client.query('ROLLBACK');
+        return { success: false, error: (applied as any).error };
+      }
+      const savedMovement: StockMovement = applied.saved;
 
       await this.completeIdempotency(client, tenantId, idempotencyKey, 'recordStockMovement', savedMovement);
 
@@ -5934,19 +6182,27 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
-  public async createStockTransfer(
+  // Phase 11 (STK-ATOMIC-002): send or receive a transfer in ONE transaction, fail-closed.
+  public async postStockTransferAtomic(
     tenantId: string,
-    transfer: StockTransfer,
-    lines: StockTransferLine[],
+    input: PostStockTransferAtomicInput,
     idempotencyKey: string
   ): Promise<StorageResult<StockTransfer>> {
     if (!this.pool) return this.missingConnError();
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const problem = (status: number, type: string, title: string, detail: string): StorageResult<StockTransfer> => ({
+      success: false,
+      error: { type: `https://api.an-erp.local/errors/${type}`, title, status, detail },
+    });
+    if (input.mode === 'DISPATCH' && (!input.lines || input.lines.length === 0)) {
+      return problem(400, 'invalid-transfer', 'تحويل غير صالح', 'لا توجد أسطر في مستند التحويل.');
+    }
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
-      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'createStockTransfer');
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'postStockTransferAtomic');
       if (reservation.action === 'REPLAY') {
         await client.query('ROLLBACK');
         return { success: true, data: reservation.cachedPayload };
@@ -5956,6 +6212,119 @@ export class PostgresPrimaryAdapter implements StoragePort {
         return { success: false, error: reservation.error };
       }
 
+      if (input.mode === 'DISPATCH') {
+        const t = input.transfer;
+        await this.lockStockRowsInTx(client, tenantId, t.companyId || tenantId, input.lines.map(l => ({ warehouseId: t.sourceWarehouseId, itemId: l.itemId })));
+        const lines = input.lines.map(l => ({ ...l }));
+        for (let i = 0; i < lines.length; i++) {
+          const l = lines[i];
+          const lineKey = `${idempotencyKey}-out-${i}`;
+          const applied = await this.applyMovementInTx(client, tenantId, {
+            id: `mov-trf-out-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`,
+            tenantId,
+            companyId: tenantId,
+            movementNumber: `MOV-${t.transferNumber}-OUT-${i + 1}`,
+            movementType: 'TRANSFER_OUT',
+            warehouseId: t.sourceWarehouseId,
+            warehouseNameAr: t.sourceWarehouseNameAr,
+            itemId: l.itemId,
+            itemCode: l.itemCode,
+            itemNameAr: l.itemNameAr,
+            quantity: l.quantity,
+            unitCost: l.unitCost,
+            totalCost: l.totalCost,
+            balanceAfterQty: 0,
+            sourceDocumentType: 'STOCK_TRANSFER',
+            sourceDocumentId: t.id,
+            sourceDocumentNumber: t.transferNumber,
+            performedBy: input.actorId,
+            performedByName: input.actorName,
+            timestamp: new Date().toISOString(),
+            idempotencyKey: lineKey,
+          }, lineKey, { lockedOutgoingCost: true, rejectNegative: true });
+          if (!applied.ok) {
+            await client.query('ROLLBACK');
+            return { success: false, error: (applied as any).error };
+          }
+          l.unitCost = applied.unitCostUsed;
+          l.totalCost = applied.totalCostUsed;
+        }
+        const finalTransfer: StockTransfer = {
+          ...t,
+          status: 'IN_TRANSIT',
+          totalItemsCount: lines.length,
+          totalCost: round2(lines.reduce((sum, l) => sum + Number(l.totalCost || 0), 0)),
+        };
+        await this.insertStockTransferInTx(client, tenantId, finalTransfer, lines, idempotencyKey);
+        await this.completeIdempotency(client, tenantId, idempotencyKey, 'postStockTransferAtomic', finalTransfer);
+        await client.query('COMMIT');
+        return { success: true, data: finalTransfer };
+      }
+
+      // RECEIVE — the transfer row lock serialises concurrent receivers (even with different idempotency keys)
+      const sel = await client.query(
+        `SELECT * FROM an_stock_transfers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, input.transfer.id]
+      );
+      if (sel.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return problem(404, 'transfer-not-found', 'مستند التحويل غير موجود', 'تعذر العثور على مستند التحويل المطلوب استلامه.');
+      }
+      const row = sel.rows[0];
+      if (row.status !== 'IN_TRANSIT') {
+        await client.query('ROLLBACK');
+        return problem(409, 'invalid-transfer-status', 'حالة التحويل لا تسمح بالاستلام', `المستند حالياً في حالة (${row.status}) ولا يمكن استلامه مجدداً.`);
+      }
+      const linesRes = await client.query(
+        `SELECT * FROM an_stock_transfer_lines WHERE tenant_id = $1 AND transfer_id = $2 ORDER BY id`,
+        [tenantId, row.id]
+      );
+      await this.lockStockRowsInTx(client, tenantId, row.company_id || tenantId, linesRes.rows.map((l: any) => ({ warehouseId: row.target_warehouse_id, itemId: l.item_id })));
+      for (let i = 0; i < linesRes.rows.length; i++) {
+        const l = linesRes.rows[i];
+        const lineKey = `${idempotencyKey}-in-${i}`;
+        const applied = await this.applyMovementInTx(client, tenantId, {
+          id: `mov-trf-in-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`,
+          tenantId,
+          companyId: tenantId,
+          movementNumber: `MOV-${row.transfer_number}-IN-${i + 1}`,
+          movementType: 'TRANSFER_IN',
+          warehouseId: row.target_warehouse_id,
+          warehouseNameAr: row.target_warehouse_name_ar,
+          itemId: l.item_id,
+          itemCode: l.item_code,
+          itemNameAr: l.item_name_ar,
+          quantity: Number(l.quantity),
+          unitCost: Number(l.unit_cost),
+          totalCost: Number(l.total_cost),
+          balanceAfterQty: 0,
+          sourceDocumentType: 'STOCK_TRANSFER',
+          sourceDocumentId: row.id,
+          sourceDocumentNumber: row.transfer_number,
+          performedBy: input.actorId,
+          performedByName: input.actorName,
+          timestamp: new Date().toISOString(),
+          idempotencyKey: lineKey,
+        }, lineKey);
+        if (!applied.ok) {
+          await client.query('ROLLBACK');
+          return { success: false, error: (applied as any).error };
+        }
+      }
+      const updated = await this.applyTransferStatusInTx(client, tenantId, row.id, row, 'RECEIVED', input.actorId, input.actorName, idempotencyKey);
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'postStockTransferAtomic', updated);
+      await client.query('COMMIT');
+      return { success: true, data: updated };
+    } catch (err: any) {
+      try { await client.query('ROLLBACK'); } catch (rbErr: any) { console.warn('[PostgresPrimaryAdapter] postStockTransferAtomic ROLLBACK failed:', rbErr?.message); }
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  // Phase 11 (STK-ATOMIC-002): transfer + lines insert, shared by createStockTransfer and postStockTransferAtomic
+  private async insertStockTransferInTx(client: PoolClient, tenantId: string, transfer: StockTransfer, lines: StockTransferLine[], idempotencyKey: string): Promise<void> {
       await client.query(
         `INSERT INTO an_stock_transfers (
           id, tenant_id, company_id, transfer_number,
@@ -5982,34 +6351,63 @@ export class PostgresPrimaryAdapter implements StoragePort {
           transfer.totalQuantity,
           transfer.totalCost,
           transfer.notes || null,
-          new Date().toISOString(),
-          new Date().toISOString(),
+          transfer.createdAt || new Date().toISOString(),
+          transfer.updatedAt || new Date().toISOString(),
           idempotencyKey,
         ]
       );
 
+      let lineNum = 0;
       for (const line of lines) {
+        lineNum++;
         await client.query(
           `INSERT INTO an_stock_transfer_lines (
-            id, tenant_id, company_id, transfer_id, item_id, item_code, item_name_ar,
-            quantity, unit_cost, total_cost, batch_number, serial_number
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            id, tenant_id, company_id, transfer_id, line_number,
+            item_id, item_code, item_name_ar, uom, quantity,
+            unit_cost, total_cost, notes
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
           [
             line.id,
             tenantId,
             line.companyId || tenantId,
             transfer.id,
+            lineNum,
             line.itemId,
             line.itemCode,
             line.itemNameAr,
+            'حبه',
             line.quantity,
             line.unitCost,
             line.totalCost,
-            line.batchNumber || null,
-            line.serialNumber || null,
+            null,
           ]
         );
       }
+  }
+
+  public async createStockTransfer(
+    tenantId: string,
+    transfer: StockTransfer,
+    lines: StockTransferLine[],
+    idempotencyKey: string
+  ): Promise<StorageResult<StockTransfer>> {
+    if (!this.pool) return this.missingConnError();
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'createStockTransfer');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
+
+      await this.insertStockTransferInTx(client, tenantId, transfer, lines, idempotencyKey);
 
       await this.completeIdempotency(client, tenantId, idempotencyKey, 'createStockTransfer', transfer);
 
@@ -6140,49 +6538,17 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
-  public async updateStockTransferStatus(
+  // Phase 11 (STK-ATOMIC-002): status UPDATE + mapping of the updated transfer, shared by updateStockTransferStatus and postStockTransferAtomic
+  private async applyTransferStatusInTx(
+    client: PoolClient,
     tenantId: string,
     transferId: string,
+    existing: any,
     status: StockTransferStatus,
     actorId: string,
     actorName: string,
     idempotencyKey: string
-  ): Promise<StorageResult<StockTransfer>> {
-    if (!this.pool) return this.missingConnError();
-
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
-      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'updateStockTransferStatus');
-      if (reservation.action === 'REPLAY') {
-        await client.query('ROLLBACK');
-        return { success: true, data: reservation.cachedPayload };
-      }
-      if (reservation.action === 'CONFLICT') {
-        await client.query('ROLLBACK');
-        return { success: false, error: reservation.error };
-      }
-
-      const selRes = await client.query(
-        `SELECT * FROM an_stock_transfers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
-        [tenantId, transferId]
-      );
-      if (selRes.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return {
-          success: false,
-          error: {
-            type: 'https://api.an-erp.local/errors/transfer-not-found',
-            title: 'Stock Transfer Not Found',
-            status: 404,
-            detail: `Stock transfer ${transferId} was not found`,
-            instance: `/api/inventory/transfers/${transferId}`,
-          },
-        };
-      }
-
-      const existing = selRes.rows[0];
+  ): Promise<StockTransfer> {
       const nowIso = new Date().toISOString();
 
       let dispatchedBy = existing.dispatched_by;
@@ -6240,12 +6606,12 @@ export class PostgresPrimaryAdapter implements StoragePort {
         requestedBy: existing.requested_by,
         requestedByName: existing.requested_by_name,
         requestedAt: existing.requested_at?.toISOString?.() || existing.requested_at,
-        dispatchedBy,
-        dispatchedByName,
-        dispatchedAt: dispatchedAt?.toISOString?.() || dispatchedAt,
-        receivedBy,
-        receivedByName,
-        receivedAt: receivedAt?.toISOString?.() || receivedAt,
+        dispatchedBy: dispatchedBy || undefined,
+        dispatchedByName: dispatchedByName || undefined,
+        dispatchedAt: dispatchedAt?.toISOString?.() || dispatchedAt || undefined,
+        receivedBy: receivedBy || undefined,
+        receivedByName: receivedByName || undefined,
+        receivedAt: receivedAt?.toISOString?.() || receivedAt || undefined,
         totalItemsCount: Number(existing.total_items_count),
         totalQuantity: Number(existing.total_quantity),
         totalCost: Number(existing.total_cost),
@@ -6254,6 +6620,54 @@ export class PostgresPrimaryAdapter implements StoragePort {
         updatedAt: nowIso,
         idempotencyKey,
       };
+
+      return updated;
+  }
+
+  public async updateStockTransferStatus(
+    tenantId: string,
+    transferId: string,
+    status: StockTransferStatus,
+    actorId: string,
+    actorName: string,
+    idempotencyKey: string
+  ): Promise<StorageResult<StockTransfer>> {
+    if (!this.pool) return this.missingConnError();
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'updateStockTransferStatus');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
+
+      const selRes = await client.query(
+        `SELECT * FROM an_stock_transfers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+        [tenantId, transferId]
+      );
+      if (selRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/transfer-not-found',
+            title: 'Stock Transfer Not Found',
+            status: 404,
+            detail: `Stock transfer ${transferId} was not found`,
+            instance: `/api/inventory/transfers/${transferId}`,
+          },
+        };
+      }
+
+      const existing = selRes.rows[0];
+      const updated = await this.applyTransferStatusInTx(client, tenantId, transferId, existing, status, actorId, actorName, idempotencyKey);
 
       await this.completeIdempotency(client, tenantId, idempotencyKey, 'updateStockTransferStatus', updated);
 
@@ -6739,17 +7153,62 @@ export class PostgresPrimaryAdapter implements StoragePort {
   // Phase 7.6: Multi-line stock documents, custody vouchers, attachments, prices
   // ============================================================================
 
-  public async saveStockDocument(
+  // Phase 10 (STK-ATOMIC-001): lock the (warehouse,item) balance rows in one global order so concurrent documents can never deadlock.
+  private async lockStockRowsInTx(client: PoolClient, tenantId: string, companyId: string, pairs: Array<{ warehouseId: string; itemId: string }>): Promise<void> {
+    const uniq = Array.from(new Map(pairs.map(p => [`${p.warehouseId}\u0000${p.itemId}`, p])).values())
+      .sort((x, y) => (x.warehouseId < y.warehouseId ? -1 : x.warehouseId > y.warehouseId ? 1 : x.itemId < y.itemId ? -1 : x.itemId > y.itemId ? 1 : 0));
+    const nowIso = new Date().toISOString();
+    for (const p of uniq) {
+      await client.query(
+        `INSERT INTO an_warehouse_stock (id, tenant_id, company_id, warehouse_id, item_id, current_qty, reserved_qty, available_qty, average_cost, total_value, updated_at)
+         VALUES ($1, $2, $3, $4, $5, 0, 0, 0, 0, 0, $6)
+         ON CONFLICT (tenant_id, warehouse_id, item_id) DO NOTHING`,
+        [`stk-${p.warehouseId}-${p.itemId}`, tenantId, companyId, p.warehouseId, p.itemId, nowIso]
+      );
+    }
+    for (const p of uniq) {
+      await client.query(
+        `SELECT id FROM an_warehouse_stock WHERE tenant_id = $1 AND warehouse_id = $2 AND item_id = $3 FOR UPDATE`,
+        [tenantId, p.warehouseId, p.itemId]
+      );
+    }
+  }
+
+  // Receipts also update an_stock_items (average / last purchase cost): lock those rows in sorted order too.
+  private async lockItemRowsInTx(client: PoolClient, tenantId: string, itemIds: string[]): Promise<void> {
+    const ids = Array.from(new Set(itemIds)).sort();
+    if (ids.length === 0) return;
+    await client.query(
+      `SELECT id FROM an_stock_items WHERE tenant_id = $1 AND id = ANY($2::text[]) ORDER BY id FOR UPDATE`,
+      [tenantId, ids]
+    );
+  }
+
+  public async postStockDocumentAtomic(
     tenantId: string,
-    doc: StockDocument,
+    input: PostStockDocumentAtomicInput,
     idempotencyKey: string
   ): Promise<StorageResult<StockDocument>> {
     if (!this.pool) return this.missingConnError();
+    const { doc, movements } = input;
+    const invalid = (detail: string): StorageResult<StockDocument> => ({
+      success: false,
+      error: { type: 'https://api.an-erp.local/errors/invalid-document', title: 'مستند مخزني غير صالح', status: 400, detail },
+    });
+    if (!doc.lines || doc.lines.length === 0 || doc.lines.length !== movements.length) {
+      return invalid('عدد أسطر المستند لا يطابق عدد الحركات.');
+    }
+    for (let i = 0; i < movements.length; i++) {
+      if (doc.lines[i].itemId !== movements[i].itemId || Number(doc.lines[i].quantity) !== Number(movements[i].quantity)) {
+        return invalid(`السطر رقم ${i + 1} لا يطابق حركته (الصنف أو الكمية).`);
+      }
+    }
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'saveStockDocument');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'postStockDocumentAtomic');
       if (reservation.action === 'REPLAY') {
         await client.query('ROLLBACK');
         return { success: true, data: reservation.cachedPayload };
@@ -6758,6 +7217,81 @@ export class PostgresPrimaryAdapter implements StoragePort {
         await client.query('ROLLBACK');
         return { success: false, error: reservation.error };
       }
+
+      await this.lockStockRowsInTx(client, tenantId, doc.companyId || tenantId, movements.map(m => ({ warehouseId: m.warehouseId, itemId: m.itemId })));
+      await this.lockItemRowsInTx(client, tenantId, movements.filter(m => m.movementType === 'RECEIPT').map(m => m.itemId));
+
+      const savedMovements: StockMovement[] = [];
+      const lines = doc.lines.map(l => ({ ...l }));
+      for (let i = 0; i < movements.length; i++) {
+        const m = movements[i];
+        const lineKey = m.idempotencyKey || `${idempotencyKey}-line-${i}`;
+        const applied = await this.applyMovementInTx(client, tenantId, m, lineKey, {
+          lockedOutgoingCost: input.useProvidedCost !== true,
+          rejectNegative: input.allowNegative !== true,
+        });
+        if (!applied.ok) {
+          await client.query('ROLLBACK');
+          return { success: false, error: (applied as any).error };
+        }
+        savedMovements.push(applied.saved);
+        if (!(m.movementType === 'RECEIPT' || m.movementType === 'TRANSFER_IN' || m.movementType === 'COUNT_ADJUSTMENT_GAIN')) {
+          lines[i].unitCost = applied.unitCostUsed;
+          lines[i].totalCost = applied.totalCostUsed;
+        }
+      }
+
+      const finalDoc: StockDocument = {
+        ...doc,
+        lines,
+        movements: savedMovements,
+        totalCost: Math.round(lines.reduce((sum, l) => sum + Number(l.totalCost || 0), 0) * 100) / 100,
+      };
+      await this.insertStockDocumentInTx(client, tenantId, finalDoc, idempotencyKey);
+
+      for (const batch of input.batches || []) {
+        await client.query(
+          `INSERT INTO an_item_batches (
+            id, tenant_id, company_id, item_id, warehouse_id, batch_number,
+            production_date, expiry_date, current_qty, unit_cost, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          ON CONFLICT (tenant_id, warehouse_id, item_id, batch_number) DO UPDATE SET
+            current_qty = EXCLUDED.current_qty,
+            production_date = EXCLUDED.production_date,
+            expiry_date = EXCLUDED.expiry_date,
+            unit_cost = EXCLUDED.unit_cost`,
+          [batch.id, tenantId, batch.companyId || tenantId, batch.itemId, batch.warehouseId, batch.batchNumber,
+           batch.productionDate || null, batch.expiryDate || null, batch.currentQty || 0, batch.unitCost || 0,
+           batch.createdAt || new Date().toISOString()]
+        );
+      }
+      for (const serial of input.serials || []) {
+        await client.query(
+          `INSERT INTO an_item_serials (
+            id, tenant_id, company_id, item_id, warehouse_id, serial_number, status, warranty_expiry, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ON CONFLICT (tenant_id, item_id, serial_number) DO UPDATE SET
+            warehouse_id = EXCLUDED.warehouse_id,
+            status = EXCLUDED.status,
+            warranty_expiry = EXCLUDED.warranty_expiry`,
+          [serial.id, tenantId, serial.companyId || tenantId, serial.itemId, serial.warehouseId, serial.serialNumber,
+           serial.status || 'IN_STOCK', serial.warrantyExpiry || null, serial.createdAt || new Date().toISOString()]
+        );
+      }
+
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'postStockDocumentAtomic', finalDoc);
+      await client.query('COMMIT');
+      return { success: true, data: finalDoc };
+    } catch (err: any) {
+      try { await client.query('ROLLBACK'); } catch (rbErr: any) { console.warn('[PostgresPrimaryAdapter] postStockDocumentAtomic ROLLBACK failed:', rbErr?.message); }
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
+  }
+
+  // Phase 10 (STK-ATOMIC-001): document + lines insert, shared by saveStockDocument and postStockDocumentAtomic
+  private async insertStockDocumentInTx(client: PoolClient, tenantId: string, doc: StockDocument, idempotencyKey: string): Promise<void> {
       await client.query(
         `INSERT INTO an_stock_documents (
           id, tenant_id, company_id, document_number, document_type,
@@ -6815,6 +7349,28 @@ export class PostgresPrimaryAdapter implements StoragePort {
           ]
         );
       }
+  }
+
+  public async saveStockDocument(
+    tenantId: string,
+    doc: StockDocument,
+    idempotencyKey: string
+  ): Promise<StorageResult<StockDocument>> {
+    if (!this.pool) return this.missingConnError();
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'saveStockDocument');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
+      await this.insertStockDocumentInTx(client, tenantId, doc, idempotencyKey);
 
       await this.completeIdempotency(client, tenantId, idempotencyKey, 'saveStockDocument', doc);
 

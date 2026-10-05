@@ -6,6 +6,10 @@
 
 import {
   StoragePort,
+  PostStockDocumentAtomicInput,
+  ApprovalPolicy,
+  ApprovalDocumentType,
+  PostStockTransferAtomicInput,
   Invitation,
   ConsumedInvitation,
   StorageResult,
@@ -775,44 +779,122 @@ export class InMemoryAdapter implements StoragePort {
     return { success: true, data: request };
   }
 
+  // Synchronous between read, check and write => atomic with respect to the event loop (same guarantee as the row lock in PostgreSQL)
   public async approveStep(
     tenantId: string,
     requestId: string,
     approverId: string,
+    idempotencyKey: string,
+    approverRole?: string
+  ): Promise<StorageResult<ApprovalRequest>> {
+    const cacheKey = `${tenantId}:approveStep:${idempotencyKey}`;
+    if (idempotencyKey && this.idempotencyRecords.has(cacheKey)) {
+      return { success: true, data: this.cloneApproval(this.idempotencyRecords.get(cacheKey)) };
+    }
+    const req = this.findApproval(tenantId, requestId);
+    if (!req) {
+      return { success: false, error: this.approvalProblem(404, 'request-not-found', 'طلب الاعتماد غير موجود', `تعذر العثور على طلب الاعتماد ${requestId}`) };
+    }
+    const ev = this.evaluateApprovalAction(req, approverId, approverRole);
+    if (!ev.ok) return { success: false, error: (ev as any).error };
+    const steps = req.steps.map(x => ({ ...x }));
+    steps[ev.index].status = 'APPROVED';
+    steps[ev.index].approverId = approverId;
+    steps[ev.index].actionTimestamp = new Date().toISOString();
+    const pending = steps.filter(x => x.status === 'PENDING').sort((x, y) => x.stepNumber - y.stepNumber);
+    const updated: ApprovalRequest = {
+      ...req,
+      steps,
+      status: pending.length > 0 ? 'PENDING' : 'APPROVED',
+      currentStep: pending.length > 0 ? pending[0].stepNumber : req.currentStep,
+    };
+    this.saveApproval(tenantId, updated);
+    if (idempotencyKey) this.idempotencyRecords.set(cacheKey, updated);
+    return { success: true, data: this.cloneApproval(updated) };
+  }
+
+  public async rejectApprovalStep(
+    tenantId: string,
+    requestId: string,
+    approverId: string,
+    approverRole: string,
+    reason: string,
     idempotencyKey: string
   ): Promise<StorageResult<ApprovalRequest>> {
-    const req = this.approvalRequests.get(`${tenantId}:${requestId}`) || this.approvalRequests.get(requestId);
+    const cleanReason = (reason || '').trim();
+    if (cleanReason.length < 3 || cleanReason.length > 500) {
+      return { success: false, error: this.approvalProblem(400, 'invalid-reject-reason', 'سبب الرفض مطلوب', 'سبب الرفض إلزامي ويجب أن يتراوح بين 3 و500 حرف.') };
+    }
+    const cacheKey = `${tenantId}:rejectApprovalStep:${idempotencyKey}`;
+    if (idempotencyKey && this.idempotencyRecords.has(cacheKey)) {
+      return { success: true, data: this.cloneApproval(this.idempotencyRecords.get(cacheKey)) };
+    }
+    const req = this.findApproval(tenantId, requestId);
     if (!req) {
-      return {
-        success: false,
-        error: {
-          type: 'https://api.an-erp.local/errors/request-not-found',
-          title: 'طلب الاعتماد غير موجود',
-          status: 404,
-          detail: `تعذر العثور على طلب الاعتماد ${requestId}`,
-        },
-      };
+      return { success: false, error: this.approvalProblem(404, 'request-not-found', 'طلب الاعتماد غير موجود', `تعذر العثور على طلب الاعتماد ${requestId}`) };
     }
-    if (req.initiatorId === approverId) {
-      return {
-        success: false,
-        error: {
-          type: 'https://api.an-erp.local/errors/sod-violation',
-          title: 'تعارض مصالح - فصل الصلاحيات والواجبات',
-          status: 403,
-          detail: 'ممنوع نظامياً: لا يجوز لمنشئ المستند اعتماده بنفسه (قاعدة فصل المهام والرقابة الثنائية).',
-        },
-      };
+    const ev = this.evaluateApprovalAction(req, approverId, approverRole);
+    if (!ev.ok) return { success: false, error: (ev as any).error };
+    const steps = req.steps.map(x => ({ ...x }));
+    steps[ev.index].status = 'REJECTED';
+    steps[ev.index].approverId = approverId;
+    steps[ev.index].actionTimestamp = new Date().toISOString();
+    steps[ev.index].rejectReason = cleanReason;
+    const updated: ApprovalRequest = { ...req, steps, status: 'REJECTED', rejectReason: cleanReason, rejectedStep: steps[ev.index].stepNumber };
+    this.saveApproval(tenantId, updated);
+    if (idempotencyKey) this.idempotencyRecords.set(cacheKey, updated);
+    return { success: true, data: this.cloneApproval(updated) };
+  }
+
+  public async getApprovalRequest(tenantId: string, id: string): Promise<StorageResult<ApprovalRequest | null>> {
+    const found = this.findApproval(tenantId, id);
+    return { success: true, data: found ? this.cloneApproval(found) : null };
+  }
+
+  public async listApprovalRequests(
+    tenantId: string,
+    filter?: { status?: string; documentType?: string; documentId?: string }
+  ): Promise<StorageResult<ApprovalRequest[]>> {
+    const out: ApprovalRequest[] = [];
+    for (const [key, r] of this.approvalRequests.entries()) {
+      if (!key.startsWith(`${tenantId}:`)) continue;
+      if (filter?.status && r.status !== filter.status) continue;
+      if (filter?.documentType && r.documentType !== filter.documentType) continue;
+      if (filter?.documentId && r.documentId !== filter.documentId) continue;
+      out.push(this.cloneApproval(r));
     }
-    req.status = 'APPROVED';
-    if (req.steps[0]) {
-      req.steps[0].status = 'APPROVED';
-      req.steps[0].approverId = approverId;
-      req.steps[0].actionTimestamp = new Date().toISOString();
-    }
-    this.approvalRequests.set(`${tenantId}:${requestId}`, req);
-    this.approvalRequests.set(requestId, req);
-    return { success: true, data: req };
+    out.sort((x, y) => (x.createdAt < y.createdAt ? 1 : x.createdAt > y.createdAt ? -1 : 0));
+    return { success: true, data: out };
+  }
+
+  private approvalPolicies = new Map<string, ApprovalPolicy>();
+
+  public async getApprovalPolicy(tenantId: string, documentType: ApprovalDocumentType): Promise<StorageResult<ApprovalPolicy | null>> {
+    const p = this.approvalPolicies.get(`${tenantId}:${documentType}`);
+    return { success: true, data: p ? JSON.parse(JSON.stringify(p)) : null };
+  }
+
+  public async listApprovalPolicies(tenantId: string): Promise<StorageResult<ApprovalPolicy[]>> {
+    const out: ApprovalPolicy[] = [];
+    for (const [key, p] of this.approvalPolicies.entries()) if (key.startsWith(`${tenantId}:`)) out.push(JSON.parse(JSON.stringify(p)));
+    return { success: true, data: out };
+  }
+
+  public async saveApprovalPolicy(tenantId: string, policy: ApprovalPolicy, idempotencyKey: string): Promise<StorageResult<ApprovalPolicy>> {
+    const cacheKey = `${tenantId}:saveApprovalPolicy:${idempotencyKey}`;
+    if (idempotencyKey && this.idempotencyRecords.has(cacheKey)) return { success: true, data: JSON.parse(JSON.stringify(this.idempotencyRecords.get(cacheKey))) };
+    const key = `${tenantId}:${policy.documentType}`;
+    const existing = this.approvalPolicies.get(key);
+    const saved: ApprovalPolicy = {
+      ...policy,
+      tenantId,
+      id: existing?.id || policy.id,
+      version: (existing?.version || 0) + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    this.approvalPolicies.set(key, saved);
+    if (idempotencyKey) this.idempotencyRecords.set(cacheKey, saved);
+    return { success: true, data: JSON.parse(JSON.stringify(saved)) };
   }
 
   public async appendSystemChangeLog(entry: SystemChangeLogEntry): Promise<StorageResult<SystemChangeLogEntry>> {
@@ -1811,6 +1893,70 @@ export class InMemoryAdapter implements StoragePort {
     return { success: true, data: transfer };
   }
 
+  // Phase 11 (STK-ATOMIC-002): same contract as the PostgreSQL adapter; synchronous between snapshot and commit.
+  public async postStockTransferAtomic(tenantId: string, input: PostStockTransferAtomicInput, idempotencyKey: string): Promise<StorageResult<StockTransfer>> {
+    const cacheKey = `${tenantId}:postStockTransferAtomic:${idempotencyKey}`;
+    if (idempotencyKey && this.idempotencyRecords.has(cacheKey)) return { success: true, data: this.idempotencyRecords.get(cacheKey) };
+    const fail = (status: number, type: string, title: string, detail: string): StorageResult<StockTransfer> =>
+      ({ success: false, error: { type: `https://api.an-erp.local/errors/${type}`, title, status, detail } });
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const snap = { stock: new Map(this.warehouseStock), movements: new Map(this.stockMovements), transfers: new Map(this.stockTransfers), lines: new Map(this.stockTransferLines) };
+    const restore = () => { this.warehouseStock = snap.stock; this.stockMovements = snap.movements; this.stockTransfers = snap.transfers; this.stockTransferLines = snap.lines; };
+    try {
+      if (input.mode === 'DISPATCH') {
+        const t = input.transfer;
+        if (!input.lines || input.lines.length === 0) return fail(400, 'invalid-transfer', 'تحويل غير صالح', 'لا توجد أسطر في مستند التحويل.');
+        for (const x of this.stockTransfers.values()) {
+          if (x.tenantId === tenantId && x.transferNumber === t.transferNumber) return fail(500, 'db-error', 'خطأ في التخزين', `رقم التحويل ${t.transferNumber} مستخدم بالفعل.`);
+        }
+        const lines = input.lines.map(l => ({ ...l, tenantId }));
+        for (let i = 0; i < lines.length; i++) {
+          const l = lines[i];
+          const r = this.applyMovementMem(tenantId, {
+            id: `mov-trf-out-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`, tenantId, companyId: tenantId,
+            movementNumber: `MOV-${t.transferNumber}-OUT-${i + 1}`, movementType: 'TRANSFER_OUT',
+            warehouseId: t.sourceWarehouseId, warehouseNameAr: t.sourceWarehouseNameAr, itemId: l.itemId, itemCode: l.itemCode, itemNameAr: l.itemNameAr,
+            quantity: l.quantity, unitCost: l.unitCost, totalCost: l.totalCost, balanceAfterQty: 0,
+            sourceDocumentType: 'STOCK_TRANSFER', sourceDocumentId: t.id, sourceDocumentNumber: t.transferNumber,
+            performedBy: input.actorId, performedByName: input.actorName, timestamp: new Date().toISOString(),
+          }, { providedCost: false, rejectNegative: true });
+          if (!r.ok) { restore(); return { success: false, error: (r as any).error }; }
+          l.unitCost = r.saved.unitCost; l.totalCost = r.saved.totalCost;
+        }
+        const final: StockTransfer = { ...t, tenantId, status: 'IN_TRANSIT', totalItemsCount: lines.length, totalCost: round2(lines.reduce((sum, l) => sum + Number(l.totalCost || 0), 0)) };
+        this.stockTransfers.set(`${tenantId}:${t.id}`, final);
+        this.stockTransferLines.set(`${tenantId}:${t.id}`, lines);
+        if (idempotencyKey) this.idempotencyRecords.set(cacheKey, final);
+        return { success: true, data: { ...final } };
+      }
+      // RECEIVE
+      const tr = this.stockTransfers.get(`${tenantId}:${input.transfer.id}`);
+      if (!tr) return fail(404, 'transfer-not-found', 'مستند التحويل غير موجود', 'تعذر العثور على مستند التحويل المطلوب استلامه.');
+      if (tr.status !== 'IN_TRANSIT') return fail(409, 'invalid-transfer-status', 'حالة التحويل لا تسمح بالاستلام', `المستند حالياً في حالة (${tr.status}) ولا يمكن استلامه مجدداً.`);
+      const lines = this.stockTransferLines.get(`${tenantId}:${tr.id}`) || [];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        const r = this.applyMovementMem(tenantId, {
+          id: `mov-trf-in-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`, tenantId, companyId: tenantId,
+          movementNumber: `MOV-${tr.transferNumber}-IN-${i + 1}`, movementType: 'TRANSFER_IN',
+          warehouseId: tr.targetWarehouseId, warehouseNameAr: tr.targetWarehouseNameAr, itemId: l.itemId, itemCode: l.itemCode, itemNameAr: l.itemNameAr,
+          quantity: l.quantity, unitCost: l.unitCost, totalCost: l.totalCost, balanceAfterQty: 0,
+          sourceDocumentType: 'STOCK_TRANSFER', sourceDocumentId: tr.id, sourceDocumentNumber: tr.transferNumber,
+          performedBy: input.actorId, performedByName: input.actorName, timestamp: new Date().toISOString(),
+        }, { providedCost: true, rejectNegative: false });
+        if (!r.ok) { restore(); return { success: false, error: (r as any).error }; }
+      }
+      const nowIso = new Date().toISOString();
+      const updated: StockTransfer = { ...tr, status: 'RECEIVED', receivedBy: input.actorId, receivedByName: input.actorName, receivedAt: nowIso, updatedAt: nowIso };
+      this.stockTransfers.set(`${tenantId}:${tr.id}`, updated);
+      if (idempotencyKey) this.idempotencyRecords.set(cacheKey, updated);
+      return { success: true, data: { ...updated } };
+    } catch (e: any) {
+      restore();
+      return fail(500, 'db-error', 'خطأ في التخزين', e?.message || 'فشل ترحيل التحويل المخزني.');
+    }
+  }
+
   public async getStockTransfer(tenantId: string, transferId: string): Promise<StorageResult<{ transfer: StockTransfer; lines: StockTransferLine[] } | null>> {
     const tr = this.stockTransfers.get(`${tenantId}:${transferId}`);
     if (!tr) return { success: true, data: null };
@@ -1964,6 +2110,153 @@ export class InMemoryAdapter implements StoragePort {
     return { success: true, data: { ...doc } };
   }
 
+  // Phase 10/11: synchronous movement step shared by the atomic document and transfer posts (the caller owns snapshot/restore).
+  private applyMovementMem(
+    tenantId: string,
+    m: StockMovement,
+    opts: { providedCost: boolean; rejectNegative: boolean }
+  ): { ok: true; saved: StockMovement; incoming: boolean } | { ok: false; error: { type: string; title: string; status: number; detail: string } } {
+    const isIn = m.movementType === 'RECEIPT' || m.movementType === 'TRANSFER_IN' || m.movementType === 'COUNT_ADJUSTMENT_GAIN';
+    const key = `${tenantId}:${m.warehouseId}:${m.itemId}`;
+    const existing = this.warehouseStock.get(key) || {
+      id: `${m.warehouseId}-${m.itemId}`, tenantId, companyId: m.companyId || tenantId, warehouseId: m.warehouseId, itemId: m.itemId,
+      currentQty: 0, reservedQty: 0, availableQty: 0, averageCost: m.unitCost || 0, totalValue: 0, updatedAt: new Date().toISOString(),
+    };
+    let newQty = existing.currentQty;
+    let newAvg = existing.averageCost;
+    let unitCostUsed = m.unitCost;
+    let totalCostUsed = m.totalCost;
+    if (isIn) {
+      const total = newQty + Math.abs(m.quantity);
+      if (total > 0 && m.unitCost) newAvg = ((newQty * existing.averageCost) + (Math.abs(m.quantity) * m.unitCost)) / total;
+      newQty = total;
+    } else {
+      newQty = newQty - Math.abs(m.quantity);
+      if (newQty < -0.00005 && opts.rejectNegative) {
+        return { ok: false, error: { type: 'https://api.an-erp.local/errors/insufficient-stock', title: 'الرصيد المخزني غير كافٍ', status: 422,
+          detail: `الرصيد المتاح للصنف ${m.itemNameAr} (${existing.currentQty}) أقل من الكمية المطلوبة للصرف (${Math.abs(m.quantity)}). فشلت العملية بالكامل ذرياً.` } };
+      }
+      if (!opts.providedCost) {
+        unitCostUsed = existing.averageCost > 0 ? existing.averageCost : m.unitCost;
+        totalCostUsed = Math.round(Math.abs(m.quantity) * unitCostUsed * 100) / 100;
+      }
+    }
+    this.warehouseStock.set(key, {
+      ...existing,
+      currentQty: newQty,
+      availableQty: newQty - existing.reservedQty,
+      averageCost: Math.round(newAvg * 100) / 100,
+      totalValue: Math.round(newQty * newAvg * 100) / 100,
+      updatedAt: new Date().toISOString(),
+    });
+    const saved: StockMovement = { ...m, unitCost: unitCostUsed, totalCost: totalCostUsed, balanceAfterQty: newQty, timestamp: m.timestamp || new Date().toISOString() };
+    this.stockMovements.set(`${tenantId}:${m.id}`, saved);
+    return { ok: true, saved, incoming: isIn };
+  }
+
+  // Phase 10 (STK-ATOMIC-001): same contract as the PostgreSQL adapter. There is NO await between taking the snapshot and
+  // committing, so the whole post is atomic with respect to the event loop; any failure restores the snapshot.
+  public async postStockDocumentAtomic(tenantId: string, input: PostStockDocumentAtomicInput, idempotencyKey: string): Promise<StorageResult<StockDocument>> {
+    const cacheKey = `${tenantId}:postStockDocumentAtomic:${idempotencyKey}`;
+    if (idempotencyKey && this.idempotencyRecords.has(cacheKey)) {
+      return { success: true, data: this.idempotencyRecords.get(cacheKey) };
+    }
+    const { doc, movements } = input;
+    const fail = (status: number, type: string, title: string, detail: string): StorageResult<StockDocument> =>
+      ({ success: false, error: { type: `https://api.an-erp.local/errors/${type}`, title, status, detail } });
+
+    if (!doc.lines || doc.lines.length === 0 || doc.lines.length !== movements.length) {
+      return fail(400, 'invalid-document', 'مستند مخزني غير صالح', 'عدد أسطر المستند لا يطابق عدد الحركات.');
+    }
+    for (let i = 0; i < movements.length; i++) {
+      if (doc.lines[i].itemId !== movements[i].itemId || Number(doc.lines[i].quantity) !== Number(movements[i].quantity)) {
+        return fail(400, 'invalid-document', 'مستند مخزني غير صالح', `السطر رقم ${i + 1} لا يطابق حركته (الصنف أو الكمية).`);
+      }
+    }
+    for (const d of this.stockDocuments.values()) {
+      if (d.tenantId === tenantId && d.documentNumber === doc.documentNumber) {
+        return fail(500, 'db-error', 'خطأ في التخزين', `رقم المستند ${doc.documentNumber} مستخدم بالفعل.`);
+      }
+    }
+
+    const snap = {
+      stock: new Map(this.warehouseStock),
+      movements: new Map(this.stockMovements),
+      batches: new Map(this.itemBatches),
+      serials: new Map(this.itemSerials),
+      docs: new Map(this.stockDocuments),
+    };
+    const restore = () => {
+      this.warehouseStock = snap.stock;
+      this.stockMovements = snap.movements;
+      this.itemBatches = snap.batches;
+      this.itemSerials = snap.serials;
+      this.stockDocuments = snap.docs;
+    };
+    const isIn = (t: string) => t === 'RECEIPT' || t === 'TRANSFER_IN' || t === 'COUNT_ADJUSTMENT_GAIN';
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+
+    try {
+      const savedMovements: StockMovement[] = [];
+      const lines = doc.lines.map(l => ({ ...l }));
+      for (let i = 0; i < movements.length; i++) {
+        const m = movements[i];
+        const key = `${tenantId}:${m.warehouseId}:${m.itemId}`;
+        const existing = this.warehouseStock.get(key) || {
+          id: `${m.warehouseId}-${m.itemId}`, tenantId, companyId: m.companyId || tenantId, warehouseId: m.warehouseId, itemId: m.itemId,
+          currentQty: 0, reservedQty: 0, availableQty: 0, averageCost: m.unitCost || 0, totalValue: 0, updatedAt: new Date().toISOString(),
+        };
+        let newQty = existing.currentQty;
+        let newAvg = existing.averageCost;
+        let unitCostUsed = m.unitCost;
+        let totalCostUsed = m.totalCost;
+        if (isIn(m.movementType)) {
+          const total = newQty + Math.abs(m.quantity);
+          if (total > 0 && m.unitCost) newAvg = ((newQty * existing.averageCost) + (Math.abs(m.quantity) * m.unitCost)) / total;
+          newQty = total;
+        } else {
+          newQty = newQty - Math.abs(m.quantity);
+          if (newQty < -0.00005 && input.allowNegative !== true) {
+            restore();
+            return fail(422, 'insufficient-stock', 'الرصيد المخزني غير كافٍ',
+              `الرصيد المتاح للصنف ${m.itemNameAr} (${existing.currentQty}) أقل من الكمية المطلوبة للصرف (${Math.abs(m.quantity)}). فشلت العملية بالكامل ذرياً.`);
+          }
+          if (input.useProvidedCost !== true) {
+            unitCostUsed = existing.averageCost > 0 ? existing.averageCost : m.unitCost;
+            totalCostUsed = round2(Math.abs(m.quantity) * unitCostUsed);
+          }
+        }
+        this.warehouseStock.set(key, {
+          ...existing,
+          currentQty: newQty,
+          availableQty: newQty - existing.reservedQty,
+          averageCost: Math.round(newAvg * 100) / 100,
+          totalValue: Math.round(newQty * newAvg * 100) / 100,
+          updatedAt: new Date().toISOString(),
+        });
+        const saved: StockMovement = { ...m, unitCost: unitCostUsed, totalCost: totalCostUsed, balanceAfterQty: newQty, timestamp: m.timestamp || new Date().toISOString() };
+        this.stockMovements.set(`${tenantId}:${m.id}`, saved);
+        savedMovements.push(saved);
+        if (!isIn(m.movementType)) { lines[i].unitCost = unitCostUsed; lines[i].totalCost = totalCostUsed; }
+      }
+      for (const b of input.batches || []) this.itemBatches.set(`${tenantId}:${b.id}`, { ...b, tenantId });
+      for (const sr of input.serials || []) this.itemSerials.set(`${tenantId}:${sr.id}`, { ...sr, tenantId });
+      const finalDoc: StockDocument = {
+        ...doc,
+        tenantId,
+        lines,
+        movements: savedMovements,
+        totalCost: round2(lines.reduce((sum, l) => sum + Number(l.totalCost || 0), 0)),
+      };
+      this.stockDocuments.set(`${tenantId}:${doc.id}`, finalDoc);
+      if (idempotencyKey) this.idempotencyRecords.set(cacheKey, finalDoc);
+      return { success: true, data: { ...finalDoc } };
+    } catch (e: any) {
+      restore();
+      return fail(500, 'db-error', 'خطأ في التخزين', e?.message || 'فشل ترحيل المستند المخزني.');
+    }
+  }
+
   public async getStockDocument(tenantId: string, docId: string): Promise<StorageResult<StockDocument | null>> {
     for (const doc of this.stockDocuments.values()) {
       if (doc.tenantId === tenantId && (doc.id === docId || doc.documentNumber === docId)) {
@@ -2034,6 +2327,61 @@ export class InMemoryAdapter implements StoragePort {
       }
     }
     return { success: true, data: null };
+  }
+
+  // Phase 11/12 Helpers
+  private approvalProblem(status: number, type: string, title: string, detail: string) {
+    return { type: `https://api.an-erp.local/errors/${type}`, title, status, detail };
+  }
+
+  private evaluateApprovalAction(
+    req: ApprovalRequest,
+    approverId: string,
+    approverRole: string | undefined
+  ): { ok: true; index: number } | { ok: false; error: { type: string; title: string; status: number; detail: string } } {
+    if (req.status !== 'PENDING') {
+      return { ok: false, error: this.approvalProblem(409, 'request-not-pending', 'طلب الاعتماد ليس قيد الانتظار', `حالة الطلب الحالية (${req.status}) لا تسمح بأي إجراء.`) };
+    }
+    if (req.initiatorId === approverId) {
+      return { ok: false, error: this.approvalProblem(403, 'sod-violation', 'تعارض مصالح - فصل الصلاحيات والواجبات', 'ممنوع نظامياً: لا يجوز لمنشئ المستند اعتماده بنفسه (قاعدة فصل المهام والرقابة الثنائية).') };
+    }
+    let index = -1;
+    req.steps.forEach((st, i) => {
+      if (st.status === 'PENDING' && (index < 0 || st.stepNumber < req.steps[index].stepNumber)) index = i;
+    });
+    if (index < 0) {
+      return { ok: false, error: this.approvalProblem(409, 'request-not-pending', 'طلب الاعتماد ليس قيد الانتظار', 'لا توجد خطوة معلّقة في هذا الطلب.') };
+    }
+    const step = req.steps[index];
+    if (step.approverType) {
+      if (step.approverType === 'USER') {
+        if (approverId !== step.approverRef) {
+          return { ok: false, error: this.approvalProblem(403, 'not-assigned-approver', 'المستخدم غير مكلّف بهذه الخطوة', 'هذه الخطوة مخصصة لمستخدم آخر.') };
+        }
+      } else if ((approverRole || '').toLowerCase() !== (step.approverRef || '').toLowerCase() || !approverRole) {
+        return { ok: false, error: this.approvalProblem(403, 'role-not-allowed', 'دور المستخدم لا يسمح بهذه الخطوة', 'دور المستخدم الحالي لا يطابق الدور المطلوب لهذه الخطوة.') };
+      }
+      if (req.enforceDistinctApprovers && req.steps.some(x => x.status === 'APPROVED' && x.approverId === approverId)) {
+        return { ok: false, error: this.approvalProblem(403, 'duplicate-approver', 'لا يجوز لنفس الشخص اعتماد أكثر من خطوة', 'السياسة تشترط أن يكون لكل خطوة موافق مختلف.') };
+      }
+    }
+    return { ok: true, index };
+  }
+
+  private cloneApproval(req: ApprovalRequest): ApprovalRequest {
+    return JSON.parse(JSON.stringify(req));
+  }
+
+  private findApproval(tenantId: string, requestId: string): ApprovalRequest | null {
+    const found = this.approvalRequests.get(`${tenantId}:${requestId}`) || this.approvalRequests.get(requestId);
+    if (!found) return null;
+    if (found.tenantId && found.tenantId !== tenantId) return null;
+    return found;
+  }
+
+  private saveApproval(tenantId: string, req: ApprovalRequest) {
+    this.approvalRequests.set(`${tenantId}:${req.id}`, req);
+    this.approvalRequests.set(req.id, req);
   }
 
   public async listCustodyExpenseVouchers(tenantId: string, custodyId?: string): Promise<StorageResult<CustodyExpenseVoucher[]>> {

@@ -559,6 +559,8 @@ export class InventoryService {
 
     const docLines: StockDocumentLine[] = [];
     const movements: StockMovement[] = [];
+    const batchesToSave: ItemBatch[] = [];
+    const serialsToSave: ItemSerial[] = [];
     let totalQuantity = 0;
     let totalCost = 0;
 
@@ -616,13 +618,11 @@ export class InventoryService {
         idempotencyKey: `${finalIdempotencyKey}-line-${idx}`,
       };
 
-      const movRes = await this.storage.recordStockMovement(tenantId, movement, `${finalIdempotencyKey}-line-${idx}`);
-      if (!movRes.success) return movRes as any;
       movements.push(movement);
 
-      // Track Batch if provided
+      // Track Batch if provided (saved in the SAME transaction as the document — Phase 10)
       if (item.trackBatch && line.batchNumber) {
-        await this.storage.saveItemBatch(tenantId, {
+        batchesToSave.push({
           id: `batch-${item.id}-${line.batchNumber}`,
           tenantId,
           companyId: tenantId,
@@ -638,7 +638,7 @@ export class InventoryService {
 
       // Track Serial if provided
       if (item.trackSerial && line.serialNumber) {
-        await this.storage.saveItemSerial(tenantId, {
+        serialsToSave.push({
           id: `ser-${item.id}-${line.serialNumber}`,
           tenantId,
           companyId: tenantId,
@@ -680,8 +680,15 @@ export class InventoryService {
       unitCost: docLines[0]?.unitCost,
     };
 
-    const saveRes = await this.storage.saveStockDocument(tenantId, stockDoc, finalIdempotencyKey);
-    const finalDoc = (saveRes.success && saveRes.data) ? saveRes.data : stockDoc;
+    // Phase 10 (STK-ATOMIC-001): movements + document + batches + serials in ONE transaction. The only result is the one returned
+    // by the storage layer (no more "success" when saving the document failed).
+    const postRes = await this.storage.postStockDocumentAtomic(
+      tenantId,
+      { doc: stockDoc, movements, batches: batchesToSave, serials: serialsToSave },
+      finalIdempotencyKey
+    );
+    if (!postRes.success || !postRes.data) return postRes as any;
+    const finalDoc = postRes.data;
     if (finalIdempotencyKey) {
       await this.storage.saveIdempotencyRecord(tenantId, finalIdempotencyKey, 'receiveStock', finalDoc);
     }
@@ -808,6 +815,7 @@ export class InventoryService {
 
     const docLines: StockDocumentLine[] = [];
     const movements: StockMovement[] = [];
+    const reorderAlerts: Array<{ id: string; entities: string[]; summaryAr: string }> = [];
     let totalQuantity = 0;
     let totalCost = 0;
 
@@ -863,21 +871,14 @@ export class InventoryService {
         idempotencyKey: `${finalIdempotencyKey}-line-${idx}`,
       };
 
-      const movRes = await this.storage.recordStockMovement(tenantId, movement, `${finalIdempotencyKey}-line-${idx}`);
-      if (!movRes.success) return movRes as any;
       movements.push(movement);
 
-      // Check reorder point
+      // Reorder-point alerts are collected here and written only AFTER the atomic post succeeded (Phase 10)
       if ((availableQty - line.quantity) <= item.reorderPoint) {
-        await this.storage.appendSystemChangeLog({
+        reorderAlerts.push({
           id: `reorder-${Date.now()}-${idx}`,
-          timestamp: new Date().toISOString(),
-          actor: performedBy,
-          changeType: 'SECURITY',
-          module: 'INVENTORY',
-          entitiesAffected: [`StockItem:${item.id}`, `Warehouse:${warehouseId}`],
+          entities: [`StockItem:${item.id}`, `Warehouse:${warehouseId}`],
           summaryAr: `تنبيه: وصل رصيد الصنف ${item.nameAr} في ${warehouse.nameAr} إلى حد إعادة الطلب (${availableQty - line.quantity} <= ${item.reorderPoint})`,
-          version: '1.0',
         });
       }
     }
@@ -911,8 +912,22 @@ export class InventoryService {
       unitCost: docLines[0]?.unitCost,
     };
 
-    const saveRes = await this.storage.saveStockDocument(tenantId, stockDoc, finalIdempotencyKey);
-    const finalDoc = (saveRes.success && saveRes.data) ? saveRes.data : stockDoc;
+    // Phase 10: the early balance check above gives a fast message; the FINAL authority is the locked check inside the transaction
+    const postRes = await this.storage.postStockDocumentAtomic(tenantId, { doc: stockDoc, movements }, finalIdempotencyKey);
+    if (!postRes.success || !postRes.data) return postRes as any;
+    const finalDoc = postRes.data;
+    for (const alert of reorderAlerts) {
+      await this.storage.appendSystemChangeLog({
+        id: alert.id,
+        timestamp: new Date().toISOString(),
+        actor: performedBy,
+        changeType: 'SECURITY',
+        module: 'INVENTORY',
+        entitiesAffected: alert.entities,
+        summaryAr: alert.summaryAr,
+        version: '1.0',
+      });
+    }
     if (finalIdempotencyKey) {
       await this.storage.saveIdempotencyRecord(tenantId, finalIdempotencyKey, 'issueStock', finalDoc);
     }
@@ -1068,10 +1083,6 @@ export class InventoryService {
         idempotencyKey: `${input.idempotencyKey}-${idx}`,
       };
 
-      const movRes = await this.storage.recordStockMovement(tenantId, movement, `${input.idempotencyKey}-${idx}`);
-      if (!movRes.success) {
-        return movRes as any;
-      }
       movements.push(movement);
     }
 
@@ -1099,7 +1110,10 @@ export class InventoryService {
       postedAt: new Date().toISOString(),
     };
 
-    await this.storage.saveStockDocument(tenantId, returnDoc, input.idempotencyKey);
+    // Phase 10: atomic post. The cost stays AS PROVIDED (original document cost) so the reversal journal below keeps matching the
+    // stock value exactly as before; only the document/movement/balance writes became all-or-nothing.
+    const returnPost = await this.storage.postStockDocumentAtomic(tenantId, { doc: returnDoc, movements, useProvidedCost: true }, input.idempotencyKey);
+    if (!returnPost.success || !returnPost.data) return returnPost as any;
 
     // Balanced Reversal Journal Entry via PostingEngine
     if (this.postingEngine && totalCost > 0) {
@@ -1160,7 +1174,7 @@ export class InventoryService {
       }
     }
 
-    return { success: true, data: returnDoc };
+    return { success: true, data: returnPost.data };
   }
 
   // ============================================================================
@@ -1495,35 +1509,14 @@ export class InventoryService {
       idempotencyKey: input.idempotencyKey,
     };
 
-    // Deduct stock from source warehouse immediately upon dispatch
-    for (const l of linesToSave) {
-      await this.storage.recordStockMovement(tenantId, {
-        id: `mov-trf-out-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        tenantId,
-        companyId: tenantId,
-        movementNumber: `MOV-${transferNumber}-OUT`,
-        movementType: 'TRANSFER_OUT',
-        warehouseId: input.sourceWarehouseId,
-        warehouseNameAr: srcWhRes.data.nameAr,
-        itemId: l.itemId,
-        itemCode: l.itemCode,
-        itemNameAr: l.itemNameAr,
-        quantity: l.quantity,
-        unitCost: l.unitCost,
-        totalCost: l.totalCost,
-        balanceAfterQty: 0,
-        sourceDocumentType: 'STOCK_TRANSFER',
-        sourceDocumentId: transferId,
-        sourceDocumentNumber: transferNumber,
-        performedBy: input.requestedBy,
-        performedByName: input.requestedByName,
-        timestamp: new Date().toISOString(),
-        idempotencyKey: `${input.idempotencyKey}-line-${l.itemId}`,
-      }, `${input.idempotencyKey}-line-${l.itemId}`);
-    }
-
-    const savedTransfer = await this.storage.createStockTransfer(tenantId, transfer, linesToSave, input.idempotencyKey);
-    return savedTransfer;
+    // Phase 11 (STK-ATOMIC-002): deduction from the source + the transfer document are ONE transaction.
+    // The value that leaves the source is the locked weighted average, and it is stored on the lines/total of the document.
+    const posted = await this.storage.postStockTransferAtomic(
+      tenantId,
+      { mode: 'DISPATCH', transfer, lines: linesToSave, actorId: input.requestedBy, actorName: input.requestedByName },
+      input.idempotencyKey
+    );
+    return posted;
   }
 
   public async receiveTransfer(
@@ -1546,56 +1539,14 @@ export class InventoryService {
       };
     }
 
-    const { transfer, lines } = existing.data;
-    if (transfer.status !== 'IN_TRANSIT') {
-      return {
-        success: false,
-        error: {
-          type: 'https://api.an-erp.local/errors/invalid-transfer-status',
-          title: 'حالة التحويل لا تسمح بالاستلام',
-          status: 400,
-          detail: `المستند حالياً في حالة (${transfer.status}) ولا يمكن استلامه مجدداً.`,
-        },
-      };
-    }
-
-    // Add items to target warehouse
-    for (const l of lines) {
-      await this.storage.recordStockMovement(tenantId, {
-        id: `mov-trf-in-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        tenantId,
-        companyId: tenantId,
-        movementNumber: `MOV-${transfer.transferNumber}-IN`,
-        movementType: 'TRANSFER_IN',
-        warehouseId: transfer.targetWarehouseId,
-        warehouseNameAr: transfer.targetWarehouseNameAr,
-        itemId: l.itemId,
-        itemCode: l.itemCode,
-        itemNameAr: l.itemNameAr,
-        quantity: l.quantity,
-        unitCost: l.unitCost,
-        totalCost: l.totalCost,
-        balanceAfterQty: 0,
-        sourceDocumentType: 'STOCK_TRANSFER',
-        sourceDocumentId: transfer.id,
-        sourceDocumentNumber: transfer.transferNumber,
-        performedBy: actorId,
-        performedByName: actorName,
-        timestamp: new Date().toISOString(),
-        idempotencyKey: `${idempotencyKey}-recv-${l.itemId}`,
-      }, `${idempotencyKey}-recv-${l.itemId}`);
-    }
-
-    const updateRes = await this.storage.updateStockTransferStatus(
+    const { transfer } = existing.data;
+    // Phase 11: the status check, the movements and the status change happen under one row lock inside the transaction
+    // (an already-received document answers 409 invalid-transfer-status from there).
+    return this.storage.postStockTransferAtomic(
       tenantId,
-      transferId,
-      'RECEIVED',
-      actorId,
-      actorName,
+      { mode: 'RECEIVE', transfer, lines: [], actorId, actorName },
       idempotencyKey
     );
-
-    return updateRes;
   }
 
   public async getStockTransfer(

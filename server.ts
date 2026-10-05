@@ -1921,6 +1921,118 @@ async function startServer() {
     return res.json({ success: true, data: approveRes.data });
   });
 
+  // ============================================================================
+  // Phase 12 (APR-001): configurable approvals — policies, inbox, approve, reject
+  // ============================================================================
+
+  const approvalIdempotencyKey = (req: Request): string => String((req.headers['idempotency-key'] as string) || req.body?.idempotencyKey || '').trim();
+  const missingApprovalKey = (res: Response) => res.status(400).json({
+    type: 'https://api.an-erp.local/errors/missing-idempotency-key',
+    title: 'مفتاح idempotencyKey مطلوب',
+    status: 400,
+    detail: 'عمليات الموافقات تتطلب Idempotency-Key.',
+  });
+
+  app.get('/api/approvals/policies', requireAuth, async (req: Request, res: Response) => {
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
+    const r = await storage.listApprovalPolicies((req as any).authContext.tenantId);
+    if (!r.success) return res.status(r.error?.status || 500).json(r.error);
+    return res.json({ success: true, data: r.data });
+  });
+
+  app.put('/api/approvals/policies/:documentType', requireAuth, requirePermission('APPROVAL_POLICY_MANAGE'), async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
+    const idempotencyKey = approvalIdempotencyKey(req);
+    if (!idempotencyKey) return missingApprovalKey(res);
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
+    const engine = new ApprovalEngine(storage);
+    const body = req.body || {};
+    const candidate = {
+      tenantId,
+      documentType: req.params.documentType,
+      mode: body.mode,
+      steps: body.steps === undefined ? [] : body.steps,
+      enforceDistinctApprovers: body.enforceDistinctApprovers === undefined ? true : body.enforceDistinctApprovers,
+      isActive: body.isActive === undefined ? true : body.isActive,
+    };
+    const valid = await engine.validatePolicy(candidate, storage);
+    if (!valid.success) return res.status(valid.error?.status || 400).json(valid.error);
+
+    const saved = await storage.saveApprovalPolicy(tenantId, {
+      id: `apol-${crypto.createHash('sha1').update(`${tenantId}:${candidate.documentType}`).digest('hex').slice(0, 24)}`,
+      tenantId,
+      documentType: candidate.documentType as any,
+      mode: candidate.mode,
+      steps: (candidate.steps as any[]).map(st => ({ label: String(st.label).trim(), approverType: st.approverType, approverRef: String(st.approverRef).trim(), stepKind: st.stepKind })),
+      enforceDistinctApprovers: candidate.enforceDistinctApprovers,
+      isActive: candidate.isActive,
+      version: 1,
+      updatedBy: userId,
+      updatedAt: new Date().toISOString(),
+    }, idempotencyKey);
+    if (!saved.success || !saved.data) return res.status(saved.error?.status || 500).json(saved.error);
+
+    // Change-log entry: policy shape only (no secrets, no user names)
+    try {
+      const logged = await storage.appendSystemChangeLog({
+        id: `LOG-APPROVALS-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
+        timestamp: new Date().toISOString(),
+        actor: userId,
+        changeType: 'PLATFORM_MANAGEMENT',
+        module: 'APPROVALS',
+        entitiesAffected: [`APPROVAL_POLICY:${saved.data.documentType}`, `TENANT:${tenantId}`],
+        summaryAr: `تحديث سياسة الاعتماد (${saved.data.documentType}) إلى الإصدار ${saved.data.version} بنمط ${saved.data.mode}`,
+        version: '1',
+      });
+      if (!logged.success) console.error('[audit] system change log failed:', (logged as any).error?.title || 'storage error');
+    } catch (e: any) {
+      console.error('[audit] system change log failed:', e?.message);
+    }
+    return res.json({ success: true, data: saved.data });
+  });
+
+  app.get('/api/approvals/inbox', requireAuth, async (req: Request, res: Response) => {
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
+    const engine = new ApprovalEngine(storage);
+    const r = await engine.listInbox((req as any).authContext.tenantId, (req as any).authContext.userId, (req as any).authContext.role || '');
+    if (!r.success) return res.status(r.error?.status || 500).json(r.error);
+    return res.json({ success: true, data: r.data });
+  });
+
+  app.post('/api/approvals/:id/approve', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
+    const role = (req as any).authContext.role || '';
+    const idempotencyKey = approvalIdempotencyKey(req);
+    if (!idempotencyKey) return missingApprovalKey(res);
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
+    const engine = new ApprovalEngine(storage);
+    const r = await engine.approve(tenantId, req.params.id, userId, role, idempotencyKey);
+    if (!r.success) return res.status(r.error?.status || 403).json(r.error);
+    await recordAudit(userId, userId, 'APPROVE_STEP', 'APPROVAL_REQUEST', req.params.id, { status: r.data?.status, currentStep: r.data?.currentStep }, req.ip || '127.0.0.1', tenantId, storage);
+    return res.json({ success: true, data: r.data });
+  });
+
+  app.post('/api/approvals/:id/reject', requireAuth, async (req: Request, res: Response) => {
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
+    const role = (req as any).authContext.role || '';
+    const idempotencyKey = approvalIdempotencyKey(req);
+    if (!idempotencyKey) return missingApprovalKey(res);
+    const storage = getRequestStorage(req, res);
+    if (!storage) return;
+    const engine = new ApprovalEngine(storage);
+    const r = await engine.reject(tenantId, req.params.id, userId, role, String(req.body?.reason ?? ''), idempotencyKey);
+    if (!r.success) return res.status(r.error?.status || 403).json(r.error);
+    await recordAudit(userId, userId, 'REJECT_STEP', 'APPROVAL_REQUEST', req.params.id, { status: r.data?.status, rejectedStep: r.data?.rejectedStep }, req.ip || '127.0.0.1', tenantId, storage);
+    return res.json({ success: true, data: r.data });
+  });
+
   // 5.2 Post transaction by URL param id
   app.post('/api/transactions/:id/post', requireAuth, requirePermission('ENTRY_POST'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
@@ -3521,7 +3633,7 @@ async function startServer() {
       if (!svc) return;
       const existing = await svc.getStockTransfer(tenantId, req.params.id);
       if (!existing.success || !existing.data) return res.status(404).json({ error: 'مستند التحويل غير موجود' });
-      return res.json({ success: true, data: existing.data, message: 'تم إرسال الشحنة وخصم الكمية من مستودع المصدر.' });
+      return res.json({ success: true, data: existing.data, message: 'التحويل أُرسل عند إنشائه، والخصم من مستودع المصدر تم وقتها.' });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
