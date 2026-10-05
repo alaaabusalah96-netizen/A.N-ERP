@@ -2323,7 +2323,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
           id: row.id,
           code: row.code,
           tenantId: row.tenant_id,
-          date: row.date.toISOString().split('T')[0],
+          date: (row.date instanceof Date ? row.date.toISOString() : new Date(row.date).toISOString()).split('T')[0],
           type: row.type,
           description: row.description,
           lines: [],
@@ -2331,7 +2331,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
           status: row.status,
           createdBy: row.created_by,
           approvedBy: row.approved_by,
-          postedAt: row.posted_at ? row.posted_at.toISOString() : undefined,
+          postedAt: row.posted_at ? (row.posted_at instanceof Date ? row.posted_at.toISOString() : new Date(row.posted_at).toISOString()) : undefined,
           reversedByEntryId: row.reversed_by_entry_id,
         });
       }
@@ -5959,18 +5959,40 @@ export class PostgresPrimaryAdapter implements StoragePort {
       // Calculate quantity delta based on movement type
       let qtyDelta = 0;
       let valueDelta = 0;
+      let unitCostUsed = movement.unitCost;
 
-      if (movement.movementType === 'RECEIPT' || movement.movementType === 'TRANSFER_IN' || movement.movementType === 'COUNT_ADJUSTMENT_GAIN') {
+      const isIn = movement.movementType === 'RECEIPT' || movement.movementType === 'TRANSFER_IN' || movement.movementType === 'COUNT_ADJUSTMENT_GAIN';
+      const isOut = movement.movementType === 'ISSUE' || movement.movementType === 'TRANSFER_OUT' || movement.movementType === 'COUNT_ADJUSTMENT_LOSS';
+
+      if (isIn) {
         qtyDelta = Math.abs(movement.quantity);
         valueDelta = qtyDelta * movement.unitCost;
-      } else if (movement.movementType === 'ISSUE' || movement.movementType === 'TRANSFER_OUT' || movement.movementType === 'COUNT_ADJUSTMENT_LOSS') {
+      } else if (isOut) {
         qtyDelta = -Math.abs(movement.quantity);
-        valueDelta = qtyDelta * (averageCost > 0 ? averageCost : movement.unitCost);
+        if (opts?.lockedOutgoingCost) {
+          unitCostUsed = averageCost > 0 ? averageCost : movement.unitCost;
+        } else {
+          unitCostUsed = movement.unitCost;
+        }
+        valueDelta = qtyDelta * unitCostUsed;
       }
 
       const newQty = currentQty + qtyDelta;
+      if (isOut && newQty < -0.00005 && opts?.rejectNegative) {
+        return {
+          ok: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/insufficient-stock',
+            title: 'الرصيد المخزني غير كافٍ',
+            status: 422,
+            detail: `الرصيد المتاح للصنف ${movement.itemNameAr} (${currentQty}) أقل من الكمية المطلوبة للصرف (${Math.abs(movement.quantity)}). فشلت العملية بالكامل ذرياً.`,
+          },
+        };
+      }
+
       const newTotalValue = Math.max(0, totalValue + valueDelta);
       const newAverageCost = newQty > 0 ? newTotalValue / newQty : (movement.unitCost > 0 ? movement.unitCost : averageCost);
+      const totalCostUsed = Math.abs(qtyDelta) * unitCostUsed;
 
       const stockId = stockRes.rows.length > 0 ? stockRes.rows[0].id : `stk-${movement.warehouseId}-${movement.itemId}`;
       const nowIso = new Date().toISOString();
@@ -5999,14 +6021,14 @@ export class PostgresPrimaryAdapter implements StoragePort {
       );
 
       // Update global item average cost and last purchase cost if receipt
-      if (movement.movementType === 'RECEIPT' && movement.unitCost > 0) {
+      if (movement.movementType === 'RECEIPT' && unitCostUsed > 0) {
         await client.query(
           `UPDATE an_stock_items SET
             average_cost = $1,
             last_purchase_cost = $2,
             updated_at = $3
           WHERE tenant_id = $4 AND id = $5`,
-          [newAverageCost, movement.unitCost, nowIso, tenantId, movement.itemId]
+          [newAverageCost, unitCostUsed, nowIso, tenantId, movement.itemId]
         );
       }
 
@@ -6033,8 +6055,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
           movement.itemCode,
           movement.itemNameAr,
           movement.quantity,
-          movement.unitCost,
-          movement.totalCost,
+          unitCostUsed,
+          totalCostUsed,
           newQty,
           movement.sourceDocumentType || null,
           movement.sourceDocumentId || null,
@@ -6069,7 +6091,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
             movement.warehouseId,
             movement.batchNumber,
             Math.max(0, batchDelta),
-            movement.unitCost,
+            unitCostUsed,
             nowIso,
             batchDelta,
           ]
@@ -6079,9 +6101,11 @@ export class PostgresPrimaryAdapter implements StoragePort {
       const saved: StockMovement = {
         ...movement,
         balanceAfterQty: newQty,
+        unitCost: unitCostUsed,
+        totalCost: totalCostUsed,
         idempotencyKey,
       };
-      return { ok: true, newQty, unitCostUsed: movement.unitCost, totalCostUsed: movement.totalCost, saved };
+      return { ok: true, newQty, unitCostUsed, totalCostUsed, saved };
   }
 
   public async recordStockMovement(
@@ -6577,8 +6601,9 @@ export class PostgresPrimaryAdapter implements StoragePort {
           received_by = $5,
           received_by_name = $6,
           received_at = $7,
-          updated_at = $8
-        WHERE tenant_id = $9 AND id = $10`,
+          updated_at = $8,
+          idempotency_key = $9
+        WHERE tenant_id = $10 AND id = $11`,
         [
           status,
           dispatchedBy,
@@ -6588,6 +6613,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
           receivedByName,
           receivedAt,
           nowIso,
+          idempotencyKey,
           tenantId,
           transferId,
         ]
@@ -7516,8 +7542,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
           performedBy: r.performed_by,
           performedByName: r.performed_by_name,
           idempotencyKey: r.idempotency_key,
-          createdAt: r.created_at?.toISOString?.() || r.created_at,
-          postedAt: r.posted_at?.toISOString?.() || r.posted_at,
+          createdAt: r.created_at ? (r.created_at instanceof Date ? r.created_at.toISOString() : new Date(r.created_at).toISOString()) : undefined as any,
+          postedAt: r.posted_at ? (r.posted_at instanceof Date ? r.posted_at.toISOString() : new Date(r.posted_at).toISOString()) : undefined as any,
         });
       }
       return { success: true, data: docs };

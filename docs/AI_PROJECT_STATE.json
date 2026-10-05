@@ -1,0 +1,92 @@
+{
+  "project": {
+    "name": "A.N ERP",
+    "version": "7.2.0",
+    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل",
+    "stack": {
+      "backend": ["Node 22", "Express 4", "TypeScript"],
+      "database": "PostgreSQL",
+      "frontend": ["React 19", "Vite", "Tailwind CSS"]
+    }
+  },
+  "auditDate": "2026-10-05T15:59:00Z",
+  "overallVerdict": "CONDITIONAL GO",
+  "architecture": {
+    "pattern": "StoragePort / Adapter",
+    "authoritative_layer": "PostgresPrimaryAdapter (Transactions/Logic)",
+    "tenancy": "Schema-shared, tenant_id column-based isolation with RLS"
+  },
+  "inventory": {
+    "valuation_method": "WEIGHTED_AVERAGE",
+    "balance_authority": "an_warehouse_stock",
+    "locking": "SELECT FOR UPDATE on balance rows",
+    "atomic_transfers": true
+  },
+  "defects": [
+    {
+      "id": "DEF-001",
+      "defect": "Schema Drift: an_stock_transfer_lines missing columns",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "evidence": "SQL insert uses line_number, uom, notes; CREATE TABLE does not define them.",
+      "blocking": true
+    },
+    {
+      "id": "DEF-002",
+      "defect": "Schema Drift: an_active_sessions missing tenant_id",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "evidence": "Application expects tenant_id; table lacks it.",
+      "blocking": false
+    },
+    {
+      "id": "DEF-003",
+      "defect": "Schema Drift: an_custom_fields missing options",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "evidence": "Application expects options; table lacks it.",
+      "blocking": false
+    },
+    {
+      "id": "DEF-004",
+      "defect": "Incomplete Read Model: getStockTransfer mapping",
+      "severity": "LOW",
+      "status": "OPEN",
+      "evidence": "SQL returns line metadata (uom, notes); TypeScript mapping drops them.",
+      "blocking": false
+    }
+  ],
+  "risks": [
+    {
+      "id": "RSK-001",
+      "risk": "PostgreSQL BYPASSRLS",
+      "impact": "Tenant isolation hardening required",
+      "evidence": "Previous audit reported application role has BYPASSRLS permission.",
+      "mitigation": "Restrict DB role permissions."
+    },
+    {
+      "id": "RSK-002",
+      "risk": "InMemory False Confidence",
+      "impact": "Schema defects invisible in tests",
+      "evidence": "Phase 11 passed InMemory but likely fails in Postgres due to DEF-001.",
+      "mitigation": "Prioritize PostgreSQL-backed tests."
+    }
+  ],
+  "requiredActions": [
+    {
+      "priority": "P0",
+      "action": "Add line_number, uom, notes columns to an_stock_transfer_lines",
+      "location": "PostgreSQL Schema / Migrations"
+    },
+    {
+      "priority": "P1",
+      "action": "Add tenant_id to an_active_sessions",
+      "location": "PostgreSQL Schema / Migrations"
+    },
+    {
+      "priority": "P2",
+      "action": "Fix mapping in getStockTransfer to include uom and notes",
+      "location": "src/core/storage/adapters/PostgresPrimaryAdapter.ts"
+    }
+  ]
+}
