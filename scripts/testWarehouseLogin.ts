@@ -65,7 +65,7 @@ async function run() {
       tenantId: data.user.tenantId,
       branchName: data.user.branchName,
     } : null,
-    hasToken: Boolean(data.token || data.accessToken || setCookie.includes('access_token')),
+    hasToken: Boolean(setCookie.includes('an_access_token')),
   });
 
   if (status !== 200 || !data.success) {

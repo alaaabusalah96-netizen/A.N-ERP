@@ -56,6 +56,7 @@ import { TenantResolutionService } from './src/core/tenant/TenantResolutionServi
 import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
 import { requirePermission, hasPermission, PermissionGroup } from './src/core/auth/PermissionMatrix';
 import { requestContextALS } from './src/core/context/RequestContext';
+import { parseIsoDate, parseNonNegativeMoney, validationError, type ParseResult } from './src/core/utils/validation';
 
 // Wave 0: Security Hardening — Strict Environment Secrets Enforcement
 export function requireEnv(name: string): string {
@@ -419,6 +420,33 @@ async function startServer() {
     }
     next();
   });
+
+  // Phase 6 (HYGIENE-001): append a SystemChangeLog entry for an administrative action.
+  // Never carries passwords, tokens, invite links or personal data; a failure is logged and never fails the request.
+  const logSystemChange = async (
+    storage: StoragePort,
+    actor: string,
+    changeType: 'SECURITY' | 'NUMBERING_OVERRIDE' | 'PLATFORM_MANAGEMENT',
+    module: 'USERS' | 'INVITATIONS' | 'COMPANY' | 'NUMBERING' | 'CUSTOM_FIELDS',
+    entitiesAffected: string[],
+    summaryAr: string
+  ): Promise<void> => {
+    try {
+      const r = await storage.appendSystemChangeLog({
+        id: `LOG-${module}-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
+        timestamp: new Date().toISOString(),
+        actor,
+        changeType,
+        module,
+        entitiesAffected,
+        summaryAr,
+        version: '1',
+      });
+      if (!r.success) console.error('[audit] system change log failed:', (r as any).error?.title || 'storage error');
+    } catch (e: any) {
+      console.error('[audit] system change log failed:', e?.message);
+    }
+  };
 
   // Helper to record operational audit log (scoped strictly to provided storage & tenant)
   const recordAudit = async (
@@ -1104,7 +1132,6 @@ async function startServer() {
 
     const responsePayload = {
       success: true,
-      accessToken,
       user: {
         id: user.id,
         username: user.username,
@@ -1191,7 +1218,7 @@ async function startServer() {
       path: '/',
     });
 
-    return res.json({ success: true, accessToken: rotation.newAccessToken, message: 'تم تدوير رمز الجلسة بنجاح' });
+    return res.json({ success: true, message: 'تم تدوير رمز الجلسة بنجاح' });
   });
 
   // 1A — Logout Endpoint
@@ -1387,6 +1414,8 @@ async function startServer() {
       storage
     );
 
+    await logSystemChange(storage, (req as any).authContext.userId, 'PLATFORM_MANAGEMENT', 'COMPANY', [`TENANT:${tenant.id}`], 'تحديث بيانات المنشأة');
+
     return res.json({ success: true, data: tenant, message: 'تم تحديث بيانات المنشأة بنجاح' });
   });
 
@@ -1440,9 +1469,10 @@ async function startServer() {
     }
 
     const encryptedPii = EncryptionService.encryptPII({ email, phone, nationalId });
-    const newId = `USR-${Date.now().toString().slice(-4)}`;
-    const defaultPass = requireEnv('RESET_USER_PASSWORD');
-    const hash = await argon2.hash(defaultPass, { type: argon2.argon2id });
+    // Phase 5 (AUTH-003): collision-safe id + a unique one-time temporary password per user
+    const newId = `USR-${crypto.randomUUID().slice(0, 8)}`;
+    const temporaryPassword = crypto.randomBytes(9).toString('base64url');
+    const hash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
     const totp = generateSecret();
     const encryptedTotp = EncryptionService.encryptPII(totp);
     const backupCodes = EncryptionService.generateEmergencyBackupCodes();
@@ -1477,15 +1507,17 @@ async function startServer() {
       backupCodesRemaining: (_bc?.length || _hbc?.length || 0),
     };
 
-    return res.json({ success: true, data: userResponse, message: 'تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام' });
+    await logSystemChange(storage, (req as any).authContext.userId, 'SECURITY', 'USERS', [`USER:${newUser.id}`, `TENANT:${tenantId}`], `إنشاء مستخدم جديد بدور (${role})`);
+
+    // temporaryPassword is returned ONCE here; it is never stored (only its Argon2id hash), logged, audited or published.
+    return res.json({ success: true, data: { ...userResponse, temporaryPassword }, message: 'تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام' });
   });
 
-  // 1L — Invitation Signed Link Generation
-  app.post('/api/invitations', requireAuth, requirePermission('USER_MANAGE'), (req: Request, res: Response) => {
+  // 1L — Invitation link generation (Phase 5 / AUTH-003: persistent, only the SHA-256 hash is stored)
+  app.post('/api/invitations', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const storage = getRequestStorage(req, res);
     if (!storage) return;
-    const tokenService = new TokenService(storage);
     const { email, role } = req.body;
     if (!email || !role) {
       return res.status(400).json({ error: 'البريد الإلكتروني والدور مطلوبان لإنشاء الدعوة' });
@@ -1497,18 +1529,40 @@ async function startServer() {
       return res.status(sodCheck.problem.status).json(sodCheck.problem);
     }
 
-    const invite = tokenService.generateInvitationToken(tenantId, email, role);
-    const inviteUrl = `${req.protocol}://${req.get('host')}/join?token=${invite.token}`;
+    const rawToken = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+
+    const invitationId = `INV-${crypto.randomUUID()}`;
+    const created = await storage.createInvitation(tenantId, {
+      id: invitationId,
+      tenantId,
+      tokenHash,
+      email,
+      proposedRole: role,
+      orgNodeId: (req as any).authContext.orgNodeId || undefined,
+      status: 'PENDING',
+      expiresAt,
+      createdBy: (req as any).authContext.userId,
+    });
+    if (!created.success) {
+      return res.status(500).json({ error: 'تعذر إنشاء الدعوة' });
+    }
+
+    // Out of scope (Phase 5): the host below still comes from req.get('host').
+    const inviteUrl = `${req.protocol}://${req.get('host')}/join?token=${rawToken}`;
 
     DomainEventBus.publish({
       eventType: 'USER_INVITED',
       tenantId,
       actorId: (req as any).authContext.userId || 'USR-001',
       actorName: 'المستخدم الحالي',
-      payload: { email, role, expiresAt: invite.expiresAt },
+      payload: { email, role, expiresAt },
     });
 
-    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'INVITE_USER', 'INVITATION', email, { role, expiresAt: invite.expiresAt }, req.ip || '127.0.0.1', tenantId, storage);
+    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'INVITE_USER', 'INVITATION', email, { role, expiresAt }, req.ip || '127.0.0.1', tenantId, storage);
+
+    await logSystemChange(storage, (req as any).authContext.userId, 'SECURITY', 'INVITATIONS', [`INVITATION:${invitationId}`, `TENANT:${tenantId}`], `إنشاء دعوة مستخدم بدور (${role})`);
 
     return res.json({
       success: true,
@@ -1516,10 +1570,107 @@ async function startServer() {
         email,
         role,
         inviteUrl,
-        expiresAt: invite.expiresAt,
+        expiresAt,
       },
-      message: 'تم توليد رابط دعوة موقّع محدود الصلاحية الزمنية (48 ساعة) بنجاح',
     });
+  });
+
+  // Phase 5 (AUTH-003): PUBLIC invitation acceptance. Role / email / org node come ONLY from the invitation row.
+  app.post('/api/invitations/accept', authRateLimiter, async (req: Request, res: Response) => {
+    const body = req.body || {};
+    const { tenantId, token, username, fullName, password } = body;
+    const isFilled = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
+    if (![tenantId, token, username, fullName, password].every(isFilled) || (password as string).length < 12) {
+      return res.status(400).json({ error: 'بيانات قبول الدعوة غير مكتملة أو غير صالحة (كلمة المرور 12 حرفًا على الأقل)' });
+    }
+    const gone = () => res.status(410).json({ error: 'رابط الدعوة غير صالح أو منتهي الصلاحية أو تم استخدامه' });
+
+    let storage: StoragePort;
+    try {
+      const tenantRes = await masterStorage.getTenant(tenantId);
+      if (!tenantRes.success || !tenantRes.data) return gone();
+      storage = await globalStorageRouter.resolveAdapterAsync(tenantRes.data);
+    } catch (err: any) {
+      console.error(`[invitations/accept] tenant storage unavailable: ${err?.message}`);
+      return res.status(503).json({
+        type: 'https://api.an-erp.local/errors/storage-unavailable',
+        title: 'مخزن بيانات المنشأة غير متاح',
+        status: 503,
+        detail: 'تعذر الاتصال بمخزن بيانات هذه المنشأة. حاول لاحقًا أو تواصل مع مدير النظام.',
+      });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const consumed = await storage.consumeInvitation(tenantId, tokenHash);
+    if (!consumed.success) return res.status(500).json({ error: 'تعذر معالجة الدعوة' });
+    if (!consumed.data) return gone();
+    const inv = consumed.data;
+
+    let userCreated = false;
+    const release = async () => {
+      try {
+        const r = await storage.releaseInvitation(tenantId, tokenHash);
+        if (!r.success) console.error('[invitations/accept] release failed for invitation', inv.id);
+      } catch (e: any) {
+        console.error('[invitations/accept] release failed for invitation', inv.id, e?.message);
+      }
+    };
+
+    try {
+      const existing = await storage.getUserByUsername(tenantId, username);
+      if (!existing.success) {
+        await release();
+        return res.status(500).json({ error: 'تعذر التحقق من اسم المستخدم' });
+      }
+      if (existing.data) {
+        await release();
+        return res.status(409).json({ error: 'اسم المستخدم مستخدم بالفعل، اختر اسمًا آخر ويمكنك إعادة استخدام نفس الدعوة' });
+      }
+
+      const hash = await argon2.hash(password, { type: argon2.argon2id });
+      const totp = generateSecret();
+      const encryptedTotp = EncryptionService.encryptPII(totp);
+      const backupCodes = EncryptionService.generateEmergencyBackupCodes();
+      const role = inv.proposedRole; // NEVER read from the request body
+      const newId = `USR-${crypto.randomUUID().slice(0, 8)}`;
+
+      const newUser: User = {
+        id: newId,
+        tenantId,
+        username,
+        fullName,
+        email: inv.email,
+        role,
+        roleTitleAr: role === 'accountant' ? 'محاسب عام' : role === 'financial_approver' ? 'معتمد مالي' : role === 'warehouse_keeper' ? 'أمين مستودع' : 'موظف تشغيلي',
+        branchName: 'الفرع الرئيسي',
+        status: 'ACTIVE',
+        assignedNodeId: inv.orgNodeId,
+        encryptedPii: EncryptionService.encryptPII({ email: inv.email }),
+        passwordHash: hash,
+        twoFactorSecret: encryptedTotp,
+        twoFactorEnabled: false,
+        backupCodes: backupCodes.hashedCodes,
+        hashedBackupCodes: backupCodes.hashedCodes,
+        requiresPasswordChange: false,
+        createdAt: new Date().toISOString(),
+      };
+
+      const saved = await storage.saveUser(newUser, `accept-invite-${inv.id}`);
+      if (!saved.success) {
+        await release();
+        return res.status(500).json({ error: 'تعذر إنشاء المستخدم' });
+      }
+      userCreated = true;
+
+      // No token, token hash, password or password hash in the audit record.
+      await recordAudit(newId, fullName, 'ACCEPT_INVITATION', 'INVITATION', inv.id, { userId: newId, username, role }, req.ip || '127.0.0.1', tenantId, storage);
+
+      return res.json({ success: true, data: { id: newId, username, role } });
+    } catch (err: any) {
+      if (!userCreated) await release();
+      console.error('[invitations/accept] failed:', err?.message);
+      return res.status(500).json({ error: 'تعذر قبول الدعوة' });
+    }
   });
 
   // 1I — Active Sessions List & Remote Instant Revocation via StoragePort
@@ -1595,6 +1746,8 @@ async function startServer() {
 
     await storage.saveCustomField(tenantId, newField);
     await recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'ADD_CUSTOM_FIELD', 'SCHEMA', newField.id, newField, req.ip || '127.0.0.1', tenantId, storage);
+
+    await logSystemChange(storage, (req as any).authContext.userId, 'PLATFORM_MANAGEMENT', 'CUSTOM_FIELDS', [`CUSTOM_FIELD:${newField.id}`, `TENANT:${tenantId}`], 'إضافة حقل مخصص');
 
     return res.json({ success: true, data: newField, message: 'تم إضافة الحقل المخصص بنجاح' });
   });
@@ -1868,6 +2021,7 @@ async function startServer() {
     if (!result.success) {
       return res.status(result.error?.status || 400).json(result.error);
     }
+    await logSystemChange(storage, userId, 'NUMBERING_OVERRIDE', 'NUMBERING', [`SEQUENCE:${sequenceKey}`, `TENANT:${tenantId}`], 'تجاوز يدوي لتسلسل الترقيم');
     return res.json(result);
   });
 
@@ -2278,22 +2432,50 @@ async function startServer() {
         });
       }
 
+      // Phase 9 (VAL-001): validate date and every line BEFORE the service is called
+      let entryDate: string = new Date().toISOString().split('T')[0];
+      if (payload.date !== undefined && payload.date !== null && payload.date !== '') {
+        const dateCheck = parseIsoDate(payload.date, 'تاريخ القيد (date)');
+        if (!dateCheck.ok) return res.status(400).json(validationError(dateCheck.detail));
+        entryDate = dateCheck.value;
+      }
+      if (!Array.isArray(payload.lines) || payload.lines.length === 0) {
+        return res.status(400).json(validationError('أسطر القيد (lines) مطلوبة ويجب أن تحتوي على سطر واحد على الأقل.'));
+      }
+      const checkedAmounts: Array<{ debit: number; credit: number }> = [];
+      for (let i = 0; i < payload.lines.length; i++) {
+        const l = payload.lines[i];
+        if (l === null || typeof l !== 'object') {
+          return res.status(400).json(validationError(`السطر رقم ${i + 1} من القيد (lines[${i}]) غير صالح.`));
+        }
+        const amt = (v: unknown, label: string): ParseResult<number> =>
+          v === undefined || v === null || v === '' ? { ok: true, value: 0 } : parseNonNegativeMoney(v, label);
+        const d = amt(l.debit, `المدين (debit) في السطر رقم ${i + 1}`);
+        if (!d.ok) return res.status(400).json(validationError(d.detail));
+        const c = amt(l.credit, `الدائن (credit) في السطر رقم ${i + 1}`);
+        if (!c.ok) return res.status(400).json(validationError(c.detail));
+        if (d.value > 0 && c.value > 0) {
+          return res.status(400).json(validationError(`السطر رقم ${i + 1} يحتوي على مدين ودائن معًا؛ يجب أن يكون أحدهما صفرًا (debit / credit).`));
+        }
+        checkedAmounts.push({ debit: d.value, credit: c.value });
+      }
+
       const entryId = payload.id;
       const entry: JournalEntry = {
         id: entryId,
         code: payload.code,
         tenantId,
-        date: payload.date || new Date().toISOString().split('T')[0],
+        date: entryDate,
         type: payload.type || 'قيد يدوي عام',
         description: payload.description,
-        totalAmount: payload.lines.reduce((s: number, l: any) => s + (Number(l.debit) || 0), 0),
+        totalAmount: checkedAmounts.reduce((s: number, a) => s + a.debit, 0),
         status: 'APPROVED',
         createdBy: userId,
         lines: payload.lines.map((l: any, i: number) => ({
           id: `${entryId}-L${i + 1}`,
           accountCode: l.accountCode,
-          debit: Number(l.debit) || 0,
-          credit: Number(l.credit) || 0,
+          debit: checkedAmounts[i].debit,
+          credit: checkedAmounts[i].credit,
           description: l.description || payload.description,
           costCenter: l.costCenter,
         })),

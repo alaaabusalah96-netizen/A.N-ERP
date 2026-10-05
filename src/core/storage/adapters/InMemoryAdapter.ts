@@ -6,6 +6,8 @@
 
 import {
   StoragePort,
+  Invitation,
+  ConsumedInvitation,
   StorageResult,
   TenantCompany,
   User,
@@ -406,6 +408,39 @@ export class InMemoryAdapter implements StoragePort {
     const res = await this.getUser(tenantId, userId);
     if (!res.success || !res.data) return { success: true, data: false };
     this.membershipStatusOverrides.set(`${tenantId}:${res.data.id}`, status);
+    return { success: true, data: true };
+  }
+
+  // Phase 5 (AUTH-003): invitations. Adapter state, keyed by tenant + token hash (tenant isolation).
+  private invitations: Map<string, Invitation> = new Map();
+
+  public async createInvitation(tenantId: string, inv: Invitation): Promise<StorageResult<boolean>> {
+    this.invitations.set(`${tenantId}:${inv.tokenHash}`, {
+      ...inv,
+      tenantId,
+      status: 'PENDING',
+      createdAt: inv.createdAt || new Date().toISOString(),
+      consumedAt: undefined,
+    });
+    return { success: true, data: true };
+  }
+
+  // Synchronous read-check-write inside one async method: atomic with respect to the event loop.
+  public async consumeInvitation(tenantId: string, tokenHash: string): Promise<StorageResult<ConsumedInvitation | null>> {
+    const inv = this.invitations.get(`${tenantId}:${tokenHash}`);
+    if (!inv || inv.status !== 'PENDING' || new Date(inv.expiresAt).getTime() <= Date.now()) {
+      return { success: true, data: null };
+    }
+    inv.status = 'ACCEPTED';
+    inv.consumedAt = new Date().toISOString();
+    return { success: true, data: { id: inv.id, email: inv.email, proposedRole: inv.proposedRole, orgNodeId: inv.orgNodeId } };
+  }
+
+  public async releaseInvitation(tenantId: string, tokenHash: string): Promise<StorageResult<boolean>> {
+    const inv = this.invitations.get(`${tenantId}:${tokenHash}`);
+    if (!inv || inv.status !== 'ACCEPTED') return { success: true, data: false };
+    inv.status = 'PENDING';
+    inv.consumedAt = undefined;
     return { success: true, data: true };
   }
 

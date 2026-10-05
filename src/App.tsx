@@ -27,7 +27,6 @@ export default function App() {
   const [selectedTxForPrint, setSelectedTxForPrint] = useState<OperationalTransaction | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
-  const [authToken, setAuthToken] = useState<string | null>(null);
 
   const showNotification = (msg: string) => {
     setNotification(msg);
@@ -36,13 +35,10 @@ export default function App() {
     }, 4500);
   };
 
-  const getAuthHeaders = (extraHeaders?: Record<string, string>, tokenOverride?: string) => {
-    const headers: Record<string, string> = { ...(extraHeaders || {}) };
-    const activeToken = tokenOverride || authToken;
-    if (activeToken) {
-      headers['Authorization'] = `Bearer ${activeToken}`;
-    }
-    return headers;
+  // Session is carried by HttpOnly cookies (credentials: 'include'); no token is held in JS state or storage.
+  // tokenOverride is accepted for call-site compatibility and ignored.
+  const getAuthHeaders = (extraHeaders?: Record<string, string>, _tokenOverride?: string) => {
+    return { ...(extraHeaders || {}) } as Record<string, string>;
   };
 
   // Check auth session via HttpOnly cookie on initial mount
@@ -69,7 +65,7 @@ export default function App() {
 
   const fetchDualCalendar = async () => {
     try {
-      const res = await fetch('/api/calendar');
+      const res = await fetch('/api/calendar', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.data) {
@@ -132,17 +128,13 @@ export default function App() {
 
   const handleLoginSuccess = (loginData: any) => {
     const user = loginData?.user ?? null;
-    const token = loginData?.accessToken || null;
-    if (token) {
-      setAuthToken(token);
-    }
     setCurrentUser(user);
     setIsLoggedIn(true);
     if (loginData?.calendar) {
       setCalendar(loginData.calendar);
     }
     showNotification(`مرحباً بك ${user?.fullName ?? ''}، تم تسجيل الدخول بنجاح.`);
-    fetchTransactions(token || undefined);
+    fetchTransactions();
   };
 
   const handleLogout = async () => {
@@ -155,7 +147,6 @@ export default function App() {
     } catch {
       // ignore
     }
-    setAuthToken(null);
     setIsLoggedIn(false);
     setCurrentUser(null);
     setActiveSection('overview');

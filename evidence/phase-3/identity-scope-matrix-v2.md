@@ -58,7 +58,7 @@ Post-migration counts: users=52704 memberships=52704 roles=52704 scopes=52704 us
 
 --- (أ) seeded users ---
 [PASS] seeded admin: membership + active role + scope rows | m=1 r=1 s=1
-[FAIL] seeded admin: login + /api/auth/me | login failed for admin: 401
+[PASS] seeded admin: login + /api/auth/me | status=200
 [PASS] seeded accountant: membership + active role + scope rows | m=1 r=1 s=1
 [PASS] seeded accountant: login + /api/auth/me | status=200
 [PASS] seeded warehouse: membership + active role + scope rows | m=1 r=1 s=1
@@ -86,16 +86,18 @@ Post-migration counts: users=52704 memberships=52704 roles=52704 scopes=52704 us
 [PASS] no duplicate rows after updateUser | m=1 r=1 s=1
 
 --- (هـ) POST /api/users and CompanyWizard ---
-[FAIL] POST /api/users (admin token unavailable)
+[PASS] POST /api/users created a user | status=200
+[PASS] API-created user has membership + role + scope | m=1 r=1 s=1
+[PASS] API-created user works right after creation | status=200
 [PASS] CompanyWizard first admin has membership + role + scope | m=1 r=1 s=1
 [PASS] CompanyWizard first admin works right after creation | status=200
 
 --- (و) restart idempotency ---
-[FAIL] table counts unchanged across two server restarts | 54558/54558/54558 -> 54991/54991/54991 -> 54991/54991/54991
+[FAIL] table counts unchanged across two server restarts | 54991/54991/54991 -> 55424/55424/55424 -> 55424/55424/55424
 [PASS] users without membership = 0 after restarts
 
 --- cleanup ---
-✓ removed temporary wizard company tenant-1791104845866-bkmd
+✓ removed temporary wizard company tenant-1791190924052-3hhx
 [PASS] no temporary users left
 [PASS] counts returned to the post-migration snapshot | before=52704/52704/52704/52704 after=52704/52704/52704/52704
 ```

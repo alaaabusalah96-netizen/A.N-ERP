@@ -18,6 +18,7 @@ import path from 'node:path';
 import { spawn, ChildProcess } from 'node:child_process';
 import { PostgresPrimaryAdapter } from '../src/core/storage/adapters/PostgresPrimaryAdapter';
 import { CompanyWizardService } from '../src/core/wizard/CompanyWizardService';
+import { accessTokenFromResponse } from './lib/httpAuth';
 
 const PORT = 3101;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -129,15 +130,15 @@ async function call(method: string, p: string, token?: string, body?: any, heade
     if (res.status === 429) { await sleep(3000); continue; }
     let json: any = null;
     try { json = await res.json(); } catch { /* empty */ }
-    return { status: res.status, json };
+    return { status: res.status, json, cookieToken: accessTokenFromResponse(res) };
   }
   return { status: 429, json: null };
 }
 async function login(username: string, password: string | undefined, tenantCode = 'MAIN'): Promise<string> {
   if (!password) throw new Error(`password env missing for ${username}`);
   const r = await call('POST', '/api/auth/login', undefined, { tenantCode, username, password }, { 'x-tenant-code': tenantCode });
-  if (r.status !== 200 || !r.json?.accessToken) throw new Error(`login failed for ${username}: ${r.status}`);
-  return r.json.accessToken;
+  if (r.status !== 200 || !r.cookieToken) throw new Error(`login failed for ${username}: ${r.status}`);
+  return r.cookieToken;
 }
 
 // ------------------------------------------------------------------ temp-user bookkeeping

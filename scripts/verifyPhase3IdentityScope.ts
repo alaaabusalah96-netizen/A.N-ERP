@@ -10,6 +10,7 @@ import { OrgHierarchyService } from '../src/core/org/OrgHierarchyService';
 import { TokenService } from '../src/core/auth/TokenService';
 import { OrgNode, User } from '../src/core/storage/StoragePort';
 import dotenv from 'dotenv';
+import { accessTokenFromResponse } from './lib/httpAuth';
 dotenv.config();
 
 const BASE_URL = 'http://localhost:3000';
@@ -54,10 +55,11 @@ async function main() {
       }),
     });
     const data = await res.json();
-    if (res.status !== 200 || !data.accessToken) {
+    const cookieToken = accessTokenFromResponse(res);
+    if (res.status !== 200 || !cookieToken) {
       throw new Error(`Login failed for ${username}: status ${res.status} ${JSON.stringify(data)}`);
     }
-    return data.accessToken;
+    return cookieToken;
   }
 
   const tenantBCode = `TB-${Date.now() % 1000000}`;

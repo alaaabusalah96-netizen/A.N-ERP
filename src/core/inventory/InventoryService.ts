@@ -42,6 +42,15 @@ import {
 } from '../storage/StoragePort';
 import { PostingEngine } from '../engines/PostingEngine';
 import { NumberingEngine } from '../engines/NumberingEngine';
+import {
+  parsePositiveQuantity,
+  parseNonNegativeQuantity,
+  parseNonNegativeMoney,
+  parseIsoDate,
+  parseBoundedString,
+  parseEnum,
+  validationError,
+} from '../utils/validation';
 
 export interface StockLineItemInput {
   itemId: string;
@@ -180,6 +189,75 @@ export class InventoryService {
   ) {}
 
   // ============================================================================
+  // Phase 9 (VAL-001): input validation helpers — rejection happens BEFORE any write / number generation
+  // ============================================================================
+
+  private invalid(detail: string): { success: false; error: NonNullable<ServiceResult<never>['error']> } {
+    return { success: false, error: validationError(detail) };
+  }
+
+  /** Optional bounded text: undefined/null → undefined; anything else must pass parseBoundedString. */
+  private optText(v: unknown, label: string, max: number, multiline = false): { ok: true; value: string | undefined; detail?: string } | { ok: false; detail: string; value?: string | undefined } {
+    if (v === undefined || v === null) return { ok: true, value: undefined };
+    const r = parseBoundedString(v, label, { max, allowNewlines: multiline });
+    return r.ok ? { ok: true, value: r.value } : { ok: false, detail: r.detail };
+  }
+
+  /**
+   * Validates one stock line and returns a normalized copy (quantity/unitCost as numbers, texts trimmed).
+   * `opts.cost` validates unitCost when sent; `opts.expiry` validates expiryDate when sent.
+   */
+  private normalizeStockLine<T extends { quantity: any; unitCost?: any; batchNumber?: any; serialNumber?: any; expiryDate?: any; notes?: any; itemId?: any }>(
+    raw: T,
+    opts: { cost?: boolean; expiry?: boolean } = {}
+  ): { ok: true; line: T; detail?: string } | { ok: false; detail: string; line?: T } {
+    const who = raw && raw.itemId !== undefined ? ` للصنف ${raw.itemId}` : '';
+    const q = parsePositiveQuantity(raw?.quantity, `الكمية (quantity)${who}`);
+    if (!q.ok) return { ok: false, detail: q.detail };
+    const line: any = { ...raw, quantity: q.value };
+    if (opts.cost && raw.unitCost !== undefined && raw.unitCost !== null) {
+      const c = parseNonNegativeMoney(raw.unitCost, `تكلفة الوحدة (unitCost)${who}`);
+      if (!c.ok) return { ok: false, detail: c.detail };
+      line.unitCost = c.value;
+    }
+    if (opts.expiry && raw.expiryDate !== undefined && raw.expiryDate !== null && raw.expiryDate !== '') {
+      const d = parseIsoDate(raw.expiryDate, `تاريخ الصلاحية (expiryDate)${who}`);
+      if (!d.ok) return { ok: false, detail: d.detail };
+      line.expiryDate = d.value;
+    }
+    for (const [key, label, max, multi] of [
+      ['batchNumber', 'رقم الدفعة (batchNumber)', 64, false],
+      ['serialNumber', 'الرقم التسلسلي (serialNumber)', 128, false],
+      ['notes', 'الملاحظات (notes)', 2000, true],
+    ] as const) {
+      if (raw[key] === undefined || raw[key] === null || raw[key] === '') continue;
+      const t = this.optText(raw[key], `${label}${who}`, max, multi);
+      if (!t.ok) return { ok: false, detail: t.detail };
+      line[key] = t.value;
+    }
+    return { ok: true, line: line as T };
+  }
+
+  /** Validates header notes and every line; returns the normalized lines (same order) or the first error. */
+  private normalizeLines(
+    lines: StockLineItemInput[],
+    headerNotes: unknown[],
+    opts: { cost?: boolean; expiry?: boolean }
+  ): { ok: true; lines: StockLineItemInput[]; detail?: string } | { ok: false; detail: string; lines?: StockLineItemInput[] } {
+    for (const n of headerNotes) {
+      const t = this.optText(n, 'الملاحظات (notes)', 2000, true);
+      if (!t.ok) return { ok: false, detail: t.detail };
+    }
+    const out: StockLineItemInput[] = [];
+    for (const raw of lines) {
+      const norm = this.normalizeStockLine(raw, opts);
+      if (!norm.ok) return { ok: false, detail: norm.detail };
+      out.push(norm.line);
+    }
+    return { ok: true, lines: out };
+  }
+
+  // ============================================================================
   // 7A: Warehouses & Bins (تعدد المخازن ومواقع التخزين الفرعية)
   // ============================================================================
 
@@ -288,13 +366,38 @@ export class InventoryService {
       };
     }
 
+    // Phase 9: validate before building / saving anything
+    const vCode = parseBoundedString(itemData.itemCode, 'كود الصنف (itemCode)', { min: 1, max: 64 });
+    if (!vCode.ok) return this.invalid(vCode.detail);
+    const vName = parseBoundedString(itemData.nameAr, 'اسم الصنف (nameAr)', { min: 1, max: 200 });
+    if (!vName.ok) return this.invalid(vName.detail);
+    const money: Record<string, number | undefined> = {};
+    for (const [key, label] of [
+      ['standardCost', 'التكلفة المعيارية (standardCost)'],
+      ['averageCost', 'متوسط التكلفة (averageCost)'],
+      ['lastPurchaseCost', 'آخر تكلفة شراء (lastPurchaseCost)'],
+      ['sellingPrice', 'سعر البيع (sellingPrice)'],
+    ] as const) {
+      const raw = (itemData as any)[key];
+      if (raw === undefined || raw === null || raw === '') continue;
+      const m = parseNonNegativeMoney(raw, label);
+      if (!m.ok) return this.invalid(m.detail);
+      money[key] = m.value;
+    }
+    let valuationMethod: StockItem['valuationMethod'] = 'WEIGHTED_AVERAGE';
+    if (itemData.valuationMethod !== undefined && itemData.valuationMethod !== null && (itemData.valuationMethod as any) !== '') {
+      const vm = parseEnum(itemData.valuationMethod, 'طريقة التقييم (valuationMethod)', ['WEIGHTED_AVERAGE', 'FIFO', 'STANDARD_COST'] as const);
+      if (!vm.ok) return this.invalid(vm.detail);
+      valuationMethod = vm.value;
+    }
+
     const item: StockItem = {
       id: itemData.id || `item-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       tenantId,
       companyId: tenantId,
-      itemCode: itemData.itemCode,
+      itemCode: vCode.value,
       barcode: itemData.barcode,
-      nameAr: itemData.nameAr,
+      nameAr: vName.value,
       nameEn: itemData.nameEn,
       category: itemData.category,
       uom: itemData.uom || 'قطعة',
@@ -302,11 +405,11 @@ export class InventoryService {
       cogsAccountCode: itemData.cogsAccountCode || '510101',
       adjustmentExpenseAccountCode: itemData.adjustmentExpenseAccountCode || '520101',
       adjustmentGainAccountCode: itemData.adjustmentGainAccountCode || '410101',
-      valuationMethod: itemData.valuationMethod || 'WEIGHTED_AVERAGE',
-      standardCost: Number(itemData.standardCost) || 0,
-      averageCost: Number(itemData.averageCost) || 0,
-      lastPurchaseCost: Number(itemData.lastPurchaseCost) || 0,
-      sellingPrice: Number(itemData.sellingPrice) || 0,
+      valuationMethod,
+      standardCost: money.standardCost ?? 0,
+      averageCost: money.averageCost ?? 0,
+      lastPurchaseCost: money.lastPurchaseCost ?? 0,
+      sellingPrice: money.sellingPrice ?? 0,
       reorderPoint: Number(itemData.reorderPoint) || 0,
       minStockLevel: Number(itemData.minStockLevel) || 0,
       maxStockLevel: Number(itemData.maxStockLevel) || 1000,
@@ -403,6 +506,11 @@ export class InventoryService {
       };
     }
 
+    // Phase 9: validate + normalize every line (and the notes) BEFORE any lookup, number generation or write
+    const normReceipt = this.normalizeLines(lines, [input.notes, input.header?.notes], { cost: true, expiry: true });
+    if (!normReceipt.ok) return this.invalid(normReceipt.detail);
+    lines = normReceipt.lines;
+
     // Validate warehouse
     const whRes = await this.storage.getWarehouse(tenantId, warehouseId);
     if (!whRes.success || !whRes.data) {
@@ -421,17 +529,6 @@ export class InventoryService {
     // Validate all items exist and quantities > 0 (Atomic validation)
     const resolvedItems: Array<{ item: StockItem; line: StockLineItemInput }> = [];
     for (const line of lines) {
-      if (line.quantity <= 0) {
-        return {
-          success: false,
-          error: {
-            type: 'https://api.an-erp.local/errors/invalid-quantity',
-            title: 'كمية التوريد غير صحيحة',
-            status: 400,
-            detail: `الكمية للصنف ${line.itemId} يجب أن تكون أكبر من صفر.`,
-          },
-        };
-      }
       const itemRes = await this.storage.getStockItem(tenantId, line.itemId);
       if (!itemRes.success || !itemRes.data) {
         return {
@@ -641,6 +738,11 @@ export class InventoryService {
       };
     }
 
+    // Phase 9: validate + normalize every line (and the notes) BEFORE any lookup, number generation or write
+    const normIssue = this.normalizeLines(lines, [input.notes, input.header?.notes], {});
+    if (!normIssue.ok) return this.invalid(normIssue.detail);
+    lines = normIssue.lines;
+
     const whRes = await this.storage.getWarehouse(tenantId, warehouseId);
     if (!whRes.success || !whRes.data) {
       return {
@@ -659,17 +761,6 @@ export class InventoryService {
     // If ANY item has insufficient stock, fail immediately before ANY modification.
     const resolvedItems: Array<{ item: StockItem; line: StockLineItemInput; availableQty: number; avgCost: number }> = [];
     for (const line of lines) {
-      if (line.quantity <= 0) {
-        return {
-          success: false,
-          error: {
-            type: 'https://api.an-erp.local/errors/invalid-quantity',
-            title: 'كمية الصرف غير صحيحة',
-            status: 400,
-            detail: `الكمية للصنف ${line.itemId} يجب أن تكون أكبر من صفر.`,
-          },
-        };
-      }
       const itemRes = await this.storage.getStockItem(tenantId, line.itemId);
       if (!itemRes.success || !itemRes.data) {
         return {
@@ -845,6 +936,17 @@ export class InventoryService {
       };
     }
 
+    // Phase 9: validate and normalize every line (and the reason) before reading or writing anything
+    const reasonCheck = this.optText(input.reason, 'سبب المرتجع (reason)', 2000, true);
+    if (!reasonCheck.ok) return this.invalid(reasonCheck.detail);
+    const normalizedReturnLines: StockReturnInput['lines'] = [];
+    for (const rl of input.lines) {
+      const norm = this.normalizeStockLine(rl, { cost: true });
+      if (!norm.ok) return this.invalid(norm.detail);
+      normalizedReturnLines.push(norm.line);
+    }
+    input = { ...input, lines: normalizedReturnLines };
+
     const origRes = await this.storage.getStockDocument(tenantId, input.originalDocumentId);
     if (!origRes.success || !origRes.data) {
       return {
@@ -861,17 +963,6 @@ export class InventoryService {
 
     // Validate quantities against original document
     for (const rLine of input.lines) {
-      if (rLine.quantity <= 0) {
-        return {
-          success: false,
-          error: {
-            type: 'https://api.an-erp.local/errors/invalid-quantity',
-            title: 'كمية المرتجع غير صحيحة',
-            status: 400,
-            detail: `الكمية المرتجعة للصنف ${rLine.itemId} يجب أن تكون أكبر من صفر.`,
-          },
-        };
-      }
       const matchOrig = origDoc.lines.find(l => l.itemId === rLine.itemId);
       if (!matchOrig) {
         return {
@@ -1296,6 +1387,8 @@ export class InventoryService {
         },
       };
     }
+    const transferNotes = this.optText(input.notes, 'ملاحظات التحويل (notes)', 2000, true);
+    if (!transferNotes.ok) return this.invalid(transferNotes.detail);
 
     const srcWhRes = await this.storage.getWarehouse(tenantId, input.sourceWarehouseId);
     const tgtWhRes = await this.storage.getWarehouse(tenantId, input.targetWarehouseId);
@@ -1318,18 +1411,10 @@ export class InventoryService {
 
     const transferId = `tr-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
 
-    for (const l of input.lines) {
-      if (l.quantity <= 0) {
-        return {
-          success: false,
-          error: {
-            type: 'https://api.an-erp.local/errors/invalid-line-quantity',
-            title: 'كمية التحويل غير صحيحة',
-            status: 400,
-            detail: 'يجب أن تكون كمية جميع الأصناف المحولة أكبر من صفر.',
-          },
-        };
-      }
+    for (const lRaw of input.lines) {
+      const norm = this.normalizeStockLine(lRaw);
+      if (!norm.ok) return this.invalid(norm.detail);
+      const l = norm.line;
 
       const itemRes = await this.storage.getStockItem(tenantId, l.itemId);
       if (!itemRes.success || !itemRes.data) {
@@ -1543,6 +1628,8 @@ export class InventoryService {
         },
       };
     }
+    const countNotes = this.optText(input.notes, 'ملاحظات الجرد (notes)', 2000, true);
+    if (!countNotes.ok) return this.invalid(countNotes.detail);
 
     const whRes = await this.storage.getWarehouse(tenantId, input.warehouseId);
     if (!whRes.success || !whRes.data) {
@@ -1564,7 +1651,12 @@ export class InventoryService {
     let netVarianceAmount = 0;
     let hasVariance = false;
 
-    for (const l of input.lines) {
+    for (const lRaw of input.lines) {
+      const cq = parseNonNegativeQuantity(lRaw.countedQty, `الكمية المعدودة (countedQty) للصنف ${lRaw.itemId}`);
+      if (!cq.ok) return this.invalid(cq.detail);
+      const ex = this.normalizeStockLine({ itemId: lRaw.itemId, quantity: 1, batchNumber: lRaw.batchNumber, serialNumber: lRaw.serialNumber, notes: lRaw.notes });
+      if (!ex.ok) return this.invalid(ex.detail);
+      const l = { ...lRaw, countedQty: cq.value, batchNumber: ex.line.batchNumber, serialNumber: ex.line.serialNumber, notes: ex.line.notes };
       const itemRes = await this.storage.getStockItem(tenantId, l.itemId);
       if (!itemRes.success || !itemRes.data) continue;
       const item = itemRes.data;
@@ -1573,7 +1665,7 @@ export class InventoryService {
       const systemQty = stockRes.success && stockRes.data ? stockRes.data.currentQty : 0;
       const unitCost = stockRes.success && stockRes.data ? stockRes.data.averageCost : item.averageCost;
 
-      const countedQty = Math.max(0, Number(l.countedQty) || 0);
+      const countedQty = l.countedQty;
       const varianceQty = countedQty - systemQty;
       const varianceAmount = Math.round(varianceQty * unitCost * 100) / 100;
 

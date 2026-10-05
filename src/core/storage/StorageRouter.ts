@@ -283,7 +283,7 @@ export class StorageRouter {
         if (typeof (entry.adapter as any).close === 'function') {
           try {
             await (entry.adapter as any).close();
-          } catch (e) {}
+          } catch (e: any) { console.warn('[StorageRouter] closing idle dedicated adapter failed:', e?.message); }
         }
         this.dedicatedAdapters.delete(key);
         evictedCount++;
@@ -309,7 +309,7 @@ export class StorageRouter {
       if (entry && typeof (entry.adapter as any).close === 'function') {
         try {
           (entry.adapter as any).close().catch(() => {});
-        } catch (e) {}
+        } catch (e: any) { console.warn('[StorageRouter] closing evicted dedicated adapter failed:', e?.message); }
       }
       this.dedicatedAdapters.delete(oldestKey);
     }
@@ -332,7 +332,7 @@ export class StorageRouter {
       if (typeof (entry.adapter as any).close === 'function') {
         try {
           await (entry.adapter as any).close();
-        } catch (e) {}
+        } catch (e: any) { console.warn('[StorageRouter] closing dedicated adapter on shutdown failed:', e?.message); }
       }
     }
     this.dedicatedAdapters.clear();

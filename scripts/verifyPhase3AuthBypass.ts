@@ -294,7 +294,7 @@ async function runBattery() {
   });
   const cookieHeader = liveLogin.headers.get('set-cookie') || '';
   const tokenMatch = cookieHeader.match(/an_access_token=([^;]+)/);
-  const token = tokenMatch ? tokenMatch[1] : (liveLogin.data?.accessToken || '');
+  const token = tokenMatch ? tokenMatch[1] : '';
   const loginSuccess = liveLogin.status === 200 && Boolean(token);
   allResults.push({
     suite: 'Live Server',

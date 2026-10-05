@@ -5,6 +5,7 @@
 
 import { PostgresPrimaryAdapter } from '../src/core/storage/adapters/PostgresPrimaryAdapter';
 import dotenv from 'dotenv';
+import { accessTokenFromResponse } from './lib/httpAuth';
 dotenv.config();
 
 const BASE_URL = 'http://localhost:3000';
@@ -72,10 +73,11 @@ async function loginUser(username: string): Promise<string> {
   });
 
   const data = await res.json();
-  if (res.status !== 200 || !data.accessToken) {
+  const cookieToken = accessTokenFromResponse(res);
+  if (res.status !== 200 || !cookieToken) {
     throw new Error(`Login failed for ${username}: status ${res.status} ${JSON.stringify(data)}`);
   }
-  return data.accessToken;
+  return cookieToken;
 }
 
 interface TestRouteDef {

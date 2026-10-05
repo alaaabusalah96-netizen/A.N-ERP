@@ -104,7 +104,13 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
         return;
       }
 
-      onNotification('تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام.');
+      // Phase 5: show the one-time temporary password once, only inside this notification (never stored).
+      const temporaryPassword = data?.data?.temporaryPassword;
+      onNotification(
+        temporaryPassword
+          ? `تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام. كلمة المرور المؤقتة (تظهر مرة واحدة فقط): ${temporaryPassword}`
+          : 'تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام.'
+      );
       setShowAddModal(false);
       setNewUserData({
         username: '',

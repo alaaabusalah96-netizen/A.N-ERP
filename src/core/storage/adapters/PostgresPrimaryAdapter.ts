@@ -64,6 +64,8 @@ import {
   CustodyExpenseVoucher,
   DocumentAttachment,
   ItemPrice,
+  Invitation,
+  ConsumedInvitation,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -471,6 +473,21 @@ export class PostgresPrimaryAdapter implements StoragePort {
         org_node_id VARCHAR(64) REFERENCES an_org_nodes(id),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         CHECK ((scope_type = 'NODE' AND org_node_id IS NOT NULL) OR (scope_type = 'TENANT' AND org_node_id IS NULL))
+      );
+
+      -- Phase 5 (AUTH-003): persistent invitations (SHA-256 token hash only; the raw token is never stored)
+      CREATE TABLE IF NOT EXISTS an_invitations (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        token_hash VARCHAR(64) NOT NULL UNIQUE,
+        email VARCHAR(255) NOT NULL,
+        proposed_role VARCHAR(64) NOT NULL,
+        org_node_id VARCHAR(64) REFERENCES an_org_nodes(id),
+        status VARCHAR(16) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','ACCEPTED','REVOKED')),
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_by VARCHAR(64) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        consumed_at TIMESTAMPTZ
       );
 
       -- Schema migrations for Phase 3 fields
@@ -1160,7 +1177,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_item_prices',
           'an_memberships',
           'an_role_assignments',
-          'an_membership_scopes'
+          'an_membership_scopes',
+          'an_invitations'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -1249,7 +1267,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
           missing += (await client.query(countMissing + ' AND u.tenant_id = $1', [t.id])).rows[0].n;
           await client.query('COMMIT');
         } catch (e) {
-          try { await client.query('ROLLBACK'); } catch {}
+          try { await client.query('ROLLBACK'); } catch (rbErr: any) { console.warn('[PostgresPrimaryAdapter] membership backfill ROLLBACK failed:', rbErr?.message); }
           throw e;
         }
       }
@@ -1363,25 +1381,25 @@ export class PostgresPrimaryAdapter implements StoragePort {
       if (r.backup_codes) {
         backupCodes = typeof r.backup_codes === 'string' ? JSON.parse(r.backup_codes) : r.backup_codes;
       }
-    } catch { }
+    } catch (e: any) { console.warn('[PostgresPrimaryAdapter] user backup_codes parse failed:', e?.name); }
 
     try {
       if (r.hashed_backup_codes) {
         hashedBackupCodes = typeof r.hashed_backup_codes === 'string' ? JSON.parse(r.hashed_backup_codes) : r.hashed_backup_codes;
       }
-    } catch { }
+    } catch (e: any) { console.warn('[PostgresPrimaryAdapter] user hashed_backup_codes parse failed:', e?.name); }
 
     try {
       if (r.permissions) {
         permissions = typeof r.permissions === 'string' ? JSON.parse(r.permissions) : r.permissions;
       }
-    } catch { }
+    } catch (e: any) { console.warn('[PostgresPrimaryAdapter] user permissions parse failed:', e?.name); }
 
     try {
       if (r.encrypted_pii) {
         encryptedPii = typeof r.encrypted_pii === 'string' ? JSON.parse(r.encrypted_pii) : r.encrypted_pii;
       }
-    } catch { }
+    } catch (e: any) { console.warn('[PostgresPrimaryAdapter] user encrypted_pii parse failed:', e?.name); }
 
     return {
       id: r.id,
@@ -1645,6 +1663,66 @@ export class PostgresPrimaryAdapter implements StoragePort {
         const res = await this.query(
           `UPDATE an_memberships SET status = $3 WHERE tenant_id = $1 AND user_id = $2`,
           [tenantId, userId, status]
+        );
+        return { success: true as const, data: (res.rowCount ?? 0) > 0 };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  // Phase 5 (AUTH-003): invitations. Persists ONLY token_hash.
+  // org_node_id is stored only if that node exists in this tenant (otherwise NULL), so a stale user->node value cannot break invitations.
+  public async createInvitation(tenantId: string, inv: Invitation): Promise<StorageResult<boolean>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        await this.query(
+          `INSERT INTO an_invitations (id, tenant_id, token_hash, email, proposed_role, org_node_id, status, expires_at, created_by)
+           VALUES ($1, $2, $3, $4, $5,
+                   (SELECT id FROM an_org_nodes WHERE id = $6 AND tenant_id = $2),
+                   'PENDING', $7, $8)`,
+          [inv.id, tenantId, inv.tokenHash, inv.email, inv.proposedRole, inv.orgNodeId || null, new Date(inv.expiresAt), inv.createdBy]
+        );
+        return { success: true as const, data: true };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  // Atomic single-statement consume: two concurrent callers can never both receive a row.
+  public async consumeInvitation(tenantId: string, tokenHash: string): Promise<StorageResult<ConsumedInvitation | null>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const res = await this.query(
+          `UPDATE an_invitations
+           SET status = 'ACCEPTED', consumed_at = NOW()
+           WHERE tenant_id = $1 AND token_hash = $2 AND status = 'PENDING' AND expires_at > NOW()
+           RETURNING id, email, proposed_role, org_node_id`,
+          [tenantId, tokenHash]
+        );
+        if (res.rows.length !== 1) return { success: true as const, data: null };
+        const r = res.rows[0];
+        return {
+          success: true as const,
+          data: { id: r.id as string, email: r.email as string, proposedRole: r.proposed_role as string, orgNodeId: (r.org_node_id as string | null) || undefined },
+        };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async releaseInvitation(tenantId: string, tokenHash: string): Promise<StorageResult<boolean>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const res = await this.query(
+          `UPDATE an_invitations SET status = 'PENDING', consumed_at = NULL
+           WHERE tenant_id = $1 AND token_hash = $2 AND status = 'ACCEPTED'`,
+          [tenantId, tokenHash]
         );
         return { success: true as const, data: (res.rowCount ?? 0) > 0 };
       } catch (err: any) {
@@ -2730,7 +2808,9 @@ export class PostgresPrimaryAdapter implements StoragePort {
     } catch (err) {
       try {
         await client.query('ROLLBACK');
-      } catch {}
+      } catch (rbErr: any) {
+        console.warn('[PostgresPrimaryAdapter] withTenantScope ROLLBACK failed:', rbErr?.message);
+      }
       throw err;
     } finally {
       client.release();
@@ -3041,7 +3121,9 @@ export class PostgresPrimaryAdapter implements StoragePort {
           `DELETE FROM an_idempotency_keys WHERE tenant_id = $1 AND idempotency_key = $2 AND operation = $3`,
           [tenantId, idempotencyKey, operation]
         );
-      } catch {}
+      } catch (cleanupErr: any) {
+        console.warn('[PostgresPrimaryAdapter] idempotency savepoint cleanup failed:', cleanupErr?.message);
+      }
       throw err;
     }
   }

@@ -12,6 +12,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 import { PostgresPrimaryAdapter } from '../src/core/storage/adapters/PostgresPrimaryAdapter';
 import { ROLE_PERMISSION_MATRIX, hasPermission, PermissionGroup } from '../src/core/auth/PermissionMatrix';
+import { accessTokenFromResponse } from './lib/httpAuth';
 
 const BASE_URL = 'http://localhost:3000';
 const TENANT_ID = 'tenant-main';
@@ -68,8 +69,9 @@ async function login(username: string): Promise<string> {
     body: JSON.stringify({ tenantCode: 'MAIN', username, password }),
   });
   const data: any = await res.json();
-  if (res.status !== 200 || !data.accessToken) throw new Error(`Login failed for ${username}: ${res.status} ${JSON.stringify(data)}`);
-  return data.accessToken;
+  const cookieToken = accessTokenFromResponse(res);
+  if (res.status !== 200 || !cookieToken) throw new Error(`Login failed for ${username}: ${res.status} ${JSON.stringify(data)}`);
+  return cookieToken;
 }
 
 async function call(method: string, path: string, token?: string, body?: any, extraHeaders: Record<string, string> = {}) {

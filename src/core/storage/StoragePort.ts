@@ -107,6 +107,28 @@ export interface User {
   createdAt?: string;
 }
 
+// Phase 5 (AUTH-003): persistent invitations. Only the SHA-256 hash of the token is ever stored.
+export interface Invitation {
+  id: string;
+  tenantId: string;
+  tokenHash: string;
+  email: string;
+  proposedRole: string;
+  orgNodeId?: string;
+  status: 'PENDING' | 'ACCEPTED' | 'REVOKED';
+  expiresAt: string;
+  createdBy: string;
+  createdAt?: string;
+  consumedAt?: string;
+}
+
+export interface ConsumedInvitation {
+  id: string;
+  email: string;
+  proposedRole: string;
+  orgNodeId?: string;
+}
+
 export interface RefreshTokenRecord {
   tokenHash: string;
   familyId: string;
@@ -762,6 +784,10 @@ export interface StoragePort {
   // Phase 4 (IDENT-001): membership / role / scope layer
   getMembershipContext(tenantId: string, userId: string): Promise<StorageResult<{ membershipId: string; status: string; role: string | null; scopes: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[] } | null>>;
   setMembershipStatus(tenantId: string, userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED'): Promise<StorageResult<boolean>>;
+  // Phase 5 (AUTH-003): invitations (atomic consume / release)
+  createInvitation(tenantId: string, inv: Invitation): Promise<StorageResult<boolean>>;
+  consumeInvitation(tenantId: string, tokenHash: string): Promise<StorageResult<ConsumedInvitation | null>>;
+  releaseInvitation(tenantId: string, tokenHash: string): Promise<StorageResult<boolean>>;
 
   // Login Attempts & Security Tracking (Anomaly Detection & Lockout)
   getLastSuccessfulLogin(userId: string): Promise<StorageResult<LoginAttemptRecord | null>>;

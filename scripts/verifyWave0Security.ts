@@ -128,7 +128,7 @@ async function runVerification() {
 
   const cookieHeader = loginRes.headers.get('set-cookie') || '';
   const tokenMatch = cookieHeader.match(/an_access_token=([^;]+)/);
-  const token = tokenMatch ? tokenMatch[1] : (loginRes.data?.accessToken || '');
+  const token = tokenMatch ? tokenMatch[1] : '';
 
   if (!token) {
     console.error('Failed to login as accountant for RBAC test:', loginRes.data);
@@ -195,7 +195,7 @@ async function runVerification() {
 
   const adminCookie = adminLoginRes.headers.get('set-cookie') || '';
   const adminTokenMatch = adminCookie.match(/an_access_token=([^;]+)/);
-  const adminToken = adminTokenMatch ? adminTokenMatch[1] : (adminLoginRes.data?.accessToken || '');
+  const adminToken = adminTokenMatch ? adminTokenMatch[1] : '';
 
   if (!adminToken) {
     console.error('Failed to login as admin for authorized test:', adminLoginRes.data);

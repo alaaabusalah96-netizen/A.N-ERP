@@ -1,6 +1,7 @@
 import { execSync } from 'child_process';
 import { PostgresPrimaryAdapter } from '../src/core/storage/adapters/PostgresPrimaryAdapter';
 import dotenv from 'dotenv';
+import { accessTokenFromResponse } from './lib/httpAuth';
 dotenv.config();
 
 async function main() {
@@ -36,7 +37,7 @@ async function main() {
 
   const dataNoHeader = await resNoHeader.json();
   console.log(`[Without Header] Status: ${resNoHeader.status}, Success: ${dataNoHeader.success}, User: ${dataNoHeader.user?.username}`);
-  if (resNoHeader.status !== 200 || !dataNoHeader.success || !dataNoHeader.accessToken) {
+  if (resNoHeader.status !== 200 || !dataNoHeader.success || !accessTokenFromResponse(resNoHeader)) {
     throw new Error('Login without Idempotency-Key header failed');
   }
 
@@ -58,7 +59,7 @@ async function main() {
 
   const dataWithHeader = await resWithHeader.json();
   console.log(`[With Header] Status: ${resWithHeader.status}, Success: ${dataWithHeader.success}, User: ${dataWithHeader.user?.username}`);
-  if (resWithHeader.status !== 200 || !dataWithHeader.success || !dataWithHeader.accessToken) {
+  if (resWithHeader.status !== 200 || !dataWithHeader.success || !accessTokenFromResponse(resWithHeader)) {
     throw new Error('Login with Idempotency-Key header failed');
   }
   console.log('✓ (أ) Login succeeded both with and without Idempotency-Key header.\n');
@@ -99,8 +100,8 @@ async function main() {
   });
   const data2 = await call2.json();
 
-  const token1 = data1.accessToken;
-  const token2 = data2.accessToken;
+  const token1 = accessTokenFromResponse(call1);
+  const token2 = accessTokenFromResponse(call2);
   const session1 = data1.sessionId || data1.session?.id;
   const session2 = data2.sessionId || data2.session?.id;
 

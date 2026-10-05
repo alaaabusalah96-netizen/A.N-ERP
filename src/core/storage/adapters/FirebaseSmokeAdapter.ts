@@ -10,6 +10,8 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { SmokeTestResult } from './MySQLSmokeAdapter';
 import {
   StoragePort,
+  Invitation,
+  ConsumedInvitation,
   StorageResult,
   AccountingPeriod,
   AccountingPeriodStatus,
@@ -65,6 +67,9 @@ export class FirebaseSmokeAdapter implements StoragePort {
   updateUser(userId: string, updates: Partial<User>) { return this.smokeOnlyError<User>('updateUser'); }
   getMembershipContext(tenantId: string, userId: string) { return this.smokeOnlyError<{ membershipId: string; status: string; role: string | null; scopes: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[] } | null>('getMembershipContext'); }
   setMembershipStatus(tenantId: string, userId: string, status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED') { return this.smokeOnlyError<boolean>('setMembershipStatus'); }
+  createInvitation(tenantId: string, inv: Invitation) { return this.smokeOnlyError<boolean>('createInvitation'); }
+  consumeInvitation(tenantId: string, tokenHash: string) { return this.smokeOnlyError<ConsumedInvitation | null>('consumeInvitation'); }
+  releaseInvitation(tenantId: string, tokenHash: string) { return this.smokeOnlyError<boolean>('releaseInvitation'); }
   getLastSuccessfulLogin(userId: string) { return this.smokeOnlyError<LoginAttemptRecord | null>('getLastSuccessfulLogin'); }
   recordSuccessfulLogin(record: LoginAttemptRecord) { return this.smokeOnlyError<void>('recordSuccessfulLogin'); }
   getFailedLoginAttempts(userId: string) { return this.smokeOnlyError<FailedAttemptRecord | null>('getFailedLoginAttempts'); }

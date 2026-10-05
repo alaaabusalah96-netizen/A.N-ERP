@@ -23,7 +23,6 @@ export interface JWTPayload {
 export class TokenService {
   private static readonly ACCESS_TOKEN_TTL_SECONDS = 15 * 60; // 15 minutes (Section 1A)
   private static readonly REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-  private static readonly INVITE_TOKEN_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours (Section 1L)
 
   constructor(private readonly storage: StoragePort) {}
 
@@ -201,7 +200,9 @@ export class TokenService {
         if (decoded?.tenantId) {
           tenantId = decoded.tenantId;
         }
-      } catch {}
+      } catch {
+        // intentional: legacy/malformed token payload — fall back to parts[1] as tenantId
+      }
     }
 
     return this.storage.withTenantScope(tenantId, async () => {
@@ -299,59 +300,5 @@ export class TokenService {
    */
   public async revokeFamily(familyId: string, reason = 'EXPLICIT_REVOCATION'): Promise<void> {
     await this.storage.invalidateTokenFamily(familyId, reason);
-  }
-
-  /**
-   * Generates a time-limited signed invitation link (Section 1L)
-   */
-  public generateInvitationToken(tenantId: string, email: string, role: string): {
-    token: string;
-    expiresAt: string;
-  } {
-    const payload = {
-      tenantId,
-      email,
-      role,
-      nonce: crypto.randomUUID(),
-      exp: Date.now() + TokenService.INVITE_TOKEN_TTL_MS,
-    };
-
-    const raw = Buffer.from(JSON.stringify(payload)).toString('base64url');
-    const signature = crypto.createHmac('sha256', this.getSecret()).update(raw).digest('base64url');
-    const token = `${raw}.${signature}`;
-
-    return {
-      token,
-      expiresAt: new Date(payload.exp).toISOString(),
-    };
-  }
-
-  /**
-   * Verifies an invitation token
-   */
-  public verifyInvitationToken(token: string): {
-    valid: boolean;
-    data?: { tenantId: string; email: string; role: string };
-    error?: string;
-  } {
-    try {
-      const [raw, signature] = token.split('.');
-      const expectedSig = crypto.createHmac('sha256', this.getSecret()).update(raw).digest('base64url');
-      if (signature !== expectedSig) {
-        return { valid: false, error: 'رابط الدعوة غير صالح أو تم التلاعب به' };
-      }
-
-      const payload = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
-      if (Date.now() > payload.exp) {
-        return { valid: false, error: 'انتهت صلاحية رابط الدعوة (أكثر من 48 ساعة)' };
-      }
-
-      return {
-        valid: true,
-        data: { tenantId: payload.tenantId, email: payload.email, role: payload.role },
-      };
-    } catch (e: any) {
-      return { valid: false, error: e.message };
-    }
   }
 }
