@@ -6056,7 +6056,60 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
-  public async getWarehouseStock(
+  
+  // Phase 16 (REC-001)
+  public async getInventoryIntegrityAggregates(tenantId: string): Promise<any> {
+    try {
+      const r = await this.pool.query(`
+        WITH stock AS (
+          SELECT warehouse_id, item_id,
+                 SUM(current_qty)::float8 AS stock_qty,
+                 SUM(total_value)::float8 AS stock_value
+          FROM an_warehouse_stock
+          WHERE tenant_id = $1
+          GROUP BY warehouse_id, item_id
+        ),
+        mov AS (
+          SELECT warehouse_id, item_id,
+                 SUM(CASE
+                   WHEN movement_type IN ('RECEIPT','TRANSFER_IN','COUNT_ADJUSTMENT_GAIN') THEN quantity
+                   WHEN movement_type IN ('ISSUE','TRANSFER_OUT','COUNT_ADJUSTMENT_LOSS') THEN -quantity
+                   ELSE 0 END)::float8 AS mov_qty,
+                 SUM(CASE
+                   WHEN movement_type IN ('RECEIPT','TRANSFER_IN','COUNT_ADJUSTMENT_GAIN') THEN total_cost
+                   WHEN movement_type IN ('ISSUE','TRANSFER_OUT','COUNT_ADJUSTMENT_LOSS') THEN -total_cost
+                   ELSE 0 END)::float8 AS mov_value
+          FROM an_stock_movements
+          WHERE tenant_id = $1
+          GROUP BY warehouse_id, item_id
+        )
+        SELECT
+          COALESCE(s.warehouse_id, m.warehouse_id) AS warehouse_id,
+          COALESCE(s.item_id, m.item_id) AS item_id,
+          COALESCE(s.stock_qty, 0) AS stock_qty,
+          COALESCE(s.stock_value, 0) AS stock_value,
+          COALESCE(m.mov_qty, 0) AS movements_qty,
+          COALESCE(m.mov_value, 0) AS movements_value
+        FROM stock s
+        FULL OUTER JOIN mov m ON s.warehouse_id = m.warehouse_id AND s.item_id = m.item_id
+      `, [tenantId]);
+      return {
+        success: true,
+        data: r.rows.map((row: any) => ({
+          warehouseId: row.warehouse_id,
+          itemId: row.item_id,
+          stockQty: Number(row.stock_qty) || 0,
+          stockValue: Number(row.stock_value) || 0,
+          movementsQty: Number(row.movements_qty) || 0,
+          movementsValue: Number(row.movements_value) || 0,
+        })),
+      };
+    } catch (e: any) {
+      return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } };
+    }
+  }
+
+public async getWarehouseStock(
     tenantId: string,
     warehouseId: string,
     itemId: string

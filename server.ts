@@ -3752,7 +3752,22 @@ async function startServer() {
   });
 
   // 7B: Stock Balances & Real-Time Levels
-  app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
+  
+  // Phase 16 (REC-001): stock vs ledger reconciliation (read-only)
+  app.get('/api/inventory/reconciliation', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const result = await svc.getInventoryReconciliation(tenantId);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);

@@ -702,6 +702,18 @@ export interface CompleteGoodsReceiptAtomicInput {
   newPoStatus: PurchaseOrderStatus;
 }
 
+// Phase 16 (REC-001): stock vs ledger integrity (read-only aggregates)
+export interface InventoryIntegrityRow {
+  warehouseId: string;
+  itemId: string;
+  stockQty: number;
+  stockValue: number;
+  movementsQty: number;
+  movementsValue: number;
+}
+
+
+
 export interface StockCountLine {
   id: string;
   tenantId: string;
@@ -1111,6 +1123,9 @@ export interface StoragePort {
   updateGoodsReceipt(tenantId: string, receipt: GoodsReceipt): Promise<StorageResult<GoodsReceipt>>;
   completeGoodsReceiptAtomic(tenantId: string, input: CompleteGoodsReceiptAtomicInput, idempotencyKey: string): Promise<StorageResult<GoodsReceipt>>;
   sumOpenReceiptQtyForPoLine(tenantId: string, poLineId: string): Promise<StorageResult<number>>;
+  // Phase 16 (REC-001)
+  getInventoryIntegrityAggregates(tenantId: string): Promise<StorageResult<InventoryIntegrityRow[]>>;
+
 
 
   

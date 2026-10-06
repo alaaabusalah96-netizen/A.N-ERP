@@ -14,7 +14,7 @@ import {
   StockAccountingConfig,
   defaultStockAccountingConfig,
   PurchaseOrder, PurchaseOrderLine, GoodsReceipt, GoodsReceiptLine,
-  PurchaseOrderStatus, CompleteGoodsReceiptAtomicInput,
+  PurchaseOrderStatus, CompleteGoodsReceiptAtomicInput, InventoryIntegrityRow,
   planCostLayerConsumption,
   PostStockTransferAtomicInput,
   Invitation,
@@ -2047,7 +2047,43 @@ export class InMemoryAdapter implements StoragePort {
     return { success: true, data: sum };
   }
 
-  public async getWarehouseStock(tenantId: string, warehouseId: string, itemId: string): Promise<StorageResult<WarehouseStock | null>> {
+  
+  // Phase 16 (REC-001)
+  public async getInventoryIntegrityAggregates(tenantId: string): Promise<StorageResult<InventoryIntegrityRow[]>> {
+    const POS = new Set(['RECEIPT', 'TRANSFER_IN', 'COUNT_ADJUSTMENT_GAIN']);
+    const NEG = new Set(['ISSUE', 'TRANSFER_OUT', 'COUNT_ADJUSTMENT_LOSS']);
+    const map = new Map<string, InventoryIntegrityRow>();
+    const key = (w: string, i: string) => `${w}|${i}`;
+    for (const s of this.warehouseStock.values()) {
+      if ((s as any).tenantId !== tenantId) continue;
+      const k = key((s as any).warehouseId, (s as any).itemId);
+      map.set(k, {
+        warehouseId: (s as any).warehouseId,
+        itemId: (s as any).itemId,
+        stockQty: Number((s as any).currentQty) || 0,
+        stockValue: Number((s as any).totalValue) || 0,
+        movementsQty: 0,
+        movementsValue: 0,
+      });
+    }
+    // stock movements map name?
+    for (const m of this.stockMovements.values()) {
+      if ((m as any).tenantId !== tenantId) continue;
+      const w = (m as any).warehouseId;
+      const i = (m as any).itemId;
+      const k = key(w, i);
+      const row = map.get(k) || { warehouseId: w, itemId: i, stockQty: 0, stockValue: 0, movementsQty: 0, movementsValue: 0 };
+      const qty = Math.abs(Number((m as any).quantity) || 0);
+      const cost = Math.abs(Number((m as any).totalCost) || 0);
+      const sign = POS.has((m as any).movementType) ? 1 : NEG.has((m as any).movementType) ? -1 : 0;
+      row.movementsQty += sign * qty;
+      row.movementsValue += sign * cost;
+      map.set(k, row);
+    }
+    return { success: true, data: Array.from(map.values()) };
+  }
+
+public async getWarehouseStock(tenantId: string, warehouseId: string, itemId: string): Promise<StorageResult<WarehouseStock | null>> {
     const sl = this.warehouseStock.get(`${tenantId}:${warehouseId}:${itemId}`);
     return { success: true, data: sl ? { ...sl } : null };
   }

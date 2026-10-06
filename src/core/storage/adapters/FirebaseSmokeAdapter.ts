@@ -322,4 +322,6 @@ export class FirebaseSmokeAdapter implements StoragePort {
   completeGoodsReceiptAtomic(..._a: any[]) { return this.smokeOnlyError<any>('completeGoodsReceiptAtomic'); }
   sumOpenReceiptQtyForPoLine(..._a: any[]) { return this.smokeOnlyError<any>('sumOpenReceiptQtyForPoLine'); }
 
+  getInventoryIntegrityAggregates(tenantId: string) { return this.smokeOnlyError<any>('getInventoryIntegrityAggregates'); }
+
 }

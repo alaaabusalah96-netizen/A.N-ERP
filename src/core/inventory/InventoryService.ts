@@ -402,6 +402,123 @@ export class InventoryService {
     return this.stockAccounting().retryDocumentJournal(tenantId, docId, idempotencyKey);
   }
 
+
+  // Phase 16 (REC-001): read-only stock vs ledger reconciliation report
+  public async getInventoryReconciliation(tenantId: string): Promise<ServiceResult<any>> {
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const cfgRes = await this.storage.getStockAccountingConfig(tenantId);
+    const cfg = cfgRes.success && cfgRes.data ? cfgRes.data : null;
+    const autoPost = !!(cfg && cfg.autoPostEnabled);
+    const defaultInv = (cfg && cfg.defaultInventoryAccountCode) || '1105';
+    const inTransitCode = (cfg && cfg.inTransitAccountCode) || '1109';
+
+    const itemsRes = await this.storage.listStockItems(tenantId);
+    const items = itemsRes.success && itemsRes.data ? itemsRes.data : [];
+    const stockRes = await this.storage.listWarehouseStock(tenantId);
+    const stocks = stockRes.success && stockRes.data ? stockRes.data : [];
+
+    // stock value by inventory account
+    const valueByAccount = new Map<string, number>();
+    for (const s of stocks) {
+      const item = items.find((i: any) => i.id === (s as any).itemId);
+      const acc = (item && (item as any).inventoryAccountCode) || defaultInv;
+      const v = Number((s as any).totalValue) || 0;
+      valueByAccount.set(acc, (valueByAccount.get(acc) || 0) + v);
+    }
+
+    const accounts: any[] = [];
+    const accountCodes = new Set<string>([...valueByAccount.keys(), defaultInv]);
+    for (const code of accountCodes) {
+      const stockValue = r2(valueByAccount.get(code) || 0);
+      let ledgerBalance = 0;
+      const bal = await this.storage.getAccountBalance(tenantId, code);
+      if (bal.success && bal.data) ledgerBalance = r2(Number(bal.data.balance) || 0);
+      const difference = r2(stockValue - ledgerBalance);
+      const status = Math.abs(difference) <= 0.01 ? 'MATCHED' : 'DIFFERENT';
+      accounts.push({ accountCode: code, stockValue, ledgerBalance, difference, status });
+    }
+
+    // in-transit
+    let inTransit: any = { status: 'NOT_APPLICABLE', accountCode: inTransitCode, openTransfersValue: 0, ledgerBalance: 0, difference: 0 };
+    if (autoPost) {
+      const trRes = await this.storage.listStockTransfers(tenantId, { status: 'IN_TRANSIT' });
+      const openTransfersValue = r2(
+        (trRes.success && trRes.data ? trRes.data : []).reduce((s: number, t: any) => s + (Number(t.totalCost) || 0), 0)
+      );
+      let ledgerBalance = 0;
+      const bal = await this.storage.getAccountBalance(tenantId, inTransitCode);
+      if (bal.success && bal.data) ledgerBalance = r2(Number(bal.data.balance) || 0);
+      const difference = r2(openTransfersValue - ledgerBalance);
+      inTransit = {
+        status: Math.abs(difference) <= 0.01 ? 'MATCHED' : 'DIFFERENT',
+        accountCode: inTransitCode,
+        openTransfersValue,
+        ledgerBalance,
+        difference,
+      };
+    }
+
+    // integrity
+    const aggRes = await this.storage.getInventoryIntegrityAggregates(tenantId);
+    const rows = aggRes.success && aggRes.data ? aggRes.data : [];
+    const qtyMismatches: any[] = [];
+    const valueMismatches: any[] = [];
+    for (const row of rows) {
+      if (Math.abs(row.stockQty - row.movementsQty) > 0.0001) {
+        qtyMismatches.push({ warehouseId: row.warehouseId, itemId: row.itemId, stockQty: row.stockQty, movementsQty: row.movementsQty });
+      }
+      if (Math.abs(row.stockValue - row.movementsValue) > 0.05) {
+        valueMismatches.push({ warehouseId: row.warehouseId, itemId: row.itemId, stockValue: row.stockValue, movementsValue: row.movementsValue });
+      }
+    }
+
+    // pending journals
+    let pendingJournals = 0;
+    try {
+      const docs = await this.storage.listStockDocuments(tenantId, { limit: 5000 });
+      if (docs.success && docs.data) {
+        pendingJournals += docs.data.filter((d: any) => d.journalStatus === 'PENDING_RETRY').length;
+      }
+      const trs = await this.storage.listStockTransfers(tenantId);
+      if (trs.success && trs.data) {
+        pendingJournals += trs.data.filter((d: any) => d.journalStatus === 'PENDING_RETRY').length;
+      }
+    } catch { /* column may be absent in older schemas — ignore */ }
+
+    const notes: string[] = [];
+    const hasAccountDiff = accounts.some((a) => a.status === 'DIFFERENT');
+    if (!autoPost && hasAccountDiff) {
+      notes.push('الفرق متوقع لأن القيود التلقائية للمخزون غير مفعّلة');
+    }
+    if (pendingJournals > 0) {
+      notes.push(`يوجد ${pendingJournals} مستند/تحويل بقيود معلّقة (PENDING_RETRY)`);
+    }
+    if (qtyMismatches.length === 0 && valueMismatches.length === 0 && !hasAccountDiff && pendingJournals === 0) {
+      notes.push('المخزن والحسابات متطابقان');
+    }
+    if (valueMismatches.length > 0) {
+      notes.push('فروق القيمة بين الرصيد والحركات قد تظهر بالمتوسط المرجح عند الصرف (حد السماح 0.05)');
+    }
+
+    return {
+      success: true,
+      data: {
+        generatedAt: new Date().toISOString(),
+        autoPostEnabled: autoPost,
+        accounts,
+        inTransit,
+        integrity: {
+          qtyMismatches: qtyMismatches.length,
+          valueMismatches: valueMismatches.length,
+          qtySamples: qtyMismatches.slice(0, 20),
+          valueSamples: valueMismatches.slice(0, 20),
+        },
+        pendingJournals,
+        notes,
+      },
+    };
+  }
+
 public async getInventorySettings(tenantId: string): Promise<ServiceResult<InventorySettings>> {
     return this.storage.getInventorySettings(tenantId);
   }
