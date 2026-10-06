@@ -42,6 +42,7 @@ import {
   InventorySettings,
 } from '../storage/StoragePort';
 import { PostingEngine } from '../engines/PostingEngine';
+import { StockAccountingService, AutoJournalOutcome } from './StockAccountingService';
 import { NumberingEngine } from '../engines/NumberingEngine';
 import {
   parsePositiveQuantity,
@@ -354,7 +355,54 @@ export class InventoryService {
   // ============================================================================
 
   // Phase 13 (COST-001): inventory settings (default valuation method, negative stock, over-receipt tolerance)
-  public async getInventorySettings(tenantId: string): Promise<ServiceResult<InventorySettings>> {
+  
+  // Phase 14 (ACC-AUTO-001)
+  private stockAccounting(): StockAccountingService {
+    return new StockAccountingService(this.storage, this.postingEngine);
+  }
+  private async precheckAutoJournal(tenantId: string): Promise<ServiceResult<null> | null> {
+    const cfg = await this.stockAccounting().getConfig(tenantId);
+    if (!cfg.autoPostEnabled) return null;
+    const v = await this.stockAccounting().validateConfigAccounts(tenantId, cfg);
+    if (!v.ok) return { success: false, error: { type: 'https://api.an-erp.local/errors/accounting-config-invalid', title: 'إعدادات المحاسبة غير صالحة', status: 422, detail: (v as any).detail } };
+    const per = await this.stockAccounting().assertOpenPeriod(tenantId, new Date().toISOString());
+    if (!per.ok) return { success: false, error: { type: (per as any).type, title: 'فترة محاسبية مقفلة', status: (per as any).status, detail: (per as any).detail } };
+    return null;
+  }
+  private async loadItemsMap(tenantId: string, itemIds: string[]): Promise<Map<string, any>> {
+    const m = new Map();
+    for (const id of itemIds) {
+      const r = await this.storage.getStockItem(tenantId, id);
+      if (r.success && r.data) m.set(id, r.data);
+    }
+    return m;
+  }
+  private attachJournal(doc: any, outcome: AutoJournalOutcome): any {
+    return { ...doc, journalStatus: outcome.journalStatus, journalEntryId: outcome.journalEntryId || doc.journalEntryId };
+  }
+  public async getStockAccountingConfig(tenantId: string) { return this.storage.getStockAccountingConfig(tenantId); }
+  public async saveStockAccountingConfig(tenantId: string, input: any, actorId: string, idempotencyKey: string) {
+    const sa = this.stockAccounting();
+    await sa.ensureDefaultAccounts(tenantId, actorId);
+    const cur = await sa.getConfig(tenantId);
+    const patch: any = {};
+    if (input.autoPostEnabled !== undefined) {
+      if (typeof input.autoPostEnabled !== 'boolean') return this.invalid('auto_post_enabled يجب أن يكون true أو false.');
+      patch.autoPostEnabled = input.autoPostEnabled;
+    }
+    for (const k of ['grirAccountCode', 'inTransitAccountCode', 'defaultInventoryAccountCode', 'defaultCogsAccountCode']) {
+      if (input[k] !== undefined && input[k] !== null && input[k] !== '') patch[k] = String(input[k]).trim();
+    }
+    const merged = { ...cur, ...patch, tenantId };
+    const v = await sa.validateConfigAccounts(tenantId, merged);
+    if (!v.ok) return { success: false as const, error: { type: 'https://api.an-erp.local/errors/accounting-config-invalid', title: 'إعدادات المحاسبة غير صالحة', status: 422, detail: (v as any).detail } };
+    return this.storage.saveStockAccountingConfig(tenantId, patch, actorId, idempotencyKey);
+  }
+  public async retryStockDocumentJournal(tenantId: string, docId: string, idempotencyKey: string) {
+    return this.stockAccounting().retryDocumentJournal(tenantId, docId, idempotencyKey);
+  }
+
+public async getInventorySettings(tenantId: string): Promise<ServiceResult<InventorySettings>> {
     return this.storage.getInventorySettings(tenantId);
   }
 
@@ -738,13 +786,23 @@ export class InventoryService {
 
     // Phase 10 (STK-ATOMIC-001): movements + document + batches + serials in ONE transaction. The only result is the one returned
     // by the storage layer (no more "success" when saving the document failed).
+    {
+      const pre = await this.precheckAutoJournal(tenantId);
+      if (pre) return pre as any;
+    }
     const postRes = await this.storage.postStockDocumentAtomic(
       tenantId,
       { doc: stockDoc, movements, batches: batchesToSave, serials: serialsToSave },
       finalIdempotencyKey
     );
     if (!postRes.success || !postRes.data) return postRes as any;
-    const finalDoc = postRes.data;
+    let finalDoc = postRes.data;
+    {
+      const items = await this.loadItemsMap(tenantId, (finalDoc.lines || []).map((l: any) => l.itemId));
+      const outcome = await this.stockAccounting().postForDocument(tenantId, finalDoc, items, 'RECEIPT', finalIdempotencyKey || finalDoc.id);
+      finalDoc = this.attachJournal(finalDoc, outcome);
+      if (outcome.messageAr) (finalDoc as any).journalMessageAr = outcome.messageAr;
+    }
     if (finalIdempotencyKey) {
       await this.storage.saveIdempotencyRecord(tenantId, finalIdempotencyKey, 'receiveStock', finalDoc);
     }
@@ -973,9 +1031,19 @@ export class InventoryService {
     };
 
     // Phase 10: the early balance check above gives a fast message; the FINAL authority is the locked check inside the transaction
+    {
+      const pre = await this.precheckAutoJournal(tenantId);
+      if (pre) return pre as any;
+    }
     const postRes = await this.storage.postStockDocumentAtomic(tenantId, { doc: stockDoc, movements, allowNegative }, finalIdempotencyKey);
     if (!postRes.success || !postRes.data) return postRes as any;
-    const finalDoc = postRes.data;
+    let finalDoc = postRes.data;
+    {
+      const items = await this.loadItemsMap(tenantId, (finalDoc.lines || []).map((l: any) => l.itemId));
+      const outcome = await this.stockAccounting().postForDocument(tenantId, finalDoc, items, 'ISSUE', finalIdempotencyKey || finalDoc.id);
+      finalDoc = this.attachJournal(finalDoc, outcome);
+      if (outcome.messageAr) (finalDoc as any).journalMessageAr = outcome.messageAr;
+    }
     for (const alert of reorderAlerts) {
       await this.storage.appendSystemChangeLog({
         id: alert.id,
@@ -1571,12 +1639,24 @@ export class InventoryService {
 
     // Phase 11 (STK-ATOMIC-002): deduction from the source + the transfer document are ONE transaction.
     // The value that leaves the source is the locked weighted average, and it is stored on the lines/total of the document.
+    {
+      const pre = await this.precheckAutoJournal(tenantId);
+      if (pre) return pre as any;
+    }
     const posted = await this.storage.postStockTransferAtomic(
       tenantId,
       { mode: 'DISPATCH', transfer, lines: linesToSave, actorId: input.requestedBy, actorName: input.requestedByName },
       input.idempotencyKey
     );
-    return posted;
+    if (!posted.success || !posted.data) return posted;
+    let finalTr = posted.data;
+    {
+      const items = await this.loadItemsMap(tenantId, linesToSave.map((l) => l.itemId));
+      const outcome = await this.stockAccounting().postForTransfer(tenantId, finalTr, linesToSave, items, 'DISPATCH', input.idempotencyKey || finalTr.id);
+      finalTr = { ...finalTr, journalStatus: outcome.journalStatus, dispatchJournalEntryId: outcome.journalEntryId || (finalTr as any).dispatchJournalEntryId } as any;
+      if (outcome.messageAr) (finalTr as any).journalMessageAr = outcome.messageAr;
+    }
+    return { success: true, data: finalTr };
   }
 
   public async receiveTransfer(
@@ -1602,11 +1682,26 @@ export class InventoryService {
     const { transfer } = existing.data;
     // Phase 11: the status check, the movements and the status change happen under one row lock inside the transaction
     // (an already-received document answers 409 invalid-transfer-status from there).
-    return this.storage.postStockTransferAtomic(
+    {
+      const pre = await this.precheckAutoJournal(tenantId);
+      if (pre) return pre as any;
+    }
+    const posted = await this.storage.postStockTransferAtomic(
       tenantId,
       { mode: 'RECEIVE', transfer, lines: [], actorId, actorName },
       idempotencyKey
     );
+    if (!posted.success || !posted.data) return posted;
+    let finalTr = posted.data;
+    {
+      const full = await this.storage.getStockTransfer(tenantId, transferId);
+      const lines = full.success && full.data ? full.data.lines : [];
+      const items = await this.loadItemsMap(tenantId, lines.map((l: any) => l.itemId));
+      const outcome = await this.stockAccounting().postForTransfer(tenantId, finalTr, lines, items, 'RECEIVE', idempotencyKey || finalTr.id);
+      finalTr = { ...finalTr, journalStatus: outcome.journalStatus, receiveJournalEntryId: outcome.journalEntryId || (finalTr as any).receiveJournalEntryId } as any;
+      if (outcome.messageAr) (finalTr as any).journalMessageAr = outcome.messageAr;
+    }
+    return { success: true, data: finalTr };
   }
 
   public async getStockTransfer(

@@ -633,6 +633,10 @@ export interface StockTransfer {
   createdAt: string;
   updatedAt: string;
   idempotencyKey?: string;
+  // Phase 14 (ACC-AUTO-001)
+  dispatchJournalEntryId?: string;
+  receiveJournalEntryId?: string;
+  journalStatus?: 'NONE' | 'POSTED' | 'PENDING_RETRY';
 }
 
 export interface StockCountLine {
@@ -1027,6 +1031,11 @@ export interface StoragePort {
   // Phase 13 (COST-001): per-tenant inventory settings (defaults are returned when no row exists)
   getInventorySettings(tenantId: string): Promise<StorageResult<InventorySettings>>;
   saveInventorySettings(tenantId: string, settings: Partial<Omit<InventorySettings, 'tenantId'>>, actorId: string, idempotencyKey: string): Promise<StorageResult<InventorySettings>>;
+  // Phase 14 (ACC-AUTO-001)
+  getStockAccountingConfig(tenantId: string): Promise<StorageResult<StockAccountingConfig>>;
+  saveStockAccountingConfig(tenantId: string, settings: Partial<Omit<StockAccountingConfig, 'tenantId'>>, actorId: string, idempotencyKey: string): Promise<StorageResult<StockAccountingConfig>>;
+  setStockDocumentJournal(tenantId: string, docId: string, journalEntryId: string | null, status: 'NONE' | 'POSTED' | 'PENDING_RETRY'): Promise<StorageResult<void>>;
+  setStockTransferJournal(tenantId: string, transferId: string, which: 'DISPATCH' | 'RECEIVE', journalEntryId: string | null, status: 'NONE' | 'POSTED' | 'PENDING_RETRY'): Promise<StorageResult<void>>;
   
   createStockTransfer(tenantId: string, transfer: StockTransfer, lines: StockTransferLine[], idempotencyKey: string): Promise<StorageResult<StockTransfer>>;
   postStockTransferAtomic(tenantId: string, input: PostStockTransferAtomicInput, idempotencyKey: string): Promise<StorageResult<StockTransfer>>;
@@ -1093,6 +1102,21 @@ export interface StockDocumentLine {
 }
 
 // Phase 10 (STK-ATOMIC-001): everything needed to post one stock document in a single all-or-nothing transaction
+// Phase 14 (ACC-AUTO-001)
+export interface StockAccountingConfig {
+  tenantId: string;
+  autoPostEnabled: boolean;
+  grirAccountCode: string;
+  inTransitAccountCode: string;
+  defaultInventoryAccountCode: string;
+  defaultCogsAccountCode: string;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+export function defaultStockAccountingConfig(tenantId: string): StockAccountingConfig {
+  return { tenantId, autoPostEnabled: false, grirAccountCode: '2106', inTransitAccountCode: '1109', defaultInventoryAccountCode: '1105', defaultCogsAccountCode: '5101' };
+}
+
 // Phase 13 (COST-001): selectable inventory costing -------------------------------------------------
 export interface InventorySettings {
   tenantId: string;
@@ -1180,6 +1204,9 @@ export interface StockDocument {
   idempotencyKey: string;
   createdAt: string;
   postedAt: string;
+  // Phase 14 (ACC-AUTO-001)
+  journalEntryId?: string;
+  journalStatus?: 'NONE' | 'POSTED' | 'PENDING_RETRY';
 }
 
 export interface CustodyExpenseLine {

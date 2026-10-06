@@ -266,4 +266,9 @@ export class MongoDBSmokeAdapter implements StoragePort {
       }
     }
   }
+  getStockAccountingConfig(tenantId: string) { return this.smokeOnlyError<any>('getStockAccountingConfig'); }
+  saveStockAccountingConfig(tenantId: string, settings: any, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<any>('saveStockAccountingConfig'); }
+  setStockDocumentJournal(tenantId: string, docId: string, journalEntryId: string | null, status: any) { return this.smokeOnlyError<any>('setStockDocumentJournal'); }
+  setStockTransferJournal(tenantId: string, transferId: string, which: any, journalEntryId: string | null, status: any) { return this.smokeOnlyError<any>('setStockTransferJournal'); }
+
 }

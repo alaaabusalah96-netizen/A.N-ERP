@@ -891,6 +891,24 @@ export class PostgresPrimaryAdapter implements StoragePort {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
+      -- Phase 14 (ACC-AUTO-001)
+      CREATE TABLE IF NOT EXISTS an_stock_accounting_config (
+        tenant_id VARCHAR(64) PRIMARY KEY REFERENCES an_tenants(id),
+        auto_post_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        grir_account_code VARCHAR(32) NOT NULL DEFAULT '2106',
+        in_transit_account_code VARCHAR(32) NOT NULL DEFAULT '1109',
+        default_inventory_account_code VARCHAR(32) NOT NULL DEFAULT '1105',
+        default_cogs_account_code VARCHAR(32) NOT NULL DEFAULT '5101',
+        updated_by VARCHAR(64),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      ALTER TABLE an_stock_documents ADD COLUMN IF NOT EXISTS journal_entry_id VARCHAR(64);
+      ALTER TABLE an_stock_documents ADD COLUMN IF NOT EXISTS journal_status VARCHAR(16);
+      ALTER TABLE an_stock_transfers ADD COLUMN IF NOT EXISTS dispatch_journal_entry_id VARCHAR(64);
+      ALTER TABLE an_stock_transfers ADD COLUMN IF NOT EXISTS receive_journal_entry_id VARCHAR(64);
+      ALTER TABLE an_stock_transfers ADD COLUMN IF NOT EXISTS journal_status VARCHAR(16);
+
+
       CREATE TABLE IF NOT EXISTS an_stock_movements (
         id VARCHAR(64) PRIMARY KEY,
         tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
@@ -6379,6 +6397,46 @@ export class PostgresPrimaryAdapter implements StoragePort {
     } finally {
       client.release();
     }
+  }
+
+  public async getStockAccountingConfig(tenantId: string): Promise<any> {
+    const { defaultStockAccountingConfig } = await import('../StoragePort');
+    try {
+      const r = await this.pool.query(`SELECT * FROM an_stock_accounting_config WHERE tenant_id = $1`, [tenantId]);
+      if (!r.rows.length) return { success: true, data: defaultStockAccountingConfig(tenantId) };
+      const row = r.rows[0];
+      return { success: true, data: {
+        tenantId, autoPostEnabled: !!row.auto_post_enabled, grirAccountCode: row.grir_account_code,
+        inTransitAccountCode: row.in_transit_account_code, defaultInventoryAccountCode: row.default_inventory_account_code,
+        defaultCogsAccountCode: row.default_cogs_account_code, updatedBy: row.updated_by || undefined,
+        updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : undefined,
+      }};
+    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+  }
+  public async saveStockAccountingConfig(tenantId: string, settings: any, actorId: string, _k: string): Promise<any> {
+    const { defaultStockAccountingConfig } = await import('../StoragePort');
+    try {
+      const curRes = await this.getStockAccountingConfig(tenantId);
+      const cur = curRes.success && curRes.data ? curRes.data : defaultStockAccountingConfig(tenantId);
+      const next = { ...cur, ...settings, tenantId, updatedBy: actorId, updatedAt: new Date().toISOString() };
+      await this.pool.query(`INSERT INTO an_stock_accounting_config (tenant_id, auto_post_enabled, grir_account_code, in_transit_account_code, default_inventory_account_code, default_cogs_account_code, updated_by, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,NOW()) ON CONFLICT (tenant_id) DO UPDATE SET auto_post_enabled=EXCLUDED.auto_post_enabled, grir_account_code=EXCLUDED.grir_account_code, in_transit_account_code=EXCLUDED.in_transit_account_code, default_inventory_account_code=EXCLUDED.default_inventory_account_code, default_cogs_account_code=EXCLUDED.default_cogs_account_code, updated_by=EXCLUDED.updated_by, updated_at=NOW()`,
+        [tenantId, !!next.autoPostEnabled, next.grirAccountCode, next.inTransitAccountCode, next.defaultInventoryAccountCode, next.defaultCogsAccountCode, actorId]);
+      return { success: true, data: next };
+    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+  }
+  public async setStockDocumentJournal(tenantId: string, docId: string, journalEntryId: string | null, status: any): Promise<any> {
+    try {
+      await this.pool.query(`UPDATE an_stock_documents SET journal_entry_id=$1, journal_status=$2 WHERE tenant_id=$3 AND id=$4`, [journalEntryId, status, tenantId, docId]);
+      return { success: true, data: undefined };
+    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+  }
+  public async setStockTransferJournal(tenantId: string, transferId: string, which: any, journalEntryId: string | null, status: any): Promise<any> {
+    try {
+      if (which === 'DISPATCH') await this.pool.query(`UPDATE an_stock_transfers SET dispatch_journal_entry_id=$1, journal_status=$2 WHERE tenant_id=$3 AND id=$4`, [journalEntryId, status, tenantId, transferId]);
+      else await this.pool.query(`UPDATE an_stock_transfers SET receive_journal_entry_id=$1, journal_status=$2 WHERE tenant_id=$3 AND id=$4`, [journalEntryId, status, tenantId, transferId]);
+      return { success: true, data: undefined };
+    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
   }
 
   public async recordStockMovement(

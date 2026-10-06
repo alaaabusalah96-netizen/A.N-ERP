@@ -11,6 +11,8 @@ import {
   ApprovalDocumentType,
   InventorySettings,
   defaultInventorySettings,
+  StockAccountingConfig,
+  defaultStockAccountingConfig,
   planCostLayerConsumption,
   PostStockTransferAtomicInput,
   Invitation,
@@ -129,6 +131,7 @@ export class InMemoryAdapter implements StoragePort {
   // Phase 13 (COST-001): cost layers per tenant:warehouse:item (arrays are replaced, never mutated, so a snapshot is a shallow Map copy)
   private costLayers = new Map<string, Array<{ id: string; poNumber: string | null; remainingQty: number; unitCost: number; receivedAt: string; isOpening: boolean }>>();
   private inventorySettings = new Map<string, InventorySettings>();
+  private stockAccountingConfig = new Map<string, StockAccountingConfig>();
   private custodyExpenseVouchers = new Map<string, CustodyExpenseVoucher>();
   private documentAttachments = new Map<string, DocumentAttachment>();
   private itemPrices = new Map<string, ItemPrice>();
@@ -216,6 +219,10 @@ export class InMemoryAdapter implements StoragePort {
         creditBalance: 0,
         isActive: true,
       },
+      { code: '1105', tenantId: SEED_TENANT_ID, nameAr: 'المخزون السلعي', type: 'ASSET', currency: 'SAR', debitBalance: 0, creditBalance: 0, isActive: true },
+      { code: '1109', tenantId: SEED_TENANT_ID, nameAr: 'مخزون في الطريق', type: 'ASSET', currency: 'SAR', debitBalance: 0, creditBalance: 0, isActive: true },
+      { code: '2106', tenantId: SEED_TENANT_ID, nameAr: 'GR/IR', type: 'LIABILITY', currency: 'SAR', debitBalance: 0, creditBalance: 0, isActive: true },
+      { code: '5101', tenantId: SEED_TENANT_ID, nameAr: 'تكلفة البضاعة', type: 'EXPENSE', currency: 'SAR', debitBalance: 0, creditBalance: 0, isActive: true },
     ];
 
     for (const acc of defaultAccounts) {
@@ -1901,6 +1908,34 @@ export class InMemoryAdapter implements StoragePort {
       }
     }
     return affected;
+  }
+
+  public async getStockAccountingConfig(tenantId: string): Promise<StorageResult<StockAccountingConfig>> {
+    const c = this.stockAccountingConfig.get(tenantId);
+    return { success: true, data: c ? { ...c } : defaultStockAccountingConfig(tenantId) };
+  }
+  public async saveStockAccountingConfig(tenantId: string, settings: Partial<Omit<StockAccountingConfig, 'tenantId'>>, actorId: string, _idempotencyKey: string): Promise<StorageResult<StockAccountingConfig>> {
+    const cur = this.stockAccountingConfig.get(tenantId) || defaultStockAccountingConfig(tenantId);
+    const next: StockAccountingConfig = { ...cur, ...settings, tenantId, updatedBy: actorId, updatedAt: new Date().toISOString() };
+    this.stockAccountingConfig.set(tenantId, next);
+    return { success: true, data: { ...next } };
+  }
+  public async setStockDocumentJournal(tenantId: string, docId: string, journalEntryId: string | null, status: 'NONE' | 'POSTED' | 'PENDING_RETRY'): Promise<StorageResult<void>> {
+    const key = `${tenantId}:${docId}`;
+    const doc = this.stockDocuments.get(key);
+    if (doc) { (doc as any).journalEntryId = journalEntryId || undefined; (doc as any).journalStatus = status; this.stockDocuments.set(key, doc); }
+    return { success: true, data: undefined as any };
+  }
+  public async setStockTransferJournal(tenantId: string, transferId: string, which: 'DISPATCH' | 'RECEIVE', journalEntryId: string | null, status: 'NONE' | 'POSTED' | 'PENDING_RETRY'): Promise<StorageResult<void>> {
+    const key = `${tenantId}:${transferId}`;
+    const tr = this.stockTransfers.get(key);
+    if (tr) {
+      if (which === 'DISPATCH') (tr as any).dispatchJournalEntryId = journalEntryId || undefined;
+      else (tr as any).receiveJournalEntryId = journalEntryId || undefined;
+      (tr as any).journalStatus = status;
+      this.stockTransfers.set(key, tr);
+    }
+    return { success: true, data: undefined as any };
   }
 
   public async getStockItem(tenantId: string, itemId: string): Promise<StorageResult<StockItem | null>> {

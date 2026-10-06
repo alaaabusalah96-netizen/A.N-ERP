@@ -3522,6 +3522,57 @@ async function startServer() {
     }
   });
 
+
+  // Phase 14 (ACC-AUTO-001)
+  app.get('/api/inventory/accounting-config', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const result = await svc.getStockAccountingConfig(tenantId);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.put('/api/inventory/accounting-config', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'تحديث إعدادات محاسبة المخزون');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const b = req.body || {};
+      const result = await svc.saveStockAccountingConfig(tenantId, {
+        autoPostEnabled: b.auto_post_enabled ?? b.autoPostEnabled,
+        grirAccountCode: b.grir_account_code ?? b.grirAccountCode,
+        inTransitAccountCode: b.in_transit_account_code ?? b.inTransitAccountCode,
+        defaultInventoryAccountCode: b.default_inventory_account_code ?? b.defaultInventoryAccountCode,
+        defaultCogsAccountCode: b.default_cogs_account_code ?? b.defaultCogsAccountCode,
+      }, userId, key);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data, message: 'تم تحديث إعدادات محاسبة المخزون' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.post('/api/inventory/documents/:id/post-journal', requireAuth, requirePermission('ENTRY_POST'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const key = requireIdempotencyKey(req, res, 'إعادة ترحيل قيد مستند المخزون');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const result = await svc.retryStockDocumentJournal(tenantId, req.params.id, key);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // 7B: Stock Balances & Real-Time Levels
   app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
