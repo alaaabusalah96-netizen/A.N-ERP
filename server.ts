@@ -57,7 +57,7 @@ import { TenantResolutionService } from './src/core/tenant/TenantResolutionServi
 import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
 import { requirePermission, hasPermission, PermissionGroup } from './src/core/auth/PermissionMatrix';
 import { requestContextALS } from './src/core/context/RequestContext';
-import { parseIsoDate, parseNonNegativeMoney, validationError, type ParseResult } from './src/core/utils/validation';
+import { parseIsoDate, parseNonNegativeMoney, validationError, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
 
 // Wave 0: Security Hardening — Strict Environment Secrets Enforcement
 export function requireEnv(name: string): string {
@@ -4174,6 +4174,73 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
   });
 
   // P3 (AUTHZ-002): attachment / print authorization maps (local, reuse existing PermissionGroup + hasPermission)
+
+  // Phase 17 (ATT-001): resolve document existence + ownership (read-only check)
+  async function assertAttachmentDocument(
+    storage: StoragePort,
+    tenantId: string,
+    docType: string,
+    docId: string,
+    access: { userId: string; canViewAllExpenses: boolean }
+  ): Promise<{ ok: true; documentNumber?: string; status?: never; error?: never } | { ok: false; status: number; error: any; documentNumber?: never }> {
+    if (!docType || !docId || docId.length > 64 || docType.length > 64) {
+      return { ok: false, status: 400, error: validationError('documentType و documentId مطلوبان وبطول معقول (≤ 64).') };
+    }
+    const notFound = () => ({ ok: false as const, status: 404, error: { type: 'https://api.an-erp.local/errors/not-found', title: 'المستند غير موجود', status: 404, detail: 'المستند غير موجود أو غير متاح.' } });
+    try {
+      switch (docType) {
+        case 'JOURNAL_ENTRY': {
+          const r = await storage.getJournalEntry(tenantId, docId);
+          if (!r.success || !r.data) return notFound();
+          return { ok: true, documentNumber: (r.data as any).entryNumber || (r.data as any).code };
+        }
+        case 'CUSTODY_VOUCHER': {
+          const r = await storage.getCustodyExpenseVoucher(tenantId, docId);
+          if (!r.success || !r.data) return notFound();
+          return { ok: true, documentNumber: (r.data as any).voucherNumber };
+        }
+        case 'CUSTODY_SETTLEMENT': {
+          const r = await storage.listCustodySettlements(tenantId);
+          const hit = r.success && r.data ? r.data.find((x: any) => x.id === docId) : null;
+          if (!hit) return notFound();
+          return { ok: true, documentNumber: (hit as any).settlementNumber };
+        }
+        case 'EXPENSE_CLAIM':
+        case 'EXPENSE_REQUEST': {
+          const r = await storage.getExpenseRequest(tenantId, docId);
+          if (!r.success || !r.data) return notFound();
+          const req = r.data.request || r.data;
+          const ownerId = (req as any).requesterId || (req as any).createdBy || (req as any).submittedBy;
+          if (!access.canViewAllExpenses && ownerId && ownerId !== access.userId) return notFound();
+          return { ok: true, documentNumber: (req as any).requestNumber || (req as any).code };
+        }
+        case 'STOCK_RECEIPT':
+        case 'RECEIPT':
+        case 'STOCK_ISSUE':
+        case 'ISSUE':
+        case 'STOCK_RETURN': {
+          const r = await storage.getStockDocument(tenantId, docId);
+          if (!r.success || !r.data) return notFound();
+          return { ok: true, documentNumber: (r.data as any).documentNumber };
+        }
+        case 'STOCK_TRANSFER': {
+          const r = await storage.getStockTransfer(tenantId, docId);
+          if (!r.success || !r.data) return notFound();
+          return { ok: true, documentNumber: (r.data.transfer || r.data as any).transferNumber };
+        }
+        case 'STOCK_COUNT': {
+          const r = await storage.getStockCount(tenantId, docId);
+          if (!r.success || !r.data) return notFound();
+          return { ok: true, documentNumber: (r.data.count || r.data as any).countNumber };
+        }
+        default:
+          return { ok: false, status: 400, error: validationError(`نوع المستند (${docType}) غير مدعوم للمرفقات.`) };
+      }
+    } catch {
+      return notFound();
+    }
+  }
+
   const EXPENSE_DOC_TYPES = new Set<string>(['EXPENSE_CLAIM', 'EXPENSE_REQUEST']);
   const ATTACHMENT_READ_PERMISSION: Record<string, PermissionGroup> = {
     STOCK_RECEIPT: 'STOCK_VIEW',
@@ -4216,23 +4283,28 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
   // 7.6G: Document Attachments (مرفقات المستندات 4–7)
   app.get('/api/attachments', requireAuth, async (req: Request, res: Response) => {
     try {
-      const docType = req.query.documentType as string;
-      const docId = req.query.documentId as string;
-      if (!docType || !docId) return res.status(400).json({ error: 'documentType و documentId مطلوبان' });
-      {
-        const role = (req as any).authContext?.role as string | undefined;
-        if (EXPENSE_DOC_TYPES.has(docType)) {
-          const { canViewAll, isSubmitter } = expenseAccess(req);
-          if (!canViewAll && !isSubmitter) return denyForbidden(res, role, 'EXPENSE_SUBMIT');
-        } else {
-          const needed = ATTACHMENT_READ_PERMISSION[docType];
-          if (!needed) return res.status(400).json({ error: `نوع المستند (${docType}) غير مدعوم للمرفقات` });
-          if (!hasPermission(role, needed)) return denyForbidden(res, role, needed);
-        }
+      const docType = String(req.query.documentType || '');
+      const docId = String(req.query.documentId || '');
+      if (!docType || !docId || docType.length > 64 || docId.length > 64) {
+        return res.status(400).json(validationError('documentType و documentId مطلوبان وبطول معقول (≤ 64).'));
+      }
+      const role = (req as any).authContext?.role as string | undefined;
+      const userId = (req as any).authContext.userId || '';
+      let canViewAllExpenses = false;
+      if (EXPENSE_DOC_TYPES.has(docType)) {
+        const access = expenseAccess(req);
+        canViewAllExpenses = access.canViewAll;
+        if (!access.canViewAll && !access.isSubmitter) return denyForbidden(res, role, 'EXPENSE_SUBMIT');
+      } else {
+        const needed = ATTACHMENT_READ_PERMISSION[docType];
+        if (!needed) return res.status(400).json(validationError(`نوع المستند (${docType}) غير مدعوم للمرفقات`));
+        if (!hasPermission(role, needed)) return denyForbidden(res, role, needed);
       }
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
       if (!storage) return;
+      const exists = await assertAttachmentDocument(storage, tenantId, docType, docId, { userId, canViewAllExpenses });
+      if (!exists.ok) return res.status(exists.status).json(exists.error);
       const result = await storage.listDocumentAttachments(tenantId, docType, docId);
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
@@ -4245,35 +4317,75 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId || 'usr-uploader';
-      {
-        const role = (req as any).authContext?.role as string | undefined;
-        const needed = ATTACHMENT_WRITE_PERMISSION[req.body?.documentType as string];
-        if (!needed) return res.status(400).json({ error: `نوع المستند (${req.body?.documentType}) غير مدعوم للمرفقات` });
-        if (!hasPermission(role, needed)) return denyForbidden(res, role, needed);
-      }
+      const role = (req as any).authContext?.role as string | undefined;
+      const body = req.body || {};
+      const docType = String(body.documentType || '');
+      const docId = String(body.documentId || '');
+      const needed = ATTACHMENT_WRITE_PERMISSION[docType];
+      if (!needed) return res.status(400).json(validationError(`نوع المستند (${docType}) غير مدعوم للمرفقات`));
+      if (!hasPermission(role, needed)) return denyForbidden(res, role, needed);
+
       const key = requireIdempotencyKey(req, res, 'إضافة مرفق مستند');
       if (!key) return;
       const storage = getRequestStorage(req, res);
       if (!storage) return;
 
-      const att = {
+      // Validate fields
+      const urlP = parseSafeFileUrl(body.fileUrl);
+      if (!urlP.ok) return res.status(400).json(validationError(urlP.detail));
+      const nameP = parseSafeFileName(body.fileName);
+      if (!nameP.ok) return res.status(400).json(validationError(nameP.detail));
+      const mimeRaw = body.mimeType || body.fileType;
+      const mimeP = parseSafeMimeType(mimeRaw);
+      if (!mimeP.ok) return res.status(400).json(validationError(mimeP.detail));
+      const sizeRaw = body.fileSize ?? body.fileSizeBytes;
+      const sizeP = parseAttachmentSize(sizeRaw);
+      if (!sizeP.ok) return res.status(400).json(validationError(sizeP.detail));
+
+      const canViewAllExpenses = EXPENSE_DOC_TYPES.has(docType)
+        ? expenseAccess(req).canViewAll
+        : true;
+      const exists = await assertAttachmentDocument(storage, tenantId, docType, docId, { userId, canViewAllExpenses });
+      if (!exists.ok) return res.status(exists.status).json(exists.error);
+
+      // Cap 50 attachments per document
+      const listed = await storage.listDocumentAttachments(tenantId, docType, docId);
+      if (listed.success && listed.data && listed.data.length >= ATTACHMENT_LIMITS.maxPerDocument) {
+        return res.status(422).json({
+          type: 'https://api.an-erp.local/errors/attachment-limit',
+          title: 'تجاوز حد المرفقات',
+          status: 422,
+          detail: `الحد الأقصى ${ATTACHMENT_LIMITS.maxPerDocument} مرفقًا لكل مستند.`,
+        });
+      }
+
+      // Real uploader name from user record (never from body)
+      let uploadedByName = 'المستخدم';
+      try {
+        const u = await storage.getUser(tenantId, userId);
+        if (u.success && u.data) uploadedByName = (u.data as any).fullName || (u.data as any).username || uploadedByName;
+      } catch { /* keep default */ }
+
+      const att: any = {
         id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         tenantId,
         companyId: tenantId,
-        documentType: req.body.documentType,
-        documentId: req.body.documentId,
-        documentNumber: req.body.documentNumber,
-        fileName: req.body.fileName,
-        fileUrl: req.body.fileUrl,
-        fileType: req.body.fileType || 'application/pdf',
-        fileSizeBytes: req.body.fileSizeBytes || 1024,
+        documentType: docType,
+        documentId: docId,
+        documentNumber: exists.documentNumber || body.documentNumber,
+        fileName: nameP.value,
+        fileUrl: urlP.value,
+        mimeType: mimeP.value,
+        fileSize: sizeP.value,
+        fileType: mimeP.value,
+        fileSizeBytes: sizeP.value,
         uploadedBy: userId,
-        uploadedByName: req.body.uploadedByName || 'المستخدم',
+        uploadedByName,
         createdAt: new Date().toISOString(),
       };
 
       const result = await storage.saveDocumentAttachment(tenantId, att);
-      if (!result.success) return res.status(500).json(result.error);
+      if (!result.success) return res.status((result.error as any)?.status || 500).json(result.error);
       return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ المرفق بنجاح' });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });

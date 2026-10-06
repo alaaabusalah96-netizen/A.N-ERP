@@ -110,3 +110,84 @@ export function validationError(detail: string): { type: string; title: string; 
     detail,
   };
 }
+
+
+/** Phase 17 (ATT-001): HTTPS-only public URL, no credentials, no loopback/private hosts. */
+export function parseSafeFileUrl(v: unknown): ParseResult<string> {
+  if (typeof v !== 'string') return { ok: false, detail: 'رابط الملف يجب أن يكون نصًا.' };
+  const s = v.trim();
+  if (s.length < 1 || s.length > 2048) return { ok: false, detail: 'رابط الملف يجب أن يكون بطول من 1 إلى 2048 حرفًا.' };
+  let u: URL;
+  try { u = new URL(s); } catch { return { ok: false, detail: 'رابط الملف غير صالح.' }; }
+  if (u.protocol !== 'https:') return { ok: false, detail: 'رابط الملف يجب أن يستخدم بروتوكول https فقط.' };
+  if (u.username || u.password) return { ok: false, detail: 'رابط الملف لا يجوز أن يحتوي بيانات مصادقة.' };
+  const host = (u.hostname || '').toLowerCase();
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host === '::1') {
+    return { ok: false, detail: 'رابط الملف لا يجوز أن يشير إلى مضيف محلي.' };
+  }
+  // IPv4 private / loopback / link-local
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (m) {
+    const a = m.slice(1).map(Number);
+    if (a.some((n) => n > 255)) return { ok: false, detail: 'رابط الملف يحتوي عنوان IP غير صالح.' };
+    const [o1, o2] = a;
+    if (o1 === 127 || o1 === 10 || o1 === 0 || (o1 === 192 && o2 === 168) || (o1 === 169 && o2 === 254) || (o1 === 172 && o2 >= 16 && o2 <= 31)) {
+      return { ok: false, detail: 'رابط الملف لا يجوز أن يشير إلى شبكة خاصة أو حلقة محلية.' };
+    }
+  }
+  // IPv6 private-ish prefixes (fc/fd unique local, fe80 link-local)
+  if (host.includes(':') && (host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80') || host === '::1')) {
+    return { ok: false, detail: 'رابط الملف لا يجوز أن يشير إلى عنوان IPv6 خاص.' };
+  }
+  return { ok: true, value: s };
+}
+
+const SAFE_FILE_EXT = new Set(['pdf', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'txt', 'zip']);
+const SAFE_MIME = new Set([
+  'application/pdf',
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/csv', 'text/plain',
+  'application/zip',
+]);
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024; // 20 MB
+
+/** Sanitize file name: strip path segments, control chars; keep a safe basename with allowed extension. */
+export function parseSafeFileName(v: unknown): ParseResult<string> {
+  if (typeof v !== 'string') return { ok: false, detail: 'اسم الملف يجب أن يكون نصًا.' };
+  let s = v.trim();
+  if (!s) return { ok: false, detail: 'اسم الملف مطلوب.' };
+  // strip path traversal
+  s = s.replace(/\\/g, '/');
+  const parts = s.split('/');
+  s = parts[parts.length - 1] || '';
+  s = s.replace(/\0/g, '').replace(/[\u0000-\u001f]/g, '').trim();
+  if (!s || s === '.' || s === '..') return { ok: false, detail: 'اسم الملف غير صالح.' };
+  if (s.length > 200) return { ok: false, detail: 'اسم الملف طويل جدًا (الحد 200 حرفًا).' };
+  const dot = s.lastIndexOf('.');
+  if (dot <= 0 || dot === s.length - 1) return { ok: false, detail: 'اسم الملف يجب أن يحتوي امتدادًا مسموحًا.' };
+  const ext = s.slice(dot + 1).toLowerCase();
+  if (!SAFE_FILE_EXT.has(ext)) return { ok: false, detail: `امتداد الملف (.${ext}) غير مسموح.` };
+  return { ok: true, value: s };
+}
+
+export function parseSafeMimeType(v: unknown): ParseResult<string> {
+  if (typeof v !== 'string') return { ok: false, detail: 'نوع الملف (MIME) يجب أن يكون نصًا.' };
+  const s = v.trim().toLowerCase();
+  if (!SAFE_MIME.has(s)) return { ok: false, detail: `نوع الملف (${s}) غير مسموح.` };
+  return { ok: true, value: s };
+}
+
+/** Positive file size in bytes, ≤ 20 MB. */
+export function parseAttachmentSize(v: unknown): ParseResult<number> {
+  if (typeof v !== 'number' && typeof v !== 'string') return { ok: false, detail: 'حجم الملف يجب أن يكون رقمًا.' };
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return { ok: false, detail: 'حجم الملف يجب أن يكون عددًا صحيحًا أكبر من صفر.' };
+  if (n > MAX_ATTACHMENT_BYTES) return { ok: false, detail: 'حجم الملف يتجاوز الحد الأقصى 20 ميجابايت.' };
+  return { ok: true, value: n };
+}
+
+export const ATTACHMENT_LIMITS = { maxPerDocument: 50, maxBytes: MAX_ATTACHMENT_BYTES } as const;
