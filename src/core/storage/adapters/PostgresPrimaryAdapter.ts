@@ -362,6 +362,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         created_at BIGINT NOT NULL,
         last_active_at BIGINT NOT NULL
       );
+      ALTER TABLE an_active_sessions ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64);
 
       -- Phase 2 Tables:
       CREATE TABLE IF NOT EXISTS an_tax_rules (
@@ -3182,6 +3183,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         field_type VARCHAR(32) NOT NULL,
         is_required BOOLEAN NOT NULL DEFAULT FALSE
       );
+      ALTER TABLE an_custom_fields ADD COLUMN IF NOT EXISTS options JSONB;
 
       CREATE TABLE IF NOT EXISTS an_audit_trail (
         id VARCHAR(64) PRIMARY KEY,
@@ -5960,25 +5962,19 @@ export class PostgresPrimaryAdapter implements StoragePort {
       let qtyDelta = 0;
       let valueDelta = 0;
       let unitCostUsed = movement.unitCost;
+      let totalCostUsed = movement.totalCost;
 
-      const isIn = movement.movementType === 'RECEIPT' || movement.movementType === 'TRANSFER_IN' || movement.movementType === 'COUNT_ADJUSTMENT_GAIN';
-      const isOut = movement.movementType === 'ISSUE' || movement.movementType === 'TRANSFER_OUT' || movement.movementType === 'COUNT_ADJUSTMENT_LOSS';
-
-      if (isIn) {
+      if (movement.movementType === 'RECEIPT' || movement.movementType === 'TRANSFER_IN' || movement.movementType === 'COUNT_ADJUSTMENT_GAIN') {
         qtyDelta = Math.abs(movement.quantity);
         valueDelta = qtyDelta * movement.unitCost;
-      } else if (isOut) {
+      } else if (movement.movementType === 'ISSUE' || movement.movementType === 'TRANSFER_OUT' || movement.movementType === 'COUNT_ADJUSTMENT_LOSS') {
         qtyDelta = -Math.abs(movement.quantity);
-        if (opts?.lockedOutgoingCost) {
-          unitCostUsed = averageCost > 0 ? averageCost : movement.unitCost;
-        } else {
-          unitCostUsed = movement.unitCost;
-        }
-        valueDelta = qtyDelta * unitCostUsed;
+        valueDelta = qtyDelta * (averageCost > 0 ? averageCost : movement.unitCost);
       }
 
       const newQty = currentQty + qtyDelta;
-      if (isOut && newQty < -0.00005 && opts?.rejectNegative) {
+      if (opts?.rejectNegative && qtyDelta < 0 && newQty < -0.00005) {
+        // Fail closed BEFORE any permanent change (the caller rolls the transaction back)
         return {
           ok: false,
           error: {
@@ -5989,10 +5985,13 @@ export class PostgresPrimaryAdapter implements StoragePort {
           },
         };
       }
-
+      if (opts?.lockedOutgoingCost && qtyDelta < 0) {
+        // Outgoing cost = weighted average of the LOCKED balance row at execution time (not the service's earlier read)
+        unitCostUsed = averageCost > 0 ? averageCost : movement.unitCost;
+        totalCostUsed = Math.round(Math.abs(movement.quantity) * unitCostUsed * 100) / 100;
+      }
       const newTotalValue = Math.max(0, totalValue + valueDelta);
       const newAverageCost = newQty > 0 ? newTotalValue / newQty : (movement.unitCost > 0 ? movement.unitCost : averageCost);
-      const totalCostUsed = Math.abs(qtyDelta) * unitCostUsed;
 
       const stockId = stockRes.rows.length > 0 ? stockRes.rows[0].id : `stk-${movement.warehouseId}-${movement.itemId}`;
       const nowIso = new Date().toISOString();
@@ -6021,14 +6020,14 @@ export class PostgresPrimaryAdapter implements StoragePort {
       );
 
       // Update global item average cost and last purchase cost if receipt
-      if (movement.movementType === 'RECEIPT' && unitCostUsed > 0) {
+      if (movement.movementType === 'RECEIPT' && movement.unitCost > 0) {
         await client.query(
           `UPDATE an_stock_items SET
             average_cost = $1,
             last_purchase_cost = $2,
             updated_at = $3
           WHERE tenant_id = $4 AND id = $5`,
-          [newAverageCost, unitCostUsed, nowIso, tenantId, movement.itemId]
+          [newAverageCost, movement.unitCost, nowIso, tenantId, movement.itemId]
         );
       }
 
@@ -6091,7 +6090,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
             movement.warehouseId,
             movement.batchNumber,
             Math.max(0, batchDelta),
-            unitCostUsed,
+            movement.unitCost,
             nowIso,
             batchDelta,
           ]
@@ -6100,9 +6099,9 @@ export class PostgresPrimaryAdapter implements StoragePort {
 
       const saved: StockMovement = {
         ...movement,
-        balanceAfterQty: newQty,
         unitCost: unitCostUsed,
         totalCost: totalCostUsed,
+        balanceAfterQty: newQty,
         idempotencyKey,
       };
       return { ok: true, newQty, unitCostUsed, totalCostUsed, saved };
@@ -6375,38 +6374,35 @@ export class PostgresPrimaryAdapter implements StoragePort {
           transfer.totalQuantity,
           transfer.totalCost,
           transfer.notes || null,
-          transfer.createdAt || new Date().toISOString(),
-          transfer.updatedAt || new Date().toISOString(),
+          new Date().toISOString(),
+          new Date().toISOString(),
           idempotencyKey,
         ]
       );
 
-      let lineNum = 0;
       for (const line of lines) {
-        lineNum++;
         await client.query(
           `INSERT INTO an_stock_transfer_lines (
-            id, tenant_id, company_id, transfer_id, line_number,
-            item_id, item_code, item_name_ar, uom, quantity,
-            unit_cost, total_cost, notes
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+            id, tenant_id, company_id, transfer_id, item_id, item_code, item_name_ar,
+            quantity, unit_cost, total_cost, batch_number, serial_number
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
           [
             line.id,
             tenantId,
             line.companyId || tenantId,
             transfer.id,
-            lineNum,
             line.itemId,
             line.itemCode,
             line.itemNameAr,
-            'حبه',
             line.quantity,
             line.unitCost,
             line.totalCost,
-            null,
+            line.batchNumber || null,
+            line.serialNumber || null,
           ]
         );
       }
+
   }
 
   public async createStockTransfer(
