@@ -100,6 +100,8 @@ export class MongoDBSmokeAdapter implements StoragePort {
   getApprovalPolicy(tenantId: string, documentType: any) { return this.smokeOnlyError<any>('getApprovalPolicy'); }
   listApprovalPolicies(tenantId: string) { return this.smokeOnlyError<any[]>('listApprovalPolicies'); }
   saveApprovalPolicy(tenantId: string, policy: any, idempotencyKey: string) { return this.smokeOnlyError<any>('saveApprovalPolicy'); }
+  getInventorySettings(tenantId: string) { return this.smokeOnlyError<any>('getInventorySettings'); }
+  saveInventorySettings(tenantId: string, settings: any, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<any>('saveInventorySettings'); }
   appendSystemChangeLog(entry: SystemChangeLogEntry) { return this.smokeOnlyError<SystemChangeLogEntry>('appendSystemChangeLog'); }
   getSystemChangeLogs() { return this.smokeOnlyError<SystemChangeLogEntry[]>('getSystemChangeLogs'); }
   saveTokenFamily(family: TokenFamily) { return this.smokeOnlyError<TokenFamily>('saveTokenFamily'); }

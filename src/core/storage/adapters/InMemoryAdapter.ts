@@ -9,6 +9,9 @@ import {
   PostStockDocumentAtomicInput,
   ApprovalPolicy,
   ApprovalDocumentType,
+  InventorySettings,
+  defaultInventorySettings,
+  planCostLayerConsumption,
   PostStockTransferAtomicInput,
   Invitation,
   ConsumedInvitation,
@@ -123,6 +126,9 @@ export class InMemoryAdapter implements StoragePort {
 
   // Phase 7.6: Multi-line documents, vouchers, attachments, prices
   private stockDocuments = new Map<string, StockDocument>();
+  // Phase 13 (COST-001): cost layers per tenant:warehouse:item (arrays are replaced, never mutated, so a snapshot is a shallow Map copy)
+  private costLayers = new Map<string, Array<{ id: string; poNumber: string | null; remainingQty: number; unitCost: number; receivedAt: string; isOpening: boolean }>>();
+  private inventorySettings = new Map<string, InventorySettings>();
   private custodyExpenseVouchers = new Map<string, CustodyExpenseVoucher>();
   private documentAttachments = new Map<string, DocumentAttachment>();
   private itemPrices = new Map<string, ItemPrice>();
@@ -1795,8 +1801,106 @@ export class InMemoryAdapter implements StoragePort {
   }
 
   public async saveStockItem(tenantId: string, item: StockItem, idempotencyKey: string): Promise<StorageResult<StockItem>> {
+    const prevMethod = this.stockItems.get(`${tenantId}:${item.id}`)?.valuationMethod;
     this.stockItems.set(`${tenantId}:${item.id}`, { ...item, tenantId });
+    // Phase 13 (COST-001): changing the valuation method of an existing item re-bases its cost layers
+    if (prevMethod !== undefined) {
+      const norm = (m: any) => (m === 'FIFO' || m === 'SPECIFIC_LOT' ? m : 'WEIGHTED_AVERAGE');
+      if (norm(prevMethod) !== norm(item.valuationMethod)) {
+        const affected = this.applyValuationMethodChangeMem(tenantId, item.id, norm(prevMethod), norm(item.valuationMethod));
+        await this.appendSystemChangeLog({
+          id: `scl-valm-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          timestamp: new Date().toISOString(),
+          actor: (item as any).updatedBy || 'system',
+          changeType: 'PLATFORM_MANAGEMENT',
+          module: 'INVENTORY',
+          entitiesAffected: [`StockItem:${item.id}`],
+          summaryAr: `تغيير طريقة تقييم الصنف ${item.itemCode} من ${norm(prevMethod)} إلى ${norm(item.valuationMethod)} (مستودعات متأثرة: ${affected})`,
+          beforeState: { valuationMethod: norm(prevMethod) },
+          afterState: { valuationMethod: norm(item.valuationMethod), warehousesAffected: affected },
+          version: '1.0',
+        });
+      }
+    }
     return { success: true, data: item };
+  }
+
+  // Phase 13 (COST-001) ---------------------------------------------------------------------------------------
+  public async getInventorySettings(tenantId: string): Promise<StorageResult<InventorySettings>> {
+    const s = this.inventorySettings.get(tenantId);
+    return { success: true, data: s ? { ...s } : defaultInventorySettings(tenantId) };
+  }
+
+  public async saveInventorySettings(tenantId: string, settings: Partial<Omit<InventorySettings, 'tenantId'>>, actorId: string, idempotencyKey: string): Promise<StorageResult<InventorySettings>> {
+    const cacheKey = `${tenantId}:saveInventorySettings:${idempotencyKey}`;
+    if (idempotencyKey && this.idempotencyRecords.has(cacheKey)) return { success: true, data: { ...this.idempotencyRecords.get(cacheKey) } };
+    const cur = this.inventorySettings.get(tenantId) || defaultInventorySettings(tenantId);
+    const saved: InventorySettings = { ...cur, ...settings, tenantId, updatedBy: actorId, updatedAt: new Date().toISOString() };
+    this.inventorySettings.set(tenantId, saved);
+    if (idempotencyKey) this.idempotencyRecords.set(cacheKey, saved);
+    return { success: true, data: { ...saved } };
+  }
+
+  private getValuationMethodMem(tenantId: string, itemId: string): 'WEIGHTED_AVERAGE' | 'FIFO' | 'SPECIFIC_LOT' {
+    const it = this.stockItems.get(`${tenantId}:${itemId}`);
+    return it && (it.valuationMethod === 'FIFO' || it.valuationMethod === 'SPECIFIC_LOT') ? it.valuationMethod : 'WEIGHTED_AVERAGE';
+  }
+
+  // WEIGHTED_AVERAGE items return { layered: false } and are never touched. FIFO / SPECIFIC_LOT items: entry adds a layer,
+  // exit consumes layers (fails closed BEFORE any change when the layers cannot cover the quantity).
+  private layerStepMem(tenantId: string, m: StockMovement, isIn: boolean, existing: WarehouseStock, newQty: number):
+    { ok: false; error: { type: string; title: string; status: number; detail: string } }
+    | { ok: true; layered: false }
+    | { ok: true; layered: true; totalValue: number; averageCost: number; unitCost: number; totalCost: number } {
+    const method = this.getValuationMethodMem(tenantId, m.itemId);
+    if (method === 'WEIGHTED_AVERAGE') return { ok: true, layered: false };
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const lkey = `${tenantId}:${m.warehouseId}:${m.itemId}`;
+    const layers = this.costLayers.get(lkey) || [];
+    const qty = Math.abs(m.quantity);
+    if (isIn) {
+      if (qty > 0) {
+        const po = m.sourcePoNumber || (m.sourceDocumentType === 'PURCHASE_ORDER' ? m.sourceDocumentNumber : undefined) || null;
+        this.costLayers.set(lkey, [...layers, { id: `lyr-${m.id}-${Math.random().toString(36).substr(2, 4)}`, poNumber: po, remainingQty: qty, unitCost: m.unitCost, receivedAt: new Date().toISOString(), isOpening: false }]);
+      }
+      const tv = existing.totalValue + (m.movementType === 'TRANSFER_IN' && m.totalCost > 0 ? m.totalCost : qty * m.unitCost);
+      return { ok: true, layered: true, totalValue: round2(tv), averageCost: round2(newQty > 0 ? tv / newQty : existing.averageCost), unitCost: m.unitCost, totalCost: m.totalCost };
+    }
+    const plan = planCostLayerConsumption(layers, qty, method, m.sourcePoNumber);
+    if (!plan.ok) {
+      return plan.code === 'insufficient-lot-stock'
+        ? { ok: false, error: { type: 'https://api.an-erp.local/errors/insufficient-lot-stock', title: 'رصيد أمر الشراء غير كافٍ', status: 422,
+            detail: `رصيد أمر الشراء ${m.sourcePoNumber} للصنف ${m.itemNameAr} (${plan.available}) أقل من الكمية المطلوبة (${qty}). فشلت العملية بالكامل ذرياً.` } }
+        : { ok: false, error: { type: 'https://api.an-erp.local/errors/insufficient-stock', title: 'الرصيد المخزني غير كافٍ', status: 422,
+            detail: `رصيد طبقات التكلفة للصنف ${m.itemNameAr} (${plan.available}) أقل من الكمية المطلوبة للصرف (${qty}). فشلت العملية بالكامل ذرياً.` } };
+    }
+    const taken = new Map(plan.takes.map(t => [t.layerId, t.newRemaining] as [string, number]));
+    this.costLayers.set(lkey, layers.map(l => (taken.has(l.id) ? { ...l, remainingQty: taken.get(l.id)! } : l)).filter(l => l.remainingQty > 0.00005));
+    const tv = Math.max(0, existing.totalValue - plan.totalCost);
+    return { ok: true, layered: true, totalValue: round2(tv), averageCost: round2(newQty > 0 ? tv / newQty : existing.averageCost), unitCost: plan.unitCost, totalCost: round2(plan.totalCost) };
+  }
+
+  private applyValuationMethodChangeMem(tenantId: string, itemId: string, from: string, to: string): number {
+    if (from === to) return 0;
+    if (from !== 'WEIGHTED_AVERAGE' && to !== 'WEIGHTED_AVERAGE') return 0; // FIFO <-> SPECIFIC_LOT: layers unchanged
+    let affected = 0;
+    for (const [k, st] of Array.from(this.warehouseStock.entries())) {
+      if (st.tenantId !== tenantId || st.itemId !== itemId) continue;
+      if (from === 'WEIGHTED_AVERAGE') {
+        this.costLayers.delete(k);
+        if (st.currentQty > 0) {
+          this.costLayers.set(k, [{ id: `lyr-open-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`, poNumber: null, remainingQty: st.currentQty, unitCost: st.averageCost, receivedAt: new Date().toISOString(), isOpening: true }]);
+          affected++;
+        }
+      } else {
+        this.costLayers.delete(k);
+        if (st.currentQty > 0) {
+          this.warehouseStock.set(k, { ...st, averageCost: Math.round((st.totalValue / st.currentQty) * 100) / 100 });
+          affected++;
+        }
+      }
+    }
+    return affected;
   }
 
   public async getStockItem(tenantId: string, itemId: string): Promise<StorageResult<StockItem | null>> {
@@ -1858,18 +1962,24 @@ export class InMemoryAdapter implements StoragePort {
       newQty = Math.max(0, newQty - movement.quantity);
     }
 
+    // Phase 13 (COST-001): FIFO / SPECIFIC_LOT items use cost layers (WEIGHTED_AVERAGE items are unchanged)
+    const legIsIn = movement.movementType === 'RECEIPT' || movement.movementType === 'TRANSFER_IN' || movement.movementType === 'COUNT_ADJUSTMENT_GAIN';
+    const lay = this.layerStepMem(tenantId, movement, legIsIn, existing, newQty);
+    if (!lay.ok) return { success: false, error: lay.error };
+
     const updatedStock: WarehouseStock = {
       ...existing,
       currentQty: newQty,
       availableQty: Math.max(0, newQty - existing.reservedQty),
-      averageCost: Math.round(newAvgCost * 100) / 100,
-      totalValue: Math.round(newQty * newAvgCost * 100) / 100,
+      averageCost: lay.layered ? lay.averageCost : Math.round(newAvgCost * 100) / 100,
+      totalValue: lay.layered ? lay.totalValue : Math.round(newQty * newAvgCost * 100) / 100,
       updatedAt: new Date().toISOString(),
     };
     this.warehouseStock.set(key, updatedStock);
 
     const savedMovement: StockMovement = {
       ...movement,
+      ...(lay.layered && !legIsIn ? { unitCost: lay.unitCost, totalCost: lay.totalCost } : {}),
       balanceAfterQty: newQty,
       timestamp: movement.timestamp || new Date().toISOString(),
     };
@@ -1900,8 +2010,8 @@ export class InMemoryAdapter implements StoragePort {
     const fail = (status: number, type: string, title: string, detail: string): StorageResult<StockTransfer> =>
       ({ success: false, error: { type: `https://api.an-erp.local/errors/${type}`, title, status, detail } });
     const round2 = (n: number) => Math.round(n * 100) / 100;
-    const snap = { stock: new Map(this.warehouseStock), movements: new Map(this.stockMovements), transfers: new Map(this.stockTransfers), lines: new Map(this.stockTransferLines) };
-    const restore = () => { this.warehouseStock = snap.stock; this.stockMovements = snap.movements; this.stockTransfers = snap.transfers; this.stockTransferLines = snap.lines; };
+    const snap = { stock: new Map(this.warehouseStock), movements: new Map(this.stockMovements), transfers: new Map(this.stockTransfers), lines: new Map(this.stockTransferLines), layers: new Map(this.costLayers) };
+    const restore = () => { this.costLayers = snap.layers; this.warehouseStock = snap.stock; this.stockMovements = snap.movements; this.stockTransfers = snap.transfers; this.stockTransferLines = snap.lines; };
     try {
       if (input.mode === 'DISPATCH') {
         const t = input.transfer;
@@ -2141,12 +2251,16 @@ export class InMemoryAdapter implements StoragePort {
         totalCostUsed = Math.round(Math.abs(m.quantity) * unitCostUsed * 100) / 100;
       }
     }
+    // Phase 13 (COST-001): FIFO / SPECIFIC_LOT items use cost layers (WEIGHTED_AVERAGE items are unchanged)
+    const lay = this.layerStepMem(tenantId, m, isIn, existing, newQty);
+    if (!lay.ok) return { ok: false, error: lay.error };
+    if (lay.layered && !isIn && !opts.providedCost) { unitCostUsed = lay.unitCost; totalCostUsed = lay.totalCost; }
     this.warehouseStock.set(key, {
       ...existing,
       currentQty: newQty,
       availableQty: newQty - existing.reservedQty,
-      averageCost: Math.round(newAvg * 100) / 100,
-      totalValue: Math.round(newQty * newAvg * 100) / 100,
+      averageCost: lay.layered ? lay.averageCost : Math.round(newAvg * 100) / 100,
+      totalValue: lay.layered ? lay.totalValue : Math.round(newQty * newAvg * 100) / 100,
       updatedAt: new Date().toISOString(),
     });
     const saved: StockMovement = { ...m, unitCost: unitCostUsed, totalCost: totalCostUsed, balanceAfterQty: newQty, timestamp: m.timestamp || new Date().toISOString() };
@@ -2185,8 +2299,10 @@ export class InMemoryAdapter implements StoragePort {
       batches: new Map(this.itemBatches),
       serials: new Map(this.itemSerials),
       docs: new Map(this.stockDocuments),
+      layers: new Map(this.costLayers),
     };
     const restore = () => {
+      this.costLayers = snap.layers;
       this.warehouseStock = snap.stock;
       this.stockMovements = snap.movements;
       this.itemBatches = snap.batches;
@@ -2226,12 +2342,19 @@ export class InMemoryAdapter implements StoragePort {
             totalCostUsed = round2(Math.abs(m.quantity) * unitCostUsed);
           }
         }
+        // Phase 13 (COST-001): FIFO / SPECIFIC_LOT items use cost layers (WEIGHTED_AVERAGE items are unchanged)
+        const lay = this.layerStepMem(tenantId, m, isIn(m.movementType), existing, newQty);
+        if (!lay.ok) {
+          restore();
+          return fail(lay.error.status, lay.error.type.split('/').pop() as string, lay.error.title, lay.error.detail);
+        }
+        if (lay.layered && !isIn(m.movementType) && input.useProvidedCost !== true) { unitCostUsed = lay.unitCost; totalCostUsed = lay.totalCost; }
         this.warehouseStock.set(key, {
           ...existing,
           currentQty: newQty,
           availableQty: newQty - existing.reservedQty,
-          averageCost: Math.round(newAvg * 100) / 100,
-          totalValue: Math.round(newQty * newAvg * 100) / 100,
+          averageCost: lay.layered ? lay.averageCost : Math.round(newAvg * 100) / 100,
+          totalValue: lay.layered ? lay.totalValue : Math.round(newQty * newAvg * 100) / 100,
           updatedAt: new Date().toISOString(),
         });
         const saved: StockMovement = { ...m, unitCost: unitCostUsed, totalCost: totalCostUsed, balanceAfterQty: newQty, timestamp: m.timestamp || new Date().toISOString() };

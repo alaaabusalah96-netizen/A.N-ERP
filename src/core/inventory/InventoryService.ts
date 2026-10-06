@@ -39,6 +39,7 @@ import {
   ItemPrice,
   ItemLedgerReport,
   ItemLedgerEntry,
+  InventorySettings,
 } from '../storage/StoragePort';
 import { PostingEngine } from '../engines/PostingEngine';
 import { NumberingEngine } from '../engines/NumberingEngine';
@@ -61,6 +62,8 @@ export interface StockLineItemInput {
   serialNumber?: string;
   expiryDate?: string;
   notes?: string;
+  // Phase 13 (COST-001): purchase-order tag (entry: tags the cost layer; exit of a SPECIFIC_LOT item: selects that PO's layers)
+  sourcePoNumber?: string;
 }
 
 export interface ReceiveStockInput {
@@ -207,7 +210,7 @@ export class InventoryService {
    * Validates one stock line and returns a normalized copy (quantity/unitCost as numbers, texts trimmed).
    * `opts.cost` validates unitCost when sent; `opts.expiry` validates expiryDate when sent.
    */
-  private normalizeStockLine<T extends { quantity: any; unitCost?: any; batchNumber?: any; serialNumber?: any; expiryDate?: any; notes?: any; itemId?: any }>(
+  private normalizeStockLine<T extends { quantity: any; unitCost?: any; batchNumber?: any; serialNumber?: any; expiryDate?: any; notes?: any; itemId?: any; sourcePoNumber?: any }>(
     raw: T,
     opts: { cost?: boolean; expiry?: boolean } = {}
   ): { ok: true; line: T; detail?: string } | { ok: false; detail: string; line?: T } {
@@ -228,6 +231,7 @@ export class InventoryService {
     for (const [key, label, max, multi] of [
       ['batchNumber', 'رقم الدفعة (batchNumber)', 64, false],
       ['serialNumber', 'الرقم التسلسلي (serialNumber)', 128, false],
+      ['sourcePoNumber', 'رقم أمر الشراء (sourcePoNumber)', 64, false],
       ['notes', 'الملاحظات (notes)', 2000, true],
     ] as const) {
       if (raw[key] === undefined || raw[key] === null || raw[key] === '') continue;
@@ -349,6 +353,36 @@ export class InventoryService {
   // 7A: Items & Catalog (بطاقة الصنف ودليل الأصناف)
   // ============================================================================
 
+  // Phase 13 (COST-001): inventory settings (default valuation method, negative stock, over-receipt tolerance)
+  public async getInventorySettings(tenantId: string): Promise<ServiceResult<InventorySettings>> {
+    return this.storage.getInventorySettings(tenantId);
+  }
+
+  public async saveInventorySettings(
+    tenantId: string,
+    input: { defaultValuationMethod?: unknown; allowNegativeStock?: unknown; overReceiptTolerancePct?: unknown },
+    actorId: string,
+    idempotencyKey: string
+  ): Promise<ServiceResult<InventorySettings>> {
+    const patch: Partial<Omit<InventorySettings, 'tenantId'>> = {};
+    if (input.defaultValuationMethod !== undefined) {
+      const vm = parseEnum(input.defaultValuationMethod, 'طريقة التقييم الافتراضية (default_valuation_method)', ['WEIGHTED_AVERAGE', 'FIFO', 'SPECIFIC_LOT'] as const);
+      if (!vm.ok) return this.invalid(vm.detail);
+      patch.defaultValuationMethod = vm.value;
+    }
+    if (input.allowNegativeStock !== undefined) {
+      if (typeof input.allowNegativeStock !== 'boolean') return this.invalid('السماح بالرصيد السالب (allow_negative_stock) يجب أن يكون true أو false.');
+      patch.allowNegativeStock = input.allowNegativeStock;
+    }
+    if (input.overReceiptTolerancePct !== undefined) {
+      const n = typeof input.overReceiptTolerancePct === 'number' ? input.overReceiptTolerancePct : NaN;
+      if (!Number.isFinite(n) || n < 0 || n > 100) return this.invalid('نسبة سماح الزيادة في الاستلام (over_receipt_tolerance_pct) يجب أن تكون رقماً بين 0 و100.');
+      patch.overReceiptTolerancePct = n;
+    }
+    if (Object.keys(patch).length === 0) return this.invalid('لا توجد أي إعدادات للتحديث.');
+    return this.storage.saveInventorySettings(tenantId, patch, actorId, idempotencyKey);
+  }
+
   public async saveStockItem(
     tenantId: string,
     itemData: Partial<StockItem>,
@@ -384,11 +418,32 @@ export class InventoryService {
       if (!m.ok) return this.invalid(m.detail);
       money[key] = m.value;
     }
+    // Phase 13 (COST-001): supported methods = WEIGHTED_AVERAGE | FIFO | SPECIFIC_LOT. STANDARD_COST is rejected on save.
     let valuationMethod: StockItem['valuationMethod'] = 'WEIGHTED_AVERAGE';
     if (itemData.valuationMethod !== undefined && itemData.valuationMethod !== null && (itemData.valuationMethod as any) !== '') {
-      const vm = parseEnum(itemData.valuationMethod, 'طريقة التقييم (valuationMethod)', ['WEIGHTED_AVERAGE', 'FIFO', 'STANDARD_COST'] as const);
+      const vm = parseEnum(itemData.valuationMethod, 'طريقة التقييم (valuationMethod)', ['WEIGHTED_AVERAGE', 'FIFO', 'SPECIFIC_LOT', 'STANDARD_COST'] as const);
       if (!vm.ok) return this.invalid(vm.detail);
+      if (vm.value === 'STANDARD_COST') {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/valuation-method-unsupported',
+            title: 'طريقة التقييم غير مدعومة',
+            status: 400,
+            detail: 'طريقة التكلفة المعيارية (STANDARD_COST) غير مدعومة حالياً. الطرق المدعومة: WEIGHTED_AVERAGE | FIFO | SPECIFIC_LOT.',
+          },
+        };
+      }
       valuationMethod = vm.value;
+    } else {
+      // No method given: an existing item keeps its method; a NEW item takes the tenant default from the inventory settings
+      const existingRes = await this.storage.getStockItem(tenantId, (itemData.id || itemData.itemCode) as string);
+      if (existingRes.success && existingRes.data) {
+        valuationMethod = existingRes.data.valuationMethod;
+      } else {
+        const st = await this.storage.getInventorySettings(tenantId);
+        if (st.success && st.data) valuationMethod = st.data.defaultValuationMethod;
+      }
     }
 
     const item: StockItem = {
@@ -597,6 +652,7 @@ export class InventoryService {
         companyId: tenantId,
         movementNumber: `${documentNumber}-${idx + 1}`,
         movementType: 'RECEIPT',
+        sourcePoNumber: line.sourcePoNumber || (sourceDocType === 'PURCHASE_ORDER' ? sourceDocNumber : undefined),
         warehouseId,
         warehouseNameAr: warehouse.nameAr,
         itemId: item.id,
@@ -766,6 +822,9 @@ export class InventoryService {
 
     // ATOMIC VALIDATION: Check that ALL items exist AND have sufficient stock.
     // If ANY item has insufficient stock, fail immediately before ANY modification.
+    // Phase 13 (COST-001): allow_negative_stock from the tenant settings (default false)
+    const invSettings = await this.storage.getInventorySettings(tenantId);
+    const allowNegative = invSettings.success && !!invSettings.data?.allowNegativeStock;
     const resolvedItems: Array<{ item: StockItem; line: StockLineItemInput; availableQty: number; avgCost: number }> = [];
     for (const line of lines) {
       const itemRes = await this.storage.getStockItem(tenantId, line.itemId);
@@ -785,7 +844,7 @@ export class InventoryService {
       const availableQty = stockRes.success && stockRes.data ? stockRes.data.availableQty : 0;
       const avgCost = stockRes.success && stockRes.data ? stockRes.data.averageCost : item.averageCost;
 
-      if (availableQty < line.quantity) {
+      if (availableQty < line.quantity && !allowNegative) {
         return {
           success: false,
           error: {
@@ -850,6 +909,7 @@ export class InventoryService {
         companyId: tenantId,
         movementNumber: `${documentNumber}-${idx + 1}`,
         movementType: 'ISSUE',
+        sourcePoNumber: line.sourcePoNumber,
         warehouseId,
         warehouseNameAr: warehouse.nameAr,
         itemId: item.id,
@@ -913,7 +973,7 @@ export class InventoryService {
     };
 
     // Phase 10: the early balance check above gives a fast message; the FINAL authority is the locked check inside the transaction
-    const postRes = await this.storage.postStockDocumentAtomic(tenantId, { doc: stockDoc, movements }, finalIdempotencyKey);
+    const postRes = await this.storage.postStockDocumentAtomic(tenantId, { doc: stockDoc, movements, allowNegative }, finalIdempotencyKey);
     if (!postRes.success || !postRes.data) return postRes as any;
     const finalDoc = postRes.data;
     for (const alert of reorderAlerts) {

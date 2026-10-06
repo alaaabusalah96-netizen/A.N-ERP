@@ -3487,6 +3487,41 @@ async function startServer() {
     }
   });
 
+  // Phase 13 (COST-001): inventory settings (default valuation method, negative stock, over-receipt tolerance)
+  app.get('/api/inventory/settings', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const result = await svc.getInventorySettings(tenantId);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.put('/api/inventory/settings', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'تحديث إعدادات المخزون');
+      if (!key) return;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      const b = req.body || {};
+      const result = await svc.saveInventorySettings(tenantId, {
+        defaultValuationMethod: b.default_valuation_method ?? b.defaultValuationMethod,
+        allowNegativeStock: b.allow_negative_stock ?? b.allowNegativeStock,
+        overReceiptTolerancePct: b.over_receipt_tolerance_pct ?? b.overReceiptTolerancePct,
+      }, userId, key);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data, message: 'تم تحديث إعدادات المخزون' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // 7B: Stock Balances & Real-Time Levels
   app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {

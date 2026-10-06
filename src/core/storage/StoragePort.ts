@@ -470,7 +470,7 @@ export interface ExpenseRequest {
 // ============================================================================
 // Phase 7: Warehouses & Inventory Module Types (3 of 15 - بند 7)
 // ============================================================================
-export type InventoryValuationMethod = 'WEIGHTED_AVERAGE' | 'FIFO' | 'STANDARD_COST';
+export type InventoryValuationMethod = 'WEIGHTED_AVERAGE' | 'FIFO' | 'SPECIFIC_LOT' | 'STANDARD_COST';
 export type StockMovementType =
   | 'RECEIPT'
   | 'ISSUE'
@@ -585,6 +585,8 @@ export interface StockMovement {
   performedByName: string;
   timestamp: string;
   idempotencyKey?: string;
+  // Phase 13 (COST-001): optional purchase-order tag. On entry it tags the cost layer; on exit of a SPECIFIC_LOT item it selects the layers of that PO.
+  sourcePoNumber?: string;
 }
 
 export interface StockTransferLine {
@@ -1021,6 +1023,10 @@ export interface StoragePort {
   
   recordStockMovement(tenantId: string, movement: StockMovement, idempotencyKey: string): Promise<StorageResult<StockMovement>>;
   listStockMovements(tenantId: string, filter?: { warehouseId?: string; itemId?: string; movementType?: string; limit?: number }): Promise<StorageResult<StockMovement[]>>;
+
+  // Phase 13 (COST-001): per-tenant inventory settings (defaults are returned when no row exists)
+  getInventorySettings(tenantId: string): Promise<StorageResult<InventorySettings>>;
+  saveInventorySettings(tenantId: string, settings: Partial<Omit<InventorySettings, 'tenantId'>>, actorId: string, idempotencyKey: string): Promise<StorageResult<InventorySettings>>;
   
   createStockTransfer(tenantId: string, transfer: StockTransfer, lines: StockTransferLine[], idempotencyKey: string): Promise<StorageResult<StockTransfer>>;
   postStockTransferAtomic(tenantId: string, input: PostStockTransferAtomicInput, idempotencyKey: string): Promise<StorageResult<StockTransfer>>;
@@ -1087,6 +1093,51 @@ export interface StockDocumentLine {
 }
 
 // Phase 10 (STK-ATOMIC-001): everything needed to post one stock document in a single all-or-nothing transaction
+// Phase 13 (COST-001): selectable inventory costing -------------------------------------------------
+export interface InventorySettings {
+  tenantId: string;
+  defaultValuationMethod: 'WEIGHTED_AVERAGE' | 'FIFO' | 'SPECIFIC_LOT';
+  allowNegativeStock: boolean;
+  overReceiptTolerancePct: number;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+
+export function defaultInventorySettings(tenantId: string): InventorySettings {
+  return { tenantId, defaultValuationMethod: 'WEIGHTED_AVERAGE', allowNegativeStock: false, overReceiptTolerancePct: 0 };
+}
+
+export interface CostLayerRow { id: string; poNumber?: string | null; remainingQty: number; unitCost: number; }
+export type CostLayerPlan =
+  | { ok: true; takes: Array<{ layerId: string; qty: number; unitCost: number; newRemaining: number }>; totalCost: number; unitCost: number }
+  | { ok: false; code: 'insufficient-stock' | 'insufficient-lot-stock'; available: number };
+
+// Pure FIFO / SPECIFIC_LOT consumption plan. `layers` must already be in consumption order (oldest first).
+// SPECIFIC_LOT with a PO number consumes ONLY the layers of that PO; without a PO number it behaves as FIFO.
+export function planCostLayerConsumption(layers: CostLayerRow[], quantity: number, method: 'FIFO' | 'SPECIFIC_LOT', poNumber?: string | null): CostLayerPlan {
+  const EPS = 0.00005;
+  const r4 = (n: number) => Math.round(n * 10000) / 10000;
+  const qty = Math.abs(quantity);
+  const lot = method === 'SPECIFIC_LOT' && !!poNumber;
+  const pool = lot ? layers.filter(l => l.poNumber === poNumber) : layers;
+  const available = r4(pool.reduce((s, l) => s + Math.max(0, Number(l.remainingQty)), 0));
+  if (available + EPS < qty) return { ok: false, code: lot ? 'insufficient-lot-stock' : 'insufficient-stock', available };
+  const takes: Array<{ layerId: string; qty: number; unitCost: number; newRemaining: number }> = [];
+  let left = qty;
+  let total = 0;
+  for (const l of pool) {
+    if (left <= EPS) break;
+    const rem = Number(l.remainingQty);
+    if (rem <= EPS) continue;
+    const take = Math.min(rem, left);
+    takes.push({ layerId: l.id, qty: take, unitCost: Number(l.unitCost), newRemaining: r4(rem - take) });
+    total += take * Number(l.unitCost);
+    left = r4(left - take);
+  }
+  total = r4(total);
+  return { ok: true, takes, totalCost: total, unitCost: qty > 0 ? r4(total / qty) : 0 };
+}
+
 export interface PostStockDocumentAtomicInput {
   doc: StockDocument;            // doc.lines and doc.movements are filled, same order and count (line <-> movement)
   movements: StockMovement[];    // same elements as doc.movements

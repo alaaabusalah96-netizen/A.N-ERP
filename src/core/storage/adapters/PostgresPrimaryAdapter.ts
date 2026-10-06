@@ -12,6 +12,9 @@ import { requestContextALS } from '../../context/RequestContext';
 import {
   StoragePort,
   ApprovalPolicy,
+  InventorySettings,
+  defaultInventorySettings,
+  planCostLayerConsumption,
   ApprovalDocumentType,
   PostStockDocumentAtomicInput,
   PostStockTransferAtomicInput,
@@ -860,6 +863,34 @@ export class PostgresPrimaryAdapter implements StoragePort {
         UNIQUE(tenant_id, warehouse_id, item_id)
       );
 
+      -- Phase 13 (COST-001): cost layers (FIFO / SPECIFIC_LOT) and per-tenant inventory settings
+      CREATE TABLE IF NOT EXISTS an_stock_cost_layers (
+        id VARCHAR(80) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id) ON DELETE CASCADE,
+        item_id VARCHAR(64) NOT NULL REFERENCES an_stock_items(id) ON DELETE CASCADE,
+        source_document_type VARCHAR(40),
+        source_document_id VARCHAR(64),
+        source_document_number VARCHAR(64),
+        po_number VARCHAR(64),
+        received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        original_qty NUMERIC(16,4) NOT NULL CHECK (original_qty > 0),
+        remaining_qty NUMERIC(16,4) NOT NULL CHECK (remaining_qty >= 0),
+        unit_cost NUMERIC(16,4) NOT NULL CHECK (unit_cost >= 0),
+        is_closed BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_an_cost_layers_fifo ON an_stock_cost_layers(tenant_id, warehouse_id, item_id, received_at) WHERE remaining_qty > 0 AND is_closed = FALSE;
+      CREATE INDEX IF NOT EXISTS idx_an_cost_layers_po ON an_stock_cost_layers(tenant_id, item_id, po_number) WHERE po_number IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS an_inventory_settings (
+        tenant_id VARCHAR(64) PRIMARY KEY REFERENCES an_tenants(id),
+        default_valuation_method VARCHAR(32) NOT NULL DEFAULT 'WEIGHTED_AVERAGE',
+        allow_negative_stock BOOLEAN NOT NULL DEFAULT FALSE,
+        over_receipt_tolerance_pct NUMERIC(5,2) NOT NULL DEFAULT 0 CHECK (over_receipt_tolerance_pct >= 0 AND over_receipt_tolerance_pct <= 100),
+        updated_by VARCHAR(64),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
       CREATE TABLE IF NOT EXISTS an_stock_movements (
         id VARCHAR(64) PRIMARY KEY,
         tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
@@ -1201,7 +1232,9 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_role_assignments',
           'an_membership_scopes',
           'an_invitations',
-          'an_approval_policies'
+          'an_approval_policies',
+          'an_stock_cost_layers',
+          'an_inventory_settings'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -1228,6 +1261,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
       try {
         await client.query(ddl);
         await this.backfillMemberships(client);
+        await this.backfillOpeningCostLayers(client);
       } finally {
         client.release();
       }
@@ -1296,6 +1330,39 @@ export class PostgresPrimaryAdapter implements StoragePort {
       }
     }
     if (missing > 0) console.error(`[phase-4] users without membership: ${missing}`);
+  }
+
+  // Phase 13 (COST-001): idempotent OPENING cost layers for FIFO / SPECIFIC_LOT items that already hold stock but have no layer.
+  // Invariant afterwards: for these items the sum of open layers' remaining_qty = current_qty. WEIGHTED_AVERAGE items get NO layers.
+  // Same RLS decision as the membership backfill (global pass if the role bypasses RLS, else one transaction per tenant).
+  private static openingLayersSql(scoped: boolean): string {
+    return `INSERT INTO an_stock_cost_layers (id, tenant_id, warehouse_id, item_id, source_document_type, received_at, original_qty, remaining_qty, unit_cost)
+       SELECT 'lyr-open-' || md5(ws.warehouse_id || '|' || ws.item_id), ws.tenant_id, ws.warehouse_id, ws.item_id, 'OPENING', ws.updated_at, ws.current_qty, ws.current_qty, ws.average_cost
+       FROM an_warehouse_stock ws JOIN an_stock_items i ON i.id = ws.item_id AND i.tenant_id = ws.tenant_id
+       WHERE ws.current_qty > 0 AND i.valuation_method IN ('FIFO', 'SPECIFIC_LOT')${scoped ? ' AND ws.tenant_id = $1' : ''}
+         AND NOT EXISTS (SELECT 1 FROM an_stock_cost_layers l WHERE l.tenant_id = ws.tenant_id AND l.warehouse_id = ws.warehouse_id AND l.item_id = ws.item_id)
+       ON CONFLICT (id) DO NOTHING`;
+  }
+
+  private async backfillOpeningCostLayers(client: PoolClient): Promise<void> {
+    const roleRes = await client.query('SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user');
+    const bypass = !!(roleRes.rows[0]?.rolbypassrls || roleRes.rows[0]?.rolsuper);
+    if (bypass) {
+      await client.query(PostgresPrimaryAdapter.openingLayersSql(false));
+      return;
+    }
+    const tenants = await client.query('SELECT id FROM an_tenants');
+    for (const t of tenants.rows) {
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [t.id]);
+        await client.query(PostgresPrimaryAdapter.openingLayersSql(true), [t.id]);
+        await client.query('COMMIT');
+      } catch (e) {
+        try { await client.query('ROLLBACK'); } catch (rbErr: any) { console.warn('[PostgresPrimaryAdapter] opening layers backfill ROLLBACK failed:', rbErr?.message); }
+        throw e;
+      }
+    }
   }
 
   // Tenant operations
@@ -5692,6 +5759,22 @@ export class PostgresPrimaryAdapter implements StoragePort {
     return this.withTenantScope(tenantId, async () => {
       return this.runIdempotent(tenantId, idempotencyKey, 'saveStockItem', async (client) => {
         try {
+          // Phase 13 (COST-001): detect a valuation-method change of an existing item. Lock order = stock rows first, then the item row
+          // (same order as the movement paths), so a change can never deadlock with a concurrent movement.
+          const normMethod = (m: any): 'WEIGHTED_AVERAGE' | 'FIFO' | 'SPECIFIC_LOT' => (m === 'FIFO' || m === 'SPECIFIC_LOT' ? m : 'WEIGHTED_AVERAGE');
+          const newMethod = normMethod(item.valuationMethod);
+          const prevPeek = await client.query(`SELECT id, valuation_method FROM an_stock_items WHERE tenant_id = $1 AND item_code = $2`, [tenantId, item.itemCode]);
+          let methodChange: { itemId: string; from: string; to: string; stockRows: any[] } | null = null;
+          if (prevPeek.rows.length > 0 && normMethod(prevPeek.rows[0].valuation_method) !== newMethod) {
+            const existingItemId = prevPeek.rows[0].id;
+            const lockedRows = await client.query(
+              `SELECT warehouse_id, current_qty, average_cost, total_value FROM an_warehouse_stock WHERE tenant_id = $1 AND item_id = $2 ORDER BY warehouse_id FOR UPDATE`,
+              [tenantId, existingItemId]
+            );
+            const prevNow = await client.query(`SELECT valuation_method FROM an_stock_items WHERE tenant_id = $1 AND id = $2`, [tenantId, existingItemId]);
+            const fromNow = normMethod(prevNow.rows[0]?.valuation_method);
+            if (fromNow !== newMethod) methodChange = { itemId: existingItemId, from: fromNow, to: newMethod, stockRows: lockedRows.rows };
+          }
           await client.query(
             `INSERT INTO an_stock_items (
               id, tenant_id, company_id, item_code, barcode, name_ar, name_en,
@@ -5752,6 +5835,45 @@ export class PostgresPrimaryAdapter implements StoragePort {
               new Date().toISOString(),
             ]
           );
+
+          if (methodChange && !(methodChange.from !== 'WEIGHTED_AVERAGE' && methodChange.to !== 'WEIGHTED_AVERAGE')) {
+            const nowIso = new Date().toISOString();
+            let affected = 0;
+            // Any open layer of this item is closed first, so the re-basing below is idempotent and keeps sum(remaining) = current_qty
+            await client.query(
+              `UPDATE an_stock_cost_layers SET remaining_qty = 0, is_closed = TRUE WHERE tenant_id = $1 AND item_id = $2 AND is_closed = FALSE`,
+              [tenantId, methodChange.itemId]
+            );
+            for (const sr of methodChange.stockRows) {
+              const q = Number(sr.current_qty);
+              if (!(q > 0)) continue;
+              affected++;
+              if (methodChange.from === 'WEIGHTED_AVERAGE') {
+                // WEIGHTED_AVERAGE -> FIFO / SPECIFIC_LOT: opening re-measurement layer at the current average cost
+                await client.query(
+                  `INSERT INTO an_stock_cost_layers (id, tenant_id, warehouse_id, item_id, source_document_type, received_at, original_qty, remaining_qty, unit_cost)
+                   VALUES ($1, $2, $3, $4, 'OPENING', $5, $6, $6, $7)`,
+                  [`lyr-open-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`, tenantId, sr.warehouse_id, methodChange.itemId, nowIso, q, Number(sr.average_cost)]
+                );
+              } else {
+                // FIFO / SPECIFIC_LOT -> WEIGHTED_AVERAGE: average = value / quantity
+                await client.query(
+                  `UPDATE an_warehouse_stock SET average_cost = $1, updated_at = $2 WHERE tenant_id = $3 AND warehouse_id = $4 AND item_id = $5`,
+                  [Number(sr.total_value) / q, nowIso, tenantId, sr.warehouse_id, methodChange.itemId]
+                );
+              }
+            }
+            await client.query(
+              `INSERT INTO an_system_changelog (id, timestamp, actor, change_type, module, entities_affected, summary_ar, before_state, after_state, evidence_ref, version)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+              [
+                `scl-valm-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`, nowIso, (item as any).updatedBy || 'system', 'PLATFORM_MANAGEMENT', 'INVENTORY',
+                [`StockItem:${methodChange.itemId}`],
+                `تغيير طريقة تقييم الصنف ${item.itemCode} من ${methodChange.from} إلى ${methodChange.to} (مستودعات متأثرة: ${affected})`,
+                JSON.stringify({ valuationMethod: methodChange.from }), JSON.stringify({ valuationMethod: methodChange.to, warehousesAffected: affected }), null, '1.0',
+              ]
+            );
+          }
 
           return { success: true, data: item };
         } catch (err: any) {
@@ -5990,6 +6112,21 @@ export class PostgresPrimaryAdapter implements StoragePort {
         unitCostUsed = averageCost > 0 ? averageCost : movement.unitCost;
         totalCostUsed = Math.round(Math.abs(movement.quantity) * unitCostUsed * 100) / 100;
       }
+      // Phase 13 (COST-001): FIFO / SPECIFIC_LOT items use cost layers. WEIGHTED_AVERAGE items skip this block entirely (no layers, no extra writes).
+      const valuationMethod = await this.getItemValuationMethodInTx(client, tenantId, movement.itemId);
+      if (valuationMethod !== 'WEIGHTED_AVERAGE') {
+        const layerRes = await this.applyCostLayersInTx(client, tenantId, movement, qtyDelta, valuationMethod);
+        if (!layerRes.ok) return layerRes;
+        // a transferred-in layer carries the exact transferred value (unit cost is rounded to 4 decimals), so the total value is preserved
+        if (qtyDelta > 0 && movement.movementType === 'TRANSFER_IN' && movement.totalCost > 0) valueDelta = movement.totalCost;
+        if (qtyDelta < 0) {
+          valueDelta = -layerRes.totalCost;
+          if (!opts || opts.lockedOutgoingCost) {
+            unitCostUsed = layerRes.unitCost;
+            totalCostUsed = Math.round(layerRes.totalCost * 100) / 100;
+          }
+        }
+      }
       const newTotalValue = Math.max(0, totalValue + valueDelta);
       const newAverageCost = newQty > 0 ? newTotalValue / newQty : (movement.unitCost > 0 ? movement.unitCost : averageCost);
 
@@ -6105,6 +6242,143 @@ export class PostgresPrimaryAdapter implements StoragePort {
         idempotencyKey,
       };
       return { ok: true, newQty, unitCostUsed, totalCostUsed, saved };
+  }
+
+  // Phase 13 (COST-001): valuation method of an item, read AFTER the warehouse-stock row lock (a method change locks the same rows first).
+  private async getItemValuationMethodInTx(client: PoolClient, tenantId: string, itemId: string): Promise<'WEIGHTED_AVERAGE' | 'FIFO' | 'SPECIFIC_LOT'> {
+    const r = await client.query(`SELECT valuation_method FROM an_stock_items WHERE tenant_id = $1 AND id = $2`, [tenantId, itemId]);
+    const m = r.rows[0]?.valuation_method;
+    if (m === 'FIFO' || m === 'SPECIFIC_LOT') return m;
+    if (m === 'STANDARD_COST') console.warn(`[phase-13] item ${itemId} is stored as STANDARD_COST (unsupported) -> treated as WEIGHTED_AVERAGE`);
+    return 'WEIGHTED_AVERAGE';
+  }
+
+  // Phase 13 (COST-001): entry = insert a layer; exit = lock open layers (oldest first), plan, then consume. Returns BEFORE any write when the layers cannot cover the quantity.
+  private async applyCostLayersInTx(
+    client: PoolClient,
+    tenantId: string,
+    movement: StockMovement,
+    qtyDelta: number,
+    method: 'FIFO' | 'SPECIFIC_LOT'
+  ): Promise<{ ok: true; totalCost: number; unitCost: number } | { ok: false; error: RFC7807Problem }> {
+    if (qtyDelta > 0) {
+      const po = movement.sourcePoNumber || (movement.sourceDocumentType === 'PURCHASE_ORDER' ? movement.sourceDocumentNumber : null) || null;
+      await client.query(
+        `INSERT INTO an_stock_cost_layers (id, tenant_id, warehouse_id, item_id, source_document_type, source_document_id, source_document_number, po_number, received_at, original_qty, remaining_qty, unit_cost)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp(), $9, $9, $10)`,
+        [`lyr-${movement.id}-${Math.random().toString(36).substr(2, 4)}`, tenantId, movement.warehouseId, movement.itemId, movement.sourceDocumentType || null, movement.sourceDocumentId || null,
+         movement.sourceDocumentNumber || null, po, qtyDelta, movement.unitCost]
+      );
+      return { ok: true, totalCost: 0, unitCost: 0 };
+    }
+    if (qtyDelta < 0) {
+      const qty = Math.abs(qtyDelta);
+      const layersRes = await client.query(
+        `SELECT id, po_number, remaining_qty, unit_cost FROM an_stock_cost_layers
+          WHERE tenant_id = $1 AND warehouse_id = $2 AND item_id = $3 AND remaining_qty > 0 AND is_closed = FALSE
+          ORDER BY received_at ASC, created_at ASC, id ASC FOR UPDATE`,
+        [tenantId, movement.warehouseId, movement.itemId]
+      );
+      const plan = planCostLayerConsumption(
+        layersRes.rows.map((l: any) => ({ id: l.id, poNumber: l.po_number, remainingQty: Number(l.remaining_qty), unitCost: Number(l.unit_cost) })),
+        qty, method, movement.sourcePoNumber
+      );
+      if (!plan.ok) {
+        return {
+          ok: false,
+          error: plan.code === 'insufficient-lot-stock'
+            ? { type: 'https://api.an-erp.local/errors/insufficient-lot-stock', title: 'رصيد أمر الشراء غير كافٍ', status: 422,
+                detail: `رصيد أمر الشراء ${movement.sourcePoNumber} للصنف ${movement.itemNameAr} (${plan.available}) أقل من الكمية المطلوبة (${qty}). فشلت العملية بالكامل ذرياً.` }
+            : { type: 'https://api.an-erp.local/errors/insufficient-stock', title: 'الرصيد المخزني غير كافٍ', status: 422,
+                detail: `رصيد طبقات التكلفة للصنف ${movement.itemNameAr} (${plan.available}) أقل من الكمية المطلوبة للصرف (${qty}). فشلت العملية بالكامل ذرياً.` },
+        };
+      }
+      for (const t of plan.takes) {
+        await client.query(
+          `UPDATE an_stock_cost_layers SET remaining_qty = $1, is_closed = $2 WHERE tenant_id = $3 AND id = $4`,
+          [t.newRemaining, t.newRemaining <= 0.00005, tenantId, t.layerId]
+        );
+      }
+      return { ok: true, totalCost: plan.totalCost, unitCost: plan.unitCost };
+    }
+    return { ok: true, totalCost: 0, unitCost: 0 };
+  }
+
+  // Phase 13 (COST-001): per-tenant inventory settings
+  public async getInventorySettings(tenantId: string): Promise<StorageResult<InventorySettings>> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const res = await this.query('SELECT * FROM an_inventory_settings WHERE tenant_id = $1', [tenantId]);
+        if (res.rows.length === 0) return { success: true as const, data: defaultInventorySettings(tenantId) };
+        const r = res.rows[0];
+        return {
+          success: true as const,
+          data: {
+            tenantId,
+            defaultValuationMethod: r.default_valuation_method,
+            allowNegativeStock: !!r.allow_negative_stock,
+            overReceiptTolerancePct: Number(r.over_receipt_tolerance_pct),
+            updatedBy: r.updated_by || undefined,
+            updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+          },
+        };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    });
+  }
+
+  public async saveInventorySettings(tenantId: string, settings: Partial<Omit<InventorySettings, 'tenantId'>>, actorId: string, idempotencyKey: string): Promise<StorageResult<InventorySettings>> {
+    if (!this.pool) return this.missingConnError();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      const reservation = await this.reserveIdempotency(client, tenantId, idempotencyKey, 'saveInventorySettings');
+      if (reservation.action === 'REPLAY') {
+        await client.query('ROLLBACK');
+        return { success: true, data: reservation.cachedPayload };
+      }
+      if (reservation.action === 'CONFLICT') {
+        await client.query('ROLLBACK');
+        return { success: false, error: reservation.error };
+      }
+      const cur = await client.query('SELECT * FROM an_inventory_settings WHERE tenant_id = $1 FOR UPDATE', [tenantId]);
+      const base = defaultInventorySettings(tenantId);
+      const method = settings.defaultValuationMethod ?? (cur.rows[0]?.default_valuation_method ?? base.defaultValuationMethod);
+      const allowNeg = settings.allowNegativeStock ?? (cur.rows[0] ? !!cur.rows[0].allow_negative_stock : base.allowNegativeStock);
+      const tol = settings.overReceiptTolerancePct ?? (cur.rows[0] ? Number(cur.rows[0].over_receipt_tolerance_pct) : base.overReceiptTolerancePct);
+      const res = await client.query(
+        `INSERT INTO an_inventory_settings (tenant_id, default_valuation_method, allow_negative_stock, over_receipt_tolerance_pct, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (tenant_id) DO UPDATE SET
+           default_valuation_method = EXCLUDED.default_valuation_method,
+           allow_negative_stock = EXCLUDED.allow_negative_stock,
+           over_receipt_tolerance_pct = EXCLUDED.over_receipt_tolerance_pct,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = NOW()
+         RETURNING *`,
+        [tenantId, method, allowNeg, tol, actorId]
+      );
+      const r = res.rows[0];
+      const saved: InventorySettings = {
+        tenantId,
+        defaultValuationMethod: r.default_valuation_method,
+        allowNegativeStock: !!r.allow_negative_stock,
+        overReceiptTolerancePct: Number(r.over_receipt_tolerance_pct),
+        updatedBy: r.updated_by || undefined,
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+      };
+      await this.completeIdempotency(client, tenantId, idempotencyKey, 'saveInventorySettings', saved);
+      await client.query('COMMIT');
+      return { success: true, data: saved };
+    } catch (err: any) {
+      try { await client.query('ROLLBACK'); } catch (rbErr: any) { console.warn('[PostgresPrimaryAdapter] saveInventorySettings ROLLBACK failed:', rbErr?.message); }
+      return this.dbError(err);
+    } finally {
+      client.release();
+    }
   }
 
   public async recordStockMovement(
