@@ -48,6 +48,7 @@ import { runPhase6Battery } from './src/core/tests/runPhase6Battery';
 import { CashCustodyService } from './src/core/modules/custody/CashCustodyService';
 import { ExpenseService } from './src/core/modules/expenses/ExpenseService';
 import { InventoryService } from './src/core/inventory/InventoryService';
+import { PurchasingService } from './src/core/purchasing/PurchasingService';
 import { SEED_COMPANY_PROFILE, seedOnlyInitialBootstrap, seedKey, SEED_TENANT_ID } from './src/core/seed/seedOnly';
 import { runPhase7Battery } from './src/core/inventory/Phase7Battery';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
@@ -3379,6 +3380,16 @@ async function startServer() {
   // PHASE 7: WAREHOUSES & INVENTORY MODULE (موديول المخازن والمخزون - موديول 3 من 15)
   // ============================================================================
 
+  const getPurchasingService = (req: Request, res: Response): PurchasingService | null => {
+    const storage = getRequestStorage(req, res);
+    if (!storage) return null;
+    const pe = new PostingEngine(storage);
+    const ne = new NumberingEngine(storage);
+    const inv = new InventoryService(storage, pe, ne);
+    const appr = new ApprovalEngine(storage);
+    return new PurchasingService(storage, appr, ne, inv);
+  };
+
   const getInventoryService = (req: Request, res: Response): InventoryService | null => {
     const storage = getRequestStorage(req, res);
     if (!storage) return null;
@@ -3522,6 +3533,173 @@ async function startServer() {
     }
   });
 
+
+
+  // Phase 15 (PO-001): Purchase Orders & Goods Receipts
+  app.get('/api/purchasing/orders', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.listPurchaseOrders(tenantId, { status: req.query.status as string, vendorId: req.query.vendorId as string });
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/orders', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'إنشاء أمر شراء');
+      if (!key) return;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const b = req.body || {};
+      const result = await svc.createPurchaseOrder(tenantId, {
+        vendorId: b.vendor_id || b.vendorId,
+        orderDate: b.order_date || b.orderDate,
+        expectedDate: b.expected_date || b.expectedDate,
+        notes: b.notes,
+        lines: (b.lines || []).map((l: any) => ({ itemId: l.item_id || l.itemId, orderedQty: l.ordered_qty ?? l.orderedQty, unitCost: l.unit_cost ?? l.unitCost })),
+        createdBy: userId,
+        idempotencyKey: key,
+      });
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.get('/api/purchasing/orders/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.getPurchaseOrder(tenantId, req.params.id);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'غير موجود' } });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/orders/:id/open', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.openPurchaseOrder(tenantId, req.params.id, userId);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/orders/:id/close', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.closePurchaseOrder(tenantId, req.params.id, userId);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/orders/:id/cancel', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.cancelPurchaseOrder(tenantId, req.params.id, userId);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.get('/api/purchasing/receipts', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.listGoodsReceipts(tenantId, { poId: req.query.poId as string, status: req.query.status as string });
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/receipts', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'إنشاء إيصال استلام');
+      if (!key) return;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const b = req.body || {};
+      const result = await svc.createGoodsReceipt(tenantId, {
+        poId: b.po_id || b.poId,
+        warehouseId: b.warehouse_id || b.warehouseId,
+        lines: (b.lines || []).map((l: any) => ({
+          poLineId: l.po_line_id || l.poLineId,
+          receivedQty: l.received_qty ?? l.receivedQty,
+          batchNumber: l.batch_number || l.batchNumber,
+          serialNumber: l.serial_number || l.serialNumber,
+          expiryDate: l.expiry_date || l.expiryDate,
+        })),
+        createdBy: userId,
+        idempotencyKey: key,
+      });
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.get('/api/purchasing/receipts/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.getGoodsReceipt(tenantId, req.params.id);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'غير موجود' } });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/receipts/:id/approve', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const role = (req as any).authContext.role || (req as any).authContext.roles?.[0] || 'warehouse_keeper';
+      const key = requireIdempotencyKey(req, res, 'اعتماد إيصال استلام');
+      if (!key) return;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.approveReceipt(tenantId, req.params.id, userId, role, key);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/receipts/:id/reject', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const role = (req as any).authContext.role || (req as any).authContext.roles?.[0] || 'warehouse_keeper';
+      const key = requireIdempotencyKey(req, res, 'رفض إيصال استلام');
+      if (!key) return;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const reason = (req.body || {}).reason || (req.body || {}).reject_reason;
+      const result = await svc.rejectReceipt(tenantId, req.params.id, userId, role, reason, key);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/receipts/:id/retry-post', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const key = requireIdempotencyKey(req, res, 'إعادة ترحيل إيصال');
+      if (!key) return;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.retryPostReceipt(tenantId, req.params.id, key);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
 
   // Phase 14 (ACC-AUTO-001)
   app.get('/api/inventory/accounting-config', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {

@@ -13,6 +13,8 @@ import {
   defaultInventorySettings,
   StockAccountingConfig,
   defaultStockAccountingConfig,
+  PurchaseOrder, PurchaseOrderLine, GoodsReceipt, GoodsReceiptLine,
+  PurchaseOrderStatus, CompleteGoodsReceiptAtomicInput,
   planCostLayerConsumption,
   PostStockTransferAtomicInput,
   Invitation,
@@ -132,6 +134,10 @@ export class InMemoryAdapter implements StoragePort {
   private costLayers = new Map<string, Array<{ id: string; poNumber: string | null; remainingQty: number; unitCost: number; receivedAt: string; isOpening: boolean }>>();
   private inventorySettings = new Map<string, InventorySettings>();
   private stockAccountingConfig = new Map<string, StockAccountingConfig>();
+  private purchaseOrders = new Map<string, any>();
+  private purchaseOrderLines = new Map<string, any[]>();
+  private goodsReceipts = new Map<string, any>();
+  private goodsReceiptLines = new Map<string, any[]>();
   private custodyExpenseVouchers = new Map<string, CustodyExpenseVoucher>();
   private documentAttachments = new Map<string, DocumentAttachment>();
   private itemPrices = new Map<string, ItemPrice>();
@@ -1855,10 +1861,15 @@ export class InMemoryAdapter implements StoragePort {
 
   // WEIGHTED_AVERAGE items return { layered: false } and are never touched. FIFO / SPECIFIC_LOT items: entry adds a layer,
   // exit consumes layers (fails closed BEFORE any change when the layers cannot cover the quantity).
-  private layerStepMem(tenantId: string, m: StockMovement, isIn: boolean, existing: WarehouseStock, newQty: number):
-    { ok: false; error: { type: string; title: string; status: number; detail: string } }
-    | { ok: true; layered: false }
-    | { ok: true; layered: true; totalValue: number; averageCost: number; unitCost: number; totalCost: number } {
+  private layerStepMem(tenantId: string, m: StockMovement, isIn: boolean, existing: WarehouseStock, newQty: number): {
+    ok: boolean;
+    layered: boolean;
+    totalValue?: number;
+    averageCost?: number;
+    unitCost?: number;
+    totalCost?: number;
+    error?: { type: string; title: string; status: number; detail: string };
+  } {
     const method = this.getValuationMethodMem(tenantId, m.itemId);
     if (method === 'WEIGHTED_AVERAGE') return { ok: true, layered: false };
     const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -1876,9 +1887,9 @@ export class InMemoryAdapter implements StoragePort {
     const plan = planCostLayerConsumption(layers, qty, method, m.sourcePoNumber);
     if (!plan.ok) {
       return plan.code === 'insufficient-lot-stock'
-        ? { ok: false, error: { type: 'https://api.an-erp.local/errors/insufficient-lot-stock', title: 'رصيد أمر الشراء غير كافٍ', status: 422,
+        ? { ok: false, layered: true, error: { type: 'https://api.an-erp.local/errors/insufficient-lot-stock', title: 'رصيد أمر الشراء غير كافٍ', status: 422,
             detail: `رصيد أمر الشراء ${m.sourcePoNumber} للصنف ${m.itemNameAr} (${plan.available}) أقل من الكمية المطلوبة (${qty}). فشلت العملية بالكامل ذرياً.` } }
-        : { ok: false, error: { type: 'https://api.an-erp.local/errors/insufficient-stock', title: 'الرصيد المخزني غير كافٍ', status: 422,
+        : { ok: false, layered: true, error: { type: 'https://api.an-erp.local/errors/insufficient-stock', title: 'الرصيد المخزني غير كافٍ', status: 422,
             detail: `رصيد طبقات التكلفة للصنف ${m.itemNameAr} (${plan.available}) أقل من الكمية المطلوبة للصرف (${qty}). فشلت العملية بالكامل ذرياً.` } };
     }
     const taken = new Map(plan.takes.map(t => [t.layerId, t.newRemaining] as [string, number]));
@@ -1948,6 +1959,92 @@ export class InMemoryAdapter implements StoragePort {
     if (filter?.category) list = list.filter(i => i.category === filter.category);
     if (filter?.isActive !== undefined) list = list.filter(i => i.isActive === filter.isActive);
     return { success: true, data: list.map(i => ({ ...i })) };
+  }
+
+
+  // Phase 15 (PO-001)
+  public async savePurchaseOrder(tenantId: string, po: PurchaseOrder, lines: PurchaseOrderLine[], idempotencyKey: string): Promise<StorageResult<PurchaseOrder>> {
+    const cacheKey = `${tenantId}:savePO:${idempotencyKey}`;
+    const hit = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'savePurchaseOrder');
+    if (hit.success && hit.data) return { success: true, data: hit.data };
+    this.purchaseOrders.set(`${tenantId}:${po.id}`, { ...po });
+    this.purchaseOrderLines.set(`${tenantId}:${po.id}`, lines.map(l => ({ ...l })));
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'savePurchaseOrder', po);
+    return { success: true, data: { ...po } };
+  }
+  public async getPurchaseOrder(tenantId: string, poId: string): Promise<StorageResult<{ po: PurchaseOrder; lines: PurchaseOrderLine[] } | null>> {
+    const po = this.purchaseOrders.get(`${tenantId}:${poId}`);
+    if (!po) return { success: true, data: null };
+    const lines = this.purchaseOrderLines.get(`${tenantId}:${poId}`) || [];
+    return { success: true, data: { po: { ...po }, lines: lines.map((l: any) => ({ ...l })) } };
+  }
+  public async listPurchaseOrders(tenantId: string, filter?: { status?: string; vendorId?: string }): Promise<StorageResult<PurchaseOrder[]>> {
+    let list = Array.from(this.purchaseOrders.values()).filter((p: any) => p.tenantId === tenantId);
+    if (filter?.status) list = list.filter((p: any) => p.status === filter.status);
+    if (filter?.vendorId) list = list.filter((p: any) => p.vendorId === filter.vendorId);
+    return { success: true, data: list.map((p: any) => ({ ...p })) };
+  }
+  public async updatePurchaseOrderStatus(tenantId: string, poId: string, status: PurchaseOrderStatus, _actorId: string): Promise<StorageResult<PurchaseOrder>> {
+    const key = `${tenantId}:${poId}`;
+    const po = this.purchaseOrders.get(key);
+    if (!po) return { success: false, error: { type: 'not-found', title: 'أمر الشراء', status: 404, detail: 'أمر الشراء غير موجود' } };
+    po.status = status; po.updatedAt = new Date().toISOString();
+    this.purchaseOrders.set(key, po);
+    return { success: true, data: { ...po } };
+  }
+  public async saveGoodsReceipt(tenantId: string, receipt: GoodsReceipt, lines: GoodsReceiptLine[], idempotencyKey: string): Promise<StorageResult<GoodsReceipt>> {
+    const hit = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'saveGoodsReceipt');
+    if (hit.success && hit.data) return { success: true, data: hit.data };
+    this.goodsReceipts.set(`${tenantId}:${receipt.id}`, { ...receipt });
+    this.goodsReceiptLines.set(`${tenantId}:${receipt.id}`, lines.map(l => ({ ...l })));
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'saveGoodsReceipt', receipt);
+    return { success: true, data: { ...receipt } };
+  }
+  public async getGoodsReceipt(tenantId: string, receiptId: string): Promise<StorageResult<{ receipt: GoodsReceipt; lines: GoodsReceiptLine[] } | null>> {
+    const r = this.goodsReceipts.get(`${tenantId}:${receiptId}`);
+    if (!r) return { success: true, data: null };
+    const lines = this.goodsReceiptLines.get(`${tenantId}:${receiptId}`) || [];
+    return { success: true, data: { receipt: { ...r }, lines: lines.map((l: any) => ({ ...l })) } };
+  }
+  public async listGoodsReceipts(tenantId: string, filter?: { poId?: string; status?: string }): Promise<StorageResult<GoodsReceipt[]>> {
+    let list = Array.from(this.goodsReceipts.values()).filter((r: any) => r.tenantId === tenantId);
+    if (filter?.poId) list = list.filter((r: any) => r.poId === filter.poId);
+    if (filter?.status) list = list.filter((r: any) => r.status === filter.status);
+    return { success: true, data: list.map((r: any) => ({ ...r })) };
+  }
+  public async updateGoodsReceipt(tenantId: string, receipt: GoodsReceipt): Promise<StorageResult<GoodsReceipt>> {
+    this.goodsReceipts.set(`${tenantId}:${receipt.id}`, { ...receipt });
+    return { success: true, data: { ...receipt } };
+  }
+  public async completeGoodsReceiptAtomic(tenantId: string, input: CompleteGoodsReceiptAtomicInput, idempotencyKey: string): Promise<StorageResult<GoodsReceipt>> {
+    const hit = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'completeGoodsReceipt');
+    if (hit.success && hit.data) return { success: true, data: hit.data };
+    for (const u of input.qtyUpdates) {
+      const lines = this.purchaseOrderLines.get(`${tenantId}:${input.poId}`) || [];
+      const line = lines.find((l: any) => l.id === u.poLineId);
+      if (line) {
+        line.receivedQty = Number(line.receivedQty) + Number(u.addReceived);
+        line.rejectedQty = Number(line.rejectedQty) + Number(u.addRejected);
+      }
+      this.purchaseOrderLines.set(`${tenantId}:${input.poId}`, lines);
+    }
+    const po = this.purchaseOrders.get(`${tenantId}:${input.poId}`);
+    if (po) { po.status = input.newPoStatus; po.updatedAt = new Date().toISOString(); this.purchaseOrders.set(`${tenantId}:${input.poId}`, po); }
+    const receipt = { ...input.receipt };
+    this.goodsReceipts.set(`${tenantId}:${receipt.id}`, receipt);
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'completeGoodsReceipt', receipt);
+    return { success: true, data: receipt };
+  }
+  public async sumOpenReceiptQtyForPoLine(tenantId: string, poLineId: string): Promise<StorageResult<number>> {
+    let sum = 0;
+    for (const [key, lines] of this.goodsReceiptLines.entries()) {
+      if (!key.startsWith(tenantId + ':')) continue;
+      const rid = key.split(':').slice(1).join(':');
+      const rec = this.goodsReceipts.get(`${tenantId}:${rid}`);
+      if (!rec || rec.status !== 'IN_APPROVAL') continue;
+      for (const l of lines) if (l.poLineId === poLineId) sum += Number(l.receivedQty);
+    }
+    return { success: true, data: sum };
   }
 
   public async getWarehouseStock(tenantId: string, warehouseId: string, itemId: string): Promise<StorageResult<WarehouseStock | null>> {

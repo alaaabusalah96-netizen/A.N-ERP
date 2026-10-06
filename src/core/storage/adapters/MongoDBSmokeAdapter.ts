@@ -271,4 +271,15 @@ export class MongoDBSmokeAdapter implements StoragePort {
   setStockDocumentJournal(tenantId: string, docId: string, journalEntryId: string | null, status: any) { return this.smokeOnlyError<any>('setStockDocumentJournal'); }
   setStockTransferJournal(tenantId: string, transferId: string, which: any, journalEntryId: string | null, status: any) { return this.smokeOnlyError<any>('setStockTransferJournal'); }
 
+  savePurchaseOrder(..._a: any[]) { return this.smokeOnlyError<any>('savePurchaseOrder'); }
+  getPurchaseOrder(..._a: any[]) { return this.smokeOnlyError<any>('getPurchaseOrder'); }
+  listPurchaseOrders(..._a: any[]) { return this.smokeOnlyError<any>('listPurchaseOrders'); }
+  updatePurchaseOrderStatus(..._a: any[]) { return this.smokeOnlyError<any>('updatePurchaseOrderStatus'); }
+  saveGoodsReceipt(..._a: any[]) { return this.smokeOnlyError<any>('saveGoodsReceipt'); }
+  getGoodsReceipt(..._a: any[]) { return this.smokeOnlyError<any>('getGoodsReceipt'); }
+  listGoodsReceipts(..._a: any[]) { return this.smokeOnlyError<any>('listGoodsReceipts'); }
+  updateGoodsReceipt(..._a: any[]) { return this.smokeOnlyError<any>('updateGoodsReceipt'); }
+  completeGoodsReceiptAtomic(..._a: any[]) { return this.smokeOnlyError<any>('completeGoodsReceiptAtomic'); }
+  sumOpenReceiptQtyForPoLine(..._a: any[]) { return this.smokeOnlyError<any>('sumOpenReceiptQtyForPoLine'); }
+
 }

@@ -639,6 +639,69 @@ export interface StockTransfer {
   journalStatus?: 'NONE' | 'POSTED' | 'PENDING_RETRY';
 }
 
+// Phase 15 (PO-001): Purchase Orders & Goods Receipts
+export type PurchaseOrderStatus = 'DRAFT' | 'OPEN' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CLOSED' | 'CANCELLED';
+export type GoodsReceiptStatus = 'IN_APPROVAL' | 'APPROVED' | 'POSTING_FAILED' | 'REJECTED' | 'RETURNED_TO_SUPPLIER' | 'CANCELLED';
+
+export interface PurchaseOrder {
+  id: string;
+  tenantId: string;
+  poNumber: string;
+  vendorId: string;
+  vendorName: string;
+  status: PurchaseOrderStatus;
+  orderDate: string;
+  expectedDate?: string;
+  notes?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface PurchaseOrderLine {
+  id: string;
+  tenantId: string;
+  poId: string;
+  lineNumber: number;
+  itemId: string;
+  orderedQty: number;
+  unitCost: number;
+  receivedQty: number;
+  rejectedQty: number;
+}
+export interface GoodsReceipt {
+  id: string;
+  tenantId: string;
+  receiptNumber: string;
+  poId: string;
+  poNumber: string;
+  warehouseId: string;
+  status: GoodsReceiptStatus;
+  approvalRequestId?: string;
+  stockDocumentId?: string;
+  rejectReason?: string;
+  createdBy: string;
+  createdAt: string;
+  completedAt?: string;
+}
+export interface GoodsReceiptLine {
+  id: string;
+  tenantId: string;
+  receiptId: string;
+  poLineId: string;
+  itemId: string;
+  receivedQty: number;
+  batchNumber?: string;
+  serialNumber?: string;
+  expiryDate?: string;
+}
+export interface CompleteGoodsReceiptAtomicInput {
+  receipt: GoodsReceipt;
+  lines: GoodsReceiptLine[];
+  poId: string;
+  qtyUpdates: Array<{ poLineId: string; addReceived: number; addRejected: number }>;
+  newPoStatus: PurchaseOrderStatus;
+}
+
 export interface StockCountLine {
   id: string;
   tenantId: string;
@@ -1036,6 +1099,20 @@ export interface StoragePort {
   saveStockAccountingConfig(tenantId: string, settings: Partial<Omit<StockAccountingConfig, 'tenantId'>>, actorId: string, idempotencyKey: string): Promise<StorageResult<StockAccountingConfig>>;
   setStockDocumentJournal(tenantId: string, docId: string, journalEntryId: string | null, status: 'NONE' | 'POSTED' | 'PENDING_RETRY'): Promise<StorageResult<void>>;
   setStockTransferJournal(tenantId: string, transferId: string, which: 'DISPATCH' | 'RECEIVE', journalEntryId: string | null, status: 'NONE' | 'POSTED' | 'PENDING_RETRY'): Promise<StorageResult<void>>;
+
+  // Phase 15 (PO-001)
+  savePurchaseOrder(tenantId: string, po: PurchaseOrder, lines: PurchaseOrderLine[], idempotencyKey: string): Promise<StorageResult<PurchaseOrder>>;
+  getPurchaseOrder(tenantId: string, poId: string): Promise<StorageResult<{ po: PurchaseOrder; lines: PurchaseOrderLine[] } | null>>;
+  listPurchaseOrders(tenantId: string, filter?: { status?: string; vendorId?: string }): Promise<StorageResult<PurchaseOrder[]>>;
+  updatePurchaseOrderStatus(tenantId: string, poId: string, status: PurchaseOrderStatus, actorId: string): Promise<StorageResult<PurchaseOrder>>;
+  saveGoodsReceipt(tenantId: string, receipt: GoodsReceipt, lines: GoodsReceiptLine[], idempotencyKey: string): Promise<StorageResult<GoodsReceipt>>;
+  getGoodsReceipt(tenantId: string, receiptId: string): Promise<StorageResult<{ receipt: GoodsReceipt; lines: GoodsReceiptLine[] } | null>>;
+  listGoodsReceipts(tenantId: string, filter?: { poId?: string; status?: string }): Promise<StorageResult<GoodsReceipt[]>>;
+  updateGoodsReceipt(tenantId: string, receipt: GoodsReceipt): Promise<StorageResult<GoodsReceipt>>;
+  completeGoodsReceiptAtomic(tenantId: string, input: CompleteGoodsReceiptAtomicInput, idempotencyKey: string): Promise<StorageResult<GoodsReceipt>>;
+  sumOpenReceiptQtyForPoLine(tenantId: string, poLineId: string): Promise<StorageResult<number>>;
+
+
   
   createStockTransfer(tenantId: string, transfer: StockTransfer, lines: StockTransferLine[], idempotencyKey: string): Promise<StorageResult<StockTransfer>>;
   postStockTransferAtomic(tenantId: string, input: PostStockTransferAtomicInput, idempotencyKey: string): Promise<StorageResult<StockTransfer>>;
@@ -1133,8 +1210,8 @@ export function defaultInventorySettings(tenantId: string): InventorySettings {
 
 export interface CostLayerRow { id: string; poNumber?: string | null; remainingQty: number; unitCost: number; }
 export type CostLayerPlan =
-  | { ok: true; takes: Array<{ layerId: string; qty: number; unitCost: number; newRemaining: number }>; totalCost: number; unitCost: number }
-  | { ok: false; code: 'insufficient-stock' | 'insufficient-lot-stock'; available: number };
+  | { ok: true; takes: Array<{ layerId: string; qty: number; unitCost: number; newRemaining: number }>; totalCost: number; unitCost: number; code?: undefined; available?: undefined }
+  | { ok: false; code: 'insufficient-stock' | 'insufficient-lot-stock'; available: number; takes?: undefined; totalCost?: undefined; unitCost?: undefined };
 
 // Pure FIFO / SPECIFIC_LOT consumption plan. `layers` must already be in consumption order (oldest first).
 // SPECIFIC_LOT with a PO number consumes ONLY the layers of that PO; without a PO number it behaves as FIFO.

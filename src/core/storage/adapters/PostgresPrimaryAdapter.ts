@@ -908,6 +908,63 @@ export class PostgresPrimaryAdapter implements StoragePort {
       ALTER TABLE an_stock_transfers ADD COLUMN IF NOT EXISTS receive_journal_entry_id VARCHAR(64);
       ALTER TABLE an_stock_transfers ADD COLUMN IF NOT EXISTS journal_status VARCHAR(16);
 
+      -- Phase 15 (PO-001)
+      CREATE TABLE IF NOT EXISTS an_purchase_orders (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        po_number VARCHAR(64) NOT NULL,
+        vendor_id VARCHAR(64) NOT NULL,
+        vendor_name VARCHAR(200) NOT NULL,
+        status VARCHAR(24) NOT NULL DEFAULT 'DRAFT',
+        order_date DATE NOT NULL,
+        expected_date DATE,
+        notes TEXT,
+        created_by VARCHAR(64) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, po_number)
+      );
+      CREATE TABLE IF NOT EXISTS an_purchase_order_lines (
+        id VARCHAR(80) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        po_id VARCHAR(64) NOT NULL REFERENCES an_purchase_orders(id) ON DELETE CASCADE,
+        line_number INT NOT NULL,
+        item_id VARCHAR(64) NOT NULL REFERENCES an_stock_items(id),
+        ordered_qty NUMERIC(16,4) NOT NULL CHECK (ordered_qty > 0),
+        unit_cost NUMERIC(16,4) NOT NULL CHECK (unit_cost >= 0),
+        received_qty NUMERIC(16,4) NOT NULL DEFAULT 0 CHECK (received_qty >= 0),
+        rejected_qty NUMERIC(16,4) NOT NULL DEFAULT 0 CHECK (rejected_qty >= 0),
+        UNIQUE (po_id, line_number)
+      );
+      CREATE TABLE IF NOT EXISTS an_goods_receipts (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        receipt_number VARCHAR(64) NOT NULL,
+        po_id VARCHAR(64) NOT NULL REFERENCES an_purchase_orders(id),
+        po_number VARCHAR(64) NOT NULL,
+        warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id),
+        status VARCHAR(24) NOT NULL,
+        approval_request_id VARCHAR(64),
+        stock_document_id VARCHAR(64),
+        reject_reason TEXT,
+        created_by VARCHAR(64) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ,
+        UNIQUE (tenant_id, receipt_number)
+      );
+      CREATE TABLE IF NOT EXISTS an_goods_receipt_lines (
+        id VARCHAR(80) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        receipt_id VARCHAR(64) NOT NULL REFERENCES an_goods_receipts(id) ON DELETE CASCADE,
+        po_line_id VARCHAR(80) NOT NULL REFERENCES an_purchase_order_lines(id),
+        item_id VARCHAR(64) NOT NULL REFERENCES an_stock_items(id),
+        received_qty NUMERIC(16,4) NOT NULL CHECK (received_qty > 0),
+        batch_number VARCHAR(64),
+        serial_number VARCHAR(128),
+        expiry_date DATE
+      );
+
+
 
       CREATE TABLE IF NOT EXISTS an_stock_movements (
         id VARCHAR(64) PRIMARY KEY,
@@ -6134,7 +6191,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
       const valuationMethod = await this.getItemValuationMethodInTx(client, tenantId, movement.itemId);
       if (valuationMethod !== 'WEIGHTED_AVERAGE') {
         const layerRes = await this.applyCostLayersInTx(client, tenantId, movement, qtyDelta, valuationMethod);
-        if (!layerRes.ok) return layerRes;
+        if (!layerRes.ok) return { ok: false, error: layerRes.error };
         // a transferred-in layer carries the exact transferred value (unit cost is rounded to 4 decimals), so the total value is preserved
         if (qtyDelta > 0 && movement.movementType === 'TRANSFER_IN' && movement.totalCost > 0) valueDelta = movement.totalCost;
         if (qtyDelta < 0) {
@@ -6278,7 +6335,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     movement: StockMovement,
     qtyDelta: number,
     method: 'FIFO' | 'SPECIFIC_LOT'
-  ): Promise<{ ok: true; totalCost: number; unitCost: number } | { ok: false; error: RFC7807Problem }> {
+  ): Promise<{ ok: true; totalCost: number; unitCost: number; error?: never } | { ok: false; error: RFC7807Problem; totalCost?: never; unitCost?: never }> {
     if (qtyDelta > 0) {
       const po = movement.sourcePoNumber || (movement.sourceDocumentType === 'PURCHASE_ORDER' ? movement.sourceDocumentNumber : null) || null;
       await client.query(
@@ -6436,6 +6493,131 @@ export class PostgresPrimaryAdapter implements StoragePort {
       if (which === 'DISPATCH') await this.pool.query(`UPDATE an_stock_transfers SET dispatch_journal_entry_id=$1, journal_status=$2 WHERE tenant_id=$3 AND id=$4`, [journalEntryId, status, tenantId, transferId]);
       else await this.pool.query(`UPDATE an_stock_transfers SET receive_journal_entry_id=$1, journal_status=$2 WHERE tenant_id=$3 AND id=$4`, [journalEntryId, status, tenantId, transferId]);
       return { success: true, data: undefined };
+    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+  }
+
+  public async savePurchaseOrder(tenantId: string, po: any, lines: any[], idempotencyKey: string): Promise<any> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO an_purchase_orders (id, tenant_id, po_number, vendor_id, vendor_name, status, order_date, expected_date, notes, created_by, created_at, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW()) ON CONFLICT (id) DO NOTHING`,
+        [po.id, tenantId, po.poNumber, po.vendorId, po.vendorName, po.status, po.orderDate, po.expectedDate || null, po.notes || null, po.createdBy]);
+      for (const l of lines) {
+        await client.query(`INSERT INTO an_purchase_order_lines (id, tenant_id, po_id, line_number, item_id, ordered_qty, unit_cost, received_qty, rejected_qty)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO NOTHING`,
+          [l.id, tenantId, l.poId, l.lineNumber, l.itemId, l.orderedQty, l.unitCost, l.receivedQty || 0, l.rejectedQty || 0]);
+      }
+      await client.query('COMMIT');
+      return { success: true, data: po };
+    } catch (e: any) { await client.query('ROLLBACK'); return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    finally { client.release(); }
+  }
+  public async getPurchaseOrder(tenantId: string, poId: string): Promise<any> {
+    try {
+      const r = await this.pool.query(`SELECT * FROM an_purchase_orders WHERE tenant_id=$1 AND id=$2`, [tenantId, poId]);
+      if (!r.rows.length) return { success: true, data: null };
+      const row = r.rows[0];
+      const lr = await this.pool.query(`SELECT * FROM an_purchase_order_lines WHERE tenant_id=$1 AND po_id=$2 ORDER BY line_number`, [tenantId, poId]);
+      return { success: true, data: { po: this.mapPo(row), lines: lr.rows.map((x: any) => this.mapPoLine(x)) } };
+    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+  }
+  private mapPo(row: any) {
+    return { id: row.id, tenantId: row.tenant_id, poNumber: row.po_number, vendorId: row.vendor_id, vendorName: row.vendor_name, status: row.status, orderDate: row.order_date, expectedDate: row.expected_date || undefined, notes: row.notes || undefined, createdBy: row.created_by, createdAt: row.created_at?.toISOString?.() || row.created_at, updatedAt: row.updated_at?.toISOString?.() || row.updated_at };
+  }
+  private mapPoLine(row: any) {
+    return { id: row.id, tenantId: row.tenant_id, poId: row.po_id, lineNumber: row.line_number, itemId: row.item_id, orderedQty: Number(row.ordered_qty), unitCost: Number(row.unit_cost), receivedQty: Number(row.received_qty), rejectedQty: Number(row.rejected_qty) };
+  }
+  public async listPurchaseOrders(tenantId: string, filter?: any): Promise<any> {
+    try {
+      let q = `SELECT * FROM an_purchase_orders WHERE tenant_id=$1`;
+      const params: any[] = [tenantId];
+      if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
+      if (filter?.vendorId) { params.push(filter.vendorId); q += ` AND vendor_id=$${params.length}`; }
+      q += ' ORDER BY created_at DESC';
+      const r = await this.pool.query(q, params);
+      return { success: true, data: r.rows.map((x: any) => this.mapPo(x)) };
+    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+  }
+  public async updatePurchaseOrderStatus(tenantId: string, poId: string, status: string, _actorId: string): Promise<any> {
+    try {
+      const r = await this.pool.query(`UPDATE an_purchase_orders SET status=$1, updated_at=NOW() WHERE tenant_id=$2 AND id=$3 RETURNING *`, [status, tenantId, poId]);
+      if (!r.rows.length) return { success: false, error: { type: 'not-found', title: 'أمر الشراء', status: 404, detail: 'غير موجود' } };
+      return { success: true, data: this.mapPo(r.rows[0]) };
+    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+  }
+  public async saveGoodsReceipt(tenantId: string, receipt: any, lines: any[], idempotencyKey: string): Promise<any> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO an_goods_receipts (id, tenant_id, receipt_number, po_id, po_number, warehouse_id, status, approval_request_id, stock_document_id, reject_reason, created_by, created_at, completed_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12) ON CONFLICT (id) DO NOTHING`,
+        [receipt.id, tenantId, receipt.receiptNumber, receipt.poId, receipt.poNumber, receipt.warehouseId, receipt.status, receipt.approvalRequestId || null, receipt.stockDocumentId || null, receipt.rejectReason || null, receipt.createdBy, receipt.completedAt || null]);
+      for (const l of lines) {
+        await client.query(`INSERT INTO an_goods_receipt_lines (id, tenant_id, receipt_id, po_line_id, item_id, received_qty, batch_number, serial_number, expiry_date)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO NOTHING`,
+          [l.id, tenantId, l.receiptId, l.poLineId, l.itemId, l.receivedQty, l.batchNumber || null, l.serialNumber || null, l.expiryDate || null]);
+      }
+      await client.query('COMMIT');
+      return { success: true, data: receipt };
+    } catch (e: any) { await client.query('ROLLBACK'); return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    finally { client.release(); }
+  }
+  public async getGoodsReceipt(tenantId: string, receiptId: string): Promise<any> {
+    try {
+      const r = await this.pool.query(`SELECT * FROM an_goods_receipts WHERE tenant_id=$1 AND id=$2`, [tenantId, receiptId]);
+      if (!r.rows.length) return { success: true, data: null };
+      const row = r.rows[0];
+      const lr = await this.pool.query(`SELECT * FROM an_goods_receipt_lines WHERE tenant_id=$1 AND receipt_id=$2`, [tenantId, receiptId]);
+      return { success: true, data: { receipt: this.mapGr(row), lines: lr.rows.map((x: any) => this.mapGrLine(x)) } };
+    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+  }
+  private mapGr(row: any) {
+    return { id: row.id, tenantId: row.tenant_id, receiptNumber: row.receipt_number, poId: row.po_id, poNumber: row.po_number, warehouseId: row.warehouse_id, status: row.status, approvalRequestId: row.approval_request_id || undefined, stockDocumentId: row.stock_document_id || undefined, rejectReason: row.reject_reason || undefined, createdBy: row.created_by, createdAt: row.created_at?.toISOString?.() || row.created_at, completedAt: row.completed_at?.toISOString?.() || row.completed_at || undefined };
+  }
+  private mapGrLine(row: any) {
+    return { id: row.id, tenantId: row.tenant_id, receiptId: row.receipt_id, poLineId: row.po_line_id, itemId: row.item_id, receivedQty: Number(row.received_qty), batchNumber: row.batch_number || undefined, serialNumber: row.serial_number || undefined, expiryDate: row.expiry_date || undefined };
+  }
+  public async listGoodsReceipts(tenantId: string, filter?: any): Promise<any> {
+    try {
+      let q = `SELECT * FROM an_goods_receipts WHERE tenant_id=$1`;
+      const params: any[] = [tenantId];
+      if (filter?.poId) { params.push(filter.poId); q += ` AND po_id=$${params.length}`; }
+      if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
+      const r = await this.pool.query(q, params);
+      return { success: true, data: r.rows.map((x: any) => this.mapGr(x)) };
+    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+  }
+  public async updateGoodsReceipt(tenantId: string, receipt: any): Promise<any> {
+    try {
+      await this.pool.query(`UPDATE an_goods_receipts SET status=$1, approval_request_id=$2, stock_document_id=$3, reject_reason=$4, completed_at=$5 WHERE tenant_id=$6 AND id=$7`,
+        [receipt.status, receipt.approvalRequestId || null, receipt.stockDocumentId || null, receipt.rejectReason || null, receipt.completedAt || null, tenantId, receipt.id]);
+      return { success: true, data: receipt };
+    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+  }
+  public async completeGoodsReceiptAtomic(tenantId: string, input: any, idempotencyKey: string): Promise<any> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const u of input.qtyUpdates) {
+        await client.query(`UPDATE an_purchase_order_lines SET received_qty = received_qty + $1, rejected_qty = rejected_qty + $2 WHERE tenant_id=$3 AND id=$4`,
+          [u.addReceived, u.addRejected, tenantId, u.poLineId]);
+      }
+      await client.query(`UPDATE an_purchase_orders SET status=$1, updated_at=NOW() WHERE tenant_id=$2 AND id=$3`, [input.newPoStatus, tenantId, input.poId]);
+      const receipt = input.receipt;
+      await client.query(`UPDATE an_goods_receipts SET status=$1, stock_document_id=$2, completed_at=$3 WHERE tenant_id=$4 AND id=$5`,
+        [receipt.status, receipt.stockDocumentId || null, receipt.completedAt || null, tenantId, receipt.id]);
+      await client.query('COMMIT');
+      return { success: true, data: receipt };
+    } catch (e: any) { await client.query('ROLLBACK'); return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    finally { client.release(); }
+  }
+  public async sumOpenReceiptQtyForPoLine(tenantId: string, poLineId: string): Promise<any> {
+    try {
+      const r = await this.pool.query(`SELECT COALESCE(SUM(gl.received_qty),0) AS s FROM an_goods_receipt_lines gl
+        JOIN an_goods_receipts g ON g.id = gl.receipt_id AND g.tenant_id = gl.tenant_id
+        WHERE gl.tenant_id=$1 AND gl.po_line_id=$2 AND g.status='IN_APPROVAL'`, [tenantId, poLineId]);
+      return { success: true, data: Number(r.rows[0].s) };
     } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
   }
 
