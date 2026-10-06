@@ -2,89 +2,124 @@
   "project": {
     "name": "A.N ERP",
     "version": "7.2.0",
-    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل — الإصدار المعتمد",
+    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل",
     "stack": {
       "backend": ["Node 22", "Express 4", "TypeScript"],
       "database": "PostgreSQL",
       "frontend": ["React 19", "Vite", "Tailwind CSS"]
     }
   },
-  "auditDate": "2026-10-06T17:35:00Z",
-  "authoritativeVerdict": "GO",
+  "auditDate": "2026-10-06T17:55:00Z",
+  "authoritativeVerdict": "CONDITIONAL GO",
   "scorecard": {
-    "architecture": 96,
-    "security": 94,
-    "authentication": 95,
-    "authorization": 96,
-    "tenant_isolation": 92,
-    "inventory_integrity": 98,
-    "accounting_integrity": 96,
-    "transaction_atomicity": 97,
-    "idempotency": 98,
-    "postgresql_safety": 94,
-    "schema_management": 90,
-    "testing": 95,
-    "performance": 91,
-    "maintainability": 88,
-    "observability": 90,
-    "production_readiness": 94,
-    "overall": 94
+    "architecture": 88,
+    "security": 92,
+    "authorization_sod": 94,
+    "tenant_isolation": 90,
+    "inventory_integrity": 90,
+    "accounting_integrity": 82,
+    "transaction_atomicity": 84,
+    "idempotency": 96,
+    "concurrency": 85,
+    "schema_management": 78,
+    "testing_quality": 85,
+    "evidence_quality": 88,
+    "maintainability": 80,
+    "performance": 85,
+    "production_readiness": 84,
+    "overall": 87
   },
-  "resolvedDefects": [
+  "defects": [
+    {
+      "id": "DEF-P1-001",
+      "title": "approveAndPostStockCount lacks shared transaction between General Ledger and Stock Movements",
+      "severity": "P1",
+      "status": "OPEN",
+      "file": "src/core/inventory/InventoryService.ts",
+      "method": "approveAndPostStockCount",
+      "impact": "If recordStockMovement fails after journal post, GL remains altered while inventory balances remain unadjusted without automatic rollback or outbox retry.",
+      "reproducible": true,
+      "recommendation": "Wrap stock adjustments and GL journal creation into an atomic transaction or register under PENDING_RETRY outbox."
+    },
+    {
+      "id": "DEF-P1-002",
+      "title": "returnStock ignores PostingEngine.postEntry return result and lacks PENDING_RETRY outbox",
+      "severity": "P1",
+      "status": "OPEN",
+      "file": "src/core/inventory/InventoryService.ts",
+      "method": "returnStock",
+      "impact": "If reversal journal fails to post, returnStock still returns success:true, leaving stock deducted/added without corresponding GL entry.",
+      "reproducible": true,
+      "recommendation": "Check postEntry return result and attach journalStatus PENDING_RETRY on failure."
+    },
+    {
+      "id": "DEF-P2-001",
+      "title": "createGoodsReceipt TOCTOU race condition on open PO line quantity under concurrent requests",
+      "severity": "P2",
+      "status": "OPEN",
+      "file": "src/core/purchasing/PurchasingService.ts",
+      "method": "createGoodsReceipt",
+      "impact": "Two concurrent receipts for the same PO line can both pass remaining quantity validation before row lock.",
+      "reproducible": true,
+      "recommendation": "Perform PO line quantity check inside a locked transaction (SELECT ... FOR UPDATE)."
+    },
+    {
+      "id": "DEF-P2-002",
+      "title": "Absence of formal version-controlled migration runner with checksum tracking",
+      "severity": "P2",
+      "status": "OPEN",
+      "file": "src/core/storage/adapters/PostgresPrimaryAdapter.ts",
+      "method": "initDatabase",
+      "impact": "Schema relies on programmatic CREATE TABLE IF NOT EXISTS and ALTER TABLE statements on startup rather than dedicated migration files.",
+      "reproducible": false,
+      "recommendation": "Implement structured migration tracking table with incremental version numbers and checksums."
+    }
+  ],
+  "resolvedHistoricalDefects": [
     {
       "id": "DEF-001",
       "title": "an_stock_transfer_lines schema alignment",
       "severity": "CRITICAL",
       "status": "RESOLVED",
-      "resolution": "PostgresPrimaryAdapter insertStockTransferInTx and DDL aligned to exact 12 authoritative columns."
+      "evidence": "PostgresPrimaryAdapter insertStockTransferInTx and DDL aligned to exact 12 authoritative columns."
     },
     {
       "id": "DEF-002",
       "title": "an_active_sessions tenant_id column",
       "severity": "HIGH",
       "status": "RESOLVED",
-      "resolution": "Added via programmatic migration ALTER TABLE an_active_sessions ADD COLUMN IF NOT EXISTS tenant_id."
+      "evidence": "Programmatic DDL ALTER TABLE an_active_sessions ADD COLUMN IF NOT EXISTS tenant_id present at line 368."
     },
     {
       "id": "DEF-003",
       "title": "an_custom_fields options column",
       "severity": "MEDIUM",
       "status": "RESOLVED",
-      "resolution": "Added via programmatic migration ALTER TABLE an_custom_fields ADD COLUMN IF NOT EXISTS options JSONB."
+      "evidence": "Programmatic DDL ALTER TABLE an_custom_fields ADD COLUMN IF NOT EXISTS options JSONB present at line 3328."
     },
     {
       "id": "DEF-004",
       "title": "getStockTransfer read model mapping",
       "severity": "LOW",
       "status": "RESOLVED",
-      "resolution": "getStockTransfer fully maps all 12 columns conforming to StockTransferLine interface."
+      "evidence": "getStockTransfer fully maps all 12 columns conforming to StockTransferLine interface."
     }
   ],
-  "activeDefects": [],
-  "verifiedContracts": {
-    "atomic_transfers": true,
-    "fail_closed_negative_stock": true,
-    "weighted_average_cost_locking": true,
-    "cost_layer_fifo_and_specific_lot": true,
-    "multi_step_policy_approvals": true,
-    "automatic_inventory_journals_with_retry": true,
-    "purchase_orders_and_goods_receipts": true,
-    "stock_vs_ledger_reconciliation_report": true,
-    "secure_document_attachments": true
-  },
-  "testExecutionSummary": {
-    "verifyPgMovementLogic": { "passed": 4, "failed": 0 },
-    "verifyP10StockAtomicMem": { "passed": 12, "failed": 0 },
-    "verifyP11TransfersMem": { "passed": 12, "failed": 0 },
-    "verifyP12ApprovalsMem": { "passed": 35, "failed": 0 },
-    "verifyP13Costing": { "passed": 50, "failed": 0 },
-    "verifyP14AutoJournals": { "passed": 24, "failed": 0 },
-    "verifyP15Purchasing": { "passed": 25, "failed": 0 },
-    "verifyP16Recon": { "passed": 14, "failed": 0 },
-    "verifyP17Attachments": { "passed": 29, "failed": 0 },
-    "testIdempotencySuite": { "passed": 5, "failed": 0 },
-    "verifyPhase3AuthBypass": { "passed": 15, "failed": 0 },
-    "totalAutomatedPasses": 225,
-    "totalAutomatedFails": 0
+  "testExecutionMetrics": {
+    "totalPassedTests": 225,
+    "totalFailedTests": 0,
+    "suites": [
+      "verifyPgMovementLogic (4/4)",
+      "verifyP10StockAtomicMem (12/12)",
+      "verifyP11TransfersMem (12/12)",
+      "verifyP12ApprovalsMem (35/35)",
+      "verifyP13Costing (50/50)",
+      "verifyP14AutoJournals (24/24)",
+      "verifyP15Purchasing (25/25)",
+      "verifyP16Recon (14/14)",
+      "verifyP17Attachments (29/29)",
+      "testIdempotencySuite (5/5)",
+      "verifyPhase3AuthBypass (15/15)"
+    ]
   }
 }
