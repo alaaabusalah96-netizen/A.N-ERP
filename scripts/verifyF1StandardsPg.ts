@@ -52,6 +52,8 @@ async function main() {
       await q(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${probe}') THEN CREATE ROLE ${probe} NOLOGIN NOSUPERUSER NOBYPASSRLS; END IF; END $$`);
       await q(`GRANT USAGE ON SCHEMA public TO ${probe}`);
       await q(`GRANT SELECT, INSERT ON an_accounting_policies TO ${probe}`);
+      // PG16+: a CREATEROLE creator is not allowed to SET ROLE to the new role unless granted explicitly.
+      try { await q(`GRANT ${probe} TO CURRENT_USER WITH SET TRUE`); } catch { try { await q(`GRANT ${probe} TO CURRENT_USER`); } catch { /* may already be a member */ } }
       useProbe = true;
     } catch (e: any) { console.log(`SKIP PGR1: app role bypasses RLS and a probe role could not be created (${e.message}). Isolation NOT proven (not counted as pass).`); }
   }
