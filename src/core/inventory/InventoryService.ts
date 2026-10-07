@@ -1360,66 +1360,15 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
     const returnPost = await this.storage.postStockDocumentAtomic(tenantId, { doc: returnDoc, movements, useProvidedCost: true }, input.idempotencyKey);
     if (!returnPost.success || !returnPost.data) return returnPost as any;
 
-    // Balanced Reversal Journal Entry via PostingEngine
+    // Repair batch 1 (DEF-P1-002): the stock effect is already committed above; the journal result is now CHECKED (draft AND post).
+    // On any failure the document is marked PENDING_RETRY (journalStatus) and the retry route posts the SAME entry (stable id / keys).
+    let returnResult: StockDocument = returnPost.data;
     if (this.postingEngine && totalCost > 0) {
-      const journalLines: JournalLine[] = [];
-      if (input.returnType === 'RETURN_RECEIPT') {
-        // Return to vendor: Debit Accounts Payable, Credit Inventory
-        journalLines.push({
-          id: `line-1-${docId}`,
-          accountCode: '210101',
-          debit: totalCost,
-          credit: 0,
-          description: `إثبات مرتجع مشتريات/توريد ${docNumber} للمستند ${origDoc.documentNumber}`,
-        });
-        journalLines.push({
-          id: `line-2-${docId}`,
-          accountCode: '110301',
-          debit: 0,
-          credit: totalCost,
-          description: `تخفيض المخزون بموجب إذن مرتجع توريد ${docNumber}`,
-        });
-      } else {
-        // Return from issue: Debit Inventory, Credit COGS
-        journalLines.push({
-          id: `line-1-${docId}`,
-          accountCode: '110301',
-          debit: totalCost,
-          credit: 0,
-          description: `إعادة إدخال المخزون بموجب مرتجع صرف ${docNumber}`,
-        });
-        journalLines.push({
-          id: `line-2-${docId}`,
-          accountCode: '510101',
-          debit: 0,
-          credit: totalCost,
-          description: `تخفيض تكلفة المنصرف بموجب مرتجع صرف ${docNumber}`,
-        });
-      }
-
-      const entryId = `je-ret-${docId}-${Date.now()}`;
-      const draftRes = await this.postingEngine.draftEntry(
-        tenantId,
-        {
-          id: entryId,
-          code: `JE-${docNumber}`,
-          tenantId,
-          date: new Date().toISOString().split('T')[0],
-          type: 'قيد تسوية مرتجع مخزني',
-          description: `قيد تسوية مرتجع مخزني ${docNumber} - الأصل ${origDoc.documentNumber}`,
-          lines: journalLines,
-          totalAmount: totalCost,
-          status: 'APPROVED',
-          createdBy: input.performedBy,
-        },
-        `draft-${input.idempotencyKey}`
-      );
-      if (draftRes.success && draftRes.data) {
-        await this.postingEngine.postEntry(tenantId, draftRes.data.id, `post-${input.idempotencyKey}`);
-      }
+      const outcome = await this.stockAccounting().postReturnJournal(tenantId, returnResult);
+      returnResult = this.attachJournal(returnResult, outcome);
+      if (outcome.messageAr) (returnResult as any).journalMessageAr = outcome.messageAr;
     }
-
-    return { success: true, data: returnPost.data };
+    return { success: true, data: returnResult };
   }
 
   // ============================================================================
@@ -1994,10 +1943,16 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
       };
     }
 
+    // Repair batch 1 (DEF-P1-001): the stock adjustments and the journal are no longer independent steps.
+    //  1) pre-check the journal (accounts exist / active, period open) -> nothing is changed when it cannot post
+    //  2) ALL stock adjustments in ONE atomic document (all-or-nothing), with a stable key per count so a retry can never adjust twice
+    //  3) the journal (stable entry id / keys per count; draft AND post are checked)
+    //  4) only then does the count become POSTED
     let journalEntryId: string | undefined;
+    const hasJournal = !!(count.hasVariance && count.netVarianceAmount !== 0);
+    let journalEntry: JournalEntry | undefined;
 
-    // If there is any variance, post a balanced journal entry via PostingEngine
-    if (count.hasVariance && count.netVarianceAmount !== 0) {
+    if (hasJournal) {
       const journalLines: JournalLine[] = [];
       const absAmount = Math.abs(count.netVarianceAmount);
 
@@ -2043,9 +1998,8 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
         );
       }
 
-      const entryId = `je-adj-${count.id}-${Date.now()}`;
-      const journalEntry: JournalEntry = {
-        id: entryId,
+      journalEntry = {
+        id: `je-adj-${count.id}`,
         code: `JE-ADJ-${count.countNumber}`,
         tenantId,
         date: new Date().toISOString().split('T')[0],
@@ -2057,66 +2011,109 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
         createdBy: input.approvedBy,
       };
 
-      const draftRes = await this.postingEngine.draftEntry(tenantId, journalEntry, `${input.idempotencyKey}-draft`);
-      if (!draftRes.success || !draftRes.data) {
-        return {
-          success: false,
-          error: draftRes.error || {
-            type: 'https://api.an-erp.local/errors/draft-failed',
-            title: 'فشل إنشاء مسودة قيد تسوية الجرد',
-            status: 500,
-            detail: 'تعذر إنشاء مسودة القيد اليومي لفروقات الجرد عبر PostingEngine.',
-          },
-        };
+      const pre = await this.stockAccounting().preflightAccounts(tenantId, journalLines.map(l => l.accountCode), journalEntry.date);
+      if (!pre.ok) {
+        return { success: false, error: { type: (pre as any).type, title: 'تعذّر اعتماد الجرد: القيد المحاسبي غير قابل للترحيل', status: (pre as any).status, detail: (pre as any).detail } };
       }
-
-      const postRes = await this.postingEngine.postEntry(tenantId, draftRes.data.id, `${input.idempotencyKey}-post`);
-      if (!postRes.success || !postRes.data) {
-        return {
-          success: false,
-          error: postRes.error || {
-            type: 'https://api.an-erp.local/errors/posting-failed',
-            title: 'فشل ترحيل قيد تسوية الجرد',
-            status: 500,
-            detail: 'تعذر ترحيل قيد التسوية إلى دفتر الأستاذ العام.',
-          },
-        };
-      }
-
-      journalEntryId = postRes.data.id;
     }
 
-    // Apply adjustments to stock movements & levels
-    for (const line of lines) {
-      if (line.varianceQty !== 0) {
-        const movementType: StockMovementType =
-          line.varianceQty > 0 ? 'COUNT_ADJUSTMENT_GAIN' : 'COUNT_ADJUSTMENT_LOSS';
-
-        await this.storage.recordStockMovement(tenantId, {
-          id: `mov-adj-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    // Stock adjustments: one atomic document
+    const adjLines = lines.filter(l => l.varianceQty !== 0);
+    if (adjLines.length > 0) {
+      const adjKey = `count-adj-${count.id}`;
+      const adjDocId = `sdoc-adj-${count.id}`;
+      const nowIso = new Date().toISOString();
+      const adjDocLines: StockDocumentLine[] = [];
+      const adjMovements: StockMovement[] = [];
+      for (let idx = 0; idx < adjLines.length; idx++) {
+        const line = adjLines[idx];
+        const isGain = line.varianceQty > 0;
+        const qty = Math.abs(line.varianceQty);
+        const itemRes = await this.storage.getStockItem(tenantId, line.itemId);
+        adjDocLines.push({
+          id: `sline-adj-${count.id}-${idx}`,
           tenantId,
-          companyId: tenantId,
+          companyId: count.companyId || tenantId,
+          documentId: adjDocId,
+          lineNumber: idx + 1,
+          itemId: line.itemId,
+          itemCode: line.itemCode,
+          itemNameAr: line.itemNameAr,
+          uom: itemRes.success && itemRes.data ? itemRes.data.uom : 'وحدة',
+          quantity: qty,
+          unitCost: line.unitCost,
+          totalCost: Math.abs(line.varianceAmount),
+          notes: `تسوية جرد ${count.countNumber}`,
+        });
+        adjMovements.push({
+          id: `mov-adj-${count.id}-${idx}`,
+          tenantId,
+          companyId: count.companyId || tenantId,
           movementNumber: `MOV-${count.countNumber}-${line.itemCode}`,
-          movementType,
+          movementType: isGain ? 'COUNT_ADJUSTMENT_GAIN' : 'COUNT_ADJUSTMENT_LOSS',
           warehouseId: count.warehouseId,
           warehouseNameAr: count.warehouseNameAr,
           itemId: line.itemId,
           itemCode: line.itemCode,
           itemNameAr: line.itemNameAr,
-          quantity: Math.abs(line.varianceQty),
+          quantity: qty,
           unitCost: line.unitCost,
           totalCost: Math.abs(line.varianceAmount),
           balanceAfterQty: line.countedQty,
           sourceDocumentType: 'STOCK_COUNT',
           sourceDocumentId: count.id,
           sourceDocumentNumber: count.countNumber,
-          journalEntryId,
           performedBy: input.approvedBy,
           performedByName: input.approvedByName,
-          timestamp: new Date().toISOString(),
-          idempotencyKey: `${input.idempotencyKey}-adj-${line.itemId}`,
-        }, `${input.idempotencyKey}-adj-${line.itemId}`);
+          timestamp: nowIso,
+          idempotencyKey: `${adjKey}-adj-${line.itemId}`,
+        });
       }
+      const adjDoc: StockDocument = {
+        id: adjDocId,
+        tenantId,
+        companyId: count.companyId || tenantId,
+        documentNumber: `ADJ-${count.countNumber}`,
+        documentType: 'COUNT_ADJUSTMENT',
+        warehouseId: count.warehouseId,
+        warehouseNameAr: count.warehouseNameAr,
+        status: 'POSTED',
+        totalQuantity: adjDocLines.reduce((sum, l) => sum + l.quantity, 0),
+        totalCost: adjDocLines.reduce((sum, l) => sum + l.totalCost, 0),
+        referenceType: 'STOCK_COUNT',
+        referenceId: count.id,
+        referenceNumber: count.countNumber,
+        notes: `تسوية فروقات الجرد ${count.countNumber}`,
+        lines: adjDocLines,
+        movements: adjMovements,
+        performedBy: input.approvedBy,
+        performedByName: input.approvedByName,
+        idempotencyKey: adjKey,
+        createdAt: nowIso,
+        postedAt: nowIso,
+      };
+      const adjRes = await this.storage.postStockDocumentAtomic(tenantId, { doc: adjDoc, movements: adjMovements, useProvidedCost: true }, adjKey);
+      if (!adjRes.success) {
+        return { success: false, error: adjRes.error || { type: 'https://api.an-erp.local/errors/count-adjustment-failed', title: 'فشل تسوية أرصدة الجرد', status: 500, detail: 'تعذّر تنفيذ تسويات المخزون؛ لم يتغيّر أي رصيد ولم يُرحَّل أي قيد.' } };
+      }
+    }
+
+    // Journal (the stock is already adjusted; a failure here leaves the count un-POSTED and a retry only completes the journal)
+    if (journalEntry && hasJournal) {
+      const pendingErr = (detail: string) => ({
+        success: false as const,
+        error: {
+          type: 'https://api.an-erp.local/errors/count-journal-pending',
+          title: 'تمت تسوية الأرصدة لكن القيد المحاسبي لم يُرحَّل',
+          status: 500,
+          detail: `${detail} أعد اعتماد المحضر: لن تتكرر تسويات المخزون وسيكتمل القيد فقط.`,
+        },
+      });
+      const draftRes = await this.postingEngine.draftEntry(tenantId, journalEntry, `count-${count.id}-je-draft`);
+      if (!draftRes.success || !draftRes.data) return pendingErr(draftRes.error?.detail || 'تعذر إنشاء مسودة القيد اليومي لفروقات الجرد.');
+      const postRes = await this.postingEngine.postEntry(tenantId, draftRes.data.id, `count-${count.id}-je-post`);
+      if (!postRes.success || !postRes.data) return pendingErr(postRes.error?.detail || 'تعذر ترحيل قيد التسوية إلى دفتر الأستاذ العام.');
+      journalEntryId = postRes.data.id;
     }
 
     const updatedCount = await this.storage.updateStockCountStatus(

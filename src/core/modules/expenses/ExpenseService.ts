@@ -719,8 +719,29 @@ export class ExpenseService {
         },
         `exp-rev-draft-${input.idempotencyKey}`
       );
-      if (draftRes.success && draftRes.data) {
-        await this.postingEngine.postEntry(tenantId, revEntryId, `exp-rev-post-${input.idempotencyKey}`);
+      // Repair batch 1 (DEF-P1-003): the request is never marked cancelled unless the reversal journal really posted
+      if (!draftRes.success || !draftRes.data) {
+        return {
+          success: false,
+          error: draftRes.error || {
+            type: 'https://api.an-erp.local/errors/draft-failed',
+            title: 'فشل إنشاء مسودة القيد العكسي',
+            status: 500,
+            detail: 'لم يُلغَ طلب المصروف لأن مسودة القيد العكسي تعذّر إنشاؤها.',
+          },
+        };
+      }
+      const revPost = await this.postingEngine.postEntry(tenantId, revEntryId, `exp-rev-post-${input.idempotencyKey}`);
+      if (!revPost.success || !revPost.data) {
+        return {
+          success: false,
+          error: revPost.error || {
+            type: 'https://api.an-erp.local/errors/posting-failed',
+            title: 'فشل ترحيل القيد العكسي',
+            status: 500,
+            detail: 'لم يُلغَ طلب المصروف لأن ترحيل القيد العكسي فشل.',
+          },
+        };
       }
     }
 

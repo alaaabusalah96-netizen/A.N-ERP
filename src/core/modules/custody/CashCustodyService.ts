@@ -411,10 +411,31 @@ export class CashCustodyService {
         },
         `cst-draft-${payload.idempotencyKey}`
       );
-      if (draftRes.success && draftRes.data) {
-        await this.postingEngine.postEntry(tenantId, entryId, `cst-post-${payload.idempotencyKey}`);
-        journalEntryId = entryId;
+      // Repair batch 1 (DEF-P1-003): a voucher is never saved (and never gets a journalEntryId) unless the journal really posted
+      if (!draftRes.success || !draftRes.data) {
+        return {
+          success: false,
+          error: draftRes.error || {
+            type: 'https://api.an-erp.local/errors/draft-failed',
+            title: 'فشل إنشاء مسودة قيد سند الصرف',
+            status: 500,
+            detail: 'لم يُسجَّل سند الصرف لأن مسودة القيد المحاسبي تعذّر إنشاؤها.',
+          },
+        };
       }
+      const postRes = await this.postingEngine.postEntry(tenantId, entryId, `cst-post-${payload.idempotencyKey}`);
+      if (!postRes.success || !postRes.data) {
+        return {
+          success: false,
+          error: postRes.error || {
+            type: 'https://api.an-erp.local/errors/posting-failed',
+            title: 'فشل ترحيل قيد سند الصرف',
+            status: 500,
+            detail: 'لم يُسجَّل سند الصرف لأن ترحيل القيد المحاسبي فشل.',
+          },
+        };
+      }
+      journalEntryId = entryId;
     }
 
     const voucher: CustodyExpenseVoucher = {
@@ -530,16 +551,8 @@ export class CashCustodyService {
       };
     }
 
-    // Load custody to restore balance
-    const custodyRes = await this.port.getCashCustody(tenantId, voucher.custodyId);
-    if (custodyRes.success && custodyRes.data) {
-      const custody = custodyRes.data;
-      await this.port.updateCashCustody(tenantId, custody.id, {
-        currentBalance: custody.currentBalance + voucher.totalAmount,
-      });
-    }
-
     // Reversal journal entry via PostingEngine
+    // Repair batch 1 (DEF-P1-003): runs BEFORE the custody balance is restored, and its result is checked
     if (this.postingEngine && voucher.totalAmount > 0) {
       const journalLines: JournalLine[] = [];
       let idx = 1;
@@ -580,9 +593,38 @@ export class CashCustodyService {
         },
         `cst-rev-draft-${input.idempotencyKey}`
       );
-      if (draftRes.success && draftRes.data) {
-        await this.postingEngine.postEntry(tenantId, revEntryId, `cst-rev-post-${input.idempotencyKey}`);
+      if (!draftRes.success || !draftRes.data) {
+        return {
+          success: false,
+          error: draftRes.error || {
+            type: 'https://api.an-erp.local/errors/draft-failed',
+            title: 'فشل إنشاء مسودة القيد العكسي',
+            status: 500,
+            detail: 'لم يُلغَ سند الصرف لأن مسودة القيد العكسي تعذّر إنشاؤها.',
+          },
+        };
       }
+      const revPost = await this.postingEngine.postEntry(tenantId, revEntryId, `cst-rev-post-${input.idempotencyKey}`);
+      if (!revPost.success || !revPost.data) {
+        return {
+          success: false,
+          error: revPost.error || {
+            type: 'https://api.an-erp.local/errors/posting-failed',
+            title: 'فشل ترحيل القيد العكسي',
+            status: 500,
+            detail: 'لم يُلغَ سند الصرف لأن ترحيل القيد العكسي فشل.',
+          },
+        };
+      }
+    }
+
+    // Load custody to restore balance (only after the reversal journal really posted)
+    const custodyRes = await this.port.getCashCustody(tenantId, voucher.custodyId);
+    if (custodyRes.success && custodyRes.data) {
+      const custody = custodyRes.data;
+      await this.port.updateCashCustody(tenantId, custody.id, {
+        currentBalance: custody.currentBalance + voucher.totalAmount,
+      });
     }
 
     return this.port.reverseCustodyExpenseVoucher(tenantId, voucher.id, input.performedBy, input.idempotencyKey);

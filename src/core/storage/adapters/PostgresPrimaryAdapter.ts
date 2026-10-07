@@ -6662,10 +6662,37 @@ public async getWarehouseStock(
       return { success: true, data: this.mapPo(r.rows[0]) };
     } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
   }
-  public async saveGoodsReceipt(tenantId: string, receipt: any, lines: any[], idempotencyKey: string): Promise<any> {
+  public async saveGoodsReceipt(tenantId: string, receipt: any, lines: any[], idempotencyKey: string, guard?: { tolerancePct: number }): Promise<any> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      if (guard) {
+        // Repair batch 1 (DEF-P2-001): lock the PO lines (fixed order), THEN re-check the remaining quantity inside this transaction.
+        // A concurrent receipt on the same line waits here and sees this receipt's quantity once it commits.
+        await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+        const wanted = new Map<string, number>();
+        for (const l of lines) wanted.set(l.poLineId, (wanted.get(l.poLineId) || 0) + Number(l.receivedQty));
+        for (const poLineId of Array.from(wanted.keys()).sort()) {
+          const pl = await client.query(`SELECT ordered_qty, received_qty FROM an_purchase_order_lines WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [tenantId, poLineId]);
+          if (pl.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return { success: false, error: { type: 'https://api.an-erp.local/errors/po-line-not-found', title: 'سطر الأمر غير موجود', status: 404, detail: `سطر ${poLineId} غير موجود.` } };
+          }
+          const open = await client.query(
+            `SELECT COALESCE(SUM(gl.received_qty),0) AS s FROM an_goods_receipt_lines gl
+               JOIN an_goods_receipts g ON g.id = gl.receipt_id AND g.tenant_id = gl.tenant_id
+              WHERE gl.tenant_id=$1 AND gl.po_line_id=$2 AND (g.status = 'IN_APPROVAL' OR (g.status = 'APPROVED' AND g.completed_at IS NULL)) AND g.id <> $3`,
+            [tenantId, poLineId, receipt.id]
+          );
+          const remaining = Number(pl.rows[0].ordered_qty) - Number(pl.rows[0].received_qty) - Number(open.rows[0].s);
+          const maxAllowed = remaining * (1 + guard.tolerancePct / 100);
+          const want = wanted.get(poLineId) as number;
+          if (want > maxAllowed + 1e-6) {
+            await client.query('ROLLBACK');
+            return { success: false, error: { type: 'https://api.an-erp.local/errors/over-receipt', title: 'تجاوز كمية الأمر', status: 422, detail: `المتبقي ${remaining} (بسماح ${guard.tolerancePct}%)؛ المطلوب ${want}.` } };
+          }
+        }
+      }
       await client.query(`INSERT INTO an_goods_receipts (id, tenant_id, receipt_number, po_id, po_number, warehouse_id, status, approval_request_id, stock_document_id, reject_reason, created_by, created_at, completed_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12) ON CONFLICT (id) DO NOTHING`,
         [receipt.id, tenantId, receipt.receiptNumber, receipt.poId, receipt.poNumber, receipt.warehouseId, receipt.status, receipt.approvalRequestId || null, receipt.stockDocumentId || null, receipt.rejectReason || null, receipt.createdBy, receipt.completedAt || null]);

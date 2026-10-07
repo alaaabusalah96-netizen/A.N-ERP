@@ -1117,7 +1117,8 @@ export interface StoragePort {
   getPurchaseOrder(tenantId: string, poId: string): Promise<StorageResult<{ po: PurchaseOrder; lines: PurchaseOrderLine[] } | null>>;
   listPurchaseOrders(tenantId: string, filter?: { status?: string; vendorId?: string }): Promise<StorageResult<PurchaseOrder[]>>;
   updatePurchaseOrderStatus(tenantId: string, poId: string, status: PurchaseOrderStatus, actorId: string): Promise<StorageResult<PurchaseOrder>>;
-  saveGoodsReceipt(tenantId: string, receipt: GoodsReceipt, lines: GoodsReceiptLine[], idempotencyKey: string): Promise<StorageResult<GoodsReceipt>>;
+  // Repair batch 1 (DEF-P2-001): with `guard`, the adapter locks the PO lines and re-checks the remaining quantity inside the same transaction
+  saveGoodsReceipt(tenantId: string, receipt: GoodsReceipt, lines: GoodsReceiptLine[], idempotencyKey: string, guard?: { tolerancePct: number }): Promise<StorageResult<GoodsReceipt>>;
   getGoodsReceipt(tenantId: string, receiptId: string): Promise<StorageResult<{ receipt: GoodsReceipt; lines: GoodsReceiptLine[] } | null>>;
   listGoodsReceipts(tenantId: string, filter?: { poId?: string; status?: string }): Promise<StorageResult<GoodsReceipt[]>>;
   updateGoodsReceipt(tenantId: string, receipt: GoodsReceipt): Promise<StorageResult<GoodsReceipt>>;
@@ -1176,7 +1177,7 @@ export interface StoragePort {
 // ============================================================================
 // Phase 7.6 Interfaces: Multi-Line Upgrades, Returns & Attachments
 // ============================================================================
-export type StockDocumentType = 'RECEIPT' | 'ISSUE' | 'RETURN_RECEIPT' | 'RETURN_ISSUE';
+export type StockDocumentType = 'RECEIPT' | 'ISSUE' | 'RETURN_RECEIPT' | 'RETURN_ISSUE' | 'COUNT_ADJUSTMENT';
 
 export interface StockDocumentLine {
   id: string;

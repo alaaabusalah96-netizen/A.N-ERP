@@ -189,11 +189,71 @@ export class StockAccountingService {
     return { journalStatus: 'POSTED', journalEntryId: posted.data.id };
   }
 
+  // Repair batch 1 (DEF-P1-001): generic pre-check (accounts exist and are active, period open) used BEFORE an operation changes anything
+  public async preflightAccounts(tenantId: string, codes: string[], dateIso: string): Promise<{ ok: true } | { ok: false; detail: string; status: number; type: string }> {
+    for (const code of Array.from(new Set(codes))) {
+      const acc = await this.storage.getAccount(tenantId, code);
+      if (!acc.success || !acc.data) return { ok: false, status: 422, type: 'https://api.an-erp.local/errors/accounting-config-invalid', detail: `الحساب (${code}) غير موجود في دليل الحسابات؛ لم يتغيّر أي شيء.` };
+      if (acc.data.isActive === false || acc.data.status === 'INACTIVE') return { ok: false, status: 422, type: 'https://api.an-erp.local/errors/accounting-config-invalid', detail: `الحساب (${code}) موقوف؛ لم يتغيّر أي شيء.` };
+    }
+    return this.assertOpenPeriod(tenantId, dateIso);
+  }
+
+  // Repair batch 1 (DEF-P1-002): the stock return journal. Stable entry id and idempotency keys (derived from the document) so a retry never duplicates it.
+  public buildReturnEntry(doc: StockDocument): JournalEntry | null {
+    const total = r2(Number(doc.totalCost) || 0);
+    if (total <= 0) return null;
+    const vendorReturn = doc.documentType === 'RETURN_RECEIPT';
+    const lines: JournalLine[] = vendorReturn
+      ? [
+          { id: `line-1-${doc.id}`, accountCode: '210101', debit: total, credit: 0, description: `إثبات مرتجع مشتريات/توريد ${doc.documentNumber} للمستند ${doc.referenceNumber}` },
+          { id: `line-2-${doc.id}`, accountCode: '110301', debit: 0, credit: total, description: `تخفيض المخزون بموجب إذن مرتجع توريد ${doc.documentNumber}` },
+        ]
+      : [
+          { id: `line-1-${doc.id}`, accountCode: '110301', debit: total, credit: 0, description: `إعادة إدخال المخزون بموجب مرتجع صرف ${doc.documentNumber}` },
+          { id: `line-2-${doc.id}`, accountCode: '510101', debit: 0, credit: total, description: `تخفيض تكلفة المنصرف بموجب مرتجع صرف ${doc.documentNumber}` },
+        ];
+    return {
+      id: `je-ret-${doc.id}`.slice(0, 64),
+      code: `JE-${doc.documentNumber}`,
+      tenantId: doc.tenantId,
+      date: new Date().toISOString().split('T')[0],
+      type: 'قيد تسوية مرتجع مخزني',
+      description: `قيد تسوية مرتجع مخزني ${doc.documentNumber} - الأصل ${doc.referenceNumber}`,
+      lines,
+      totalAmount: total,
+      status: 'APPROVED',
+      createdBy: doc.performedBy,
+    } as JournalEntry;
+  }
+
+  public async postReturnJournal(tenantId: string, doc: StockDocument): Promise<AutoJournalOutcome> {
+    const entry = this.buildReturnEntry(doc);
+    if (!entry) return { journalStatus: 'NONE' };
+    const pendingMsg = 'تم تسجيل حركة المرتجع لكن القيد المحاسبي لم يُرحَّل بعد؛ أعد المحاولة من شاشة المستند';
+    const draft = await this.postingEngine.draftEntry(tenantId, entry, `ret-${doc.id}-je-draft`);
+    if (!draft.success || !draft.data) {
+      await this.storage.setStockDocumentJournal(tenantId, doc.id, null, 'PENDING_RETRY');
+      return { journalStatus: 'PENDING_RETRY', messageAr: pendingMsg };
+    }
+    const posted = await this.postingEngine.postEntry(tenantId, draft.data.id, `ret-${doc.id}-je-post`);
+    if (!posted.success || !posted.data) {
+      await this.storage.setStockDocumentJournal(tenantId, doc.id, draft.data.id, 'PENDING_RETRY');
+      return { journalStatus: 'PENDING_RETRY', journalEntryId: draft.data.id, messageAr: pendingMsg };
+    }
+    await this.storage.setStockDocumentJournal(tenantId, doc.id, posted.data.id, 'POSTED');
+    return { journalStatus: 'POSTED', journalEntryId: posted.data.id };
+  }
+
   public async retryDocumentJournal(tenantId: string, docId: string, idempotencyKey: string): Promise<StorageResult<AutoJournalOutcome & { doc?: StockDocument }>> {
     const docRes = await this.storage.getStockDocument(tenantId, docId);
     if (!docRes.success || !docRes.data) return { success: false, error: docRes.error || { type: 'not-found', title: 'مستند', status: 404, detail: 'المستند غير موجود' } };
     const doc = docRes.data;
     if (doc.journalStatus === 'POSTED' && doc.journalEntryId) return { success: true, data: { journalStatus: 'POSTED', journalEntryId: doc.journalEntryId, doc } };
+    if (doc.documentType === 'RETURN_RECEIPT' || doc.documentType === 'RETURN_ISSUE') {
+      const ro = await this.postReturnJournal(tenantId, doc);
+      return { success: true, data: { ...ro, doc: { ...doc, journalStatus: ro.journalStatus, journalEntryId: ro.journalEntryId } } };
+    }
     const items = new Map<string, StockItem>();
     for (const line of doc.lines || []) {
       const ir = await this.storage.getStockItem(tenantId, line.itemId);

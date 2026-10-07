@@ -1993,9 +1993,33 @@ export class InMemoryAdapter implements StoragePort {
     this.purchaseOrders.set(key, po);
     return { success: true, data: { ...po } };
   }
-  public async saveGoodsReceipt(tenantId: string, receipt: GoodsReceipt, lines: GoodsReceiptLine[], idempotencyKey: string): Promise<StorageResult<GoodsReceipt>> {
+  public async saveGoodsReceipt(tenantId: string, receipt: GoodsReceipt, lines: GoodsReceiptLine[], idempotencyKey: string, guard?: { tolerancePct: number }): Promise<StorageResult<GoodsReceipt>> {
     const hit = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'saveGoodsReceipt');
     if (hit.success && hit.data) return { success: true, data: hit.data };
+    if (guard) {
+      // Repair batch 1 (DEF-P2-001): the check and the write below run with no await in between (same atomicity as the SQL row lock)
+      const poLines: any[] = this.purchaseOrderLines.get(`${tenantId}:${receipt.poId}`) || [];
+      const wanted = new Map<string, number>();
+      for (const l of lines) wanted.set(l.poLineId, (wanted.get(l.poLineId) || 0) + Number(l.receivedQty));
+      for (const [poLineId, want] of Array.from(wanted.entries())) {
+        const pl = poLines.find((x: any) => x.id === poLineId);
+        if (!pl) return { success: false, error: { type: 'https://api.an-erp.local/errors/po-line-not-found', title: 'سطر الأمر غير موجود', status: 404, detail: `سطر ${poLineId} غير موجود.` } };
+        let open = 0;
+        for (const [key, rls] of this.goodsReceiptLines.entries()) {
+          if (!key.startsWith(tenantId + ':')) continue;
+          const rid = key.split(':').slice(1).join(':');
+          const rec = this.goodsReceipts.get(`${tenantId}:${rid}`);
+          // open = waiting for approval, or approved but not yet posted to stock (a completed receipt keeps status APPROVED but is already in received_qty)
+          if (!rec || rec.id === receipt.id || !(rec.status === 'IN_APPROVAL' || (rec.status === 'APPROVED' && !rec.completedAt))) continue;
+          for (const l of rls) if (l.poLineId === poLineId) open += Number(l.receivedQty);
+        }
+        const remaining = Number(pl.orderedQty) - Number(pl.receivedQty) - open;
+        const maxAllowed = remaining * (1 + guard.tolerancePct / 100);
+        if (want > maxAllowed + 1e-6) {
+          return { success: false, error: { type: 'https://api.an-erp.local/errors/over-receipt', title: 'تجاوز كمية الأمر', status: 422, detail: `المتبقي ${remaining} (بسماح ${guard.tolerancePct}%)؛ المطلوب ${want}.` } };
+        }
+      }
+    }
     this.goodsReceipts.set(`${tenantId}:${receipt.id}`, { ...receipt });
     this.goodsReceiptLines.set(`${tenantId}:${receipt.id}`, lines.map(l => ({ ...l })));
     await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'saveGoodsReceipt', receipt);

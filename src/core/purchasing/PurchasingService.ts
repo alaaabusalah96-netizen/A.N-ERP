@@ -198,7 +198,7 @@ export class PurchasingService {
 
     if (sub.data.mode === 'DIRECT') {
       receipt.status = 'APPROVED';
-      const saved = await this.storage.saveGoodsReceipt(tenantId, receipt, grLines, input.idempotencyKey);
+      const saved = await this.storage.saveGoodsReceipt(tenantId, receipt, grLines, input.idempotencyKey, { tolerancePct: tol });
       if (!saved.success) return saved as any;
       const posted = await this.postReceiptToStock(tenantId, receipt, grLines, po, poLines, input.idempotencyKey);
       if (!posted.success) {
@@ -211,7 +211,7 @@ export class PurchasingService {
 
     receipt.status = 'IN_APPROVAL';
     receipt.approvalRequestId = sub.data.request.id;
-    const saved = await this.storage.saveGoodsReceipt(tenantId, receipt, grLines, input.idempotencyKey);
+    const saved = await this.storage.saveGoodsReceipt(tenantId, receipt, grLines, input.idempotencyKey, { tolerancePct: tol });
     if (!saved.success) return saved as any;
     return { success: true, data: { receipt: saved.data!, lines: grLines, mode: 'STEPS' } };
   }
