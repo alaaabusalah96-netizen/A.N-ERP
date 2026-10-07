@@ -309,4 +309,23 @@ export class MySQLSmokeAdapter implements StoragePort {
   listUserWarehouseAccess(..._a: any[]) { return this.smokeOnlyError<any>('listUserWarehouseAccess'); }
   setUserWarehouseAccess(..._a: any[]) { return this.smokeOnlyError<any>('setUserWarehouseAccess'); }
 
+  // Phase F1-v3.2
+  saveStandardsCatalogEntry(..._a: any[]) { return this.smokeOnlyError<any>('saveStandardsCatalogEntry'); }
+  listStandardsCatalog(..._a: any[]) { return this.smokeOnlyError<any>('listStandardsCatalog'); }
+  getStandardsCatalogEntry(..._a: any[]) { return this.smokeOnlyError<any>('getStandardsCatalogEntry'); }
+  saveJurisdiction(..._a: any[]) { return this.smokeOnlyError<any>('saveJurisdiction'); }
+  listJurisdictions(..._a: any[]) { return this.smokeOnlyError<any>('listJurisdictions'); }
+  getJurisdiction(..._a: any[]) { return this.smokeOnlyError<any>('getJurisdiction'); }
+  saveAccountingRule(..._a: any[]) { return this.smokeOnlyError<any>('saveAccountingRule'); }
+  listAccountingRules(..._a: any[]) { return this.smokeOnlyError<any>('listAccountingRules'); }
+  getAccountingRule(..._a: any[]) { return this.smokeOnlyError<any>('getAccountingRule'); }
+  saveTaxRule(..._a: any[]) { return this.smokeOnlyError<any>('saveTaxRule'); }
+  listTaxRules(..._a: any[]) { return this.smokeOnlyError<any>('listTaxRules'); }
+  getTaxRule(..._a: any[]) { return this.smokeOnlyError<any>('getTaxRule'); }
+  saveAccountingPolicy(..._a: any[]) { return this.smokeOnlyError<any>('saveAccountingPolicy'); }
+  listAccountingPolicies(..._a: any[]) { return this.smokeOnlyError<any>('listAccountingPolicies'); }
+  getAccountingPolicy(..._a: any[]) { return this.smokeOnlyError<any>('getAccountingPolicy'); }
+  appendStandardsDecisionLog(..._a: any[]) { return this.smokeOnlyError<any>('appendStandardsDecisionLog'); }
+  listStandardsDecisionLogs(..._a: any[]) { return this.smokeOnlyError<any>('listStandardsDecisionLogs'); }
+
 }

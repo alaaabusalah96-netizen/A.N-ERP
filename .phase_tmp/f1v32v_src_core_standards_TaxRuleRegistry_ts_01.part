@@ -1,0 +1,14 @@
+import { StoragePort, StorageResult, TaxRuleEntry } from '../storage/StoragePort';
+
+export class TaxRuleRegistry {
+  constructor(private readonly storage: StoragePort) {}
+  save(entry: TaxRuleEntry, idempotencyKey: string): Promise<StorageResult<TaxRuleEntry>> { return this.storage.saveTaxRule(entry, idempotencyKey); }
+  inspectRules(filter?: { jurisdictionId?: string; status?: string; asOfDate?: string }): Promise<StorageResult<TaxRuleEntry[]>> { return this.storage.listTaxRules(filter); }
+  get(id: string): Promise<StorageResult<TaxRuleEntry | null>> { return this.storage.getTaxRule(id); }
+  async resolveActive(jurisdictionId: string, asOfDate: string): Promise<StorageResult<TaxRuleEntry | null>> {
+    const result = await this.storage.listTaxRules({ jurisdictionId, status: 'ACTIVE', asOfDate });
+    if (!result.success) return { success: false, error: result.error };
+    const candidates = [...(result.data || [])].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom) || b.version.localeCompare(a.version) || a.id.localeCompare(b.id));
+    return { success: true, data: candidates[0] || null };
+  }
+}

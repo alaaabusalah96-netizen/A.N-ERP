@@ -1,0 +1,69 @@
+import { InMemoryAdapter } from '../src/core/storage/adapters/InMemoryAdapter';
+import { FirebaseSmokeAdapter } from '../src/core/storage/adapters/FirebaseSmokeAdapter';
+import { MongoDBSmokeAdapter } from '../src/core/storage/adapters/MongoDBSmokeAdapter';
+import { MySQLSmokeAdapter } from '../src/core/storage/adapters/MySQLSmokeAdapter';
+import { PostgresPrimaryAdapter } from '../src/core/storage/adapters/PostgresPrimaryAdapter';
+import { AccountingRuleRegistry, JurisdictionRegistry, StandardsCatalogRegistry, TaxRuleRegistry } from '../src/core/standards';
+
+let passed = 0;
+let failed = 0;
+const check = (name: string, ok: boolean, detail = '') => {
+  if (ok) { passed++; console.log(`PASS: ${name}${detail ? ` — ${detail}` : ''}`); }
+  else { failed++; console.log(`FAIL: ${name}${detail ? ` — ${detail}` : ''}`); }
+};
+const assertSuccess = <T>(r: { success: boolean; data?: T }) => r.success;
+
+const storage = new InMemoryAdapter();
+const catalog = new StandardsCatalogRegistry(storage);
+const jurisdictions = new JurisdictionRegistry(storage);
+const accounting = new AccountingRuleRegistry(storage);
+const tax = new TaxRuleRegistry(storage);
+const now = new Date().toISOString();
+
+const catalogEntry = { id: 'f1-cat-ifrs', framework: 'IFRS' as const, code: 'IAS-2', titleEn: 'Inventories', titleAr: 'المخزون', coverageStatus: 'SOURCE_REQUIRED' as const, sourceReference: 'SOURCE_REQUIRED', createdAt: now, updatedAt: now };
+const jurisdiction = { id: 'f1-j-eg', code: 'EG', nameEn: 'Egypt', nameAr: 'مصر', framework: 'EAS' as const, isActive: true, createdAt: now };
+const accountingRule = { id: 'f1-rule-ias2', jurisdictionId: jurisdiction.id, framework: 'IFRS' as const, standardCode: 'IAS-2', ruleKey: 'inventory.measurement', titleEn: 'Inventory measurement', titleAr: 'قياس المخزون', eventTypes: ['INVENTORY_COUNT'] as import('../src/core/storage/StoragePort').AccountingEventType[], status: 'ACTIVE' as const, version: '1.0', effectiveFrom: '2026-01-01', sourceReference: 'SOURCE_REQUIRED', payloadJson: '{}', createdAt: now, updatedAt: now };
+const taxRule = { id: 'f1-tax-eg', jurisdictionId: jurisdiction.id, ruleKey: 'VAT', titleEn: 'VAT', titleAr: 'ضريبة القيمة المضافة', status: 'SOURCE_REQUIRED' as const, version: '1.0', effectiveFrom: '2026-01-01', sourceReference: 'SOURCE_REQUIRED', payloadJson: '{}', createdAt: now, updatedAt: now };
+const policy = { id: 'f1-pol-1', tenantId: 'tenant-f1', policyKey: 'inventory.valuation', valueJson: '{"method":"WAC"}', version: 1, effectiveFrom: '2026-01-01', updatedBy: 'test', createdAt: now, updatedAt: now };
+const log = { id: 'f1-log-1', tenantId: 'tenant-f1', eventType: 'INVENTORY_COUNT' as const, eventRef: 'COUNT-1', decisionStatus: 'REVIEW_REQUIRED' as const, standardCode: 'IAS-2', explanationAr: 'يتطلب مراجعة', createdAt: now };
+
+const c1 = await catalog.save(catalogEntry, 'f1-cat-1'); check('catalog save', assertSuccess(c1));
+const cReplay = await catalog.save({ ...catalogEntry, titleAr: 'يجب ألا يتغير عند replay' }, 'f1-cat-1'); check('catalog idempotent replay', assertSuccess(cReplay) && cReplay.data?.titleAr === catalogEntry.titleAr);
+const cList = await catalog.list({ framework: 'IFRS' }); check('catalog list/filter', assertSuccess(cList) && cList.data?.length === 1);
+check('catalog get-by-id', (await catalog.get(catalogEntry.id)).data?.code === 'IAS-2');
+
+check('jurisdiction save', assertSuccess(await jurisdictions.save(jurisdiction, 'f1-j-1')));
+check('jurisdiction list', (await jurisdictions.list()).data?.length === 1);
+check('jurisdiction get-by-id', (await jurisdictions.get(jurisdiction.id)).data?.code === 'EG');
+
+check('accounting rule save', assertSuccess(await accounting.save(accountingRule, 'f1-r-1')));
+check('accounting rule date filter', (await accounting.inspectRules({ asOfDate: '2026-06-01' })).data?.length === 1);
+check('accounting rule future excluded', (await accounting.inspectRules({ asOfDate: '2025-12-31' })).data?.length === 0);
+check('accounting rule resolve ACTIVE', (await accounting.resolveForPosting({ jurisdictionId: jurisdiction.id, eventType: 'INVENTORY_COUNT', asOfDate: '2026-06-01' })).data?.id === accountingRule.id);
+const nonActive = { ...accountingRule, id: 'f1-rule-draft', ruleKey: 'inventory.other', status: 'DRAFT' as const };
+await accounting.save(nonActive, 'f1-r-2');
+check('accounting resolver excludes non-ACTIVE', (await accounting.resolveForPosting({ jurisdictionId: jurisdiction.id, eventType: 'INVENTORY_COUNT', asOfDate: '2026-06-01' })).data?.id === accountingRule.id);
+check('accounting rule get-by-id', (await accounting.get(accountingRule.id)).data?.standardCode === 'IAS-2');
+
+check('tax rule save', assertSuccess(await tax.save(taxRule, 'f1-tax-1')));
+check('tax rule date filter', (await tax.inspectRules({ jurisdictionId: jurisdiction.id, asOfDate: '2026-06-01' })).data?.length === 1);
+check('tax rule resolver excludes SOURCE_REQUIRED', (await tax.resolveActive(jurisdiction.id, '2026-06-01')).data === null);
+check('tax rule get-by-id', (await tax.get(taxRule.id)).data?.ruleKey === 'VAT');
+
+check('policy save', assertSuccess(await storage.saveAccountingPolicy(policy, 'f1-pol-1')));
+check('policy effective-date lookup', (await storage.getAccountingPolicy(policy.tenantId, policy.policyKey, '2026-06-01')).data?.version === 1);
+check('policy out-of-range lookup', (await storage.getAccountingPolicy(policy.tenantId, policy.policyKey, '2025-12-31')).data === null);
+check('decision log append', assertSuccess(await storage.appendStandardsDecisionLog(log)));
+check('decision log tenant filter', (await storage.listStandardsDecisionLogs('tenant-f1', { eventRef: 'COUNT-1' })).data?.length === 1);
+check('decision log cross-tenant isolation', (await storage.listStandardsDecisionLogs('tenant-other')).data?.length === 0);
+
+const adapterChecks: Array<[string, { saveStandardsCatalogEntry: (...args: any[]) => unknown; listStandardsDecisionLogs: (...args: any[]) => unknown }]> = [
+  ['PostgreSQL', new PostgresPrimaryAdapter()], ['MySQL', new MySQLSmokeAdapter()], ['MongoDB', new MongoDBSmokeAdapter()], ['Firebase', new FirebaseSmokeAdapter()]
+];
+for (const [name, adapter] of adapterChecks) {
+  check(`${name} adapter exposes F1 storage`, typeof adapter.saveStandardsCatalogEntry === 'function' && typeof adapter.listStandardsDecisionLogs === 'function');
+}
+
+const ddl = new PostgresPrimaryAdapter().getDdlScript();
+for (const table of ['an_standards_catalog','an_jurisdictions','an_accounting_rules','an_tax_rules','an_accounting_policies','an_standards_decision_log']) check(`DDL contains ${table}`, ddl.includes(`CREATE TABLE IF NOT EXISTS ${table}`));
+check('DDL has tenant indexes', ddl.includes('idx_an_accounting_rules_tenant') && ddl.includes('idx_an_accounting_policies_effective'));

@@ -1,0 +1,9 @@
+import { JurisdictionEntry, StoragePort, StorageResult } from '../storage/StoragePort';
+
+/** F1 storage registry only. Jurisdiction data is provenance/configuration, not evaluation. */
+export class JurisdictionRegistry {
+  constructor(private readonly storage: StoragePort) {}
+  save(entry: JurisdictionEntry, idempotencyKey: string): Promise<StorageResult<JurisdictionEntry>> { return this.storage.saveJurisdiction(entry, idempotencyKey); }
+  list(): Promise<StorageResult<JurisdictionEntry[]>> { return this.storage.listJurisdictions(); }
+  get(id: string): Promise<StorageResult<JurisdictionEntry | null>> { return this.storage.getJurisdiction(id); }
+}

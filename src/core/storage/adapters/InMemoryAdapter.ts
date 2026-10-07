@@ -71,7 +71,7 @@ import {
   CustodyExpenseLine,
   CustodyExpenseVoucher,
   DocumentAttachment,
-  ItemPrice,
+  ItemPrice, StandardsCatalogEntry, JurisdictionEntry, AccountingRuleEntry, AccountingEventType, TaxRuleEntry, AccountingPolicyEntry, StandardsDecisionLogEntry,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 import { SEED_TENANT_ID } from '../../seed/seedOnly';
@@ -121,6 +121,12 @@ export class InMemoryAdapter implements StoragePort {
   private stockItems = new Map<string, StockItem>();
   private warehouseStock = new Map<string, WarehouseStock>();
   private userWarehouseAccess = new Map<string, string[]>();
+  private standardsCatalog = new Map<string, StandardsCatalogEntry>();
+  private jurisdictionsMap = new Map<string, JurisdictionEntry>();
+  private accountingRulesMap = new Map<string, AccountingRuleEntry>();
+  private taxRulesMap = new Map<string, TaxRuleEntry>();
+  private accountingPoliciesMap = new Map<string, AccountingPolicyEntry[]>();
+  private standardsDecisionLogsMap = new Map<string, StandardsDecisionLogEntry[]>();
   private stockMovements = new Map<string, StockMovement>();
   private stockTransfers = new Map<string, StockTransfer>();
   private stockTransferLines = new Map<string, StockTransferLine[]>();
@@ -2430,6 +2436,70 @@ public async getWarehouseStock(tenantId: string, warehouseId: string, itemId: st
   // ============================================================================
   // Phase 7.6 Storage Implementations (InMemory)
   // ============================================================================
+
+  // Phase F1-v3.2 — Standards Intelligence Storage (no evaluation/posting)
+  public async saveStandardsCatalogEntry(entry: StandardsCatalogEntry, idempotencyKey: string): Promise<StorageResult<StandardsCatalogEntry>> {
+    const hit = await this.checkIdempotencyRecord('__std__', idempotencyKey, 'saveStandardsCatalogEntry');
+    if (hit.success && hit.data) return { success: true, data: { ...(hit.data as StandardsCatalogEntry) } };
+    const copy = { ...entry }; this.standardsCatalog.set(entry.id, copy);
+    await this.saveIdempotencyRecord('__std__', idempotencyKey, 'saveStandardsCatalogEntry', copy);
+    return { success: true, data: { ...copy } };
+  }
+  public async listStandardsCatalog(filter?: { framework?: string; coverageStatus?: string }): Promise<StorageResult<StandardsCatalogEntry[]>> {
+    let list = [...this.standardsCatalog.values()];
+    if (filter?.framework) list = list.filter(x => x.framework === filter.framework);
+    if (filter?.coverageStatus) list = list.filter(x => x.coverageStatus === filter.coverageStatus);
+    return { success: true, data: list.map(x => ({ ...x })) };
+  }
+  public async getStandardsCatalogEntry(id: string): Promise<StorageResult<StandardsCatalogEntry | null>> {
+    const e = this.standardsCatalog.get(id); return { success: true, data: e ? { ...e } : null };
+  }
+  public async saveJurisdiction(entry: JurisdictionEntry, idempotencyKey: string): Promise<StorageResult<JurisdictionEntry>> {
+    const hit = await this.checkIdempotencyRecord('__std__', idempotencyKey, 'saveJurisdiction');
+    if (hit.success && hit.data) return { success: true, data: { ...(hit.data as JurisdictionEntry) } };
+    const copy = { ...entry }; this.jurisdictionsMap.set(entry.id, copy);
+    await this.saveIdempotencyRecord('__std__', idempotencyKey, 'saveJurisdiction', copy);
+    return { success: true, data: { ...copy } };
+  }
+  public async listJurisdictions(): Promise<StorageResult<JurisdictionEntry[]>> { return { success: true, data: [...this.jurisdictionsMap.values()].map(x => ({ ...x })) }; }
+  public async getJurisdiction(id: string): Promise<StorageResult<JurisdictionEntry | null>> { const e=this.jurisdictionsMap.get(id); return { success:true,data:e?{...e}:null }; }
+  public async saveAccountingRule(entry: AccountingRuleEntry, idempotencyKey: string): Promise<StorageResult<AccountingRuleEntry>> {
+    const tenantKey = entry.tenantId || '__std__';
+    const hit = await this.checkIdempotencyRecord(tenantKey, idempotencyKey, 'saveAccountingRule');
+    if (hit.success && hit.data) { const x=hit.data as AccountingRuleEntry; return { success:true,data:{...x,eventTypes:[...x.eventTypes]} }; }
+    const copy = { ...entry, eventTypes: [...entry.eventTypes] }; this.accountingRulesMap.set(entry.id, copy);
+    await this.saveIdempotencyRecord(tenantKey, idempotencyKey, 'saveAccountingRule', copy);
+    return { success: true, data: { ...copy, eventTypes: [...copy.eventTypes] } };
+  }
+  public async listAccountingRules(filter?: { jurisdictionId?: string; framework?: string; eventType?: string; status?: string; asOfDate?: string }): Promise<StorageResult<AccountingRuleEntry[]>> {
+    let list=[...this.accountingRulesMap.values()];
+    if(filter?.jurisdictionId) list=list.filter(x=>x.jurisdictionId===filter.jurisdictionId);
+    if(filter?.framework) list=list.filter(x=>x.framework===filter.framework);
+    if(filter?.eventType) list=list.filter(x=>x.eventTypes.includes(filter.eventType as AccountingEventType));
+    if(filter?.status) list=list.filter(x=>x.status===filter.status);
+    if(filter?.asOfDate) list=list.filter(x=>x.effectiveFrom<=filter.asOfDate! && (!x.effectiveTo || x.effectiveTo>=filter.asOfDate!));
+    return {success:true,data:list.map(x=>({...x,eventTypes:[...x.eventTypes]}))};
+  }
+  public async getAccountingRule(id: string): Promise<StorageResult<AccountingRuleEntry | null>> { const e=this.accountingRulesMap.get(id); return {success:true,data:e?{...e,eventTypes:[...e.eventTypes]}:null}; }
+  public async saveTaxRule(entry: TaxRuleEntry, idempotencyKey: string): Promise<StorageResult<TaxRuleEntry>> {
+    const hit=await this.checkIdempotencyRecord('__std__',idempotencyKey,'saveTaxRule'); if(hit.success&&hit.data)return {success:true,data:{...(hit.data as TaxRuleEntry)}};
+    const copy={...entry}; this.taxRulesMap.set(entry.id,copy); await this.saveIdempotencyRecord('__std__',idempotencyKey,'saveTaxRule',copy); return {success:true,data:{...copy}};
+  }
+  public async listTaxRules(filter?: { jurisdictionId?: string; status?: string; asOfDate?: string }): Promise<StorageResult<TaxRuleEntry[]>> {
+    let list=[...this.taxRulesMap.values()]; if(filter?.jurisdictionId)list=list.filter(x=>x.jurisdictionId===filter.jurisdictionId); if(filter?.status)list=list.filter(x=>x.status===filter.status); if(filter?.asOfDate)list=list.filter(x=>x.effectiveFrom<=filter.asOfDate!&&(!x.effectiveTo||x.effectiveTo>=filter.asOfDate!)); return {success:true,data:list.map(x=>({...x}))};
+  }
+  public async getTaxRule(id: string): Promise<StorageResult<TaxRuleEntry | null>> { const e=this.taxRulesMap.get(id); return {success:true,data:e?{...e}:null}; }
+  public async saveAccountingPolicy(entry: AccountingPolicyEntry, idempotencyKey: string): Promise<StorageResult<AccountingPolicyEntry>> {
+    const hit=await this.checkIdempotencyRecord(entry.tenantId,idempotencyKey,'saveAccountingPolicy'); if(hit.success&&hit.data)return {success:true,data:{...(hit.data as AccountingPolicyEntry)}};
+    const list=this.accountingPoliciesMap.get(entry.tenantId)||[]; const copy={...entry}; const idx=list.findIndex(x=>x.id===entry.id); if(idx>=0)list[idx]=copy; else list.push(copy); this.accountingPoliciesMap.set(entry.tenantId,list);
+    await this.saveIdempotencyRecord(entry.tenantId,idempotencyKey,'saveAccountingPolicy',copy); return {success:true,data:{...copy}};
+  }
+  public async listAccountingPolicies(tenantId: string, filter?: { policyKey?: string; asOfDate?: string }): Promise<StorageResult<AccountingPolicyEntry[]>> {
+    let list=[...(this.accountingPoliciesMap.get(tenantId)||[])]; if(filter?.policyKey)list=list.filter(x=>x.policyKey===filter.policyKey); if(filter?.asOfDate)list=list.filter(x=>x.effectiveFrom<=filter.asOfDate!&&(!x.effectiveTo||x.effectiveTo>=filter.asOfDate!)); return {success:true,data:list.map(x=>({...x}))};
+  }
+  public async getAccountingPolicy(tenantId: string, policyKey: string, asOfDate?: string): Promise<StorageResult<AccountingPolicyEntry | null>> { const rows=await this.listAccountingPolicies(tenantId,{policyKey,asOfDate}); return {success:true,data:rows.data?.[0]||null}; }
+  public async appendStandardsDecisionLog(entry: StandardsDecisionLogEntry): Promise<StorageResult<StandardsDecisionLogEntry>> { const list=this.standardsDecisionLogsMap.get(entry.tenantId)||[]; const copy={...entry}; list.push(copy); this.standardsDecisionLogsMap.set(entry.tenantId,list); return {success:true,data:{...copy}}; }
+  public async listStandardsDecisionLogs(tenantId: string, filter?: { eventType?: string; eventRef?: string; limit?: number }): Promise<StorageResult<StandardsDecisionLogEntry[]>> { let list=[...(this.standardsDecisionLogsMap.get(tenantId)||[])]; if(filter?.eventType)list=list.filter(x=>x.eventType===filter.eventType); if(filter?.eventRef)list=list.filter(x=>x.eventRef===filter.eventRef); list=list.slice(-(filter?.limit||100)).reverse(); return {success:true,data:list.map(x=>({...x}))}; }
 
   public async saveStockDocument(tenantId: string, doc: StockDocument, idempotencyKey: string): Promise<StorageResult<StockDocument>> {
     const cached = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'saveStockDocument');
