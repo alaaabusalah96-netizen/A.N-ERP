@@ -40,21 +40,41 @@ async function main() {
   check('PGC2 DB CHECK: ACTIVE rule with the unasserted-date sentinel is rejected', await rejects(q(`INSERT INTO an_accounting_rules (rule_id, version, standard_id, framework, jurisdiction_id, event_type, priority, tier, effective_from, source_reference, source_verified, status) VALUES ($1,1,'X','IFRS','J','GOODS_RECEIPT',1,2,'0001-01-01','src',TRUE,'ACTIVE')`, [`ZZ-TEST-${run}-DB2`])));
   check('PGC3 DB CHECK: IMPLEMENTED standard without evidence is rejected', await rejects(q(`INSERT INTO an_standards (standard_id, framework, version, title_en, coverage_status, effective_from, source_verified) VALUES ($1,'IFRS',1,'t','IMPLEMENTED','2024-01-01',TRUE)`, [`ZZ-TEST-${run}-DB3`])));
   check('PGC4 DB CHECK: tax rate without a verified source is rejected', await rejects(q(`INSERT INTO an_std_tax_rules (tax_rule_id, version, jurisdiction_id, tax_type, priority, rate, effective_from, source_verified, status) VALUES ($1,1,'J','VAT',1,0.14,'2024-01-01',FALSE,'DRAFT')`, [`ZZ-TEST-${run}-DB4`])));
-  check('PGC5 DB primary key: a second row with the same (rule_id, version) cannot exist', await rejects(q(`INSERT INTO an_accounting_rules (rule_id, version, standard_id, framework, jurisdiction_id, event_type, priority, tier, effective_from, status) SELECT rule_id, version, standard_id, framework, jurisdiction_id, event_type, priority, tier, effective_from, 'DRAFT' FROM an_accounting_rules WHERE rule_id LIKE $1 LIMIT 1`, [`ZZ-TEST-${run}%`])));
+  check('PGC5 DB primary key: a second row with the same (rule_id, version) cannot exist', await rejects(q(`INSERT INTO an_accounting_rules (rule_id, version, standard_id, framework, jurisdiction_id, event_type, priority, tier, effective_from, status) SELECT rule_id, version, standard_id, framework, jurisdiction_id, event_type, priority, tier, effective_from, 'DRAFT' FROM an_accounting_rules WHERE rule_id LIKE 'ZZ-TEST-%' LIMIT 1`)));
 
   const role = await q(`SELECT rolbypassrls OR rolsuper AS bypass FROM pg_roles WHERE rolname = current_user`);
   const bypass = !!role.rows[0]?.bypass;
   console.log(`INFO: DB role bypasses RLS = ${bypass}`);
-  if (bypass) { console.log('SKIP PGR1: current DB role bypasses RLS, cross-tenant isolation cannot be proven with this role (not counted as pass).'); }
-  else {
+  const probe = 'an_rls_probe_f1';
+  let useProbe = false;
+  if (bypass) {
+    try {
+      await q(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${probe}') THEN CREATE ROLE ${probe} NOLOGIN NOSUPERUSER NOBYPASSRLS; END IF; END $$`);
+      await q(`GRANT USAGE ON SCHEMA public TO ${probe}`);
+      await q(`GRANT SELECT, INSERT ON an_accounting_policies TO ${probe}`);
+      useProbe = true;
+    } catch (e: any) { console.log(`SKIP PGR1: app role bypasses RLS and a probe role could not be created (${e.message}). Isolation NOT proven (not counted as pass).`); }
+  }
+  if (!bypass || useProbe) {
     const c = await pg.pool.connect();
     try {
-      await c.query('BEGIN'); await c.query("SELECT set_config('app.current_tenant_id', $1, true)", [tB]);
-      const seen = await c.query('SELECT count(*)::int AS n FROM an_accounting_policies WHERE tenant_id = $1', [tA]);
-      const wr = await c.query('SAVEPOINT s').then(() => c.query(`INSERT INTO an_accounting_policies (id, tenant_id, policy_key, value, version, effective_from, created_by) VALUES ('zz-x-${run}', $1, 'fx_policy', 'x', 1, '2026-01-01', 'u')`, [tA])).then(() => false, () => true);
+      await c.query('BEGIN');
+      let ok = true;
+      if (useProbe) { try { await c.query(`SET LOCAL ROLE ${probe}`); } catch (e: any) { ok = false; console.log(`SKIP PGR1: cannot switch to the probe role (${e.message}). Isolation NOT proven (not counted as pass).`); } }
+      if (ok) {
+        await c.query("SELECT set_config('app.current_tenant_id', $1, true)", [tA]);
+        const own = await c.query('SELECT count(*)::int AS n FROM an_accounting_policies WHERE tenant_id = $1', [tA]);
+        await c.query("SELECT set_config('app.current_tenant_id', $1, true)", [tB]);
+        const seen = await c.query('SELECT count(*)::int AS n FROM an_accounting_policies WHERE tenant_id = $1', [tA]);
+        const wr = await c.query(`INSERT INTO an_accounting_policies (id, tenant_id, policy_key, value, version, effective_from, created_by) VALUES ('zz-x-${run}', $1, 'fx_policy', 'x', 1, '2026-01-01', 'u')`, [tA]).then(() => false, () => true);
+        check(`PGR1 RLS (${useProbe ? 'non-bypass probe role' : 'app role'}): own tenant sees its rows (control), other tenant sees 0 and cannot write into it`, own.rows[0].n > 0 && seen.rows[0].n === 0 && wr === true, `own=${own.rows[0].n} otherSees=${seen.rows[0].n} writeBlocked=${wr}`);
+      }
       await c.query('ROLLBACK');
-      check('PGR1 RLS: tenant B cannot read tenant A policies and cannot write rows for tenant A', seen.rows[0].n === 0 && wr === true, `visible=${seen.rows[0].n} writeBlocked=${wr}`);
     } finally { c.release(); }
+  }
+  if (useProbe) {
+    try { await q(`REVOKE ALL ON an_accounting_policies FROM ${probe}`); await q(`REVOKE USAGE ON SCHEMA public FROM ${probe}`); await q(`DROP ROLE IF EXISTS ${probe}`); }
+    catch (e: any) { console.log(`INFO: probe role cleanup skipped (${e.message})`); }
   }
 
   console.log(`\nPassed: ${tally.pass} | Failed: ${tally.fail}`);
