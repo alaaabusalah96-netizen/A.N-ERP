@@ -120,6 +120,7 @@ export class InMemoryAdapter implements StoragePort {
   private warehouseBins = new Map<string, WarehouseBin>();
   private stockItems = new Map<string, StockItem>();
   private warehouseStock = new Map<string, WarehouseStock>();
+  private userWarehouseAccess = new Map<string, string[]>();
   private stockMovements = new Map<string, StockMovement>();
   private stockTransfers = new Map<string, StockTransfer>();
   private stockTransferLines = new Map<string, StockTransferLine[]>();
@@ -2081,6 +2082,33 @@ export class InMemoryAdapter implements StoragePort {
       map.set(k, row);
     }
     return { success: true, data: Array.from(map.values()) };
+  }
+
+
+  // Phase 18 (SCOPE-001)
+  public async listUserWarehouseAccess(tenantId: string, userId: string): Promise<StorageResult<string[]>> {
+    return { success: true, data: [...(this.userWarehouseAccess.get(`${tenantId}:${userId}`) || [])] };
+  }
+  public async setUserWarehouseAccess(tenantId: string, userId: string, warehouseIds: string[], actorId: string, idempotencyKey: string): Promise<StorageResult<string[]>> {
+    const hit = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'setUserWarehouseAccess');
+    if (hit.success && hit.data) return { success: true, data: hit.data };
+    const user = await this.getUser(tenantId, userId);
+    if (!user.success || !user.data) {
+      return { success: false, error: { type: 'https://api.an-erp.local/errors/not-found', title: 'المستخدم غير موجود', status: 404, detail: 'المستخدم غير موجود في هذه المنشأة.' } };
+    }
+    const unique = Array.from(new Set((warehouseIds || []).filter(Boolean).map(String)));
+    if (unique.length > 200) {
+      return { success: false, error: { type: 'https://api.an-erp.local/errors/validation-failed', title: 'بيانات غير صالحة', status: 400, detail: 'الحد الأقصى 200 مستودعًا.' } };
+    }
+    for (const wid of unique) {
+      const w = await this.getWarehouse(tenantId, wid);
+      if (!w.success || !w.data) {
+        return { success: false, error: { type: 'https://api.an-erp.local/errors/not-found', title: 'المستودع غير موجود', status: 404, detail: `المستودع ${wid} غير موجود في هذه المنشأة.` } };
+      }
+    }
+    this.userWarehouseAccess.set(`${tenantId}:${userId}`, unique);
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'setUserWarehouseAccess', unique);
+    return { success: true, data: unique };
   }
 
 public async getWarehouseStock(tenantId: string, warehouseId: string, itemId: string): Promise<StorageResult<WarehouseStock | null>> {

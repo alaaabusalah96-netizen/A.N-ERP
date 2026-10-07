@@ -964,6 +964,17 @@ export class PostgresPrimaryAdapter implements StoragePort {
         expiry_date DATE
       );
 
+      -- Phase 18 (SCOPE-001)
+      CREATE TABLE IF NOT EXISTS an_user_warehouse_access (
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        user_id VARCHAR(64) NOT NULL,
+        warehouse_id VARCHAR(64) NOT NULL REFERENCES an_warehouses(id) ON DELETE CASCADE,
+        granted_by VARCHAR(64) NOT NULL,
+        granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (tenant_id, user_id, warehouse_id)
+      );
+
+
 
 
       CREATE TABLE IF NOT EXISTS an_stock_movements (
@@ -1287,6 +1298,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_expense_lines',
           'an_expense_attachments',
           'an_warehouses',
+          'an_user_warehouse_access',
           'an_warehouse_bins',
           'an_stock_items',
           'an_warehouse_stock',
@@ -6106,6 +6118,57 @@ export class PostgresPrimaryAdapter implements StoragePort {
       };
     } catch (e: any) {
       return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } };
+    }
+  }
+
+
+  // Phase 18 (SCOPE-001)
+  public async listUserWarehouseAccess(tenantId: string, userId: string): Promise<any> {
+    try {
+      const r = await this.pool.query(
+        `SELECT warehouse_id FROM an_user_warehouse_access WHERE tenant_id=$1 AND user_id=$2`,
+        [tenantId, userId]
+      );
+      return { success: true, data: r.rows.map((x: any) => x.warehouse_id) };
+    } catch (e: any) {
+      return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } };
+    }
+  }
+  public async setUserWarehouseAccess(tenantId: string, userId: string, warehouseIds: string[], actorId: string, idempotencyKey: string): Promise<any> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const u = await client.query(`SELECT id FROM an_users WHERE tenant_id=$1 AND id=$2`, [tenantId, userId]);
+      if (!u.rows.length) {
+        await client.query('ROLLBACK');
+        return { success: false, error: { type: 'not-found', title: 'المستخدم غير موجود', status: 404, detail: 'المستخدم غير موجود في هذه المنشأة.' } };
+      }
+      const unique = Array.from(new Set((warehouseIds || []).filter(Boolean).map(String)));
+      if (unique.length > 200) {
+        await client.query('ROLLBACK');
+        return { success: false, error: { type: 'validation', title: 'بيانات غير صالحة', status: 400, detail: 'الحد الأقصى 200 مستودعًا.' } };
+      }
+      for (const wid of unique) {
+        const w = await client.query(`SELECT id FROM an_warehouses WHERE tenant_id=$1 AND id=$2`, [tenantId, wid]);
+        if (!w.rows.length) {
+          await client.query('ROLLBACK');
+          return { success: false, error: { type: 'not-found', title: 'المستودع غير موجود', status: 404, detail: `المستودع ${wid} غير موجود.` } };
+        }
+      }
+      await client.query(`DELETE FROM an_user_warehouse_access WHERE tenant_id=$1 AND user_id=$2`, [tenantId, userId]);
+      for (const wid of unique) {
+        await client.query(
+          `INSERT INTO an_user_warehouse_access (tenant_id, user_id, warehouse_id, granted_by, granted_at) VALUES ($1,$2,$3,$4,NOW())`,
+          [tenantId, userId, wid, actorId]
+        );
+      }
+      await client.query('COMMIT');
+      return { success: true, data: unique };
+    } catch (e: any) {
+      try { await client.query('ROLLBACK'); } catch {}
+      return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } };
+    } finally {
+      client.release();
     }
   }
 

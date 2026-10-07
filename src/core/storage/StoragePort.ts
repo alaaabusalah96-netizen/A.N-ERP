@@ -1125,6 +1125,10 @@ export interface StoragePort {
   sumOpenReceiptQtyForPoLine(tenantId: string, poLineId: string): Promise<StorageResult<number>>;
   // Phase 16 (REC-001)
   getInventoryIntegrityAggregates(tenantId: string): Promise<StorageResult<InventoryIntegrityRow[]>>;
+  // Phase 18 (SCOPE-001): per-user warehouse scope
+  listUserWarehouseAccess(tenantId: string, userId: string): Promise<StorageResult<string[]>>;
+  setUserWarehouseAccess(tenantId: string, userId: string, warehouseIds: string[], actorId: string, idempotencyKey: string): Promise<StorageResult<string[]>>;
+
 
 
 

@@ -324,4 +324,7 @@ export class FirebaseSmokeAdapter implements StoragePort {
 
   getInventoryIntegrityAggregates(tenantId: string) { return this.smokeOnlyError<any>('getInventoryIntegrityAggregates'); }
 
+  listUserWarehouseAccess(..._a: any[]) { return this.smokeOnlyError<any>('listUserWarehouseAccess'); }
+  setUserWarehouseAccess(..._a: any[]) { return this.smokeOnlyError<any>('setUserWarehouseAccess'); }
+
 }

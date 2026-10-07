@@ -2408,6 +2408,43 @@ async function startServer() {
     return { role, canViewAll, isSubmitter };
   }
 
+  // Phase 18 (SCOPE-001): per-user warehouse scope
+  const SCOPE_EXEMPT_ROLES = new Set(['super_admin', 'admin', 'platform_admin', 'system_admin', 'auditor']);
+  async function getAllowedWarehouseIds(req: Request, storage: StoragePort): Promise<Set<string> | null> {
+    const cached = (req as any).__allowedWarehouses;
+    if (cached !== undefined) return cached;
+    const role = String((req as any).authContext?.role || '').toLowerCase();
+    if (SCOPE_EXEMPT_ROLES.has(role)) {
+      (req as any).__allowedWarehouses = null;
+      return null;
+    }
+    const tenantId = (req as any).authContext.tenantId;
+    const userId = (req as any).authContext.userId;
+    const res = await storage.listUserWarehouseAccess(tenantId, userId);
+    if (!res.success) {
+      (req as any).__allowedWarehouses = null;
+      return null;
+    }
+    const ids = res.data || [];
+    const allowed = ids.length === 0 ? null : new Set(ids);
+    (req as any).__allowedWarehouses = allowed;
+    return allowed;
+  }
+  async function assertWarehouseAllowed(req: Request, res: Response, storage: StoragePort, warehouseId: string | undefined | null): Promise<boolean> {
+    if (!warehouseId) {
+      res.status(400).json({ type: 'https://api.an-erp.local/errors/validation-failed', title: 'بيانات غير صالحة', status: 400, detail: 'معرّف المستودع مطلوب.' });
+      return false;
+    }
+    const allowed = await getAllowedWarehouseIds(req, storage);
+    if (allowed === null) return true;
+    if (!allowed.has(warehouseId)) {
+      const role = (req as any).authContext?.role as string | undefined;
+      denyForbidden(res, role, 'WAREHOUSE_SCOPE');
+      return false;
+    }
+    return true;
+  }
+
   // 4A: دليل الحسابات (Chart of Accounts)
   app.get('/api/accounting/accounts', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
     try {
@@ -3405,7 +3442,58 @@ async function startServer() {
   });
 
   // 7A: Warehouses List
-  app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
+  
+  // Phase 18 (SCOPE-001): manage user warehouse access
+  app.get('/api/inventory/warehouse-access/:userId', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const result = await storage.listUserWarehouseAccess(tenantId, req.params.userId);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+  app.put('/api/inventory/warehouse-access/:userId', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const actorId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'تحديث نطاق المستودعات');
+      if (!key) return;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const warehouseIds = Array.isArray(req.body?.warehouseIds) ? req.body.warehouseIds
+        : (Array.isArray(req.body?.warehouse_ids) ? req.body.warehouse_ids : null);
+      if (!Array.isArray(warehouseIds)) {
+        return res.status(400).json({ type: 'https://api.an-erp.local/errors/validation-failed', title: 'بيانات غير صالحة', status: 400, detail: 'warehouseIds يجب أن يكون مصفوفة.' });
+      }
+      if (warehouseIds.length > 200) {
+        return res.status(400).json({ type: 'https://api.an-erp.local/errors/validation-failed', title: 'بيانات غير صالحة', status: 400, detail: 'الحد الأقصى 200 مستودعًا.' });
+      }
+      const result = await storage.setUserWarehouseAccess(tenantId, req.params.userId, warehouseIds.map(String), actorId, key);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      try {
+        await storage.appendSystemChangeLog({
+          id: `scl-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          actor: actorId,
+          changeType: 'SECURITY',
+          module: 'WAREHOUSE_SCOPE',
+          entitiesAffected: [req.params.userId],
+          summaryAr: `تحديث نطاق مستودعات المستخدم (${(result.data || []).length} مستودع)`,
+          afterState: { warehouseIds: result.data },
+          version: 'phase-18',
+        });
+      } catch { /* non-fatal */ }
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
@@ -3416,7 +3504,13 @@ async function startServer() {
       };
       const result = await svc.listWarehouses(tenantId, filter);
       if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
+      {
+        const storage = getRequestStorage(req, res);
+        if (!storage) return;
+        const allowed = await getAllowedWarehouseIds(req, storage);
+        const data = allowed === null ? result.data : (result.data || []).filter((w: any) => allowed.has(w.id));
+        return res.json({ success: true, data });
+      }
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -3444,6 +3538,11 @@ async function startServer() {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
       if (!svc) return;
+      {
+        const storage = getRequestStorage(req, res);
+        if (!storage) return;
+        if (!(await assertWarehouseAllowed(req, res, storage, req.params.id))) return;
+      }
       const result = await svc.listWarehouseBins(tenantId, req.params.id);
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
@@ -3774,9 +3873,14 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!svc) return;
       const warehouseId = req.query.warehouseId as string;
       const itemId = req.query.itemId as string;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      if (warehouseId && !(await assertWarehouseAllowed(req, res, storage, warehouseId))) return;
       const result = await svc.listWarehouseStock(tenantId, warehouseId, itemId);
       if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
+      const allowed = await getAllowedWarehouseIds(req, storage);
+      const data = allowed === null ? result.data : (result.data || []).filter((r: any) => allowed.has(r.warehouseId));
+      return res.json({ success: true, data });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -3794,9 +3898,14 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
         movementType: req.query.movementType as string,
         limit: req.query.limit ? Number(req.query.limit) : undefined,
       };
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      if (filter.warehouseId && !(await assertWarehouseAllowed(req, res, storage, filter.warehouseId))) return;
       const result = await svc.listStockMovements(tenantId, filter);
       if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
+      const allowed = await getAllowedWarehouseIds(req, storage);
+      const data = allowed === null ? result.data : (result.data || []).filter((r: any) => allowed.has(r.warehouseId));
+      return res.json({ success: true, data });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -3811,6 +3920,12 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!key) return;
       const svc = getInventoryService(req, res);
       if (!svc) return;
+      {
+        const storage = getRequestStorage(req, res);
+        if (!storage) return;
+        const wid = (req.body || {}).warehouseId || (req.body || {}).warehouse_id;
+        if (!(await assertWarehouseAllowed(req, res, storage, wid))) return;
+      }
 
       const result = await svc.receiveStock(tenantId, {
         ...req.body,
@@ -3835,6 +3950,12 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!key) return;
       const svc = getInventoryService(req, res);
       if (!svc) return;
+      {
+        const storage = getRequestStorage(req, res);
+        if (!storage) return;
+        const wid = (req.body || {}).warehouseId || (req.body || {}).warehouse_id;
+        if (!(await assertWarehouseAllowed(req, res, storage, wid))) return;
+      }
 
       const result = await svc.issueStock(tenantId, {
         ...req.body,
@@ -3860,9 +3981,13 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
         status: req.query.status as string,
         warehouseId: req.query.warehouseId as string,
       };
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
       const result = await svc.listStockTransfers(tenantId, filter);
       if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
+      const allowed = await getAllowedWarehouseIds(req, storage);
+      const data = allowed === null ? result.data : (result.data || []).filter((t: any) => allowed.has(t.sourceWarehouseId) || allowed.has(t.targetWarehouseId));
+      return res.json({ success: true, data });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -3876,6 +4001,12 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!key) return;
       const svc = getInventoryService(req, res);
       if (!svc) return;
+      {
+        const storage = getRequestStorage(req, res);
+        if (!storage) return;
+        const src = (req.body || {}).sourceWarehouseId || (req.body || {}).source_warehouse_id;
+        if (!(await assertWarehouseAllowed(req, res, storage, src))) return;
+      }
 
       const result = await svc.createTransfer(tenantId, {
         ...req.body,
@@ -3899,6 +4030,15 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       const result = await svc.getStockTransfer(tenantId, req.params.id);
       if (!result.success) return res.status(500).json(result.error);
       if (!result.data) return res.status(404).json({ error: 'مستند التحويل غير موجود' });
+      {
+        const storage = getRequestStorage(req, res);
+        if (!storage) return;
+        const allowed = await getAllowedWarehouseIds(req, storage);
+        const tr = (result.data as any).transfer || result.data;
+        if (allowed !== null && !allowed.has(tr.sourceWarehouseId) && !allowed.has(tr.targetWarehouseId)) {
+          return denyForbidden(res, (req as any).authContext?.role, 'WAREHOUSE_SCOPE');
+        }
+      }
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -3910,6 +4050,13 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
       if (!svc) return;
+      {
+        const storage = getRequestStorage(req, res);
+        if (!storage) return;
+        const existing = await svc.getStockTransfer(tenantId, req.params.id);
+        const tr = existing.success && existing.data ? ((existing.data as any).transfer || existing.data) : null;
+        if (!(await assertWarehouseAllowed(req, res, storage, tr?.sourceWarehouseId))) return;
+      }
       const existing = await svc.getStockTransfer(tenantId, req.params.id);
       if (!existing.success || !existing.data) return res.status(404).json({ error: 'مستند التحويل غير موجود' });
       return res.json({ success: true, data: existing.data, message: 'التحويل أُرسل عند إنشائه، والخصم من مستودع المصدر تم وقتها.' });
@@ -3926,6 +4073,13 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!key) return;
       const svc = getInventoryService(req, res);
       if (!svc) return;
+      {
+        const storage = getRequestStorage(req, res);
+        if (!storage) return;
+        const existing = await svc.getStockTransfer(tenantId, req.params.id);
+        const tr = existing.success && existing.data ? ((existing.data as any).transfer || existing.data) : null;
+        if (!(await assertWarehouseAllowed(req, res, storage, tr?.targetWarehouseId))) return;
+      }
 
       const result = await svc.receiveTransfer(
         tenantId,
@@ -3952,9 +4106,14 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
         warehouseId: req.query.warehouseId as string,
         status: req.query.status as string,
       };
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      if ((filter as any).warehouseId && !(await assertWarehouseAllowed(req, res, storage, (filter as any).warehouseId))) return;
       const result = await svc.listStockCounts(tenantId, filter);
       if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
+      const allowed = await getAllowedWarehouseIds(req, storage);
+      const data = allowed === null ? result.data : (result.data || []).filter((c: any) => allowed.has(c.warehouseId));
+      return res.json({ success: true, data });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -3968,6 +4127,12 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!key) return;
       const svc = getInventoryService(req, res);
       if (!svc) return;
+      {
+        const storage = getRequestStorage(req, res);
+        if (!storage) return;
+        const wid = (req.body || {}).warehouseId || (req.body || {}).warehouse_id;
+        if (!(await assertWarehouseAllowed(req, res, storage, wid))) return;
+      }
 
       const result = await svc.createStockCount(tenantId, {
         ...req.body,
@@ -3991,6 +4156,15 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       const result = await svc.getStockCount(tenantId, req.params.id);
       if (!result.success) return res.status(500).json(result.error);
       if (!result.data) return res.status(404).json({ error: 'محضر الجرد غير موجود' });
+      {
+        const storage = getRequestStorage(req, res);
+        if (!storage) return;
+        const allowed = await getAllowedWarehouseIds(req, storage);
+        const cnt = (result.data as any).count || result.data;
+        if (allowed !== null && !allowed.has(cnt.warehouseId)) {
+          return denyForbidden(res, (req as any).authContext?.role, 'WAREHOUSE_SCOPE');
+        }
+      }
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -4036,9 +4210,12 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
         warehouseId: req.query.warehouseId as string,
         limit: req.query.limit ? Number(req.query.limit) : undefined,
       };
+      if (filter.warehouseId && !(await assertWarehouseAllowed(req, res, storage, filter.warehouseId))) return;
       const result = await storage.listStockDocuments(tenantId, filter);
       if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
+      const allowed = await getAllowedWarehouseIds(req, storage);
+      const data = allowed === null ? result.data : (result.data || []).filter((d: any) => allowed.has(d.warehouseId));
+      return res.json({ success: true, data });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -4053,6 +4230,12 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       const result = await storage.getStockDocument(tenantId, req.params.id);
       if (!result.success) return res.status(500).json(result.error);
       if (!result.data) return res.status(404).json({ error: 'المستند غير موجود' });
+      {
+        const allowed = await getAllowedWarehouseIds(req, storage);
+        if (allowed !== null && !allowed.has((result.data as any).warehouseId)) {
+          return denyForbidden(res, (req as any).authContext?.role, 'WAREHOUSE_SCOPE');
+        }
+      }
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -4068,6 +4251,12 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!key) return;
       const svc = getInventoryService(req, res);
       if (!svc) return;
+      {
+        const storage = getRequestStorage(req, res);
+        if (!storage) return;
+        const wid = (req.body || {}).warehouseId || (req.body || {}).warehouse_id;
+        if (!(await assertWarehouseAllowed(req, res, storage, wid))) return;
+      }
 
       const result = await svc.returnStock(tenantId, {
         ...req.body,
@@ -4089,6 +4278,9 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       const tenantId = (req as any).authContext.tenantId;
       const svc = getInventoryService(req, res);
       if (!svc) return;
+      const __scopeStorage = getRequestStorage(req, res);
+      if (!__scopeStorage) return;
+      const __allowedWh = await getAllowedWarehouseIds(req, __scopeStorage);
       const warehouseId = req.query.warehouseId as string;
       const fromDate = req.query.from as string;
       const toDate = req.query.to as string;
@@ -4100,7 +4292,15 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       });
 
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
+      {
+        let data = result.data as any;
+        if (__allowedWh !== null && data) {
+          if (Array.isArray(data)) data = data.filter((m: any) => __allowedWh.has(m.warehouseId));
+          else if (Array.isArray(data.movements)) data.movements = data.movements.filter((m: any) => __allowedWh.has(m.warehouseId));
+          else if (Array.isArray(data.entries)) data.entries = data.entries.filter((m: any) => __allowedWh.has(m.warehouseId));
+        }
+        return res.json({ success: true, data });
+      }
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
