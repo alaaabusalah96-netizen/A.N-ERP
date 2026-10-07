@@ -2,25 +2,27 @@
   "project": {
     "name": "A.N ERP",
     "version": "7.2.0",
-    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل",
+    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل — تدقيق شامل معتمد",
     "stack": {
       "backend": ["Node 22", "Express 4", "TypeScript"],
       "database": "PostgreSQL",
       "frontend": ["React 19", "Vite", "Tailwind CSS"]
     }
   },
-  "auditDate": "2026-10-06T17:55:00Z",
+  "auditDate": "2026-10-06T21:20:00Z",
   "authoritativeVerdict": "CONDITIONAL GO",
   "scorecard": {
     "architecture": 88,
     "security": 92,
+    "authentication": 95,
     "authorization_sod": 94,
     "tenant_isolation": 90,
     "inventory_integrity": 90,
     "accounting_integrity": 82,
     "transaction_atomicity": 84,
-    "idempotency": 96,
     "concurrency": 85,
+    "costing": 95,
+    "idempotency": 96,
     "schema_management": 78,
     "testing_quality": 85,
     "evidence_quality": 88,
@@ -32,47 +34,53 @@
   "defects": [
     {
       "id": "DEF-P1-001",
-      "title": "approveAndPostStockCount lacks shared transaction between General Ledger and Stock Movements",
       "severity": "P1",
-      "status": "OPEN",
+      "area": "Accounting / Inventory Atomicity",
       "file": "src/core/inventory/InventoryService.ts",
       "method": "approveAndPostStockCount",
-      "impact": "If recordStockMovement fails after journal post, GL remains altered while inventory balances remain unadjusted without automatic rollback or outbox retry.",
+      "impact": "General Ledger journal posts before inventory adjustment loop; return of recordStockMovement is unchecked; no atomic rollback or outbox retry.",
       "reproducible": true,
-      "recommendation": "Wrap stock adjustments and GL journal creation into an atomic transaction or register under PENDING_RETRY outbox."
+      "recommendation": "Wrap stock adjustments and GL journal into an atomic transaction or register under PENDING_RETRY outbox."
     },
     {
       "id": "DEF-P1-002",
-      "title": "returnStock ignores PostingEngine.postEntry return result and lacks PENDING_RETRY outbox",
       "severity": "P1",
-      "status": "OPEN",
+      "area": "Accounting Reversal",
       "file": "src/core/inventory/InventoryService.ts",
       "method": "returnStock",
-      "impact": "If reversal journal fails to post, returnStock still returns success:true, leaving stock deducted/added without corresponding GL entry.",
+      "impact": "postingEngine.postEntry return result is ignored at line 1418; method returns success:true even if reversal journal fails, with no PENDING_RETRY tracking.",
       "reproducible": true,
       "recommendation": "Check postEntry return result and attach journalStatus PENDING_RETRY on failure."
     },
     {
+      "id": "DEF-P1-003",
+      "severity": "P1",
+      "area": "Custody & Expense Reversal Accounting",
+      "file": "src/core/modules/custody/CashCustodyService.ts",
+      "method": "recordCustodyExpenseVoucher, cancelCustodyVoucher",
+      "impact": "postingEngine.postEntry return value is ignored; voucher status updates to POSTED even if posting fails.",
+      "reproducible": true,
+      "recommendation": "Verify postEntry outcome before updating document status."
+    },
+    {
       "id": "DEF-P2-001",
-      "title": "createGoodsReceipt TOCTOU race condition on open PO line quantity under concurrent requests",
       "severity": "P2",
-      "status": "OPEN",
+      "area": "Purchasing Concurrency",
       "file": "src/core/purchasing/PurchasingService.ts",
       "method": "createGoodsReceipt",
-      "impact": "Two concurrent receipts for the same PO line can both pass remaining quantity validation before row lock.",
+      "impact": "TOCTOU race on remaining PO line quantity without row lock; decoupled stock receive and PO line update.",
       "reproducible": true,
-      "recommendation": "Perform PO line quantity check inside a locked transaction (SELECT ... FOR UPDATE)."
+      "recommendation": "Lock PO line during calculation and combine stock receive and PO update under shared lock."
     },
     {
       "id": "DEF-P2-002",
-      "title": "Absence of formal version-controlled migration runner with checksum tracking",
       "severity": "P2",
-      "status": "OPEN",
+      "area": "Database Migration",
       "file": "src/core/storage/adapters/PostgresPrimaryAdapter.ts",
       "method": "initDatabase",
-      "impact": "Schema relies on programmatic CREATE TABLE IF NOT EXISTS and ALTER TABLE statements on startup rather than dedicated migration files.",
+      "impact": "Absence of dedicated version-tracked migration engine with checksums.",
       "reproducible": false,
-      "recommendation": "Implement structured migration tracking table with incremental version numbers and checksums."
+      "recommendation": "Implement structured migration runner with version tracking table."
     }
   ],
   "resolvedHistoricalDefects": [
@@ -105,8 +113,20 @@
       "evidence": "getStockTransfer fully maps all 12 columns conforming to StockTransferLine interface."
     }
   ],
+  "verifiedFeatures": {
+    "atomic_transfers": true,
+    "fail_closed_negative_stock": true,
+    "weighted_average_cost_locking": true,
+    "cost_layer_fifo_and_specific_lot": true,
+    "multi_step_policy_approvals": true,
+    "automatic_inventory_journals_with_retry": true,
+    "purchase_orders_and_goods_receipts": true,
+    "stock_vs_ledger_reconciliation_report": true,
+    "secure_document_attachments": true,
+    "per_user_warehouse_scope": true
+  },
   "testExecutionMetrics": {
-    "totalPassedTests": 225,
+    "totalPassedTests": 244,
     "totalFailedTests": 0,
     "suites": [
       "verifyPgMovementLogic (4/4)",
@@ -118,6 +138,7 @@
       "verifyP15Purchasing (25/25)",
       "verifyP16Recon (14/14)",
       "verifyP17Attachments (29/29)",
+      "verifyP18WarehouseScope (19/19)",
       "testIdempotencySuite (5/5)",
       "verifyPhase3AuthBypass (15/15)"
     ]

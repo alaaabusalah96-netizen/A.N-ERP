@@ -69,6 +69,7 @@ async function loginUser(username: string): Promise<string> {
       tenantCode: 'MAIN',
       username,
       password,
+      forceTerminateOldest: true,
     }),
   });
 

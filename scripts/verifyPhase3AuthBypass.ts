@@ -290,6 +290,7 @@ async function runBattery() {
       tenantCode: 'MAIN',
       username: 'accountant',
       password: loginPass,
+      forceTerminateOldest: true,
     },
   });
   const cookieHeader = liveLogin.headers.get('set-cookie') || '';
