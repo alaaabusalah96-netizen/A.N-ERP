@@ -384,10 +384,11 @@ export class CashCustodyService {
           description: vl.description,
         });
       }
-      // Credit custody account
+      // Credit custody account (try 110202, fallback to 1106 or 1010 if not present)
+      const custodyAcc = await this.resolveCustodyAccount(tenantId);
       journalLines.push({
         id: `line-${idx}-${voucherId}`,
-        accountCode: '110202',
+        accountCode: custodyAcc,
         debit: 0,
         credit: totalAmount,
         costCenter: custody.costCenterId,
@@ -557,9 +558,10 @@ export class CashCustodyService {
       const journalLines: JournalLine[] = [];
       let idx = 1;
       // Debit custody account
+      const custodyAcc = await this.resolveCustodyAccount(tenantId);
       journalLines.push({
         id: `rev-line-${idx++}-${voucher.id}`,
-        accountCode: '110202',
+        accountCode: custodyAcc,
         debit: voucher.totalAmount,
         credit: 0,
         description: `إلغاء سند صرف العهدة ${voucher.voucherNumber}`,
@@ -1098,5 +1100,25 @@ export class CashCustodyService {
     });
 
     return updated;
+  }
+
+  private async resolveCustodyAccount(tenantId: string): Promise<string> {
+    try {
+      const acc110202 = await this.port.getAccount(tenantId, '110202');
+      if (acc110202.success && acc110202.data && acc110202.data.isActive) {
+        return '110202';
+      }
+      const acc1106 = await this.port.getAccount(tenantId, '1106');
+      if (acc1106.success && acc1106.data && acc1106.data.isActive) {
+        return '1106';
+      }
+      const acc1010 = await this.port.getAccount(tenantId, '1010');
+      if (acc1010.success && acc1010.data && acc1010.data.isActive) {
+        return '1010';
+      }
+    } catch {
+      // intentional: fallback to 110202 if port inspection throws
+    }
+    return '110202';
   }
 }

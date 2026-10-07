@@ -6,6 +6,8 @@
  * Errors follow RFC 7807 problem details specification.
  */
 
+import type { StandardRecord, JurisdictionRecord, AccountingRuleRecord, TaxRuleRecord, AccountingPolicyRecord, CoverageStatus } from '../standards/standardsTypes';
+
 export interface RFC7807Problem {
   type: string;
   title: string;
@@ -875,106 +877,6 @@ export interface OperationalAuditRecord {
   timestamp: string;
 }
 
-// =============================================================================
-// Phase F1-v3.2 — Standards Intelligence Storage Foundation (storage only)
-// =============================================================================
-export type StandardsFramework = 'IFRS' | 'EAS' | 'TAX' | 'OTHER';
-export type StandardsCoverageStatus = 'IMPLEMENTED' | 'PARTIAL' | 'REFERENCE_ONLY' | 'NOT_IMPLEMENTED' | 'SOURCE_REQUIRED';
-export type AccountingRuleStatus = 'ACTIVE' | 'REFERENCE_ONLY' | 'SOURCE_REQUIRED' | 'DEPRECATED' | 'DRAFT';
-export type AccountingEventType =
-  | 'PURCHASE_ORDER' | 'GOODS_RECEIPT' | 'SUPPLIER_INVOICE' | 'SUPPLIER_PAYMENT' | 'PURCHASE_RETURN'
-  | 'SALES_ORDER' | 'DELIVERY' | 'SALES_INVOICE' | 'CUSTOMER_RECEIPT' | 'SALES_RETURN' | 'CREDIT_NOTE'
-  | 'INVENTORY_TRANSFER' | 'INVENTORY_COUNT' | 'INVENTORY_WRITE_DOWN' | 'INVENTORY_WRITE_DOWN_REVERSAL'
-  | 'INVENTORY_LOSS' | 'INVENTORY_GAIN' | 'PRODUCTION_ISSUE' | 'PRODUCTION_RECEIPT'
-  | 'ASSET_ACQUISITION' | 'ASSET_CAPITALIZATION' | 'DEPRECIATION_RUN' | 'ASSET_DISPOSAL' | 'ASSET_IMPAIRMENT' | 'ASSET_REVALUATION'
-  | 'PAYROLL_RUN' | 'FOREIGN_CURRENCY_SETTLEMENT' | 'FOREIGN_CURRENCY_REVALUATION'
-  | 'LEASE_COMMENCEMENT' | 'LEASE_PAYMENT' | 'LEASE_REMEASUREMENT'
-  | 'INTEREST_ACCRUAL' | 'LOAN_DRAW' | 'LOAN_REPAYMENT' | 'EXPECTED_CREDIT_LOSS'
-  | 'PROVISION_RECOGNITION' | 'PROVISION_REASSESSMENT' | 'TAX_ACCRUAL' | 'TAX_PAYMENT'
-  | 'PERIOD_CLOSE' | 'CONSOLIDATION' | 'INTERCOMPANY_ELIMINATION';
-
-export interface StandardsCatalogEntry {
-  id: string; framework: StandardsFramework; code: string; titleEn: string; titleAr: string;
-  coverageStatus: StandardsCoverageStatus; sourceReference?: string; notes?: string;
-  createdAt: string; updatedAt: string;
-}
-export interface JurisdictionEntry {
-  id: string; code: string; nameEn: string; nameAr: string; framework: StandardsFramework;
-  parentId?: string; isActive: boolean; createdAt: string;
-}
-export interface AccountingRuleEntry {
-  id: string; tenantId?: string; jurisdictionId: string; framework: StandardsFramework; standardCode: string;
-  ruleKey: string; titleEn: string; titleAr: string; eventTypes: AccountingEventType[];
-  status: AccountingRuleStatus; version: string; effectiveFrom: string; effectiveTo?: string;
-  supersededBy?: string; sourceReference?: string; earlyAdoption?: boolean; transitionMethod?: string;
-  payloadJson?: string; createdAt: string; updatedAt: string;
-}
-export interface TaxRuleEntry {
-  id: string; jurisdictionId: string; ruleKey: string; titleEn: string; titleAr: string;
-  status: AccountingRuleStatus; version: string; effectiveFrom: string; effectiveTo?: string;
-  sourceReference?: string; payloadJson?: string; createdAt: string; updatedAt: string;
-}
-export interface AccountingPolicyEntry {
-  id: string; tenantId: string; policyKey: string; valueJson: string; version: number;
-  effectiveFrom: string; effectiveTo?: string; updatedBy: string; createdAt: string; updatedAt: string;
-}
-export interface StandardsDecisionLogEntry {
-  id: string; tenantId: string; eventType: AccountingEventType | string; eventRef?: string;
-  decisionStatus: 'APPLY' | 'REVIEW_REQUIRED' | 'NOT_APPLICABLE' | 'REJECT'; ruleId?: string;
-  standardCode?: string; standardVersion?: string; jurisdictionId?: string;
-  explanationAr?: string; explanationEn?: string; factsJson?: string; treatmentJson?: string; createdAt: string;
-}
-
-// =============================================================================
-// Phase F1-v3.2 — Standards Intelligence Storage Foundation (storage only)
-// =============================================================================
-export type StandardsFramework = 'IFRS' | 'EAS' | 'TAX' | 'OTHER';
-export type StandardsCoverageStatus = 'IMPLEMENTED' | 'PARTIAL' | 'REFERENCE_ONLY' | 'NOT_IMPLEMENTED' | 'SOURCE_REQUIRED';
-export type AccountingRuleStatus = 'ACTIVE' | 'REFERENCE_ONLY' | 'SOURCE_REQUIRED' | 'DEPRECATED' | 'DRAFT';
-export type AccountingEventType =
-  | 'PURCHASE_ORDER' | 'GOODS_RECEIPT' | 'SUPPLIER_INVOICE' | 'SUPPLIER_PAYMENT' | 'PURCHASE_RETURN'
-  | 'SALES_ORDER' | 'DELIVERY' | 'SALES_INVOICE' | 'CUSTOMER_RECEIPT' | 'SALES_RETURN' | 'CREDIT_NOTE'
-  | 'INVENTORY_TRANSFER' | 'INVENTORY_COUNT' | 'INVENTORY_WRITE_DOWN' | 'INVENTORY_WRITE_DOWN_REVERSAL'
-  | 'INVENTORY_LOSS' | 'INVENTORY_GAIN' | 'PRODUCTION_ISSUE' | 'PRODUCTION_RECEIPT'
-  | 'ASSET_ACQUISITION' | 'ASSET_CAPITALIZATION' | 'DEPRECIATION_RUN' | 'ASSET_DISPOSAL' | 'ASSET_IMPAIRMENT' | 'ASSET_REVALUATION'
-  | 'PAYROLL_RUN' | 'FOREIGN_CURRENCY_SETTLEMENT' | 'FOREIGN_CURRENCY_REVALUATION'
-  | 'LEASE_COMMENCEMENT' | 'LEASE_PAYMENT' | 'LEASE_REMEASUREMENT'
-  | 'INTEREST_ACCRUAL' | 'LOAN_DRAW' | 'LOAN_REPAYMENT' | 'EXPECTED_CREDIT_LOSS'
-  | 'PROVISION_RECOGNITION' | 'PROVISION_REASSESSMENT' | 'TAX_ACCRUAL' | 'TAX_PAYMENT'
-  | 'PERIOD_CLOSE' | 'CONSOLIDATION' | 'INTERCOMPANY_ELIMINATION';
-
-export interface StandardsCatalogEntry {
-  id: string; framework: StandardsFramework; code: string; titleEn: string; titleAr: string;
-  coverageStatus: StandardsCoverageStatus; sourceReference?: string; notes?: string;
-  createdAt: string; updatedAt: string;
-}
-export interface JurisdictionEntry {
-  id: string; code: string; nameEn: string; nameAr: string; framework: StandardsFramework;
-  parentId?: string; isActive: boolean; createdAt: string;
-}
-export interface AccountingRuleEntry {
-  id: string; tenantId?: string; jurisdictionId: string; framework: StandardsFramework; standardCode: string;
-  ruleKey: string; titleEn: string; titleAr: string; eventTypes: AccountingEventType[];
-  status: AccountingRuleStatus; version: string; effectiveFrom: string; effectiveTo?: string;
-  supersededBy?: string; sourceReference?: string; earlyAdoption?: boolean; transitionMethod?: string;
-  payloadJson?: string; createdAt: string; updatedAt: string;
-}
-export interface TaxRuleEntry {
-  id: string; jurisdictionId: string; ruleKey: string; titleEn: string; titleAr: string;
-  status: AccountingRuleStatus; version: string; effectiveFrom: string; effectiveTo?: string;
-  sourceReference?: string; payloadJson?: string; createdAt: string; updatedAt: string;
-}
-export interface AccountingPolicyEntry {
-  id: string; tenantId: string; policyKey: string; valueJson: string; version: number;
-  effectiveFrom: string; effectiveTo?: string; updatedBy: string; createdAt: string; updatedAt: string;
-}
-export interface StandardsDecisionLogEntry {
-  id: string; tenantId: string; eventType: AccountingEventType | string; eventRef?: string;
-  decisionStatus: 'APPLY' | 'REVIEW_REQUIRED' | 'NOT_APPLICABLE' | 'REJECT'; ruleId?: string;
-  standardCode?: string; standardVersion?: string; jurisdictionId?: string;
-  explanationAr?: string; explanationEn?: string; factsJson?: string; treatmentJson?: string; createdAt: string;
-}
-
 export interface StoragePort {
   readonly adapterName: string;
 
@@ -1179,24 +1081,6 @@ export interface StoragePort {
 
   // Phase 6: Expenses Module Operations (2 of 15)
   createExpenseRequest(tenantId: string, request: ExpenseRequest, lines: ExpenseLine[], attachments: ExpenseAttachment[], idempotencyKey: string): Promise<StorageResult<ExpenseRequest>>;
-  // Phase F1-v3.2 — Standards Intelligence Storage
-  saveStandardsCatalogEntry(entry: StandardsCatalogEntry, idempotencyKey: string): Promise<StorageResult<StandardsCatalogEntry>>;
-  listStandardsCatalog(filter?: { framework?: string; coverageStatus?: string }): Promise<StorageResult<StandardsCatalogEntry[]>>;
-  getStandardsCatalogEntry(id: string): Promise<StorageResult<StandardsCatalogEntry | null>>;
-  saveJurisdiction(entry: JurisdictionEntry, idempotencyKey: string): Promise<StorageResult<JurisdictionEntry>>;
-  listJurisdictions(): Promise<StorageResult<JurisdictionEntry[]>>;
-  getJurisdiction(id: string): Promise<StorageResult<JurisdictionEntry | null>>;
-  saveAccountingRule(entry: AccountingRuleEntry, idempotencyKey: string): Promise<StorageResult<AccountingRuleEntry>>;
-  listAccountingRules(filter?: { jurisdictionId?: string; framework?: string; eventType?: string; status?: string; asOfDate?: string }): Promise<StorageResult<AccountingRuleEntry[]>>;
-  getAccountingRule(id: string): Promise<StorageResult<AccountingRuleEntry | null>>;
-  saveTaxRule(entry: TaxRuleEntry, idempotencyKey: string): Promise<StorageResult<TaxRuleEntry>>;
-  listTaxRules(filter?: { jurisdictionId?: string; status?: string; asOfDate?: string }): Promise<StorageResult<TaxRuleEntry[]>>;
-  getTaxRule(id: string): Promise<StorageResult<TaxRuleEntry | null>>;
-  saveAccountingPolicy(entry: AccountingPolicyEntry, idempotencyKey: string): Promise<StorageResult<AccountingPolicyEntry>>;
-  listAccountingPolicies(tenantId: string, filter?: { policyKey?: string; asOfDate?: string }): Promise<StorageResult<AccountingPolicyEntry[]>>;
-  getAccountingPolicy(tenantId: string, policyKey: string, asOfDate?: string): Promise<StorageResult<AccountingPolicyEntry | null>>;
-  appendStandardsDecisionLog(entry: StandardsDecisionLogEntry): Promise<StorageResult<StandardsDecisionLogEntry>>;
-  listStandardsDecisionLogs(tenantId: string, filter?: { eventType?: string; eventRef?: string; limit?: number }): Promise<StorageResult<StandardsDecisionLogEntry[]>>;
   getExpenseRequest(tenantId: string, requestId: string): Promise<StorageResult<{ request: ExpenseRequest; lines: ExpenseLine[]; attachments: ExpenseAttachment[] } | null>>;
   listExpenseRequests(tenantId: string, filter?: { status?: string; employeeId?: string }): Promise<StorageResult<ExpenseRequest[]>>;
   updateExpenseRequestStatus(tenantId: string, requestId: string, updates: Partial<ExpenseRequest>, idempotencyKey: string): Promise<StorageResult<ExpenseRequest>>;
@@ -1230,6 +1114,21 @@ export interface StoragePort {
   setStockDocumentJournal(tenantId: string, docId: string, journalEntryId: string | null, status: 'NONE' | 'POSTED' | 'PENDING_RETRY'): Promise<StorageResult<void>>;
   setStockTransferJournal(tenantId: string, transferId: string, which: 'DISPATCH' | 'RECEIVE', journalEntryId: string | null, status: 'NONE' | 'POSTED' | 'PENDING_RETRY'): Promise<StorageResult<void>>;
 
+  // Standards Intelligence F1 (SI-1..SI-10). Global reference data (no tenant): history is immutable, a duplicate
+  // (id, version) is rejected with 409 unless it is a replay of the same idempotencyKey.
+  saveStandard(s: StandardRecord, actorId: string, idempotencyKey: string): Promise<StorageResult<StandardRecord>>;
+  listStandards(filter?: { standardId?: string; framework?: string }): Promise<StorageResult<StandardRecord[]>>;
+  updateStandardCoverage(standardId: string, version: number, coverage: CoverageStatus, evidenceRef: string | null, actorId: string, idempotencyKey: string): Promise<StorageResult<StandardRecord>>;
+  saveJurisdiction(j: JurisdictionRecord, actorId: string, idempotencyKey: string): Promise<StorageResult<JurisdictionRecord>>;
+  listJurisdictions(): Promise<StorageResult<JurisdictionRecord[]>>;
+  saveAccountingRule(rule: AccountingRuleRecord, actorId: string, idempotencyKey: string): Promise<StorageResult<AccountingRuleRecord>>;
+  listAccountingRules(filter?: { ruleId?: string; eventType?: string; jurisdictionId?: string }): Promise<StorageResult<AccountingRuleRecord[]>>;
+  saveStdTaxRule(rule: TaxRuleRecord, actorId: string, idempotencyKey: string): Promise<StorageResult<TaxRuleRecord>>;
+  listStdTaxRules(filter?: { taxRuleId?: string; jurisdictionId?: string; taxType?: string }): Promise<StorageResult<TaxRuleRecord[]>>;
+  // Tenant policies: atomic append of a NEW effective-dated version (closes the previous one, rejects backdating).
+  appendAccountingPolicyVersion(tenantId: string, input: { id: string; tenantId: string; policyKey: string; value: string; effectiveFrom: string; reason?: string | null; createdBy: string }, actorId: string, idempotencyKey: string): Promise<StorageResult<AccountingPolicyRecord>>;
+  listAccountingPolicies(tenantId: string, policyKey?: string): Promise<StorageResult<AccountingPolicyRecord[]>>;
+
   // Phase 15 (PO-001)
   savePurchaseOrder(tenantId: string, po: PurchaseOrder, lines: PurchaseOrderLine[], idempotencyKey: string): Promise<StorageResult<PurchaseOrder>>;
   getPurchaseOrder(tenantId: string, poId: string): Promise<StorageResult<{ po: PurchaseOrder; lines: PurchaseOrderLine[] } | null>>;
@@ -1247,24 +1146,6 @@ export interface StoragePort {
   // Phase 18 (SCOPE-001): per-user warehouse scope
   listUserWarehouseAccess(tenantId: string, userId: string): Promise<StorageResult<string[]>>;
   setUserWarehouseAccess(tenantId: string, userId: string, warehouseIds: string[], actorId: string, idempotencyKey: string): Promise<StorageResult<string[]>>;
-  // Phase F1-v3.2 — Standards Intelligence Storage
-  saveStandardsCatalogEntry(entry: StandardsCatalogEntry, idempotencyKey: string): Promise<StorageResult<StandardsCatalogEntry>>;
-  listStandardsCatalog(filter?: { framework?: string; coverageStatus?: string }): Promise<StorageResult<StandardsCatalogEntry[]>>;
-  getStandardsCatalogEntry(id: string): Promise<StorageResult<StandardsCatalogEntry | null>>;
-  saveJurisdiction(entry: JurisdictionEntry, idempotencyKey: string): Promise<StorageResult<JurisdictionEntry>>;
-  listJurisdictions(): Promise<StorageResult<JurisdictionEntry[]>>;
-  getJurisdiction(id: string): Promise<StorageResult<JurisdictionEntry | null>>;
-  saveAccountingRule(entry: AccountingRuleEntry, idempotencyKey: string): Promise<StorageResult<AccountingRuleEntry>>;
-  listAccountingRules(filter?: { jurisdictionId?: string; framework?: string; eventType?: string; status?: string; asOfDate?: string }): Promise<StorageResult<AccountingRuleEntry[]>>;
-  getAccountingRule(id: string): Promise<StorageResult<AccountingRuleEntry | null>>;
-  saveTaxRule(entry: TaxRuleEntry, idempotencyKey: string): Promise<StorageResult<TaxRuleEntry>>;
-  listTaxRules(filter?: { jurisdictionId?: string; status?: string; asOfDate?: string }): Promise<StorageResult<TaxRuleEntry[]>>;
-  getTaxRule(id: string): Promise<StorageResult<TaxRuleEntry | null>>;
-  saveAccountingPolicy(entry: AccountingPolicyEntry, idempotencyKey: string): Promise<StorageResult<AccountingPolicyEntry>>;
-  listAccountingPolicies(tenantId: string, filter?: { policyKey?: string; asOfDate?: string }): Promise<StorageResult<AccountingPolicyEntry[]>>;
-  getAccountingPolicy(tenantId: string, policyKey: string, asOfDate?: string): Promise<StorageResult<AccountingPolicyEntry | null>>;
-  appendStandardsDecisionLog(entry: StandardsDecisionLogEntry): Promise<StorageResult<StandardsDecisionLogEntry>>;
-  listStandardsDecisionLogs(tenantId: string, filter?: { eventType?: string; eventRef?: string; limit?: number }): Promise<StorageResult<StandardsDecisionLogEntry[]>>;
 
 
 

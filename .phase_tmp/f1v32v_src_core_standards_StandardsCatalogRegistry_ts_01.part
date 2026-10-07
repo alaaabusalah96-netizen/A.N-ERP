@@ -1,9 +1,0 @@
-import { StandardsCatalogEntry, StoragePort, StorageResult } from '../storage/StoragePort';
-
-/** F1 storage registry only. No rule evaluation or posting is performed here. */
-export class StandardsCatalogRegistry {
-  constructor(private readonly storage: StoragePort) {}
-  save(entry: StandardsCatalogEntry, idempotencyKey: string): Promise<StorageResult<StandardsCatalogEntry>> { return this.storage.saveStandardsCatalogEntry(entry, idempotencyKey); }
-  list(filter?: { framework?: string; coverageStatus?: string }): Promise<StorageResult<StandardsCatalogEntry[]>> { return this.storage.listStandardsCatalog(filter); }
-  get(id: string): Promise<StorageResult<StandardsCatalogEntry | null>> { return this.storage.getStandardsCatalogEntry(id); }
-}

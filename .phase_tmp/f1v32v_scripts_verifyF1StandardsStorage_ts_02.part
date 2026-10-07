@@ -1,6 +1,0 @@
-check('DDL preserves legacy country tax table', ddl.includes('ALTER TABLE an_tax_rules RENAME TO an_country_tax_rules') && ddl.includes('CREATE TABLE IF NOT EXISTS an_country_tax_rules'));
-const f1DdlStart = ddl.indexOf('Phase F1-v3.2'); const f1DdlEnd = ddl.indexOf('Enable and Force Row Level Security (RLS) on all tenant-isolated tables', f1DdlStart); const f1Ddl = f1DdlStart >= 0 && f1DdlEnd > f1DdlStart ? ddl.slice(f1DdlStart, f1DdlEnd) : ''; check('no ACTIVE seed in F1 DDL', !f1Ddl.includes("DEFAULT 'ACTIVE'"));
-
-console.log(`Passed: ${passed}`);
-console.log(`Failed: ${failed}`);
-if (failed) throw new Error(`F1 verification failed: ${failed}`);

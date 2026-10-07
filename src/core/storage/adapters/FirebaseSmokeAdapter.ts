@@ -306,6 +306,17 @@ export class FirebaseSmokeAdapter implements StoragePort {
       };
     }
   }
+  saveStandard(s: any, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<any>('saveStandard'); }
+  listStandards(filter?: any) { return this.smokeOnlyError<any>('listStandards'); }
+  updateStandardCoverage(standardId: string, version: number, coverage: any, evidenceRef: string | null, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<any>('updateStandardCoverage'); }
+  saveJurisdiction(j: any, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<any>('saveJurisdiction'); }
+  listJurisdictions() { return this.smokeOnlyError<any>('listJurisdictions'); }
+  saveAccountingRule(rule: any, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<any>('saveAccountingRule'); }
+  listAccountingRules(filter?: any) { return this.smokeOnlyError<any>('listAccountingRules'); }
+  saveStdTaxRule(rule: any, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<any>('saveStdTaxRule'); }
+  listStdTaxRules(filter?: any) { return this.smokeOnlyError<any>('listStdTaxRules'); }
+  appendAccountingPolicyVersion(tenantId: string, input: any, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<any>('appendAccountingPolicyVersion'); }
+  listAccountingPolicies(tenantId: string, policyKey?: string) { return this.smokeOnlyError<any>('listAccountingPolicies'); }
   getStockAccountingConfig(tenantId: string) { return this.smokeOnlyError<any>('getStockAccountingConfig'); }
   saveStockAccountingConfig(tenantId: string, settings: any, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<any>('saveStockAccountingConfig'); }
   setStockDocumentJournal(tenantId: string, docId: string, journalEntryId: string | null, status: any) { return this.smokeOnlyError<any>('setStockDocumentJournal'); }
@@ -326,43 +337,5 @@ export class FirebaseSmokeAdapter implements StoragePort {
 
   listUserWarehouseAccess(..._a: any[]) { return this.smokeOnlyError<any>('listUserWarehouseAccess'); }
   setUserWarehouseAccess(..._a: any[]) { return this.smokeOnlyError<any>('setUserWarehouseAccess'); }
-
-  // Phase F1-v3.2
-  saveStandardsCatalogEntry(..._a: any[]) { return this.smokeOnlyError<any>('saveStandardsCatalogEntry'); }
-  listStandardsCatalog(..._a: any[]) { return this.smokeOnlyError<any>('listStandardsCatalog'); }
-  getStandardsCatalogEntry(..._a: any[]) { return this.smokeOnlyError<any>('getStandardsCatalogEntry'); }
-  saveJurisdiction(..._a: any[]) { return this.smokeOnlyError<any>('saveJurisdiction'); }
-  listJurisdictions(..._a: any[]) { return this.smokeOnlyError<any>('listJurisdictions'); }
-  getJurisdiction(..._a: any[]) { return this.smokeOnlyError<any>('getJurisdiction'); }
-  saveAccountingRule(..._a: any[]) { return this.smokeOnlyError<any>('saveAccountingRule'); }
-  listAccountingRules(..._a: any[]) { return this.smokeOnlyError<any>('listAccountingRules'); }
-  getAccountingRule(..._a: any[]) { return this.smokeOnlyError<any>('getAccountingRule'); }
-  saveTaxRule(..._a: any[]) { return this.smokeOnlyError<any>('saveTaxRule'); }
-  listTaxRules(..._a: any[]) { return this.smokeOnlyError<any>('listTaxRules'); }
-  getTaxRule(..._a: any[]) { return this.smokeOnlyError<any>('getTaxRule'); }
-  saveAccountingPolicy(..._a: any[]) { return this.smokeOnlyError<any>('saveAccountingPolicy'); }
-  listAccountingPolicies(..._a: any[]) { return this.smokeOnlyError<any>('listAccountingPolicies'); }
-  getAccountingPolicy(..._a: any[]) { return this.smokeOnlyError<any>('getAccountingPolicy'); }
-  appendStandardsDecisionLog(..._a: any[]) { return this.smokeOnlyError<any>('appendStandardsDecisionLog'); }
-  listStandardsDecisionLogs(..._a: any[]) { return this.smokeOnlyError<any>('listStandardsDecisionLogs'); }
-
-  // Phase F1-v3.2
-  saveStandardsCatalogEntry(..._a: any[]) { return this.smokeOnlyError<any>('saveStandardsCatalogEntry'); }
-  listStandardsCatalog(..._a: any[]) { return this.smokeOnlyError<any>('listStandardsCatalog'); }
-  getStandardsCatalogEntry(..._a: any[]) { return this.smokeOnlyError<any>('getStandardsCatalogEntry'); }
-  saveJurisdiction(..._a: any[]) { return this.smokeOnlyError<any>('saveJurisdiction'); }
-  listJurisdictions(..._a: any[]) { return this.smokeOnlyError<any>('listJurisdictions'); }
-  getJurisdiction(..._a: any[]) { return this.smokeOnlyError<any>('getJurisdiction'); }
-  saveAccountingRule(..._a: any[]) { return this.smokeOnlyError<any>('saveAccountingRule'); }
-  listAccountingRules(..._a: any[]) { return this.smokeOnlyError<any>('listAccountingRules'); }
-  getAccountingRule(..._a: any[]) { return this.smokeOnlyError<any>('getAccountingRule'); }
-  saveTaxRule(..._a: any[]) { return this.smokeOnlyError<any>('saveTaxRule'); }
-  listTaxRules(..._a: any[]) { return this.smokeOnlyError<any>('listTaxRules'); }
-  getTaxRule(..._a: any[]) { return this.smokeOnlyError<any>('getTaxRule'); }
-  saveAccountingPolicy(..._a: any[]) { return this.smokeOnlyError<any>('saveAccountingPolicy'); }
-  listAccountingPolicies(..._a: any[]) { return this.smokeOnlyError<any>('listAccountingPolicies'); }
-  getAccountingPolicy(..._a: any[]) { return this.smokeOnlyError<any>('getAccountingPolicy'); }
-  appendStandardsDecisionLog(..._a: any[]) { return this.smokeOnlyError<any>('appendStandardsDecisionLog'); }
-  listStandardsDecisionLogs(..._a: any[]) { return this.smokeOnlyError<any>('listStandardsDecisionLogs'); }
 
 }

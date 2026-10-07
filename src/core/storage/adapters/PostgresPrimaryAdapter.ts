@@ -72,7 +72,7 @@ import {
   DocumentAttachment,
   ItemPrice,
   Invitation,
-  ConsumedInvitation, StandardsCatalogEntry, JurisdictionEntry, AccountingRuleEntry, TaxRuleEntry, AccountingPolicyEntry, StandardsDecisionLogEntry,
+  ConsumedInvitation,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 
@@ -368,23 +368,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
       ALTER TABLE an_active_sessions ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64);
 
       -- Phase 2 Tables:
-      -- Preserve the pre-F1 country tax-rate table under its legacy name so
-      -- the F1 standards tax-rule registry can own an_tax_rules safely.
-      DO $$
-      BEGIN
-        IF to_regclass('public.an_tax_rules') IS NOT NULL
-           AND NOT EXISTS (
-             SELECT 1 FROM information_schema.columns
-             WHERE table_schema = 'public'
-               AND table_name = 'an_tax_rules'
-               AND column_name = 'jurisdiction_id'
-           )
-           AND to_regclass('public.an_country_tax_rules') IS NULL THEN
-          ALTER TABLE an_tax_rules RENAME TO an_country_tax_rules;
-        END IF;
-      END $$;
-
-      CREATE TABLE IF NOT EXISTS an_country_tax_rules (
+      CREATE TABLE IF NOT EXISTS an_tax_rules (
         country_code VARCHAR(8) PRIMARY KEY,
         country_name_ar VARCHAR(255) NOT NULL,
         standard_vat_rate NUMERIC(6, 4) NOT NULL,
@@ -907,6 +891,60 @@ export class PostgresPrimaryAdapter implements StoragePort {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
+      -- F1 Standards Intelligence: global reference data (no tenant data -> no RLS); tenant policies below ARE under RLS.
+      CREATE TABLE IF NOT EXISTS an_standards (
+        standard_id VARCHAR(80) NOT NULL, framework VARCHAR(8) NOT NULL, version INT NOT NULL CHECK (version >= 1),
+        title_en TEXT NOT NULL, title_ar TEXT,
+        coverage_status VARCHAR(20) NOT NULL CHECK (coverage_status IN ('IMPLEMENTED','PARTIAL','REFERENCE_ONLY','SOURCE_REQUIRED','NOT_IMPLEMENTED')),
+        coverage_evidence_ref TEXT, effective_from DATE NOT NULL, effective_to DATE,
+        early_adoption_allowed BOOLEAN NOT NULL DEFAULT FALSE, early_adoption_from DATE,
+        amendment TEXT, transition_method VARCHAR(24), superseded_by VARCHAR(80),
+        source_reference TEXT, source_verified BOOLEAN NOT NULL DEFAULT FALSE, mapping JSONB,
+        created_idem_key VARCHAR(200), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (framework, standard_id, version),
+        CHECK (effective_to IS NULL OR effective_to >= effective_from),
+        CHECK (coverage_status NOT IN ('IMPLEMENTED','PARTIAL') OR (coverage_evidence_ref IS NOT NULL AND coverage_evidence_ref <> '' AND source_verified))
+      );
+      CREATE TABLE IF NOT EXISTS an_jurisdictions (
+        id VARCHAR(80) PRIMARY KEY, kind VARCHAR(16) NOT NULL, country_code VARCHAR(8), framework VARCHAR(8) NOT NULL,
+        parent_id VARCHAR(80), relation_to_ifrs VARCHAR(16) NOT NULL, name_ar TEXT NOT NULL, name_en TEXT NOT NULL,
+        status VARCHAR(16) NOT NULL, created_idem_key VARCHAR(200), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS an_accounting_rules (
+        rule_id VARCHAR(80) NOT NULL, version INT NOT NULL CHECK (version >= 1), standard_id VARCHAR(80) NOT NULL, framework VARCHAR(8) NOT NULL,
+        jurisdiction_id VARCHAR(80) NOT NULL, event_type VARCHAR(64) NOT NULL, priority INT NOT NULL, tier SMALLINT NOT NULL CHECK (tier BETWEEN 1 AND 5),
+        conditions JSONB NOT NULL DEFAULT '{}', treatment JSONB NOT NULL DEFAULT '{}', required_data JSONB NOT NULL DEFAULT '[]', exceptions JSONB NOT NULL DEFAULT '[]',
+        policy_option VARCHAR(80), effective_from DATE NOT NULL, effective_to DATE,
+        early_adoption_allowed BOOLEAN NOT NULL DEFAULT FALSE, early_adoption_from DATE,
+        source_reference TEXT, source_verified BOOLEAN NOT NULL DEFAULT FALSE,
+        status VARCHAR(16) NOT NULL CHECK (status IN ('ACTIVE','DRAFT','SOURCE_REQUIRED','REFERENCE_ONLY','SUPERSEDED','RETIRED')),
+        superseded_by VARCHAR(80), created_idem_key VARCHAR(200), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (rule_id, version),
+        CHECK (effective_to IS NULL OR effective_to >= effective_from),
+        CHECK (status <> 'ACTIVE' OR (source_verified AND source_reference IS NOT NULL AND source_reference <> '' AND effective_from <> DATE '0001-01-01'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_an_acc_rules_event ON an_accounting_rules(event_type, jurisdiction_id);
+      CREATE TABLE IF NOT EXISTS an_std_tax_rules (
+        tax_rule_id VARCHAR(80) NOT NULL, version INT NOT NULL CHECK (version >= 1), jurisdiction_id VARCHAR(80) NOT NULL, tax_type VARCHAR(40) NOT NULL,
+        priority INT NOT NULL, conditions JSONB NOT NULL DEFAULT '{}', treatment JSONB NOT NULL DEFAULT '{}', rate NUMERIC(9,6),
+        required_data JSONB NOT NULL DEFAULT '[]', effective_from DATE NOT NULL, effective_to DATE,
+        early_adoption_allowed BOOLEAN NOT NULL DEFAULT FALSE, early_adoption_from DATE,
+        source_reference TEXT, source_verified BOOLEAN NOT NULL DEFAULT FALSE,
+        status VARCHAR(16) NOT NULL CHECK (status IN ('ACTIVE','DRAFT','SOURCE_REQUIRED','REFERENCE_ONLY','SUPERSEDED','RETIRED')),
+        created_idem_key VARCHAR(200), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (tax_rule_id, version),
+        CHECK (effective_to IS NULL OR effective_to >= effective_from),
+        CHECK (rate IS NULL OR (rate >= 0 AND rate <= 1 AND source_verified)),
+        CHECK (status <> 'ACTIVE' OR (source_verified AND source_reference IS NOT NULL AND source_reference <> '' AND effective_from <> DATE '0001-01-01'))
+      );
+      CREATE TABLE IF NOT EXISTS an_accounting_policies (
+        id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id), policy_key VARCHAR(64) NOT NULL,
+        value VARCHAR(200) NOT NULL, version INT NOT NULL CHECK (version >= 1), effective_from DATE NOT NULL, effective_to DATE,
+        reason TEXT, created_by VARCHAR(64) NOT NULL, created_idem_key VARCHAR(200), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, policy_key, version), CHECK (effective_to IS NULL OR effective_to >= effective_from)
+      );
+      CREATE INDEX IF NOT EXISTS idx_an_acc_policies ON an_accounting_policies(tenant_id, policy_key, version);
+
       -- Phase 14 (ACC-AUTO-001)
       CREATE TABLE IF NOT EXISTS an_stock_accounting_config (
         tenant_id VARCHAR(64) PRIMARY KEY REFERENCES an_tenants(id),
@@ -1140,7 +1178,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
       );
 
       -- Seed country tax rules if not exist
-      INSERT INTO an_country_tax_rules (country_code, country_name_ar, standard_vat_rate, currency_code, tax_authority_name, tax_id_format_regex)
+      INSERT INTO an_tax_rules (country_code, country_name_ar, standard_vat_rate, currency_code, tax_authority_name, tax_id_format_regex)
       VALUES 
         ('SA', 'المملكة العربية السعودية', 0.1500, 'SAR', 'هيئة الزكاة والضريبة والجمارك (ZATCA)', '^3[0-9]{13}3$'),
         ('EG', 'جمهورية مصر العربية', 0.1400, 'EGP', 'مصلحة الضرائب المصرية (ETA)', '^[0-9]{9}$'),
@@ -1279,105 +1317,6 @@ export class PostgresPrimaryAdapter implements StoragePort {
       );
       CREATE INDEX IF NOT EXISTS idx_item_prices ON an_item_prices(tenant_id, item_id);
 
-      -- Phase F1-v3.2 — Standards Intelligence Storage Foundation (storage only)
-      CREATE TABLE IF NOT EXISTS an_standards_catalog (
-        id VARCHAR(64) PRIMARY KEY,
-        framework VARCHAR(16) NOT NULL,
-        code VARCHAR(64) NOT NULL,
-        title_en VARCHAR(300) NOT NULL,
-        title_ar VARCHAR(300) NOT NULL,
-        coverage_status VARCHAR(32) NOT NULL,
-        source_reference TEXT,
-        notes TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE (framework, code)
-      );
-      CREATE TABLE IF NOT EXISTS an_jurisdictions (
-        id VARCHAR(64) PRIMARY KEY,
-        code VARCHAR(64) NOT NULL UNIQUE,
-        name_en VARCHAR(200) NOT NULL,
-        name_ar VARCHAR(200) NOT NULL,
-        framework VARCHAR(16) NOT NULL,
-        parent_id VARCHAR(64),
-        is_active BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-      CREATE TABLE IF NOT EXISTS an_accounting_rules (
-        id VARCHAR(64) PRIMARY KEY,
-        tenant_id VARCHAR(64),
-        jurisdiction_id VARCHAR(64) NOT NULL,
-        framework VARCHAR(16) NOT NULL,
-        standard_code VARCHAR(64) NOT NULL,
-        rule_key VARCHAR(160) NOT NULL,
-        title_en VARCHAR(300) NOT NULL,
-        title_ar VARCHAR(300) NOT NULL,
-        event_types TEXT NOT NULL,
-        status VARCHAR(32) NOT NULL,
-        version VARCHAR(64) NOT NULL,
-        effective_from DATE NOT NULL,
-        effective_to DATE,
-        superseded_by VARCHAR(64),
-        source_reference TEXT,
-        early_adoption BOOLEAN NOT NULL DEFAULT FALSE,
-        transition_method VARCHAR(128),
-        payload_json TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CONSTRAINT an_accounting_rules_scope_key UNIQUE (tenant_id, jurisdiction_id, rule_key, version)
-      );
-      CREATE INDEX IF NOT EXISTS idx_an_accounting_rules_effective ON an_accounting_rules (jurisdiction_id, effective_from, effective_to);
-      CREATE INDEX IF NOT EXISTS idx_an_accounting_rules_tenant ON an_accounting_rules (tenant_id, jurisdiction_id);
-      CREATE TABLE IF NOT EXISTS an_tax_rules (
-        id VARCHAR(64) PRIMARY KEY,
-        jurisdiction_id VARCHAR(64) NOT NULL,
-        rule_key VARCHAR(160) NOT NULL,
-        title_en VARCHAR(300) NOT NULL,
-        title_ar VARCHAR(300) NOT NULL,
-        status VARCHAR(32) NOT NULL,
-        version VARCHAR(64) NOT NULL,
-        effective_from DATE NOT NULL,
-        effective_to DATE,
-        source_reference TEXT,
-        payload_json TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE (jurisdiction_id, rule_key, version)
-      );
-      CREATE INDEX IF NOT EXISTS idx_an_tax_rules_effective ON an_tax_rules (jurisdiction_id, effective_from, effective_to);
-      CREATE TABLE IF NOT EXISTS an_accounting_policies (
-        id VARCHAR(64) PRIMARY KEY,
-        tenant_id VARCHAR(64) NOT NULL,
-        policy_key VARCHAR(160) NOT NULL,
-        value_json TEXT NOT NULL,
-        version INT NOT NULL,
-        effective_from DATE NOT NULL,
-        effective_to DATE,
-        updated_by VARCHAR(64) NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE (tenant_id, policy_key, version)
-      );
-      CREATE INDEX IF NOT EXISTS idx_an_accounting_policies_effective ON an_accounting_policies (tenant_id, policy_key, effective_from, effective_to);
-      CREATE TABLE IF NOT EXISTS an_standards_decision_log (
-        id VARCHAR(64) PRIMARY KEY,
-        tenant_id VARCHAR(64) NOT NULL,
-        event_type VARCHAR(80) NOT NULL,
-        event_ref VARCHAR(160),
-        decision_status VARCHAR(32) NOT NULL,
-        rule_id VARCHAR(64),
-        standard_code VARCHAR(64),
-        standard_version VARCHAR(64),
-        jurisdiction_id VARCHAR(64),
-        explanation_ar TEXT,
-        explanation_en TEXT,
-        facts_json TEXT,
-        treatment_json TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_an_standards_decision_log_tenant_event ON an_standards_decision_log (tenant_id, event_type, created_at);
-      CREATE INDEX IF NOT EXISTS idx_an_standards_decision_log_ref ON an_standards_decision_log (tenant_id, event_ref);
-
       -- Enable and Force Row Level Security (RLS) on all tenant-isolated tables
       DO $$
       DECLARE
@@ -1437,8 +1376,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_approval_policies',
           'an_stock_cost_layers',
           'an_inventory_settings',
-          'an_accounting_policies',
-          'an_standards_decision_log'
+          'an_accounting_policies'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -3704,37 +3642,6 @@ export class PostgresPrimaryAdapter implements StoragePort {
     };
   }
 
-  // Phase F1-v3.2 — Standards Intelligence Storage (no evaluation/posting)
-  private mapStandardsCatalogRow(row: any): StandardsCatalogEntry { return { id: row.id, framework: row.framework, code: row.code, titleEn: row.title_en, titleAr: row.title_ar, coverageStatus: row.coverage_status, sourceReference: row.source_reference || undefined, notes: row.notes || undefined, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() }; }
-  private mapJurisdictionRow(row: any): JurisdictionEntry { return { id: row.id, code: row.code, nameEn: row.name_en, nameAr: row.name_ar, framework: row.framework, parentId: row.parent_id || undefined, isActive: !!row.is_active, createdAt: new Date(row.created_at).toISOString() }; }
-  private mapAccountingRuleRow(row: any): AccountingRuleEntry { return { id: row.id, tenantId: row.tenant_id || undefined, jurisdictionId: row.jurisdiction_id, framework: row.framework, standardCode: row.standard_code, ruleKey: row.rule_key, titleEn: row.title_en, titleAr: row.title_ar, eventTypes: typeof row.event_types === 'string' ? JSON.parse(row.event_types) : (row.event_types || []), status: row.status, version: row.version, effectiveFrom: String(row.effective_from).slice(0,10), effectiveTo: row.effective_to ? String(row.effective_to).slice(0,10) : undefined, supersededBy: row.superseded_by || undefined, sourceReference: row.source_reference || undefined, earlyAdoption: !!row.early_adoption, transitionMethod: row.transition_method || undefined, payloadJson: row.payload_json || undefined, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() }; }
-  private mapTaxRuleRow(row: any): TaxRuleEntry { return { id: row.id, jurisdictionId: row.jurisdiction_id, ruleKey: row.rule_key, titleEn: row.title_en, titleAr: row.title_ar, status: row.status, version: row.version, effectiveFrom: String(row.effective_from).slice(0,10), effectiveTo: row.effective_to ? String(row.effective_to).slice(0,10) : undefined, sourceReference: row.source_reference || undefined, payloadJson: row.payload_json || undefined, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() }; }
-  private mapAccountingPolicyRow(row: any): AccountingPolicyEntry { return { id: row.id, tenantId: row.tenant_id, policyKey: row.policy_key, valueJson: row.value_json, version: Number(row.version), effectiveFrom: String(row.effective_from).slice(0,10), effectiveTo: row.effective_to ? String(row.effective_to).slice(0,10) : undefined, updatedBy: row.updated_by, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() }; }
-  private mapDecisionLogRow(row: any): StandardsDecisionLogEntry { return { id: row.id, tenantId: row.tenant_id, eventType: row.event_type, eventRef: row.event_ref || undefined, decisionStatus: row.decision_status, ruleId: row.rule_id || undefined, standardCode: row.standard_code || undefined, standardVersion: row.standard_version || undefined, jurisdictionId: row.jurisdiction_id || undefined, explanationAr: row.explanation_ar || undefined, explanationEn: row.explanation_en || undefined, factsJson: row.facts_json || undefined, treatmentJson: row.treatment_json || undefined, createdAt: new Date(row.created_at).toISOString() }; }
-
-  public async saveStandardsCatalogEntry(entry: StandardsCatalogEntry, idempotencyKey: string): Promise<StorageResult<StandardsCatalogEntry>> {
-    if (!this.pool) return this.missingConnError();
-    try { return await this.withTenantScope('__std__', () => this.runIdempotent('__std__', idempotencyKey, 'saveStandardsCatalogEntry', async client => { const r=await client.query(`INSERT INTO an_standards_catalog (id,framework,code,title_en,title_ar,coverage_status,source_reference,notes,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO UPDATE SET framework=EXCLUDED.framework,code=EXCLUDED.code,title_en=EXCLUDED.title_en,title_ar=EXCLUDED.title_ar,coverage_status=EXCLUDED.coverage_status,source_reference=EXCLUDED.source_reference,notes=EXCLUDED.notes,updated_at=EXCLUDED.updated_at RETURNING *`,[entry.id,entry.framework,entry.code,entry.titleEn,entry.titleAr,entry.coverageStatus,entry.sourceReference||null,entry.notes||null,entry.createdAt,entry.updatedAt]); return {success:true,data:this.mapStandardsCatalogRow(r.rows[0])}; })); } catch(err:any){ return this.dbError(err); }
-  }
-  public async listStandardsCatalog(filter?: { framework?: string; coverageStatus?: string }): Promise<StorageResult<StandardsCatalogEntry[]>> { if(!this.pool)return this.missingConnError(); try { const p:any[]=[]; const w:string[]=[]; if(filter?.framework){p.push(filter.framework);w.push(`framework=$${p.length}`);} if(filter?.coverageStatus){p.push(filter.coverageStatus);w.push(`coverage_status=$${p.length}`);} const r=await this.query(`SELECT * FROM an_standards_catalog ${w.length?'WHERE '+w.join(' AND '):''} ORDER BY framework,code`,p); return {success:true,data:r.rows.map((x:any)=>this.mapStandardsCatalogRow(x))}; } catch(err:any){return this.dbError(err);} }
-  public async getStandardsCatalogEntry(id: string): Promise<StorageResult<StandardsCatalogEntry | null>> { if(!this.pool)return this.missingConnError(); try{const r=await this.query('SELECT * FROM an_standards_catalog WHERE id=$1',[id]);return {success:true,data:r.rows[0]?this.mapStandardsCatalogRow(r.rows[0]):null};}catch(err:any){return this.dbError(err);} }
-  public async saveJurisdiction(entry: JurisdictionEntry, idempotencyKey: string): Promise<StorageResult<JurisdictionEntry>> { if(!this.pool)return this.missingConnError(); try{return await this.withTenantScope('__std__',()=>this.runIdempotent('__std__',idempotencyKey,'saveJurisdiction',async client=>{const r=await client.query(`INSERT INTO an_jurisdictions (id,code,name_en,name_ar,framework,parent_id,is_active,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET code=EXCLUDED.code,name_en=EXCLUDED.name_en,name_ar=EXCLUDED.name_ar,framework=EXCLUDED.framework,parent_id=EXCLUDED.parent_id,is_active=EXCLUDED.is_active RETURNING *`,[entry.id,entry.code,entry.nameEn,entry.nameAr,entry.framework,entry.parentId||null,entry.isActive,entry.createdAt]);return {success:true,data:this.mapJurisdictionRow(r.rows[0])};}));}catch(err:any){return this.dbError(err);} }
-  public async listJurisdictions(): Promise<StorageResult<JurisdictionEntry[]>> { if(!this.pool)return this.missingConnError(); try{const r=await this.query('SELECT * FROM an_jurisdictions ORDER BY code');return {success:true,data:r.rows.map((x:any)=>this.mapJurisdictionRow(x))};}catch(err:any){return this.dbError(err);} }
-  public async getJurisdiction(id: string): Promise<StorageResult<JurisdictionEntry | null>> { if(!this.pool)return this.missingConnError(); try{const r=await this.query('SELECT * FROM an_jurisdictions WHERE id=$1',[id]);return {success:true,data:r.rows[0]?this.mapJurisdictionRow(r.rows[0]):null};}catch(err:any){return this.dbError(err);} }
-  public async saveAccountingRule(entry: AccountingRuleEntry, idempotencyKey: string): Promise<StorageResult<AccountingRuleEntry>> { if(!this.pool)return this.missingConnError(); const work=async(client:PoolClient)=>this.runIdempotent(entry.tenantId||'__std__',idempotencyKey,'saveAccountingRule',async c=>{const r=await c.query(`INSERT INTO an_accounting_rules (id,tenant_id,jurisdiction_id,framework,standard_code,rule_key,title_en,title_ar,event_types,status,version,effective_from,effective_to,superseded_by,source_reference,early_adoption,transition_method,payload_json,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) ON CONFLICT(id) DO UPDATE SET tenant_id=EXCLUDED.tenant_id,jurisdiction_id=EXCLUDED.jurisdiction_id,framework=EXCLUDED.framework,standard_code=EXCLUDED.standard_code,rule_key=EXCLUDED.rule_key,title_en=EXCLUDED.title_en,title_ar=EXCLUDED.title_ar,event_types=EXCLUDED.event_types,status=EXCLUDED.status,version=EXCLUDED.version,effective_from=EXCLUDED.effective_from,effective_to=EXCLUDED.effective_to,superseded_by=EXCLUDED.superseded_by,source_reference=EXCLUDED.source_reference,early_adoption=EXCLUDED.early_adoption,transition_method=EXCLUDED.transition_method,payload_json=EXCLUDED.payload_json,updated_at=EXCLUDED.updated_at RETURNING *`,[entry.id,entry.tenantId||null,entry.jurisdictionId,entry.framework,entry.standardCode,entry.ruleKey,entry.titleEn,entry.titleAr,JSON.stringify(entry.eventTypes),entry.status,entry.version,entry.effectiveFrom,entry.effectiveTo||null,entry.supersededBy||null,entry.sourceReference||null,entry.earlyAdoption??false,entry.transitionMethod||null,entry.payloadJson||null,entry.createdAt,entry.updatedAt]);return {success:true,data:this.mapAccountingRuleRow(r.rows[0])};});
-    if(entry.tenantId) return this.withTenantScope(entry.tenantId,()=>work(this.asyncLocalStorage.getStore()!.client));
-    return this.withTenantScope('__std__',()=>work(this.asyncLocalStorage.getStore()!.client)); }
-  public async listAccountingRules(filter?: { jurisdictionId?: string; framework?: string; eventType?: string; status?: string; asOfDate?: string }): Promise<StorageResult<AccountingRuleEntry[]>> { if(!this.pool)return this.missingConnError(); try{const p:any[]=[];const w:string[]=[];const tenant=this.getCurrentTenantScope(); if(tenant){p.push(tenant);w.push(`(tenant_id IS NULL OR tenant_id=$${p.length})`);}else{w.push('tenant_id IS NULL');} if(filter?.jurisdictionId){p.push(filter.jurisdictionId);w.push(`jurisdiction_id=$${p.length}`);} if(filter?.framework){p.push(filter.framework);w.push(`framework=$${p.length}`);} if(filter?.status){p.push(filter.status);w.push(`status=$${p.length}`);} if(filter?.eventType){p.push(filter.eventType);w.push(`event_types LIKE '%' || $${p.length} || '%'`);} if(filter?.asOfDate){p.push(filter.asOfDate);w.push(`effective_from <= $${p.length}::date AND (effective_to IS NULL OR effective_to >= $${p.length}::date)`);} const r=await this.query(`SELECT * FROM an_accounting_rules WHERE ${w.join(' AND ')} ORDER BY effective_from DESC,rule_key`,p); return {success:true,data:r.rows.map((x:any)=>this.mapAccountingRuleRow(x))};}catch(err:any){return this.dbError(err);} }
-  public async getAccountingRule(id: string): Promise<StorageResult<AccountingRuleEntry | null>> { if(!this.pool)return this.missingConnError(); try{const tenant=this.getCurrentTenantScope();const r=await this.query(tenant?'SELECT * FROM an_accounting_rules WHERE id=$1 AND (tenant_id IS NULL OR tenant_id=$2)':'SELECT * FROM an_accounting_rules WHERE id=$1 AND tenant_id IS NULL',tenant?[id,tenant]:[id]);return {success:true,data:r.rows[0]?this.mapAccountingRuleRow(r.rows[0]):null};}catch(err:any){return this.dbError(err);} }
-  public async saveTaxRule(entry: TaxRuleEntry, idempotencyKey: string): Promise<StorageResult<TaxRuleEntry>> { if(!this.pool)return this.missingConnError(); try{return await this.withTenantScope('__std__',()=>this.runIdempotent('__std__',idempotencyKey,'saveTaxRule',async client=>{const r=await client.query(`INSERT INTO an_tax_rules (id,jurisdiction_id,rule_key,title_en,title_ar,status,version,effective_from,effective_to,source_reference,payload_json,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(id) DO UPDATE SET jurisdiction_id=EXCLUDED.jurisdiction_id,rule_key=EXCLUDED.rule_key,title_en=EXCLUDED.title_en,title_ar=EXCLUDED.title_ar,status=EXCLUDED.status,version=EXCLUDED.version,effective_from=EXCLUDED.effective_from,effective_to=EXCLUDED.effective_to,source_reference=EXCLUDED.source_reference,payload_json=EXCLUDED.payload_json,updated_at=EXCLUDED.updated_at RETURNING *`,[entry.id,entry.jurisdictionId,entry.ruleKey,entry.titleEn,entry.titleAr,entry.status,entry.version,entry.effectiveFrom,entry.effectiveTo||null,entry.sourceReference||null,entry.payloadJson||null,entry.createdAt,entry.updatedAt]);return {success:true,data:this.mapTaxRuleRow(r.rows[0])};}));}catch(err:any){return this.dbError(err);} }
-  public async listTaxRules(filter?: { jurisdictionId?: string; status?: string; asOfDate?: string }): Promise<StorageResult<TaxRuleEntry[]>> { if(!this.pool)return this.missingConnError(); try{const p:any[]=[];const w:string[]=[];if(filter?.jurisdictionId){p.push(filter.jurisdictionId);w.push(`jurisdiction_id=$${p.length}`);}if(filter?.status){p.push(filter.status);w.push(`status=$${p.length}`);}if(filter?.asOfDate){p.push(filter.asOfDate);w.push(`effective_from <= $${p.length}::date AND (effective_to IS NULL OR effective_to >= $${p.length}::date)`);}const r=await this.query(`SELECT * FROM an_tax_rules ${w.length?'WHERE '+w.join(' AND '):''} ORDER BY effective_from DESC,rule_key`,p);return {success:true,data:r.rows.map((x:any)=>this.mapTaxRuleRow(x))};}catch(err:any){return this.dbError(err);} }
-  public async getTaxRule(id: string): Promise<StorageResult<TaxRuleEntry | null>> { if(!this.pool)return this.missingConnError(); try{const r=await this.query('SELECT * FROM an_tax_rules WHERE id=$1',[id]);return {success:true,data:r.rows[0]?this.mapTaxRuleRow(r.rows[0]):null};}catch(err:any){return this.dbError(err);} }
-  public async saveAccountingPolicy(entry: AccountingPolicyEntry, idempotencyKey: string): Promise<StorageResult<AccountingPolicyEntry>> { if(!this.pool)return this.missingConnError(); return this.withTenantScope(entry.tenantId,async()=>{try{return await this.runIdempotent(entry.tenantId,idempotencyKey,'saveAccountingPolicy',async client=>{const r=await client.query(`INSERT INTO an_accounting_policies (id,tenant_id,policy_key,value_json,version,effective_from,effective_to,updated_by,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET policy_key=EXCLUDED.policy_key,value_json=EXCLUDED.value_json,version=EXCLUDED.version,effective_from=EXCLUDED.effective_from,effective_to=EXCLUDED.effective_to,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at RETURNING *`,[entry.id,entry.tenantId,entry.policyKey,entry.valueJson,entry.version,entry.effectiveFrom,entry.effectiveTo||null,entry.updatedBy,entry.createdAt,entry.updatedAt]);return {success:true,data:this.mapAccountingPolicyRow(r.rows[0])};});}catch(err:any){return this.dbError(err);}}); }
-  public async listAccountingPolicies(tenantId: string, filter?: { policyKey?: string; asOfDate?: string }): Promise<StorageResult<AccountingPolicyEntry[]>> { if(!this.pool)return this.missingConnError(); return this.withTenantScope(tenantId,async()=>{try{const p:any[]=[tenantId];const w:string[]=['tenant_id=$1'];if(filter?.policyKey){p.push(filter.policyKey);w.push(`policy_key=$${p.length}`);}if(filter?.asOfDate){p.push(filter.asOfDate);w.push(`effective_from <= $${p.length}::date AND (effective_to IS NULL OR effective_to >= $${p.length}::date)`);}const r=await this.query(`SELECT * FROM an_accounting_policies WHERE ${w.join(' AND ')} ORDER BY effective_from DESC,version DESC`,p);return {success:true,data:r.rows.map((x:any)=>this.mapAccountingPolicyRow(x))};}catch(err:any){return this.dbError(err);}}); }
-  public async getAccountingPolicy(tenantId: string, policyKey: string, asOfDate?: string): Promise<StorageResult<AccountingPolicyEntry | null>> { const rows=await this.listAccountingPolicies(tenantId,{policyKey,asOfDate}); return {success:true,data:rows.data?.[0]||null,error:rows.error}; }
-  public async appendStandardsDecisionLog(entry: StandardsDecisionLogEntry): Promise<StorageResult<StandardsDecisionLogEntry>> { if(!this.pool)return this.missingConnError(); return this.withTenantScope(entry.tenantId,async()=>{try{const r=await this.query(`INSERT INTO an_standards_decision_log (id,tenant_id,event_type,event_ref,decision_status,rule_id,standard_code,standard_version,jurisdiction_id,explanation_ar,explanation_en,facts_json,treatment_json,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[entry.id,entry.tenantId,entry.eventType,entry.eventRef||null,entry.decisionStatus,entry.ruleId||null,entry.standardCode||null,entry.standardVersion||null,entry.jurisdictionId||null,entry.explanationAr||null,entry.explanationEn||null,entry.factsJson||null,entry.treatmentJson||null,entry.createdAt]);return {success:true,data:this.mapDecisionLogRow(r.rows[0])};}catch(err:any){return this.dbError(err);}}); }
-  public async listStandardsDecisionLogs(tenantId: string, filter?: { eventType?: string; eventRef?: string; limit?: number }): Promise<StorageResult<StandardsDecisionLogEntry[]>> { if(!this.pool)return this.missingConnError(); return this.withTenantScope(tenantId,async()=>{try{const p:any[]=[tenantId];const w:string[]=['tenant_id=$1'];if(filter?.eventType){p.push(filter.eventType);w.push(`event_type=$${p.length}`);}if(filter?.eventRef){p.push(filter.eventRef);w.push(`event_ref=$${p.length}`);}p.push(Math.min(Math.max(filter?.limit||100,1),500));const r=await this.query(`SELECT * FROM an_standards_decision_log WHERE ${w.join(' AND ')} ORDER BY created_at DESC LIMIT $${p.length}`,p);return {success:true,data:r.rows.map((x:any)=>this.mapDecisionLogRow(x))};}catch(err:any){return this.dbError(err);}}); }
-
   // Phase 2 Implementations
 
   public async listTenants(): Promise<StorageResult<TenantCompany[]>> {
@@ -3828,7 +3735,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
   public async getCountryTaxRule(countryCode: string): Promise<StorageResult<CountryTaxRule>> {
     if (!this.pool) return this.missingConnError();
     try {
-      const res = await this.query('SELECT * FROM an_country_tax_rules WHERE country_code = $1', [countryCode.toUpperCase()]);
+      const res = await this.query('SELECT * FROM an_tax_rules WHERE country_code = $1', [countryCode.toUpperCase()]);
       if (res.rows.length === 0) {
         return {
           success: false,
@@ -3860,7 +3767,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
   public async listCountryTaxRules(): Promise<StorageResult<CountryTaxRule[]>> {
     if (!this.pool) return this.missingConnError();
     try {
-      const res = await this.query('SELECT * FROM an_country_tax_rules ORDER BY country_code ASC');
+      const res = await this.query('SELECT * FROM an_tax_rules ORDER BY country_code ASC');
       const list: CountryTaxRule[] = res.rows.map((r: any) => ({
         countryCode: r.country_code,
         countryNameAr: r.country_name_ar,
@@ -3879,7 +3786,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     if (!this.pool) return this.missingConnError();
     try {
       const q = `
-        INSERT INTO an_country_tax_rules (country_code, country_name_ar, standard_vat_rate, currency_code, tax_authority_name, tax_id_format_regex, updated_at)
+        INSERT INTO an_tax_rules (country_code, country_name_ar, standard_vat_rate, currency_code, tax_authority_name, tax_id_format_regex, updated_at)
         VALUES ($1, $2, $3, $4, $5, $6, NOW())
         ON CONFLICT (country_code) DO UPDATE SET
           country_name_ar = EXCLUDED.country_name_ar,
@@ -6746,6 +6653,136 @@ public async getWarehouseStock(
       return { success: true, data: next };
     } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
   }
+  // ===== F1 Standards Intelligence (SI-1..SI-10): global reference tables + tenant policies =====
+  private async insertOnceStd(table: string, pk: string[], cols: string[], vals: any[], key: string): Promise<StorageResult<any>> {
+    const names = cols.map(c => c.split('::')[0]);
+    const ph = cols.map((c, i) => (c.includes('::') ? `$${i + 1}::jsonb` : `$${i + 1}`));
+    const pkIdx = pk.map(p => names.indexOf(p));
+    const r = await this.query(`INSERT INTO ${table} (${names.join(',')},created_idem_key) VALUES (${ph.join(',')},$${cols.length + 1}) ON CONFLICT (${pk.join(',')}) DO NOTHING RETURNING 1`, [...vals, key]);
+    if (r.rows.length) return { success: true, data: undefined };
+    const ex = await this.query(`SELECT created_idem_key FROM ${table} WHERE ${pk.map((p, i) => `${p}=$${i + 1}`).join(' AND ')}`, pkIdx.map(i => vals[i]));
+    if (ex.rows[0] && ex.rows[0].created_idem_key === key) return { success: true, data: undefined };
+    return { success: false, error: { type: 'standards', title: 'version-conflict', status: 409, detail: `${table} row already exists (history is immutable)` } };
+  }
+  private stdWhere(f: Record<string, any> | undefined, map: Record<string, string>): { sql: string; params: any[] } {
+    const parts: string[] = []; const params: any[] = [];
+    for (const [k, col] of Object.entries(map)) { if (f && f[k] != null) { params.push(f[k]); parts.push(`${col}=$${params.length}`); } }
+    return { sql: parts.length ? `WHERE ${parts.join(' AND ')}` : '', params };
+  }
+  public async saveStandard(s: any, actorId: string, key: string): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const r = await this.insertOnceStd('an_standards', ['framework', 'standard_id', 'version'],
+        ['standard_id', 'framework', 'version', 'title_en', 'title_ar', 'coverage_status', 'coverage_evidence_ref', 'effective_from', 'effective_to', 'early_adoption_allowed', 'early_adoption_from', 'amendment', 'transition_method', 'superseded_by', 'source_reference', 'source_verified', 'mapping::jsonb'],
+        [s.standardId, s.framework, s.version, s.titleEn, s.titleAr || null, s.coverageStatus, s.coverageEvidenceRef || null, s.effectiveFrom, s.effectiveTo || null, !!s.earlyAdoptionAllowed, s.earlyAdoptionFrom || null, s.amendment || null, s.transitionMethod || null, s.supersededBy || null, s.sourceReference || null, !!s.sourceVerified, s.mapping ? JSON.stringify(s.mapping) : null], key);
+      return r.success ? { success: true, data: s } : r;
+    } catch (e: any) { return this.dbError(e); }
+  }
+  public async listStandards(filter?: any): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const w = this.stdWhere(filter, { standardId: 'standard_id', framework: 'framework' });
+      const res = await this.query(`SELECT standard_id, framework, version, title_en, title_ar, coverage_status, coverage_evidence_ref, to_char(effective_from,'YYYY-MM-DD') AS effective_from, to_char(effective_to,'YYYY-MM-DD') AS effective_to, early_adoption_allowed, to_char(early_adoption_from,'YYYY-MM-DD') AS early_adoption_from, amendment, transition_method, superseded_by, source_reference, source_verified, mapping FROM an_standards ${w.sql} ORDER BY framework, standard_id, version`, w.params);
+      return { success: true, data: res.rows.map((r: any) => ({ standardId: r.standard_id, framework: r.framework, version: r.version, titleEn: r.title_en, titleAr: r.title_ar || undefined, coverageStatus: r.coverage_status, coverageEvidenceRef: r.coverage_evidence_ref, effectiveFrom: r.effective_from, effectiveTo: r.effective_to, earlyAdoptionAllowed: !!r.early_adoption_allowed, earlyAdoptionFrom: r.early_adoption_from, amendment: r.amendment, transitionMethod: r.transition_method || undefined, supersededBy: r.superseded_by, sourceReference: r.source_reference, sourceVerified: !!r.source_verified, mapping: r.mapping || null })) };
+    } catch (e: any) { return this.dbError(e); }
+  }
+  public async updateStandardCoverage(standardId: string, version: number, coverage: any, evidenceRef: string | null, actorId: string, key: string): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const r = await this.query(`UPDATE an_standards SET coverage_status=$3, coverage_evidence_ref=$4, updated_at=NOW() WHERE standard_id=$1 AND version=$2 RETURNING framework`, [standardId, version, coverage, evidenceRef]);
+      if (!r.rows.length) return { success: false, error: { type: 'standards', title: 'not-found', status: 404, detail: `${standardId} v${version}` } };
+      const all = await this.listStandards({ standardId });
+      return { success: true, data: (all.data || []).find((x: any) => x.version === version) };
+    } catch (e: any) { return this.dbError(e); }
+  }
+  public async saveJurisdiction(j: any, actorId: string, key: string): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const r = await this.insertOnceStd('an_jurisdictions', ['id'],
+        ['id', 'kind', 'country_code', 'framework', 'parent_id', 'relation_to_ifrs', 'name_ar', 'name_en', 'status'],
+        [j.id, j.kind, j.countryCode || null, j.framework, j.parentId || null, j.relationToIfrs, j.nameAr, j.nameEn, j.status], key);
+      return r.success ? { success: true, data: j } : r;
+    } catch (e: any) { return this.dbError(e); }
+  }
+  public async listJurisdictions(): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_jurisdictions ORDER BY id', []);
+      return { success: true, data: res.rows.map((r: any) => ({ id: r.id, kind: r.kind, countryCode: r.country_code, framework: r.framework, parentId: r.parent_id, relationToIfrs: r.relation_to_ifrs, nameAr: r.name_ar, nameEn: r.name_en, status: r.status })) };
+    } catch (e: any) { return this.dbError(e); }
+  }
+  public async saveAccountingRule(rule: any, actorId: string, key: string): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const r = await this.insertOnceStd('an_accounting_rules', ['rule_id', 'version'],
+        ['rule_id', 'version', 'standard_id', 'framework', 'jurisdiction_id', 'event_type', 'priority', 'tier', 'conditions::jsonb', 'treatment::jsonb', 'required_data::jsonb', 'exceptions::jsonb', 'policy_option', 'effective_from', 'effective_to', 'early_adoption_allowed', 'early_adoption_from', 'source_reference', 'source_verified', 'status', 'superseded_by'],
+        [rule.ruleId, rule.version, rule.standardId, rule.framework, rule.jurisdictionId, rule.eventType, rule.priority, rule.tier, JSON.stringify(rule.conditions || {}), JSON.stringify(rule.treatment || {}), JSON.stringify(rule.requiredData || []), JSON.stringify(rule.exceptions || []), rule.policyOption || null, rule.effectiveFrom, rule.effectiveTo || null, !!rule.earlyAdoptionAllowed, rule.earlyAdoptionFrom || null, rule.sourceReference || null, !!rule.sourceVerified, rule.status, rule.supersededBy || null], key);
+      return r.success ? { success: true, data: rule } : r;
+    } catch (e: any) { return this.dbError(e); }
+  }
+  public async listAccountingRules(filter?: any): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const w = this.stdWhere(filter, { ruleId: 'rule_id', eventType: 'event_type', jurisdictionId: 'jurisdiction_id' });
+      const res = await this.query(`SELECT rule_id, version, standard_id, framework, jurisdiction_id, event_type, priority, tier, conditions, treatment, required_data, exceptions, policy_option, to_char(effective_from,'YYYY-MM-DD') AS effective_from, to_char(effective_to,'YYYY-MM-DD') AS effective_to, early_adoption_allowed, to_char(early_adoption_from,'YYYY-MM-DD') AS early_adoption_from, source_reference, source_verified, status, superseded_by FROM an_accounting_rules ${w.sql} ORDER BY rule_id, version`, w.params);
+      return { success: true, data: res.rows.map((r: any) => ({ ruleId: r.rule_id, version: r.version, standardId: r.standard_id, framework: r.framework, jurisdictionId: r.jurisdiction_id, eventType: r.event_type, priority: r.priority, tier: r.tier, conditions: r.conditions || {}, treatment: r.treatment || {}, requiredData: r.required_data || [], exceptions: r.exceptions || [], policyOption: r.policy_option, effectiveFrom: r.effective_from, effectiveTo: r.effective_to, earlyAdoptionAllowed: !!r.early_adoption_allowed, earlyAdoptionFrom: r.early_adoption_from, sourceReference: r.source_reference, sourceVerified: !!r.source_verified, status: r.status, supersededBy: r.superseded_by })) };
+    } catch (e: any) { return this.dbError(e); }
+  }
+  public async saveStdTaxRule(rule: any, actorId: string, key: string): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const r = await this.insertOnceStd('an_std_tax_rules', ['tax_rule_id', 'version'],
+        ['tax_rule_id', 'version', 'jurisdiction_id', 'tax_type', 'priority', 'conditions::jsonb', 'treatment::jsonb', 'rate', 'required_data::jsonb', 'effective_from', 'effective_to', 'early_adoption_allowed', 'early_adoption_from', 'source_reference', 'source_verified', 'status'],
+        [rule.taxRuleId, rule.version, rule.jurisdictionId, rule.taxType, rule.priority, JSON.stringify(rule.conditions || {}), JSON.stringify(rule.treatment || {}), rule.rate ?? null, JSON.stringify(rule.requiredData || []), rule.effectiveFrom, rule.effectiveTo || null, !!rule.earlyAdoptionAllowed, rule.earlyAdoptionFrom || null, rule.sourceReference || null, !!rule.sourceVerified, rule.status], key);
+      return r.success ? { success: true, data: rule } : r;
+    } catch (e: any) { return this.dbError(e); }
+  }
+  public async listStdTaxRules(filter?: any): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const w = this.stdWhere(filter, { taxRuleId: 'tax_rule_id', jurisdictionId: 'jurisdiction_id', taxType: 'tax_type' });
+      const res = await this.query(`SELECT tax_rule_id, version, jurisdiction_id, tax_type, priority, conditions, treatment, rate, required_data, to_char(effective_from,'YYYY-MM-DD') AS effective_from, to_char(effective_to,'YYYY-MM-DD') AS effective_to, early_adoption_allowed, to_char(early_adoption_from,'YYYY-MM-DD') AS early_adoption_from, source_reference, source_verified, status FROM an_std_tax_rules ${w.sql} ORDER BY tax_rule_id, version`, w.params);
+      return { success: true, data: res.rows.map((r: any) => ({ taxRuleId: r.tax_rule_id, version: r.version, jurisdictionId: r.jurisdiction_id, taxType: r.tax_type, priority: r.priority, conditions: r.conditions || {}, treatment: r.treatment || {}, rate: r.rate == null ? null : Number(r.rate), requiredData: r.required_data || [], effectiveFrom: r.effective_from, effectiveTo: r.effective_to, earlyAdoptionAllowed: !!r.early_adoption_allowed, earlyAdoptionFrom: r.early_adoption_from, sourceReference: r.source_reference, sourceVerified: !!r.source_verified, status: r.status })) };
+    } catch (e: any) { return this.dbError(e); }
+  }
+  private mapAcctPolicyRow(tenantId: string, r: any): any {
+    return { id: r.id, tenantId, policyKey: r.policy_key, value: r.value, version: r.version, effectiveFrom: r.effective_from, effectiveTo: r.effective_to, reason: r.reason, createdBy: r.created_by, createdAt: r.created_at?.toISOString?.() || r.created_at };
+  }
+  public async appendAccountingPolicyVersion(tenantId: string, input: any, actorId: string, key: string): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    const client = await this.pool.connect();
+    const SEL = `id, policy_key, value, version, to_char(effective_from,'YYYY-MM-DD') AS effective_from, to_char(effective_to,'YYYY-MM-DD') AS effective_to, reason, created_by, created_at`;
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`pol:${tenantId}:${input.policyKey}`]);
+      const dup = await client.query(`SELECT ${SEL} FROM an_accounting_policies WHERE tenant_id=$1 AND id=$2`, [tenantId, input.id]);
+      if (dup.rows.length) { await client.query('ROLLBACK'); return { success: true, data: this.mapAcctPolicyRow(tenantId, dup.rows[0]) }; }
+      const last = await client.query(`SELECT id, version, to_char(effective_from,'YYYY-MM-DD') AS effective_from FROM an_accounting_policies WHERE tenant_id=$1 AND policy_key=$2 ORDER BY version DESC LIMIT 1 FOR UPDATE`, [tenantId, input.policyKey]);
+      if (last.rows.length && input.effectiveFrom <= last.rows[0].effective_from) {
+        await client.query('ROLLBACK');
+        return { success: false, error: { type: 'standards', title: 'POLICY_BACKDATE_REJECTED', status: 409, detail: `effectiveFrom must be after ${last.rows[0].effective_from}` } };
+      }
+      if (last.rows.length) await client.query(`UPDATE an_accounting_policies SET effective_to = ($3::date - 1) WHERE tenant_id=$1 AND id=$2`, [tenantId, last.rows[0].id, input.effectiveFrom]);
+      const version = (last.rows[0]?.version || 0) + 1;
+      const ins = await client.query(`INSERT INTO an_accounting_policies (id, tenant_id, policy_key, value, version, effective_from, reason, created_by, created_idem_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${SEL}`, [input.id, tenantId, input.policyKey, input.value, version, input.effectiveFrom, input.reason || null, actorId, key]);
+      await client.query('COMMIT');
+      return { success: true, data: this.mapAcctPolicyRow(tenantId, ins.rows[0]) };
+    } catch (e: any) {
+      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      return this.dbError(e);
+    } finally { client.release(); }
+  }
+  public async listAccountingPolicies(tenantId: string, policyKey?: string): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const res = await this.query(`SELECT id, policy_key, value, version, to_char(effective_from,'YYYY-MM-DD') AS effective_from, to_char(effective_to,'YYYY-MM-DD') AS effective_to, reason, created_by, created_at FROM an_accounting_policies WHERE tenant_id=$1 ${policyKey ? 'AND policy_key=$2' : ''} ORDER BY policy_key, version`, policyKey ? [tenantId, policyKey] : [tenantId]);
+        return { success: true as const, data: res.rows.map((r: any) => this.mapAcctPolicyRow(tenantId, r)) };
+      } catch (e: any) { return this.dbError(e); }
+    });
+  }
+
   public async setStockDocumentJournal(tenantId: string, docId: string, journalEntryId: string | null, status: any): Promise<any> {
     try {
       await this.pool.query(`UPDATE an_stock_documents SET journal_entry_id=$1, journal_status=$2 WHERE tenant_id=$3 AND id=$4`, [journalEntryId, status, tenantId, docId]);

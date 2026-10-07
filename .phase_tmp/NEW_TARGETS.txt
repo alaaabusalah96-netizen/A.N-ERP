@@ -1,6 +1,0 @@
-scripts/verifyF1StandardsStorage.ts
-src/core/standards/AccountingRuleRegistry.ts
-src/core/standards/JurisdictionRegistry.ts
-src/core/standards/StandardsCatalogRegistry.ts
-src/core/standards/TaxRuleRegistry.ts
-src/core/standards/index.ts

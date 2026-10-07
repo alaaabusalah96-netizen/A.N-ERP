@@ -26,6 +26,7 @@ import { executePrimaryBattery } from './src/core/tests/runPrimaryBattery';
 import { runPhase1Battery } from './src/core/tests/runPhase1Battery';
 import { globalStorageRouter } from './src/core/storage/StorageRouter';
 import { PostingEngine } from './src/core/engines/PostingEngine';
+import { seedStandardsCatalogue } from './src/core/standards/seedCatalogue';
 import { ApprovalEngine } from './src/core/engines/ApprovalEngine';
 import { NumberingEngine } from './src/core/engines/NumberingEngine';
 import { JournalEntry, RFC7807Problem, User, ActiveSessionRecord, StoragePort, CompanyProfile, TenantCompany, CustomFieldDefinition } from './src/core/storage/StoragePort';
@@ -4775,6 +4776,11 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
     await seedOnlyInitialBootstrap(masterStorage);
     await initSeedUsers(masterStorage, companyProfile.id);
     console.log('✓ تم فحص وبذر بيانات المستأجر والمستخدمين بنجاح (seedOnly).');
+    // F1 Standards Intelligence: idempotent catalogue seed (reference entries only, never overwrites, non-fatal).
+    try {
+      const sc = await seedStandardsCatalogue(masterStorage as any, 'system');
+      console.log(`✓ كتالوج المعايير: +${sc.standards} معيار، +${sc.jurisdictions} اختصاص (تخطّي ${sc.skipped})${sc.errors.length ? ' | أخطاء: ' + sc.errors.length : ''}`);
+    } catch (e: any) { console.error('[standards] seed skipped:', e?.message || e); }
 
     // Startup Fail-Fast Guard (Section 13.2 & Item A-3)
     const t = crypto.randomUUID();
