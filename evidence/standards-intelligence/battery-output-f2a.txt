@@ -1,0 +1,116 @@
+F2SMOKE APPLY 2 D5201:10|C1105:10
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+[phase-4] DECISION: DB role bypasses RLS -> global membership backfill
+SEED 0 0 0
+
+> an-erp@7.2.0 battery:phase7.6
+> tsx src/core/tests/cliRunPhase7_6.ts
+
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+===============================================================
+⚡ STARTING PHASE 7.6 VERIFICATION BATTERY (UPGRADED MODULES 4-7)
+===============================================================
+[phase-4] DECISION: DB role bypasses RLS -> global membership backfill
+WARN [ADR-011/Phase7.6]: مسار توافقي فردي (single itemId) مستخدم في receiveStock — يرجى استخدام مصفوفة lines[] المتعددة.
+
+--- RESULTS SUMMARY ---
+[✓ PASS] #1 [7.6-01-MULTI-RECEIPT-ATOMIC] توريد مخزني بـ٣ أصناف في مستند واحد + ذرية مؤكدة (787ms)
+       دليل: تم توريد ٣ أصناف في مستند واحد (REC-000001) بإجمالي 4300 ر.س. تم إثبات الذرية الكاملة برفض المعاملة المتعددة وإبقاء الأرصدة سليمة عند فشل صنف واحد.
+[✓ PASS] #2 [7.6-02-MULTI-ISSUE-ATOMIC] صرف مخزني بـ٣ أصناف في مستند واحد + ذرية مؤكدة (878ms)
+       دليل: تم صرف ٣ أصناف في إذن صرف واحد (ISS-000001) بإجمالي كمية 17 وتكلفة 1100 ر.س. تم إثبات الذرية التامة برفض الصرف بالكامل عند نقص رصيد صنف واحد وإبقاء الأرصدة بلا تغيير (8, 15, 20).
+[✓ PASS] #3 [7.6-03-MULTI-CUSTODY-EXPENSE] صرف عهدة بـ٣ تصنيفات في مستند واحد + قيد واحد (780ms)
+       دليل: تم تسجيل سند صرف عهدة متعدد (VCH-202610-1099) بـ٣ تصنيفات بقيمة 1000 ر.س مع قيد متوازن واحد (JE-CST-VCH-202610-1099) ورصيد عهدة مضبوط (4000 ر.س). تم إثبات التراجع الكامل ذرياً عند تجاوز الرصيد.
+[✓ PASS] #4 [7.6-04-UNIFIED-PRINTING] طباعة فعلية لكل مستندات 4–7 (1299ms)
+       دليل: تم توليد وطباعة ٨ مستندات تشغيلية موحدة كاملة (قيد محاسبي، سند صرف عهدة، طلب مصروف، إذن توريد، إذن صرف، إذن تحويل، محضر جرد، كارت صنف). كل مستند يحمل ترويسة المؤسسة، جدول البنود، الإجماليات، خانات التوقيع، وتذييل A.N ERP حرفياً.
+[✓ PASS] #5 [7.6-05-STOCK-RETURNS] مرتجع مخزني بـ٣ بنود يعيد الأثر كاملاً (816ms)
+       دليل: تم إنشاء وترحيل إذن مرتجع صرف مخزني (RET-ISS-000001) بـ٣ أصناف، أعاد الكميات للمستودع (8, 17, 23) ورحل قيداً عكسياً متوازناً بقيمة 430 ر.س عبر PostingEngine بلا حذف أو تعديل في السجلات الأصلية.
+[✓ PASS] #6 [7.6-06-ITEM-LEDGER-STOCK-CARD] كارت صنف حقيقي مطابق لرصيد المخزون (44ms)
+       دليل: تم إنشاء كارت صنف حقيقي للصنف (ITM-A-644563 - محرك كهربائي 500 وات) يشمل الرصيد الافتتاحي وجميع الحركات (توريد 10، صرف 2، تحويل 1، مرتجع 1) مع تطابق تام بين الرصيد الختامي (8) والرصيد الفعلي للمخزون (8).
+[✓ PASS] #7 [7.6-07-BARCODE-PRICE-LOOKUP] باركود صنف + بحث بالمسح (31ms)
+       دليل: تم توليد باركود SVG مطابق للصنف (628100200644563)، وحفظ تسعيرة الصنف (120 ر.س)، والتحقق من البحث الفوري بمسح الباركود واسترجاع بطاقة الصنف بنجاح.
+[✓ PASS] #8 [7.6-08-ATTACHMENTS-LINKING] مرفقات مرتبطة بمستندات 4–7 (88ms)
+       دليل: تم حفظ واسترجاع مرفق رسمي (بوليصة_شحن_المورد.pdf - 245000 بايت) وربطه بإذن التوريد المخزني (RET-ISS-000001) والتحقق من ظهوره عند الاستعلام.
+[✓ PASS] #9 [7.6-09-DATA-MIGRATION-COMPAT] ترحيل رجعي للحركات الأحادية القديمة بلا فقد بيانات (326ms)
+       دليل: تم التحقق من الترحيل الرجعي التلقائي للمدخلات الأحادية القديمة وتغليفها بسلاسة في مستند lines[1] مع الحفاظ التام على أرقام المستندات وتوافقية واجهات الاستدعاء السابقة بلا فقد بيانات.
+[✓ PASS] #10 [7.6-10-REGRESSION-AND-EVIDENCE] بطاريات 4–7 معادة بعد الترقية بنجاح + evidence/phase-7.6/ مكتمل (760ms)
+       دليل: تمت إعادة تشغيل سيناريوهات الانحدار للموديولات 4 و5 و6 و7 بنجاح تام، وتأسيس أرشيف الأدلة الملزم في evidence/phase-7.6/ مشتملاً على battery-output.txt و acceptance-rows.md و usability.md.
+[✓ PASS] #11 [7.6-11-ZERO-SINGLE-ITEM-CONTRACT] صفر مدخل itemId مفرد متبقٍ في مسارات المخزون (72ms)
+       دليل: تم التحقق من أن مسارات التوريد والصرف والمرتجع والجرد تعتمد حصرًا على بنية المستند المتعدد (StockDocument + StockDocumentLine[]) وصفر مدخلات مفردة معزولة.
+---------------------------------------------------------------
+Total: 11 | Passed: 11 | Failed: 0 | All Passed: true
+Execution Duration: 7530ms
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[phase-4] DECISION: DB role bypasses RLS -> global membership backfill
+[phase-4] DECISION: DB role bypasses RLS -> global membership backfill
+[PASS] PG0 initializeSchema succeeds with the F1 tables (idempotent re-run)
+[PASS] PG1 test tenant zzf1amuz34o8d created
+[PASS] PG1 test tenant zzf1bmuz34o8d created
+--- shared suite on PostgresPrimaryAdapter ---
+[PASS] A1 boundary: effectiveFrom is inclusive
+[PASS] A2 boundary: effectiveTo is inclusive
+[PASS] A3 day before / after window is not effective
+[PASS] A4 open-ended window and malformed date
+[PASS] A5 historical date resolves v1 regardless of input order
+[PASS] A6 current date resolves v2
+[PASS] A7 date before any version -> NONE
+[PASS] A8 two effective versions with the same number -> CONFLICT (no guessing)
+[PASS] A9 early adoption needs explicit opt-in
+[PASS] A10 early adoption not before earlyAdoptionFrom, not if not allowed
+[PASS] A11 validateWindow rejects reversed / malformed windows
+[PASS] A12 validateNewVersion rejects overlap and reused version, accepts adjacent
+[PASS] B1 taxonomy has the 42 spec events
+[PASS] B2 taxonomy is extensible but rejects malformed names
+[PASS] B3 seed: no errors, every seed jurisdiction and standard present
+[PASS] B4 re-seed is idempotent (adds nothing, no errors)
+[PASS] B5 SI-10: every seeded standard is NOT_IMPLEMENTED, unverified, no asserted date
+[PASS] B6 SI-3: Egypt is EAS (not IFRS), EAS->IFRS mapping is UNVERIFIED, tax is its own jurisdiction
+[PASS] B7 no invented EAS numbers for revenue/leases (placeholder ids only)
+[PASS] B8 coverage report lists IAS 2 as NOT_IMPLEMENTED
+[PASS] C1 IMPLEMENTED without evidence is rejected
+[PASS] C2 cannot mark an unverified-source standard as implemented
+[PASS] C3 registering PARTIAL without evidence is rejected
+[PASS] C4 verified fixtures (IFRS + EAS) register
+[PASS] C5 duplicate (standard, version) is rejected, history immutable
+[PASS] C6 storage: same idempotencyKey replays OK, a different key conflicts (409)
+[PASS] C7 EQUIVALENT_VERIFIED mapping without source is rejected (mapping is not equivalence)
+[PASS] C8 coverage upgrade with evidence on a verified standard is accepted
+[PASS] D1 test jurisdictions register; unknown parent rejected
+[PASS] D2 ACTIVE without a verified source is rejected (SI-6/SI-10)
+[PASS] D3 ACTIVE with the unasserted-date sentinel is rejected
+[PASS] D4 account numbers inside a treatment are rejected (roles only), even nested
+[PASS] D5 unknown event / bad tier rejected
+[PASS] D6 SI-8: accounting rule in a TAX jurisdiction rejected; framework mismatch rejected; unknown standard rejected
+[PASS] D7 ACTIVE rule needs a covered standard (IAS 2 is NOT_IMPLEMENTED)
+[PASS] D8 valid ACTIVE rule (verified fixture) registers
+[PASS] D9 overlapping window and reused version number are rejected
+[PASS] D10 v2 (adjacent window) registers; v1 untouched
+[PASS] D11 historical transaction resolves to the rule effective on its date
+[PASS] D12 SOURCE_REQUIRED rule registers but is never a posting candidate (SI-6)
+[PASS] D13 jurisdiction change yields a different applicable rule
+[PASS] D14 "which rule applied on this date?" answers rule id + version + source
+[PASS] D15 candidates ordered explicitly (tier, then priority), not by insertion
+[PASS] E1 tax rule in a non-TAX jurisdiction rejected (SI-8)
+[PASS] E2 invented rate (unverified source) and out-of-range rate rejected
+[PASS] E3 SOURCE_REQUIRED tax rule without a rate registers (no invented numbers)
+[PASS] E4 verified tax rule registers; v2 adjacent ok; overlap rejected
+[PASS] E5 tax rule resolves by transaction date
+[PASS] E6 tax rules never appear in the accounting-rule registry
+[PASS] F1 unknown policy, invalid enum value, non-numeric threshold, bad date rejected
+[PASS] F2 first policy version created (v1, open-ended)
+[PASS] F3 new version closes the previous window the day before
+[PASS] F4 getEffective is date-aware (before / inside v1 / v2 start)
+[PASS] F5 backdating / same-day change rejected (409) and history unchanged
+[PASS] F6 idempotent replay returns the same version, creates no extra row
+[PASS] F7 tenant isolation: another tenant sees no history and no effective value
+[PASS] F8 concurrent appends serialize: contiguous versions, increasing dates, exactly one open window
+[PASS] G1 registry writes were logged to SystemChangeLog (module=standards)
+--- DB-level proofs ---
+[PASS] PGC1 DB CHECK: ACTIVE rule without a verified source is rejected by the database itself
+[PASS] PGC2 DB CHECK: ACTIVE rule with the unasserted-date sentinel is rejected
+[PASS] PGC3 DB CHECK: IMPLEMENTED standard without evidence is rejected
+[PASS] PGC4 DB CHECK: tax rate without a verified source is rejected
+[PASS] PGC5 DB primary key: a second row with the same (rule_id, version) cannot exist
+INFO: DB role bypasses RLS = true
+[PASS] PGR1 RLS (non-bypass probe role): own tenant sees its rows (control), other tenant sees 0 and cannot write into it
+
+Passed: 67 | Failed: 0

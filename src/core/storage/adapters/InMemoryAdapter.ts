@@ -4,6 +4,7 @@
  * EXPLICIT NOTICE: Strictly forbidden for closing Phase isolation or persistence batteries.
  */
 
+import type { AccountingDecisionRecord } from '../../standards/decisionTypes';
 import type { StandardRecord, JurisdictionRecord, AccountingRuleRecord, TaxRuleRecord, AccountingPolicyRecord, CoverageStatus } from '../../standards/standardsTypes';
 import {
   StoragePort,
@@ -142,6 +143,7 @@ export class InMemoryAdapter implements StoragePort {
   private stdRules = new Map<string, AccountingRuleRecord & { _k: string }>();
   private stdTaxRules = new Map<string, TaxRuleRecord & { _k: string }>();
   private stdPolicies = new Map<string, AccountingPolicyRecord[]>();
+  private stdDecisions = new Map<string, AccountingDecisionRecord>(); // key: tenantId|decisionKey
   private stdInsertOnce<T extends { _k: string }>(m: Map<string, T>, pk: string, row: T, key: string): StorageResult<any> {
     const ex = m.get(pk);
     if (!ex) { m.set(pk, row); return { success: true, data: undefined }; }
@@ -2004,6 +2006,29 @@ export class InMemoryAdapter implements StoragePort {
     const out: AccountingPolicyRecord[] = [];
     for (const [k, v] of this.stdPolicies) if (k.startsWith(tenantId + '|') && (!policyKey || k === `${tenantId}|${policyKey}`)) out.push(...v.map(x => ({ ...x })));
     return { success: true, data: out.sort((a, b) => a.policyKey.localeCompare(b.policyKey) || a.version - b.version) };
+  }
+  public async saveAccountingDecision(tenantId: string, rec: AccountingDecisionRecord): Promise<StorageResult<AccountingDecisionRecord>> {
+    const k = `${tenantId}|${rec.decisionKey}`;
+    if (!this.stdDecisions.has(k)) this.stdDecisions.set(k, JSON.parse(JSON.stringify({ ...rec, tenantId, journalEntryId: null })));
+    return { success: true, data: JSON.parse(JSON.stringify(this.stdDecisions.get(k))) };
+  }
+  public async getAccountingDecision(tenantId: string, id: string): Promise<StorageResult<AccountingDecisionRecord | null>> {
+    const r = [...this.stdDecisions.values()].find(d => d.tenantId === tenantId && d.id === id);
+    return { success: true, data: r ? JSON.parse(JSON.stringify(r)) : null };
+  }
+  public async listAccountingDecisions(tenantId: string, f?: { eventType?: string; eventId?: string; journalEntryId?: string; status?: string; limit?: number }): Promise<StorageResult<AccountingDecisionRecord[]>> {
+    const rows = [...this.stdDecisions.values()].filter(d => d.tenantId === tenantId && (!f?.eventType || d.eventType === f.eventType) && (!f?.eventId || d.eventId === f.eventId) && (!f?.journalEntryId || d.journalEntryId === f.journalEntryId) && (!f?.status || d.decisionStatus === f.status))
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : a.id < b.id ? -1 : 1)).slice(0, Math.min(Math.max(Number(f?.limit) || 100, 1), 500));
+    return { success: true, data: JSON.parse(JSON.stringify(rows)) };
+  }
+  public async linkDecisionToJournal(tenantId: string, decisionId: string, journalEntryId: string): Promise<StorageResult<AccountingDecisionRecord>> {
+    const d = [...this.stdDecisions.values()].find(x => x.tenantId === tenantId && x.id === decisionId);
+    if (!d) return { success: false, error: { type: 'standards', title: 'not-found', status: 404, detail: decisionId } };
+    if (d.journalEntryId === journalEntryId) return { success: true, data: JSON.parse(JSON.stringify(d)) };
+    if (d.decisionStatus !== 'APPLY') return { success: false, error: { type: 'standards', title: 'link-conflict', status: 409, detail: 'only APPLY decisions can be linked to a journal' } };
+    if (d.journalEntryId) return { success: false, error: { type: 'standards', title: 'link-conflict', status: 409, detail: `decision already linked to journal ${d.journalEntryId}` } };
+    d.journalEntryId = journalEntryId;
+    return { success: true, data: JSON.parse(JSON.stringify(d)) };
   }
   public async setStockDocumentJournal(tenantId: string, docId: string, journalEntryId: string | null, status: 'NONE' | 'POSTED' | 'PENDING_RETRY'): Promise<StorageResult<void>> {
     const key = `${tenantId}:${docId}`;

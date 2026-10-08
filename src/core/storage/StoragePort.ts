@@ -6,6 +6,7 @@
  * Errors follow RFC 7807 problem details specification.
  */
 
+import type { AccountingDecisionRecord } from '../standards/decisionTypes';
 import type { StandardRecord, JurisdictionRecord, AccountingRuleRecord, TaxRuleRecord, AccountingPolicyRecord, CoverageStatus } from '../standards/standardsTypes';
 
 export interface RFC7807Problem {
@@ -1128,6 +1129,13 @@ export interface StoragePort {
   // Tenant policies: atomic append of a NEW effective-dated version (closes the previous one, rejects backdating).
   appendAccountingPolicyVersion(tenantId: string, input: { id: string; tenantId: string; policyKey: string; value: string; effectiveFrom: string; reason?: string | null; createdBy: string }, actorId: string, idempotencyKey: string): Promise<StorageResult<AccountingPolicyRecord>>;
   listAccountingPolicies(tenantId: string, policyKey?: string): Promise<StorageResult<AccountingPolicyRecord[]>>;
+
+  // Standards Intelligence F2: durable AccountingDecision (tenant-scoped). Idempotent on (tenantId, decisionKey): a replay returns
+  // the ORIGINAL stored decision. Immutable except the one-way link to a journal (same journal = no-op, other journal = 409).
+  saveAccountingDecision(tenantId: string, rec: AccountingDecisionRecord): Promise<StorageResult<AccountingDecisionRecord>>;
+  getAccountingDecision(tenantId: string, id: string): Promise<StorageResult<AccountingDecisionRecord | null>>;
+  listAccountingDecisions(tenantId: string, filter?: { eventType?: string; eventId?: string; journalEntryId?: string; status?: string; limit?: number }): Promise<StorageResult<AccountingDecisionRecord[]>>;
+  linkDecisionToJournal(tenantId: string, decisionId: string, journalEntryId: string): Promise<StorageResult<AccountingDecisionRecord>>;
 
   // Phase 15 (PO-001)
   savePurchaseOrder(tenantId: string, po: PurchaseOrder, lines: PurchaseOrderLine[], idempotencyKey: string): Promise<StorageResult<PurchaseOrder>>;

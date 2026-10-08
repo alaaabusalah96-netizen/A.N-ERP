@@ -288,6 +288,10 @@ export class MySQLSmokeAdapter implements StoragePort {
       };
     }
   }
+  saveAccountingDecision(tenantId: string, rec: any) { return this.smokeOnlyError<any>('saveAccountingDecision'); }
+  getAccountingDecision(tenantId: string, id: string) { return this.smokeOnlyError<any>('getAccountingDecision'); }
+  listAccountingDecisions(tenantId: string, filter?: any) { return this.smokeOnlyError<any>('listAccountingDecisions'); }
+  linkDecisionToJournal(tenantId: string, decisionId: string, journalEntryId: string) { return this.smokeOnlyError<any>('linkDecisionToJournal'); }
   saveStandard(s: any, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<any>('saveStandard'); }
   listStandards(filter?: any) { return this.smokeOnlyError<any>('listStandards'); }
   updateStandardCoverage(standardId: string, version: number, coverage: any, evidenceRef: string | null, actorId: string, idempotencyKey: string) { return this.smokeOnlyError<any>('updateStandardCoverage'); }

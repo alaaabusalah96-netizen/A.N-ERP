@@ -89,7 +89,7 @@ async function main() {
 
   console.log('--- Part 3: static checks on the real adapter source (DDL / RLS text) ---');
   const src = fs.readFileSync('src/core/storage/adapters/PostgresPrimaryAdapter.ts', 'utf8');
-  check('S1 an_accounting_policies is in the FORCE-RLS tenant table list', /'an_inventory_settings',\s*'an_accounting_policies'\s*\]/.test(src));
+  check('S1 an_accounting_policies is in the FORCE-RLS tenant table list', /'an_inventory_settings',\s*'an_accounting_policies'\s*[,\]]/.test(src));
   check('S2 DB-level guard: ACTIVE rules (accounting + tax) need verified source and a real date', (src.match(/status <> 'ACTIVE' OR \(source_verified AND source_reference IS NOT NULL/g) || []).length === 2);
   check('S3 DB-level guard: IMPLEMENTED/PARTIAL standards need evidence and a verified source; tax rate needs verified source', /coverage_status NOT IN \('IMPLEMENTED','PARTIAL'\) OR \(coverage_evidence_ref IS NOT NULL/.test(src) && /CHECK \(rate IS NULL OR \(rate >= 0 AND rate <= 1 AND source_verified\)\)/.test(src));
   check('S4 policies table: tenant FK + unique (tenant, key, version); global tables have composite primary keys per version', /an_accounting_policies \([\s\S]*REFERENCES an_tenants\(id\)[\s\S]*UNIQUE \(tenant_id, policy_key, version\)/.test(src) && /PRIMARY KEY \(rule_id, version\)/.test(src) && /PRIMARY KEY \(framework, standard_id, version\)/.test(src));

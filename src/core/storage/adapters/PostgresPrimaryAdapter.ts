@@ -945,6 +945,24 @@ export class PostgresPrimaryAdapter implements StoragePort {
       );
       CREATE INDEX IF NOT EXISTS idx_an_acc_policies ON an_accounting_policies(tenant_id, policy_key, version);
 
+      -- F2: durable accounting decision record (tenant data -> RLS). APPLY must always carry a rule reference (SI-9).
+      CREATE TABLE IF NOT EXISTS an_accounting_decisions (
+        id VARCHAR(64) PRIMARY KEY, tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id), decision_key VARCHAR(200) NOT NULL,
+        event_type VARCHAR(64) NOT NULL, event_id TEXT NOT NULL, source_module VARCHAR(64) NOT NULL, event_date DATE NOT NULL,
+        decision_status VARCHAR(16) NOT NULL CHECK (decision_status IN ('APPLY','REVIEW_REQUIRED','NOT_APPLICABLE','REJECT')),
+        reason_code VARCHAR(64) NOT NULL, framework VARCHAR(8), jurisdiction_id VARCHAR(80), standard_id VARCHAR(80),
+        rule_id VARCHAR(80), rule_version INT, tier SMALLINT, policy_key VARCHAR(64), policy_value VARCHAR(200), policy_version INT,
+        facts JSONB NOT NULL DEFAULT '{}', treatment JSONB NOT NULL DEFAULT '{}', tax_treatment JSONB,
+        missing_facts JSONB NOT NULL DEFAULT '[]', warnings JSONB NOT NULL DEFAULT '[]', conflicting JSONB NOT NULL DEFAULT '[]',
+        explanation_ar TEXT NOT NULL, explanation_en TEXT NOT NULL, journal_entry_id TEXT, created_by TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, decision_key),
+        CHECK (decision_status <> 'APPLY' OR (rule_id IS NOT NULL AND rule_version IS NOT NULL AND standard_id IS NOT NULL)),
+        CHECK (journal_entry_id IS NULL OR decision_status = 'APPLY')
+      );
+      CREATE INDEX IF NOT EXISTS idx_an_acc_decisions_event ON an_accounting_decisions(tenant_id, event_type, event_id);
+      CREATE INDEX IF NOT EXISTS idx_an_acc_decisions_journal ON an_accounting_decisions(tenant_id, journal_entry_id) WHERE journal_entry_id IS NOT NULL;
+
       -- Phase 14 (ACC-AUTO-001)
       CREATE TABLE IF NOT EXISTS an_stock_accounting_config (
         tenant_id VARCHAR(64) PRIMARY KEY REFERENCES an_tenants(id),
@@ -1376,7 +1394,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_approval_policies',
           'an_stock_cost_layers',
           'an_inventory_settings',
-          'an_accounting_policies'
+          'an_accounting_policies',
+          'an_accounting_decisions'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -6779,6 +6798,61 @@ public async getWarehouseStock(
       try {
         const res = await this.query(`SELECT id, policy_key, value, version, to_char(effective_from,'YYYY-MM-DD') AS effective_from, to_char(effective_to,'YYYY-MM-DD') AS effective_to, reason, created_by, created_at FROM an_accounting_policies WHERE tenant_id=$1 ${policyKey ? 'AND policy_key=$2' : ''} ORDER BY policy_key, version`, policyKey ? [tenantId, policyKey] : [tenantId]);
         return { success: true as const, data: res.rows.map((r: any) => this.mapAcctPolicyRow(tenantId, r)) };
+      } catch (e: any) { return this.dbError(e); }
+    });
+  }
+
+  // ===== F2 durable AccountingDecision (tenant-scoped, RLS). Immutable except the one-way journal link. =====
+  private static readonly DEC_COLS = `id, tenant_id, decision_key, event_type, event_id, source_module, to_char(event_date,'YYYY-MM-DD') AS event_date, decision_status, reason_code, framework, jurisdiction_id, standard_id, rule_id, rule_version, tier, policy_key, policy_value, policy_version, facts, treatment, tax_treatment, missing_facts, warnings, conflicting, explanation_ar, explanation_en, journal_entry_id, created_by, created_at`;
+  private mapDecisionRow(r: any): any {
+    return { id: r.id, tenantId: r.tenant_id, decisionKey: r.decision_key, eventType: r.event_type, eventId: r.event_id, sourceModule: r.source_module, eventDate: r.event_date, decisionStatus: r.decision_status, reasonCode: r.reason_code, framework: r.framework, jurisdictionId: r.jurisdiction_id, standardId: r.standard_id, ruleId: r.rule_id, ruleVersion: r.rule_version, tier: r.tier, policyKey: r.policy_key, policyValue: r.policy_value, policyVersion: r.policy_version, facts: r.facts || {}, treatment: r.treatment || {}, taxTreatment: r.tax_treatment || null, missingFacts: r.missing_facts || [], warnings: r.warnings || [], conflicting: r.conflicting || [], explanationAr: r.explanation_ar, explanationEn: r.explanation_en, journalEntryId: r.journal_entry_id, createdBy: r.created_by, createdAt: r.created_at?.toISOString?.() || r.created_at };
+  }
+  public async saveAccountingDecision(tenantId: string, rec: any): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        await this.query(`INSERT INTO an_accounting_decisions (id, tenant_id, decision_key, event_type, event_id, source_module, event_date, decision_status, reason_code, framework, jurisdiction_id, standard_id, rule_id, rule_version, tier, policy_key, policy_value, policy_version, facts, treatment, tax_treatment, missing_facts, warnings, conflicting, explanation_ar, explanation_en, created_by, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20::jsonb,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,$25,$26,$27,$28) ON CONFLICT (tenant_id, decision_key) DO NOTHING`,
+          [rec.id, tenantId, rec.decisionKey, rec.eventType, rec.eventId, rec.sourceModule, rec.eventDate, rec.decisionStatus, rec.reasonCode, rec.framework, rec.jurisdictionId, rec.standardId, rec.ruleId, rec.ruleVersion, rec.tier, rec.policyKey, rec.policyValue, rec.policyVersion, JSON.stringify(rec.facts || {}), JSON.stringify(rec.treatment || {}), rec.taxTreatment ? JSON.stringify(rec.taxTreatment) : null, JSON.stringify(rec.missingFacts || []), JSON.stringify(rec.warnings || []), JSON.stringify(rec.conflicting || []), rec.explanationAr, rec.explanationEn, rec.createdBy, rec.createdAt]);
+        // replay-safe: whatever is stored for (tenant, decision_key) is the decision of record, whether we just wrote it or not
+        const sel = await this.query(`SELECT ${PostgresPrimaryAdapter.DEC_COLS} FROM an_accounting_decisions WHERE tenant_id=$1 AND decision_key=$2`, [tenantId, rec.decisionKey]);
+        return { success: true as const, data: this.mapDecisionRow(sel.rows[0]) };
+      } catch (e: any) { return this.dbError(e); }
+    });
+  }
+  public async getAccountingDecision(tenantId: string, id: string): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const r = await this.query(`SELECT ${PostgresPrimaryAdapter.DEC_COLS} FROM an_accounting_decisions WHERE tenant_id=$1 AND id=$2`, [tenantId, id]);
+        return { success: true as const, data: r.rows[0] ? this.mapDecisionRow(r.rows[0]) : null };
+      } catch (e: any) { return this.dbError(e); }
+    });
+  }
+  public async listAccountingDecisions(tenantId: string, f?: any): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const params: any[] = [tenantId]; const w = ['tenant_id=$1'];
+        for (const [k, col] of [['eventType', 'event_type'], ['eventId', 'event_id'], ['journalEntryId', 'journal_entry_id'], ['status', 'decision_status']] as const) {
+          if (f && f[k] != null) { params.push(f[k]); w.push(`${col}=$${params.length}`); }
+        }
+        params.push(Math.min(Math.max(Number(f?.limit) || 100, 1), 500));
+        const r = await this.query(`SELECT ${PostgresPrimaryAdapter.DEC_COLS} FROM an_accounting_decisions WHERE ${w.join(' AND ')} ORDER BY created_at DESC, id LIMIT $${params.length}`, params);
+        return { success: true as const, data: r.rows.map((x: any) => this.mapDecisionRow(x)) };
+      } catch (e: any) { return this.dbError(e); }
+    });
+  }
+  public async linkDecisionToJournal(tenantId: string, decisionId: string, journalEntryId: string): Promise<any> {
+    if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const u = await this.query(`UPDATE an_accounting_decisions SET journal_entry_id=$3 WHERE tenant_id=$1 AND id=$2 AND journal_entry_id IS NULL AND decision_status='APPLY' RETURNING id`, [tenantId, decisionId, journalEntryId]);
+        const sel = await this.query(`SELECT ${PostgresPrimaryAdapter.DEC_COLS} FROM an_accounting_decisions WHERE tenant_id=$1 AND id=$2`, [tenantId, decisionId]);
+        const row = sel.rows[0];
+        if (!row) return { success: false as const, error: { type: 'standards', title: 'not-found', status: 404, detail: decisionId } };
+        if (u.rows.length || row.journal_entry_id === journalEntryId) return { success: true as const, data: this.mapDecisionRow(row) };
+        const why = row.decision_status !== 'APPLY' ? 'only APPLY decisions can be linked to a journal' : `decision already linked to journal ${row.journal_entry_id}`;
+        return { success: false as const, error: { type: 'standards', title: 'link-conflict', status: 409, detail: why } };
       } catch (e: any) { return this.dbError(e); }
     });
   }
