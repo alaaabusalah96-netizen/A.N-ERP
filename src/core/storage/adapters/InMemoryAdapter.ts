@@ -17,6 +17,7 @@ import {
   defaultStockAccountingConfig,
   PurchaseOrder, PurchaseOrderLine, GoodsReceipt, GoodsReceiptLine,
   PurchaseOrderStatus, CompleteGoodsReceiptAtomicInput, InventoryIntegrityRow,
+  PurchaseRequest, PurchaseRequestLine, RequestForQuote, RfqLine, SupplierQuote, SupplierQuoteLine,
   planCostLayerConsumption,
   PostStockTransferAtomicInput,
   Invitation,
@@ -155,6 +156,12 @@ export class InMemoryAdapter implements StoragePort {
   private purchaseOrderLines = new Map<string, any[]>();
   private goodsReceipts = new Map<string, any>();
   private goodsReceiptLines = new Map<string, any[]>();
+  private purchaseRequests = new Map<string, any>();
+  private purchaseRequestLines = new Map<string, any[]>();
+  private rfqs = new Map<string, any>();
+  private rfqLines = new Map<string, any[]>();
+  private supplierQuotes = new Map<string, any>();
+  private supplierQuoteLines = new Map<string, any[]>();
   private custodyExpenseVouchers = new Map<string, CustodyExpenseVoucher>();
   private documentAttachments = new Map<string, DocumentAttachment>();
   private itemPrices = new Map<string, ItemPrice>();
@@ -2171,6 +2178,106 @@ export class InMemoryAdapter implements StoragePort {
   }
 
   
+  
+  // Phase 8a (P2P-001): Purchase Request / RFQ / Supplier Quotes
+  public async savePurchaseRequest(tenantId: string, pr: PurchaseRequest, lines: PurchaseRequestLine[], idempotencyKey: string): Promise<StorageResult<PurchaseRequest>> {
+    const hit = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'savePurchaseRequest');
+    if (hit.success && hit.data) return { success: true, data: hit.data as PurchaseRequest };
+    this.purchaseRequests.set(`${tenantId}:${pr.id}`, { ...pr });
+    this.purchaseRequestLines.set(`${tenantId}:${pr.id}`, lines.map(l => ({ ...l })));
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'savePurchaseRequest', pr);
+    return { success: true, data: pr };
+  }
+  public async getPurchaseRequest(tenantId: string, prId: string): Promise<StorageResult<{ pr: PurchaseRequest; lines: PurchaseRequestLine[] } | null>> {
+    const pr = this.purchaseRequests.get(`${tenantId}:${prId}`);
+    if (!pr) return { success: true, data: null };
+    const lines = this.purchaseRequestLines.get(`${tenantId}:${prId}`) || [];
+    return { success: true, data: { pr: { ...pr }, lines: lines.map(l => ({ ...l })) } };
+  }
+  public async listPurchaseRequests(tenantId: string, filter?: { status?: string; requestedBy?: string }): Promise<StorageResult<PurchaseRequest[]>> {
+    const list = Array.from(this.purchaseRequests.values()).filter((p: any) => {
+      if (p.tenantId !== tenantId) return false;
+      if (filter?.status && p.status !== filter.status) return false;
+      if (filter?.requestedBy && p.requestedBy !== filter.requestedBy) return false;
+      return true;
+    }).map((p: any) => ({ ...p }));
+    return { success: true, data: list };
+  }
+  public async updatePurchaseRequest(tenantId: string, pr: PurchaseRequest): Promise<StorageResult<PurchaseRequest>> {
+    const key = `${tenantId}:${pr.id}`;
+    if (!this.purchaseRequests.has(key)) {
+      return { success: false, error: { type: 'https://api.an-erp.local/errors/pr-not-found', title: 'طلب الشراء غير موجود', status: 404, detail: pr.id } };
+    }
+    const updated = { ...pr, updatedAt: new Date().toISOString() };
+    this.purchaseRequests.set(key, updated);
+    return { success: true, data: updated };
+  }
+  public async saveRfq(tenantId: string, rfq: RequestForQuote, lines: RfqLine[], idempotencyKey: string): Promise<StorageResult<RequestForQuote>> {
+    const hit = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'saveRfq');
+    if (hit.success && hit.data) return { success: true, data: hit.data as RequestForQuote };
+    this.rfqs.set(`${tenantId}:${rfq.id}`, { ...rfq });
+    this.rfqLines.set(`${tenantId}:${rfq.id}`, lines.map(l => ({ ...l })));
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'saveRfq', rfq);
+    return { success: true, data: rfq };
+  }
+  public async getRfq(tenantId: string, rfqId: string): Promise<StorageResult<{ rfq: RequestForQuote; lines: RfqLine[] } | null>> {
+    const rfq = this.rfqs.get(`${tenantId}:${rfqId}`);
+    if (!rfq) return { success: true, data: null };
+    const lines = this.rfqLines.get(`${tenantId}:${rfqId}`) || [];
+    return { success: true, data: { rfq: { ...rfq }, lines: lines.map(l => ({ ...l })) } };
+  }
+  public async listRfqs(tenantId: string, filter?: { status?: string; prId?: string }): Promise<StorageResult<RequestForQuote[]>> {
+    const list = Array.from(this.rfqs.values()).filter((r: any) => {
+      if (r.tenantId !== tenantId) return false;
+      if (filter?.status && r.status !== filter.status) return false;
+      if (filter?.prId && r.prId !== filter.prId) return false;
+      return true;
+    }).map((r: any) => ({ ...r }));
+    return { success: true, data: list };
+  }
+  public async updateRfq(tenantId: string, rfq: RequestForQuote): Promise<StorageResult<RequestForQuote>> {
+    const key = `${tenantId}:${rfq.id}`;
+    if (!this.rfqs.has(key)) {
+      return { success: false, error: { type: 'https://api.an-erp.local/errors/rfq-not-found', title: 'طلب عرض السعر غير موجود', status: 404, detail: rfq.id } };
+    }
+    const updated = { ...rfq, updatedAt: new Date().toISOString() };
+    this.rfqs.set(key, updated);
+    return { success: true, data: updated };
+  }
+  public async saveSupplierQuote(tenantId: string, quote: SupplierQuote, lines: SupplierQuoteLine[], idempotencyKey: string): Promise<StorageResult<SupplierQuote>> {
+    const hit = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'saveSupplierQuote');
+    if (hit.success && hit.data) return { success: true, data: hit.data as SupplierQuote };
+    this.supplierQuotes.set(`${tenantId}:${quote.id}`, { ...quote });
+    this.supplierQuoteLines.set(`${tenantId}:${quote.id}`, lines.map(l => ({ ...l })));
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'saveSupplierQuote', quote);
+    return { success: true, data: quote };
+  }
+  public async getSupplierQuote(tenantId: string, quoteId: string): Promise<StorageResult<{ quote: SupplierQuote; lines: SupplierQuoteLine[] } | null>> {
+    const quote = this.supplierQuotes.get(`${tenantId}:${quoteId}`);
+    if (!quote) return { success: true, data: null };
+    const lines = this.supplierQuoteLines.get(`${tenantId}:${quoteId}`) || [];
+    return { success: true, data: { quote: { ...quote }, lines: lines.map(l => ({ ...l })) } };
+  }
+  public async listSupplierQuotes(tenantId: string, filter?: { rfqId?: string; vendorId?: string; status?: string }): Promise<StorageResult<SupplierQuote[]>> {
+    const list = Array.from(this.supplierQuotes.values()).filter((q: any) => {
+      if (q.tenantId !== tenantId) return false;
+      if (filter?.rfqId && q.rfqId !== filter.rfqId) return false;
+      if (filter?.vendorId && q.vendorId !== filter.vendorId) return false;
+      if (filter?.status && q.status !== filter.status) return false;
+      return true;
+    }).map((q: any) => ({ ...q }));
+    return { success: true, data: list };
+  }
+  public async updateSupplierQuote(tenantId: string, quote: SupplierQuote): Promise<StorageResult<SupplierQuote>> {
+    const key = `${tenantId}:${quote.id}`;
+    if (!this.supplierQuotes.has(key)) {
+      return { success: false, error: { type: 'https://api.an-erp.local/errors/quote-not-found', title: 'عرض المورد غير موجود', status: 404, detail: quote.id } };
+    }
+    const updated = { ...quote, updatedAt: new Date().toISOString() };
+    this.supplierQuotes.set(key, updated);
+    return { success: true, data: updated };
+  }
+
   // Phase 16 (REC-001)
   public async getInventoryIntegrityAggregates(tenantId: string): Promise<StorageResult<InventoryIntegrityRow[]>> {
     const POS = new Set(['RECEIPT', 'TRANSFER_IN', 'COUNT_ADJUSTMENT_GAIN']);

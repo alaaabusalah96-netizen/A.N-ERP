@@ -1045,6 +1045,97 @@ export class PostgresPrimaryAdapter implements StoragePort {
         granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (tenant_id, user_id, warehouse_id)
       );
+      -- Phase 8a (P2P-001): Purchase Request / RFQ / Supplier Quotes
+      CREATE TABLE IF NOT EXISTS an_purchase_requests (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        pr_number VARCHAR(64) NOT NULL,
+        status VARCHAR(24) NOT NULL,
+        requested_by VARCHAR(64) NOT NULL,
+        needed_by DATE,
+        notes TEXT,
+        cost_center_id VARCHAR(64),
+        project_id VARCHAR(64),
+        source_reorder_event_id VARCHAR(80),
+        approved_by VARCHAR(64),
+        approved_at TIMESTAMPTZ,
+        rejection_reason TEXT,
+        converted_po_id VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, pr_number)
+      );
+      CREATE TABLE IF NOT EXISTS an_purchase_request_lines (
+        id VARCHAR(80) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        pr_id VARCHAR(64) NOT NULL REFERENCES an_purchase_requests(id) ON DELETE CASCADE,
+        line_number INT NOT NULL,
+        item_id VARCHAR(64) NOT NULL,
+        quantity NUMERIC(16,4) NOT NULL CHECK (quantity > 0),
+        uom VARCHAR(32),
+        needed_by DATE,
+        cost_center_id VARCHAR(64),
+        project_id VARCHAR(64),
+        notes TEXT,
+        UNIQUE (pr_id, line_number)
+      );
+      CREATE TABLE IF NOT EXISTS an_rfqs (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        rfq_number VARCHAR(64) NOT NULL,
+        status VARCHAR(24) NOT NULL,
+        pr_id VARCHAR(64),
+        notes TEXT,
+        created_by VARCHAR(64) NOT NULL,
+        sent_at TIMESTAMPTZ,
+        closed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, rfq_number)
+      );
+      CREATE TABLE IF NOT EXISTS an_rfq_lines (
+        id VARCHAR(80) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        rfq_id VARCHAR(64) NOT NULL REFERENCES an_rfqs(id) ON DELETE CASCADE,
+        line_number INT NOT NULL,
+        item_id VARCHAR(64) NOT NULL,
+        quantity NUMERIC(16,4) NOT NULL CHECK (quantity > 0),
+        uom VARCHAR(32),
+        notes TEXT,
+        UNIQUE (rfq_id, line_number)
+      );
+      CREATE TABLE IF NOT EXISTS an_supplier_quotes (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        quote_number VARCHAR(64) NOT NULL,
+        rfq_id VARCHAR(64) NOT NULL REFERENCES an_rfqs(id),
+        vendor_id VARCHAR(64) NOT NULL,
+        vendor_name VARCHAR(200) NOT NULL,
+        status VARCHAR(24) NOT NULL,
+        quote_date DATE NOT NULL,
+        valid_until DATE,
+        notes TEXT,
+        created_by VARCHAR(64) NOT NULL,
+        selected_at TIMESTAMPTZ,
+        converted_po_id VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, quote_number)
+      );
+      CREATE TABLE IF NOT EXISTS an_supplier_quote_lines (
+        id VARCHAR(80) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        quote_id VARCHAR(64) NOT NULL REFERENCES an_supplier_quotes(id) ON DELETE CASCADE,
+        rfq_line_id VARCHAR(80) NOT NULL,
+        line_number INT NOT NULL,
+        item_id VARCHAR(64) NOT NULL,
+        quantity NUMERIC(16,4) NOT NULL CHECK (quantity > 0),
+        unit_price NUMERIC(16,4) NOT NULL CHECK (unit_price >= 0),
+        lead_time_days INT,
+        notes TEXT,
+        UNIQUE (quote_id, line_number)
+      );
+
 
 
 
@@ -6197,6 +6288,209 @@ export class PostgresPrimaryAdapter implements StoragePort {
 
 
   // Phase 18 (SCOPE-001)
+
+  // Phase 8a (P2P-001)
+  public async savePurchaseRequest(tenantId: string, pr: any, lines: any[], idempotencyKey: string): Promise<any> {
+    const hit = await this.checkIdempotency(tenantId, idempotencyKey, 'savePurchaseRequest');
+    if (hit) return { success: true, data: hit };
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO an_purchase_requests (id, tenant_id, pr_number, status, requested_by, needed_by, notes, cost_center_id, project_id, source_reorder_event_id, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())`,
+        [pr.id, tenantId, pr.prNumber, pr.status, pr.requestedBy, pr.neededBy || null, pr.notes || null, pr.costCenterId || null, pr.projectId || null, pr.sourceReorderEventId || null]
+      );
+      for (const l of lines) {
+        await client.query(
+          `INSERT INTO an_purchase_request_lines (id, tenant_id, pr_id, line_number, item_id, quantity, uom, needed_by, cost_center_id, project_id, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [l.id, tenantId, pr.id, l.lineNumber, l.itemId, l.quantity, l.uom || null, l.neededBy || null, l.costCenterId || null, l.projectId || null, l.notes || null]
+        );
+      }
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'savePurchaseRequest', pr);
+      return { success: true, data: pr };
+    } catch (e: any) {
+      await client.query('ROLLBACK');
+      return { success: false, error: { type: 'pg', title: 'savePurchaseRequest', status: 500, detail: e.message } };
+    } finally { client.release(); }
+  }
+  public async getPurchaseRequest(tenantId: string, prId: string): Promise<any> {
+    const r = await this.pool.query(`SELECT * FROM an_purchase_requests WHERE tenant_id=$1 AND id=$2`, [tenantId, prId]);
+    if (!r.rows.length) return { success: true, data: null };
+    const lr = await this.pool.query(`SELECT * FROM an_purchase_request_lines WHERE tenant_id=$1 AND pr_id=$2 ORDER BY line_number`, [tenantId, prId]);
+    const row = r.rows[0];
+    return { success: true, data: { pr: this.mapPr(row), lines: lr.rows.map((x: any) => this.mapPrLine(x)) } };
+  }
+  public async listPurchaseRequests(tenantId: string, filter?: any): Promise<any> {
+    let q = `SELECT * FROM an_purchase_requests WHERE tenant_id=$1`;
+    const params: any[] = [tenantId];
+    if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
+    if (filter?.requestedBy) { params.push(filter.requestedBy); q += ` AND requested_by=$${params.length}`; }
+    q += ' ORDER BY created_at DESC';
+    const r = await this.pool.query(q, params);
+    return { success: true, data: r.rows.map((x: any) => this.mapPr(x)) };
+  }
+  public async updatePurchaseRequest(tenantId: string, pr: any): Promise<any> {
+    const r = await this.pool.query(
+      `UPDATE an_purchase_requests SET status=$1, approved_by=$2, approved_at=$3, rejection_reason=$4, converted_po_id=$5, notes=$6, updated_at=NOW()
+       WHERE tenant_id=$7 AND id=$8 RETURNING *`,
+      [pr.status, pr.approvedBy || null, pr.approvedAt || null, pr.rejectionReason || null, pr.convertedPoId || null, pr.notes || null, tenantId, pr.id]
+    );
+    if (!r.rows.length) return { success: false, error: { type: 'pg', title: 'pr-not-found', status: 404, detail: pr.id } };
+    return { success: true, data: this.mapPr(r.rows[0]) };
+  }
+  private mapPr(row: any) {
+    return {
+      id: row.id, tenantId: row.tenant_id, prNumber: row.pr_number, status: row.status, requestedBy: row.requested_by,
+      neededBy: row.needed_by ? String(row.needed_by).slice(0, 10) : undefined, notes: row.notes || undefined,
+      costCenterId: row.cost_center_id || undefined, projectId: row.project_id || undefined,
+      sourceReorderEventId: row.source_reorder_event_id || undefined, approvedBy: row.approved_by || undefined,
+      approvedAt: row.approved_at ? new Date(row.approved_at).toISOString() : undefined,
+      rejectionReason: row.rejection_reason || undefined, convertedPoId: row.converted_po_id || undefined,
+      createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
+    };
+  }
+  private mapPrLine(row: any) {
+    return {
+      id: row.id, tenantId: row.tenant_id, prId: row.pr_id, lineNumber: row.line_number, itemId: row.item_id,
+      quantity: Number(row.quantity), uom: row.uom || undefined,
+      neededBy: row.needed_by ? String(row.needed_by).slice(0, 10) : undefined,
+      costCenterId: row.cost_center_id || undefined, projectId: row.project_id || undefined, notes: row.notes || undefined,
+    };
+  }
+  public async saveRfq(tenantId: string, rfq: any, lines: any[], idempotencyKey: string): Promise<any> {
+    const hit = await this.checkIdempotency(tenantId, idempotencyKey, 'saveRfq');
+    if (hit) return { success: true, data: hit };
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO an_rfqs (id, tenant_id, rfq_number, status, pr_id, notes, created_by, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`,
+        [rfq.id, tenantId, rfq.rfqNumber, rfq.status, rfq.prId || null, rfq.notes || null, rfq.createdBy]
+      );
+      for (const l of lines) {
+        await client.query(
+          `INSERT INTO an_rfq_lines (id, tenant_id, rfq_id, line_number, item_id, quantity, uom, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [l.id, tenantId, rfq.id, l.lineNumber, l.itemId, l.quantity, l.uom || null, l.notes || null]
+        );
+      }
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'saveRfq', rfq);
+      return { success: true, data: rfq };
+    } catch (e: any) {
+      await client.query('ROLLBACK');
+      return { success: false, error: { type: 'pg', title: 'saveRfq', status: 500, detail: e.message } };
+    } finally { client.release(); }
+  }
+  public async getRfq(tenantId: string, rfqId: string): Promise<any> {
+    const r = await this.pool.query(`SELECT * FROM an_rfqs WHERE tenant_id=$1 AND id=$2`, [tenantId, rfqId]);
+    if (!r.rows.length) return { success: true, data: null };
+    const lr = await this.pool.query(`SELECT * FROM an_rfq_lines WHERE tenant_id=$1 AND rfq_id=$2 ORDER BY line_number`, [tenantId, rfqId]);
+    return { success: true, data: { rfq: this.mapRfq(r.rows[0]), lines: lr.rows.map((x: any) => this.mapRfqLine(x)) } };
+  }
+  public async listRfqs(tenantId: string, filter?: any): Promise<any> {
+    let q = `SELECT * FROM an_rfqs WHERE tenant_id=$1`;
+    const params: any[] = [tenantId];
+    if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
+    if (filter?.prId) { params.push(filter.prId); q += ` AND pr_id=$${params.length}`; }
+    q += ' ORDER BY created_at DESC';
+    const r = await this.pool.query(q, params);
+    return { success: true, data: r.rows.map((x: any) => this.mapRfq(x)) };
+  }
+  public async updateRfq(tenantId: string, rfq: any): Promise<any> {
+    const r = await this.pool.query(
+      `UPDATE an_rfqs SET status=$1, sent_at=$2, closed_at=$3, notes=$4, updated_at=NOW() WHERE tenant_id=$5 AND id=$6 RETURNING *`,
+      [rfq.status, rfq.sentAt || null, rfq.closedAt || null, rfq.notes || null, tenantId, rfq.id]
+    );
+    if (!r.rows.length) return { success: false, error: { type: 'pg', title: 'rfq-not-found', status: 404, detail: rfq.id } };
+    return { success: true, data: this.mapRfq(r.rows[0]) };
+  }
+  private mapRfq(row: any) {
+    return {
+      id: row.id, tenantId: row.tenant_id, rfqNumber: row.rfq_number, status: row.status, prId: row.pr_id || undefined,
+      notes: row.notes || undefined, createdBy: row.created_by,
+      sentAt: row.sent_at ? new Date(row.sent_at).toISOString() : undefined,
+      closedAt: row.closed_at ? new Date(row.closed_at).toISOString() : undefined,
+      createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
+    };
+  }
+  private mapRfqLine(row: any) {
+    return {
+      id: row.id, tenantId: row.tenant_id, rfqId: row.rfq_id, lineNumber: row.line_number, itemId: row.item_id,
+      quantity: Number(row.quantity), uom: row.uom || undefined, notes: row.notes || undefined,
+    };
+  }
+  public async saveSupplierQuote(tenantId: string, quote: any, lines: any[], idempotencyKey: string): Promise<any> {
+    const hit = await this.checkIdempotency(tenantId, idempotencyKey, 'saveSupplierQuote');
+    if (hit) return { success: true, data: hit };
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO an_supplier_quotes (id, tenant_id, quote_number, rfq_id, vendor_id, vendor_name, status, quote_date, valid_until, notes, created_by, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())`,
+        [quote.id, tenantId, quote.quoteNumber, quote.rfqId, quote.vendorId, quote.vendorName, quote.status, quote.quoteDate, quote.validUntil || null, quote.notes || null, quote.createdBy]
+      );
+      for (const l of lines) {
+        await client.query(
+          `INSERT INTO an_supplier_quote_lines (id, tenant_id, quote_id, rfq_line_id, line_number, item_id, quantity, unit_price, lead_time_days, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [l.id, tenantId, quote.id, l.rfqLineId, l.lineNumber, l.itemId, l.quantity, l.unitPrice, l.leadTimeDays ?? null, l.notes || null]
+        );
+      }
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'saveSupplierQuote', quote);
+      return { success: true, data: quote };
+    } catch (e: any) {
+      await client.query('ROLLBACK');
+      return { success: false, error: { type: 'pg', title: 'saveSupplierQuote', status: 500, detail: e.message } };
+    } finally { client.release(); }
+  }
+  public async getSupplierQuote(tenantId: string, quoteId: string): Promise<any> {
+    const r = await this.pool.query(`SELECT * FROM an_supplier_quotes WHERE tenant_id=$1 AND id=$2`, [tenantId, quoteId]);
+    if (!r.rows.length) return { success: true, data: null };
+    const lr = await this.pool.query(`SELECT * FROM an_supplier_quote_lines WHERE tenant_id=$1 AND quote_id=$2 ORDER BY line_number`, [tenantId, quoteId]);
+    return { success: true, data: { quote: this.mapQuote(r.rows[0]), lines: lr.rows.map((x: any) => this.mapQuoteLine(x)) } };
+  }
+  public async listSupplierQuotes(tenantId: string, filter?: any): Promise<any> {
+    let q = `SELECT * FROM an_supplier_quotes WHERE tenant_id=$1`;
+    const params: any[] = [tenantId];
+    if (filter?.rfqId) { params.push(filter.rfqId); q += ` AND rfq_id=$${params.length}`; }
+    if (filter?.vendorId) { params.push(filter.vendorId); q += ` AND vendor_id=$${params.length}`; }
+    if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
+    q += ' ORDER BY created_at DESC';
+    const r = await this.pool.query(q, params);
+    return { success: true, data: r.rows.map((x: any) => this.mapQuote(x)) };
+  }
+  public async updateSupplierQuote(tenantId: string, quote: any): Promise<any> {
+    const r = await this.pool.query(
+      `UPDATE an_supplier_quotes SET status=$1, selected_at=$2, converted_po_id=$3, notes=$4, updated_at=NOW() WHERE tenant_id=$5 AND id=$6 RETURNING *`,
+      [quote.status, quote.selectedAt || null, quote.convertedPoId || null, quote.notes || null, tenantId, quote.id]
+    );
+    if (!r.rows.length) return { success: false, error: { type: 'pg', title: 'quote-not-found', status: 404, detail: quote.id } };
+    return { success: true, data: this.mapQuote(r.rows[0]) };
+  }
+  private mapQuote(row: any) {
+    return {
+      id: row.id, tenantId: row.tenant_id, quoteNumber: row.quote_number, rfqId: row.rfq_id, vendorId: row.vendor_id,
+      vendorName: row.vendor_name, status: row.status, quoteDate: String(row.quote_date).slice(0, 10),
+      validUntil: row.valid_until ? String(row.valid_until).slice(0, 10) : undefined, notes: row.notes || undefined,
+      createdBy: row.created_by, selectedAt: row.selected_at ? new Date(row.selected_at).toISOString() : undefined,
+      convertedPoId: row.converted_po_id || undefined,
+      createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
+    };
+  }
+  private mapQuoteLine(row: any) {
+    return {
+      id: row.id, tenantId: row.tenant_id, quoteId: row.quote_id, rfqLineId: row.rfq_line_id, lineNumber: row.line_number,
+      itemId: row.item_id, quantity: Number(row.quantity), unitPrice: Number(row.unit_price),
+      leadTimeDays: row.lead_time_days != null ? Number(row.lead_time_days) : undefined, notes: row.notes || undefined,
+    };
+  }
+
   public async listUserWarehouseAccess(tenantId: string, userId: string): Promise<any> {
     try {
       const r = await this.pool.query(

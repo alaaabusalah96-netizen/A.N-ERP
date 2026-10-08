@@ -705,6 +705,96 @@ export interface CompleteGoodsReceiptAtomicInput {
   newPoStatus: PurchaseOrderStatus;
 }
 
+
+// Phase 8a (P2P-001): Purchase Request + RFQ + Supplier Quotes (extends R15 PO)
+export type PurchaseRequestStatus = 'DRAFT' | 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED' | 'CONVERTED' | 'CANCELLED';
+export type RfqStatus = 'DRAFT' | 'SENT' | 'CLOSED' | 'CANCELLED';
+export type SupplierQuoteStatus = 'RECEIVED' | 'SELECTED' | 'REJECTED' | 'EXPIRED';
+
+export interface PurchaseRequest {
+  id: string;
+  tenantId: string;
+  prNumber: string;
+  status: PurchaseRequestStatus;
+  requestedBy: string;
+  neededBy?: string;
+  notes?: string;
+  costCenterId?: string;
+  projectId?: string;
+  sourceReorderEventId?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectionReason?: string;
+  convertedPoId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface PurchaseRequestLine {
+  id: string;
+  tenantId: string;
+  prId: string;
+  lineNumber: number;
+  itemId: string;
+  quantity: number;
+  uom?: string;
+  neededBy?: string;
+  costCenterId?: string;
+  projectId?: string;
+  notes?: string;
+}
+export interface RequestForQuote {
+  id: string;
+  tenantId: string;
+  rfqNumber: string;
+  status: RfqStatus;
+  prId?: string;
+  notes?: string;
+  createdBy: string;
+  sentAt?: string;
+  closedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface RfqLine {
+  id: string;
+  tenantId: string;
+  rfqId: string;
+  lineNumber: number;
+  itemId: string;
+  quantity: number;
+  uom?: string;
+  notes?: string;
+}
+export interface SupplierQuote {
+  id: string;
+  tenantId: string;
+  quoteNumber: string;
+  rfqId: string;
+  vendorId: string;
+  vendorName: string;
+  status: SupplierQuoteStatus;
+  quoteDate: string;
+  validUntil?: string;
+  notes?: string;
+  createdBy: string;
+  selectedAt?: string;
+  convertedPoId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface SupplierQuoteLine {
+  id: string;
+  tenantId: string;
+  quoteId: string;
+  rfqLineId: string;
+  lineNumber: number;
+  itemId: string;
+  quantity: number;
+  unitPrice: number;
+  leadTimeDays?: number;
+  notes?: string;
+}
+
 // Phase 16 (REC-001): stock vs ledger integrity (read-only aggregates)
 export interface InventoryIntegrityRow {
   warehouseId: string;
@@ -1149,6 +1239,20 @@ export interface StoragePort {
   updateGoodsReceipt(tenantId: string, receipt: GoodsReceipt): Promise<StorageResult<GoodsReceipt>>;
   completeGoodsReceiptAtomic(tenantId: string, input: CompleteGoodsReceiptAtomicInput, idempotencyKey: string): Promise<StorageResult<GoodsReceipt>>;
   sumOpenReceiptQtyForPoLine(tenantId: string, poLineId: string): Promise<StorageResult<number>>;
+
+  // Phase 8a (P2P-001): PR / RFQ / Supplier Quotes
+  savePurchaseRequest(tenantId: string, pr: PurchaseRequest, lines: PurchaseRequestLine[], idempotencyKey: string): Promise<StorageResult<PurchaseRequest>>;
+  getPurchaseRequest(tenantId: string, prId: string): Promise<StorageResult<{ pr: PurchaseRequest; lines: PurchaseRequestLine[] } | null>>;
+  listPurchaseRequests(tenantId: string, filter?: { status?: string; requestedBy?: string }): Promise<StorageResult<PurchaseRequest[]>>;
+  updatePurchaseRequest(tenantId: string, pr: PurchaseRequest): Promise<StorageResult<PurchaseRequest>>;
+  saveRfq(tenantId: string, rfq: RequestForQuote, lines: RfqLine[], idempotencyKey: string): Promise<StorageResult<RequestForQuote>>;
+  getRfq(tenantId: string, rfqId: string): Promise<StorageResult<{ rfq: RequestForQuote; lines: RfqLine[] } | null>>;
+  listRfqs(tenantId: string, filter?: { status?: string; prId?: string }): Promise<StorageResult<RequestForQuote[]>>;
+  updateRfq(tenantId: string, rfq: RequestForQuote): Promise<StorageResult<RequestForQuote>>;
+  saveSupplierQuote(tenantId: string, quote: SupplierQuote, lines: SupplierQuoteLine[], idempotencyKey: string): Promise<StorageResult<SupplierQuote>>;
+  getSupplierQuote(tenantId: string, quoteId: string): Promise<StorageResult<{ quote: SupplierQuote; lines: SupplierQuoteLine[] } | null>>;
+  listSupplierQuotes(tenantId: string, filter?: { rfqId?: string; vendorId?: string; status?: string }): Promise<StorageResult<SupplierQuote[]>>;
+  updateSupplierQuote(tenantId: string, quote: SupplierQuote): Promise<StorageResult<SupplierQuote>>;
   // Phase 16 (REC-001)
   getInventoryIntegrityAggregates(tenantId: string): Promise<StorageResult<InventoryIntegrityRow[]>>;
   // Phase 18 (SCOPE-001): per-user warehouse scope

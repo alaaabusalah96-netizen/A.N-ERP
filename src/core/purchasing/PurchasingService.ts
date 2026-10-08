@@ -4,7 +4,9 @@
 import {
   StoragePort, StorageResult, PurchaseOrder, PurchaseOrderLine, GoodsReceipt, GoodsReceiptLine,
   PurchaseOrderStatus, GoodsReceiptStatus, MasterPartner, StockItem,
+  PurchaseRequest, PurchaseRequestLine, RequestForQuote, RfqLine, SupplierQuote, SupplierQuoteLine,
 } from '../storage/StoragePort';
+import { DomainEventBus } from '../events/DomainEventBus';
 import { ApprovalEngine } from '../engines/ApprovalEngine';
 import { NumberingEngine } from '../engines/NumberingEngine';
 import { InventoryService } from '../inventory/InventoryService';
@@ -41,6 +43,9 @@ export class PurchasingService {
     if (!vendors.success) return vendors as any;
     const vendor = (vendors.data || []).find((v: MasterPartner) => v.id === input.vendorId);
     if (!vendor) return this.fail(404, 'vendor-not-found', 'المورد غير موجود', 'المورد غير مسجّل أو ليس من نوع VENDOR.');
+    if (vendor.status === 'PENDING_APPROVAL' || vendor.status === 'REJECTED') {
+      return this.fail(409, 'vendor-not-approved', 'المورد غير معتمد', 'لا يمكن إنشاء أمر شراء لمورد لم يُعتمد بعد (حوكمة البيانات / Dual-Control).');
+    }
 
     const lines: PurchaseOrderLine[] = [];
     let i = 0;
@@ -364,4 +369,405 @@ export class PurchasingService {
 
   public async getGoodsReceipt(tenantId: string, id: string) { return this.storage.getGoodsReceipt(tenantId, id); }
   public async listGoodsReceipts(tenantId: string, filter?: { poId?: string; status?: string }) { return this.storage.listGoodsReceipts(tenantId, filter); }
+
+  // ===========================================================================
+  // Phase 8a (P2P-001): Purchase Request → RFQ → Supplier Quote → PO
+  // ===========================================================================
+
+  public async createPurchaseRequest(
+    tenantId: string,
+    input: {
+      lines: Array<{ itemId: string; quantity: number; uom?: string; neededBy?: string; costCenterId?: string; projectId?: string; notes?: string }>;
+      requestedBy: string;
+      neededBy?: string;
+      notes?: string;
+      costCenterId?: string;
+      projectId?: string;
+      sourceReorderEventId?: string;
+      idempotencyKey: string;
+    },
+  ): Promise<SvcResult<{ pr: PurchaseRequest; lines: PurchaseRequestLine[] }>> {
+    if (!input.lines?.length) return this.fail(400, 'empty-pr', 'طلب شراء فارغ', 'يجب إضافة سطر واحد على الأقل.');
+    const lines: PurchaseRequestLine[] = [];
+    let i = 0;
+    for (const raw of input.lines) {
+      const qty = parsePositiveQuantity(raw.quantity, 'الكمية');
+      if (!qty.ok) return this.fail(400, 'invalid-qty', 'كمية غير صالحة', qty.detail);
+      const itemRes = await this.storage.getStockItem(tenantId, raw.itemId);
+      if (!itemRes.success || !itemRes.data) return this.fail(404, 'item-not-found', 'صنف غير موجود', `الصنف ${raw.itemId} غير موجود.`);
+      i += 1;
+      lines.push({
+        id: `prl-${input.idempotencyKey}-${i}`.slice(0, 80),
+        tenantId,
+        prId: '',
+        lineNumber: i,
+        itemId: raw.itemId,
+        quantity: qty.value,
+        uom: raw.uom,
+        neededBy: raw.neededBy?.slice(0, 10),
+        costCenterId: raw.costCenterId,
+        projectId: raw.projectId,
+        notes: raw.notes,
+      });
+    }
+    const seq = await this.numbering.generateNumber(tenantId, 'PURCHASE_REQUEST', 'PR', `${input.idempotencyKey}-num`);
+    if (!seq.success || !seq.data) return seq as any;
+    const prId = `pr-${input.idempotencyKey}`.slice(0, 60);
+    for (const l of lines) l.prId = prId;
+    const pr: PurchaseRequest = {
+      id: prId,
+      tenantId,
+      prNumber: seq.data.formattedCode,
+      status: 'DRAFT',
+      requestedBy: input.requestedBy,
+      neededBy: input.neededBy?.slice(0, 10),
+      notes: input.notes,
+      costCenterId: input.costCenterId,
+      projectId: input.projectId,
+      sourceReorderEventId: input.sourceReorderEventId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = await this.storage.savePurchaseRequest(tenantId, pr, lines, input.idempotencyKey);
+    if (!saved.success) return saved as any;
+    await DomainEventBus.publish({
+      eventType: 'PURCHASE_REQUESTED',
+      tenantId,
+      actorId: input.requestedBy,
+      actorName: input.requestedBy,
+      payload: { prId: pr.id, prNumber: pr.prNumber, lineCount: lines.length },
+      idempotencyKey: input.idempotencyKey,
+    });
+    return { success: true, data: { pr: saved.data!, lines } };
+  }
+
+  public async submitPurchaseRequest(tenantId: string, prId: string, actorId: string): Promise<SvcResult<PurchaseRequest>> {
+    const full = await this.storage.getPurchaseRequest(tenantId, prId);
+    if (!full.success || !full.data) return this.fail(404, 'pr-not-found', 'طلب الشراء غير موجود', 'تعذر العثور على طلب الشراء.');
+    if (full.data.pr.status !== 'DRAFT') return this.fail(409, 'invalid-pr-status', 'حالة غير صالحة', 'لا يمكن تقديم طلب ليس في حالة مسودة.');
+    const updated: PurchaseRequest = { ...full.data.pr, status: 'PENDING_APPROVAL', updatedAt: new Date().toISOString() };
+    return this.storage.updatePurchaseRequest(tenantId, updated);
+  }
+
+  public async approvePurchaseRequest(tenantId: string, prId: string, approverId: string): Promise<SvcResult<PurchaseRequest>> {
+    const full = await this.storage.getPurchaseRequest(tenantId, prId);
+    if (!full.success || !full.data) return this.fail(404, 'pr-not-found', 'طلب الشراء غير موجود', 'تعذر العثور على طلب الشراء.');
+    const pr = full.data.pr;
+    if (pr.status !== 'PENDING_APPROVAL' && pr.status !== 'DRAFT') {
+      return this.fail(409, 'invalid-pr-status', 'حالة غير صالحة', 'لا يمكن اعتماد طلب في هذه الحالة.');
+    }
+    if (pr.requestedBy === approverId) {
+      return this.fail(403, 'sod-violation', 'تعارض فصل المهام', 'منشئ طلب الشراء لا يجوز له اعتماده بنفسه.');
+    }
+    const updated: PurchaseRequest = {
+      ...pr,
+      status: 'APPROVED',
+      approvedBy: approverId,
+      approvedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    return this.storage.updatePurchaseRequest(tenantId, updated);
+  }
+
+  public async rejectPurchaseRequest(tenantId: string, prId: string, actorId: string, reason: string): Promise<SvcResult<PurchaseRequest>> {
+    const full = await this.storage.getPurchaseRequest(tenantId, prId);
+    if (!full.success || !full.data) return this.fail(404, 'pr-not-found', 'طلب الشراء غير موجود', 'تعذر العثور على طلب الشراء.');
+    if (full.data.pr.status === 'CONVERTED' || full.data.pr.status === 'CANCELLED') {
+      return this.fail(409, 'invalid-pr-status', 'حالة غير صالحة', 'لا يمكن رفض طلب محوّل أو ملغى.');
+    }
+    const updated: PurchaseRequest = {
+      ...full.data.pr,
+      status: 'REJECTED',
+      rejectionReason: reason || 'مرفوض',
+      updatedAt: new Date().toISOString(),
+    };
+    return this.storage.updatePurchaseRequest(tenantId, updated);
+  }
+
+  public async convertPurchaseRequestToPO(
+    tenantId: string,
+    input: { prId: string; vendorId: string; actorId: string; unitCosts: Record<string, number>; idempotencyKey: string },
+  ): Promise<SvcResult<{ po: PurchaseOrder; lines: PurchaseOrderLine[]; pr: PurchaseRequest }>> {
+    const full = await this.storage.getPurchaseRequest(tenantId, input.prId);
+    if (!full.success || !full.data) return this.fail(404, 'pr-not-found', 'طلب الشراء غير موجود', 'تعذر العثور على طلب الشراء.');
+    const pr = full.data.pr;
+    if (pr.status !== 'APPROVED') return this.fail(409, 'pr-not-approved', 'طلب غير معتمد', 'يجب اعتماد طلب الشراء قبل تحويله لأمر شراء.');
+    if (pr.convertedPoId) return this.fail(409, 'pr-already-converted', 'طلب محوّل مسبقًا', 'تم تحويل هذا الطلب مسبقًا.');
+    const poLines = full.data.lines.map((l) => {
+      const cost = input.unitCosts[l.itemId] ?? input.unitCosts[l.id] ?? 0;
+      return { itemId: l.itemId, orderedQty: l.quantity, unitCost: cost };
+    });
+    const poRes = await this.createPurchaseOrder(tenantId, {
+      vendorId: input.vendorId,
+      lines: poLines,
+      createdBy: input.actorId,
+      notes: `من طلب شراء ${pr.prNumber}`,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!poRes.success || !poRes.data) return poRes as any;
+    const updatedPr: PurchaseRequest = {
+      ...pr,
+      status: 'CONVERTED',
+      convertedPoId: poRes.data.po.id,
+      updatedAt: new Date().toISOString(),
+    };
+    const up = await this.storage.updatePurchaseRequest(tenantId, updatedPr);
+    if (!up.success) return up as any;
+    await DomainEventBus.publish({
+      eventType: 'PO_ISSUED',
+      tenantId,
+      actorId: input.actorId,
+      actorName: input.actorId,
+      payload: { poId: poRes.data.po.id, poNumber: poRes.data.po.poNumber, prId: pr.id },
+      idempotencyKey: input.idempotencyKey,
+    });
+    return { success: true, data: { po: poRes.data.po, lines: poRes.data.lines, pr: up.data! } };
+  }
+
+  public async createRfq(
+    tenantId: string,
+    input: {
+      prId?: string;
+      lines?: Array<{ itemId: string; quantity: number; uom?: string; notes?: string }>;
+      createdBy: string;
+      notes?: string;
+      idempotencyKey: string;
+    },
+  ): Promise<SvcResult<{ rfq: RequestForQuote; lines: RfqLine[] }>> {
+    let rawLines = input.lines || [];
+    if (input.prId) {
+      const prFull = await this.storage.getPurchaseRequest(tenantId, input.prId);
+      if (!prFull.success || !prFull.data) return this.fail(404, 'pr-not-found', 'طلب الشراء غير موجود', 'تعذر ربط RFQ بطلب شراء.');
+      if (prFull.data.pr.status !== 'APPROVED' && prFull.data.pr.status !== 'CONVERTED') {
+        return this.fail(409, 'pr-not-approved', 'طلب غير معتمد', 'إنشاء RFQ من طلب شراء يتطلب اعتماده أولًا.');
+      }
+      if (!rawLines.length) {
+        rawLines = prFull.data.lines.map((l) => ({ itemId: l.itemId, quantity: l.quantity, uom: l.uom, notes: l.notes }));
+      }
+    }
+    if (!rawLines.length) return this.fail(400, 'empty-rfq', 'طلب عرض سعر فارغ', 'يجب إضافة سطر واحد على الأقل.');
+    const lines: RfqLine[] = [];
+    let i = 0;
+    for (const raw of rawLines) {
+      const qty = parsePositiveQuantity(raw.quantity, 'الكمية');
+      if (!qty.ok) return this.fail(400, 'invalid-qty', 'كمية غير صالحة', qty.detail);
+      const itemRes = await this.storage.getStockItem(tenantId, raw.itemId);
+      if (!itemRes.success || !itemRes.data) return this.fail(404, 'item-not-found', 'صنف غير موجود', `الصنف ${raw.itemId} غير موجود.`);
+      i += 1;
+      lines.push({
+        id: `rfql-${input.idempotencyKey}-${i}`.slice(0, 80),
+        tenantId,
+        rfqId: '',
+        lineNumber: i,
+        itemId: raw.itemId,
+        quantity: qty.value,
+        uom: raw.uom,
+        notes: raw.notes,
+      });
+    }
+    const seq = await this.numbering.generateNumber(tenantId, 'RFQ', 'RFQ', `${input.idempotencyKey}-num`);
+    if (!seq.success || !seq.data) return seq as any;
+    const rfqId = `rfq-${input.idempotencyKey}`.slice(0, 60);
+    for (const l of lines) l.rfqId = rfqId;
+    const rfq: RequestForQuote = {
+      id: rfqId,
+      tenantId,
+      rfqNumber: seq.data.formattedCode,
+      status: 'DRAFT',
+      prId: input.prId,
+      notes: input.notes,
+      createdBy: input.createdBy,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = await this.storage.saveRfq(tenantId, rfq, lines, input.idempotencyKey);
+    if (!saved.success) return saved as any;
+    return { success: true, data: { rfq: saved.data!, lines } };
+  }
+
+  public async sendRfq(tenantId: string, rfqId: string, actorId: string): Promise<SvcResult<RequestForQuote>> {
+    const full = await this.storage.getRfq(tenantId, rfqId);
+    if (!full.success || !full.data) return this.fail(404, 'rfq-not-found', 'طلب عرض السعر غير موجود', 'تعذر العثور على RFQ.');
+    if (full.data.rfq.status !== 'DRAFT') return this.fail(409, 'invalid-rfq-status', 'حالة غير صالحة', 'لا يمكن إرسال RFQ ليس مسودة.');
+    const updated: RequestForQuote = {
+      ...full.data.rfq,
+      status: 'SENT',
+      sentAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const res = await this.storage.updateRfq(tenantId, updated);
+    if (!res.success) return res;
+    await DomainEventBus.publish({
+      eventType: 'RFQ_SENT',
+      tenantId,
+      actorId,
+      actorName: actorId,
+      payload: { rfqId, rfqNumber: updated.rfqNumber },
+    });
+    return res;
+  }
+
+  public async recordSupplierQuote(
+    tenantId: string,
+    input: {
+      rfqId: string;
+      vendorId: string;
+      lines: Array<{ rfqLineId: string; itemId: string; quantity: number; unitPrice: number; leadTimeDays?: number; notes?: string }>;
+      quoteDate?: string;
+      validUntil?: string;
+      notes?: string;
+      createdBy: string;
+      idempotencyKey: string;
+    },
+  ): Promise<SvcResult<{ quote: SupplierQuote; lines: SupplierQuoteLine[] }>> {
+    const rfqFull = await this.storage.getRfq(tenantId, input.rfqId);
+    if (!rfqFull.success || !rfqFull.data) return this.fail(404, 'rfq-not-found', 'طلب عرض السعر غير موجود', 'تعذر ربط العرض بـ RFQ.');
+    if (rfqFull.data.rfq.status !== 'SENT' && rfqFull.data.rfq.status !== 'DRAFT') {
+      return this.fail(409, 'invalid-rfq-status', 'حالة RFQ غير صالحة', 'لا تُقبل عروض على RFQ مغلق أو ملغى.');
+    }
+    const vendors = await this.storage.listMasterPartners(tenantId, 'VENDOR');
+    if (!vendors.success) return vendors as any;
+    const vendor = (vendors.data || []).find((v: MasterPartner) => v.id === input.vendorId);
+    if (!vendor) return this.fail(404, 'vendor-not-found', 'المورد غير موجود', 'المورد غير مسجّل.');
+    if (vendor.status === 'PENDING_APPROVAL' || vendor.status === 'REJECTED') {
+      return this.fail(409, 'vendor-not-approved', 'المورد غير معتمد', 'لا تُقبل عروض من مورد غير معتمد.');
+    }
+    if (!input.lines?.length) return this.fail(400, 'empty-quote', 'عرض فارغ', 'يجب إضافة سطر واحد على الأقل.');
+    const lines: SupplierQuoteLine[] = [];
+    let i = 0;
+    for (const raw of input.lines) {
+      const qty = parsePositiveQuantity(raw.quantity, 'الكمية');
+      if (!qty.ok) return this.fail(400, 'invalid-qty', 'كمية غير صالحة', qty.detail);
+      const price = parseNonNegativeMoney(raw.unitPrice, 'سعر الوحدة');
+      if (!price.ok) return this.fail(400, 'invalid-price', 'سعر غير صالح', price.detail);
+      i += 1;
+      lines.push({
+        id: `sql-${input.idempotencyKey}-${i}`.slice(0, 80),
+        tenantId,
+        quoteId: '',
+        rfqLineId: raw.rfqLineId,
+        lineNumber: i,
+        itemId: raw.itemId,
+        quantity: qty.value,
+        unitPrice: price.value,
+        leadTimeDays: raw.leadTimeDays,
+        notes: raw.notes,
+      });
+    }
+    const seq = await this.numbering.generateNumber(tenantId, 'SUPPLIER_QUOTE', 'SQ', `${input.idempotencyKey}-num`);
+    if (!seq.success || !seq.data) return seq as any;
+    const quoteId = `sq-${input.idempotencyKey}`.slice(0, 60);
+    for (const l of lines) l.quoteId = quoteId;
+    const quote: SupplierQuote = {
+      id: quoteId,
+      tenantId,
+      quoteNumber: seq.data.formattedCode,
+      rfqId: input.rfqId,
+      vendorId: vendor.id,
+      vendorName: vendor.nameAr,
+      status: 'RECEIVED',
+      quoteDate: (input.quoteDate || new Date().toISOString()).slice(0, 10),
+      validUntil: input.validUntil?.slice(0, 10),
+      notes: input.notes,
+      createdBy: input.createdBy,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = await this.storage.saveSupplierQuote(tenantId, quote, lines, input.idempotencyKey);
+    if (!saved.success) return saved as any;
+    await DomainEventBus.publish({
+      eventType: 'SUPPLIER_QUOTE_RECEIVED',
+      tenantId,
+      actorId: input.createdBy,
+      actorName: input.createdBy,
+      payload: { quoteId, rfqId: input.rfqId, vendorId: vendor.id },
+      idempotencyKey: input.idempotencyKey,
+    });
+    return { success: true, data: { quote: saved.data!, lines } };
+  }
+
+  public async selectSupplierQuote(tenantId: string, quoteId: string, actorId: string): Promise<SvcResult<SupplierQuote>> {
+    const full = await this.storage.getSupplierQuote(tenantId, quoteId);
+    if (!full.success || !full.data) return this.fail(404, 'quote-not-found', 'عرض المورد غير موجود', 'تعذر العثور على العرض.');
+    if (full.data.quote.status !== 'RECEIVED') {
+      return this.fail(409, 'invalid-quote-status', 'حالة غير صالحة', 'لا يمكن اختيار عرض ليس في حالة RECEIVED.');
+    }
+    // reject siblings on same RFQ
+    const siblings = await this.storage.listSupplierQuotes(tenantId, { rfqId: full.data.quote.rfqId });
+    if (siblings.success && siblings.data) {
+      for (const s of siblings.data) {
+        if (s.id !== quoteId && s.status === 'RECEIVED') {
+          await this.storage.updateSupplierQuote(tenantId, { ...s, status: 'REJECTED', updatedAt: new Date().toISOString() });
+        }
+      }
+    }
+    const updated: SupplierQuote = {
+      ...full.data.quote,
+      status: 'SELECTED',
+      selectedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    return this.storage.updateSupplierQuote(tenantId, updated);
+  }
+
+  public async convertQuoteToPO(
+    tenantId: string,
+    input: { quoteId: string; actorId: string; idempotencyKey: string },
+  ): Promise<SvcResult<{ po: PurchaseOrder; lines: PurchaseOrderLine[]; quote: SupplierQuote }>> {
+    const full = await this.storage.getSupplierQuote(tenantId, input.quoteId);
+    if (!full.success || !full.data) return this.fail(404, 'quote-not-found', 'عرض المورد غير موجود', 'تعذر العثور على العرض.');
+    const quote = full.data.quote;
+    if (quote.status !== 'SELECTED' && quote.status !== 'RECEIVED') {
+      return this.fail(409, 'invalid-quote-status', 'حالة غير صالحة', 'يجب اختيار العرض قبل التحويل لأمر شراء.');
+    }
+    if (quote.convertedPoId) return this.fail(409, 'quote-already-converted', 'عرض محوّل مسبقًا', 'تم تحويل هذا العرض مسبقًا.');
+    if (quote.status === 'RECEIVED') {
+      const sel = await this.selectSupplierQuote(tenantId, quote.id, input.actorId);
+      if (!sel.success) return sel as any;
+    }
+    const poRes = await this.createPurchaseOrder(tenantId, {
+      vendorId: quote.vendorId,
+      lines: full.data.lines.map((l) => ({ itemId: l.itemId, orderedQty: l.quantity, unitCost: l.unitPrice })),
+      createdBy: input.actorId,
+      notes: `من عرض مورد ${quote.quoteNumber}`,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!poRes.success || !poRes.data) return poRes as any;
+    const updatedQuote: SupplierQuote = {
+      ...quote,
+      status: 'SELECTED',
+      convertedPoId: poRes.data.po.id,
+      selectedAt: quote.selectedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const up = await this.storage.updateSupplierQuote(tenantId, updatedQuote);
+    if (!up.success) return up as any;
+    // close RFQ
+    const rfqFull = await this.storage.getRfq(tenantId, quote.rfqId);
+    if (rfqFull.success && rfqFull.data) {
+      await this.storage.updateRfq(tenantId, {
+        ...rfqFull.data.rfq,
+        status: 'CLOSED',
+        closedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    await DomainEventBus.publish({
+      eventType: 'PO_ISSUED',
+      tenantId,
+      actorId: input.actorId,
+      actorName: input.actorId,
+      payload: { poId: poRes.data.po.id, poNumber: poRes.data.po.poNumber, quoteId: quote.id },
+      idempotencyKey: input.idempotencyKey,
+    });
+    return { success: true, data: { po: poRes.data.po, lines: poRes.data.lines, quote: up.data! } };
+  }
+
+  public async getPurchaseRequest(tenantId: string, prId: string) { return this.storage.getPurchaseRequest(tenantId, prId); }
+  public async listPurchaseRequests(tenantId: string, filter?: { status?: string; requestedBy?: string }) { return this.storage.listPurchaseRequests(tenantId, filter); }
+  public async getRfq(tenantId: string, rfqId: string) { return this.storage.getRfq(tenantId, rfqId); }
+  public async listRfqs(tenantId: string, filter?: { status?: string; prId?: string }) { return this.storage.listRfqs(tenantId, filter); }
+  public async getSupplierQuote(tenantId: string, quoteId: string) { return this.storage.getSupplierQuote(tenantId, quoteId); }
+  public async listSupplierQuotes(tenantId: string, filter?: { rfqId?: string; vendorId?: string; status?: string }) { return this.storage.listSupplierQuotes(tenantId, filter); }
+
 }

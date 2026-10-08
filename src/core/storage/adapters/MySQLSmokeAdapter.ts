@@ -312,6 +312,20 @@ export class MySQLSmokeAdapter implements StoragePort {
   getPurchaseOrder(..._a: any[]) { return this.smokeOnlyError<any>('getPurchaseOrder'); }
   listPurchaseOrders(..._a: any[]) { return this.smokeOnlyError<any>('listPurchaseOrders'); }
   updatePurchaseOrderStatus(..._a: any[]) { return this.smokeOnlyError<any>('updatePurchaseOrderStatus'); }
+
+  savePurchaseRequest(..._a: any[]) { return this.smokeOnlyError<any>('savePurchaseRequest'); }
+  getPurchaseRequest(..._a: any[]) { return this.smokeOnlyError<any>('getPurchaseRequest'); }
+  listPurchaseRequests(..._a: any[]) { return this.smokeOnlyError<any>('listPurchaseRequests'); }
+  updatePurchaseRequest(..._a: any[]) { return this.smokeOnlyError<any>('updatePurchaseRequest'); }
+  saveRfq(..._a: any[]) { return this.smokeOnlyError<any>('saveRfq'); }
+  getRfq(..._a: any[]) { return this.smokeOnlyError<any>('getRfq'); }
+  listRfqs(..._a: any[]) { return this.smokeOnlyError<any>('listRfqs'); }
+  updateRfq(..._a: any[]) { return this.smokeOnlyError<any>('updateRfq'); }
+  saveSupplierQuote(..._a: any[]) { return this.smokeOnlyError<any>('saveSupplierQuote'); }
+  getSupplierQuote(..._a: any[]) { return this.smokeOnlyError<any>('getSupplierQuote'); }
+  listSupplierQuotes(..._a: any[]) { return this.smokeOnlyError<any>('listSupplierQuotes'); }
+  updateSupplierQuote(..._a: any[]) { return this.smokeOnlyError<any>('updateSupplierQuote'); }
+
   saveGoodsReceipt(..._a: any[]) { return this.smokeOnlyError<any>('saveGoodsReceipt'); }
   getGoodsReceipt(..._a: any[]) { return this.smokeOnlyError<any>('getGoodsReceipt'); }
   listGoodsReceipts(..._a: any[]) { return this.smokeOnlyError<any>('listGoodsReceipts'); }

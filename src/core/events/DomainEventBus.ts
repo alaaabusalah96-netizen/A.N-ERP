@@ -24,7 +24,13 @@ export type DomainEventType =
   | 'STOCK_ISSUED'
   | 'STOCK_TRANSFERRED'
   | 'STOCK_COUNT_VARIANCE_DETECTED'
-  | 'REORDER_POINT_REACHED';
+  | 'REORDER_POINT_REACHED'
+  | 'PURCHASE_REQUESTED'
+  | 'RFQ_SENT'
+  | 'SUPPLIER_QUOTE_RECEIVED'
+  | 'PO_ISSUED'
+  | 'THREE_WAY_MATCH_FAILED'
+  | 'SUPPLIER_INVOICE_APPROVED';
 
 export interface DomainEvent<T = any> {
   id: string;
