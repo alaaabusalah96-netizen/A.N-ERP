@@ -18,6 +18,8 @@
     "battery:phase7.6": "tsx src/core/tests/cliRunPhase7_6.ts",
     "verify:f1": "tsx scripts/verifyF1Standards.ts",
     "verify:f1:pg": "tsx scripts/verifyF1StandardsPg.ts",
+    "verify:f2": "tsx scripts/verifyF2Decisions.ts",
+    "verify:f2:pg": "tsx scripts/verifyF2DecisionsPg.ts",
     "test:e2e": "tsx scripts/runPhase4_6E2E.ts"
   },
   "dependencies": {
