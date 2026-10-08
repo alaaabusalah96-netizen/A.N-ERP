@@ -27,6 +27,8 @@ import { runPhase1Battery } from './src/core/tests/runPhase1Battery';
 import { globalStorageRouter } from './src/core/storage/StorageRouter';
 import { PostingEngine } from './src/core/engines/PostingEngine';
 import { seedStandardsCatalogue } from './src/core/standards/seedCatalogue';
+import { RuleExplanationService } from './src/core/standards/RuleExplanationService';
+import { StandardsDecisionService } from './src/core/standards/StandardsDecisionService';
 import { ApprovalEngine } from './src/core/engines/ApprovalEngine';
 import { NumberingEngine } from './src/core/engines/NumberingEngine';
 import { JournalEntry, RFC7807Problem, User, ActiveSessionRecord, StoragePort, CompanyProfile, TenantCompany, CustomFieldDefinition } from './src/core/storage/StoragePort';
@@ -3435,6 +3437,35 @@ async function startServer() {
     const ne = new NumberingEngine(storage);
     return new InventoryService(storage, pe, ne);
   };
+
+  // F3a (SI-7): "why was this entry/treatment produced?" — read-only, tenant-scoped via getRequestStorage.
+  app.get('/api/standards/explain/journal/:entryId', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const out = await new RuleExplanationService(storage).explainJournal((req as any).authContext.tenantId, String(req.params.entryId));
+      return res.status(out.found ? 200 : 404).json({ success: out.found, data: out });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.get('/api/standards/explain/decision/:id', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const out = await new RuleExplanationService(storage).explainDecision((req as any).authContext.tenantId, String(req.params.id));
+      return res.status(out.found ? 200 : 404).json({ success: out.found, data: out });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.get('/api/standards/decisions', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const q = req.query as Record<string, string | undefined>;
+      const limit = Math.min(Math.max(parseInt(q.limit || '50', 10) || 50, 1), 200);
+      const result = await new StandardsDecisionService(storage).findDecisions((req as any).authContext.tenantId, { eventType: q.eventType, eventId: q.eventId, journalEntryId: q.journalEntryId, status: q.status, limit });
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
 
   // Phase 7 Acceptance Battery Endpoint (Internal / Auditor)
   app.get('/api/internal/phase7-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
