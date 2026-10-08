@@ -1,0 +1,30 @@
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[phase-4] DECISION: DB role bypasses RLS -> global membership backfill
+[phase-4] DECISION: DB role bypasses RLS -> global membership backfill
+[PASS] PG0 initializeSchema succeeds (idempotent re-run)
+[PASS] PG1 test tenant zzf3amuzg38o0 created
+[PASS] PG1 test tenant zzf3bmuzg38o0 created
+--- shared F3b acceptance suite on PostgresPrimaryAdapter ---
+[PASS] F3-1 inventory purchase: accounting rule + separate tax rule + inventory effect select the path; journal D inventory 1000 / D VAT 100 / C GR-IR 1100 posted through PostingEngine
+[PASS] F3-2 sales: invoice path (revenue + VAT, tax rule cited) and delivery path (COGS/inventory) pick different rules; both journals posted, linked and explained
+[PASS] F3-3 foreign currency: v1 before 2025 and v2 after use different effective-date rules; a missing amount/rate fact -> REVIEW_REQUIRED (no invented rate)
+[PASS] F3-4 fixed asset: capitalize -> asset account, below-threshold -> expense, depreciation event is its own rule; undecided capitalization (fact missing) -> REVIEW_REQUIRED
+[PASS] F3-5 missing fact: REVIEW_REQUIRED with the missing list, no lines, DETERMINISTIC never claimed, bridge refuses to post, explanation shows what is missing
+[PASS] F3-6 jurisdiction change: IFRS-pack vs EAS-pack give a different rule, framework and journal for identical facts; each explained with its own framework
+[PASS] F3-7 historical transaction: a 2024 event uses v1 (expense 5201) and a 2025 event uses v2 (5101); the stored 2024 explanation still names v1
+[PASS] F3-8 each of the 12 posted journals carries a durable decision reference (ruleId, version, standard, framework, jurisdiction) retrievable by journal id
+[PASS] F3-9 "why was this entry posted?": every section present (event, facts, framework, jurisdiction, standard, rule+source, decision, mapping, journal check, tax, inventory effect), AR+EN text
+[PASS] F3-9b a journal that no decision produced is reported as such (no invented explanation); another tenant sees nothing
+[PASS] F3-10 journals reached the ledger through PostingEngine/StoragePort: status POSTED, balanced, the account balance reflects the posting; re-posting a decision is refused and creates no second journal
+[PASS] F3-11 company policy: no policy -> REVIEW_REQUIRED; FIFO period and weighted-average period post different journals and the explanation shows the policy and its version
+[PASS] F3-12 a SOURCE_REQUIRED rule blocks automation end to end: REVIEW_REQUIRED, bridge refuses, no journal exists for the event
+[PASS] F3-13 a decision linked to a journal that is missing is explained honestly (journal.found=false, matchesTreatment=null)
+--- DB-level proofs ---
+[PASS] PGF fixture rule registered on PostgreSQL
+[PASS] PGF decision stored
+[PASS] PGJ1 race: 6 parallel postDecision calls on one decision leave exactly ONE journal row, the account moved once (77), the link points to it and every other caller got a clean 409/ok (no 5xx)
+[PASS] PGD1 durability: a fresh adapter instance explains the journal from PostgreSQL alone (rule id+version, standard, matching lines)
+[PASS] PGD2 raw SQL: two journal lines (D5201 77 / C1105 77) and the decision row holds the same journal id
+[PASS] PGI1 isolation: tenant B cannot explain tenant A's journal and cannot post tenant A's decision
+
+Passed: 23 | Failed: 0
