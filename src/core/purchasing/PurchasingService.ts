@@ -5,6 +5,7 @@ import {
   StoragePort, StorageResult, PurchaseOrder, PurchaseOrderLine, GoodsReceipt, GoodsReceiptLine,
   PurchaseOrderStatus, GoodsReceiptStatus, MasterPartner, StockItem,
   PurchaseRequest, PurchaseRequestLine, RequestForQuote, RfqLine, SupplierQuote, SupplierQuoteLine,
+  SupplierInvoice, SupplierInvoiceLine, ThreeWayMatchResult, ThreeWayMatchLineResult,
 } from '../storage/StoragePort';
 import { DomainEventBus } from '../events/DomainEventBus';
 import { ApprovalEngine } from '../engines/ApprovalEngine';
@@ -769,5 +770,176 @@ export class PurchasingService {
   public async listRfqs(tenantId: string, filter?: { status?: string; prId?: string }) { return this.storage.listRfqs(tenantId, filter); }
   public async getSupplierQuote(tenantId: string, quoteId: string) { return this.storage.getSupplierQuote(tenantId, quoteId); }
   public async listSupplierQuotes(tenantId: string, filter?: { rfqId?: string; vendorId?: string; status?: string }) { return this.storage.listSupplierQuotes(tenantId, filter); }
+
+
+  // Phase 8c (P2P-002): Supplier Invoice + Three-Way Matching
+  public async createSupplierInvoice(
+    tenantId: string,
+    input: {
+      poId: string; receiptId?: string; vendorInvoiceRef: string; invoiceDate?: string; dueDate?: string;
+      notes?: string; taxAmount?: number; autoMatch?: boolean;
+      lines: Array<{ poLineId: string; itemId: string; invoicedQty: number; unitPrice: number; taxAmount?: number; notes?: string }>;
+      createdBy: string; idempotencyKey: string;
+    },
+  ): Promise<SvcResult<{ invoice: SupplierInvoice; lines: SupplierInvoiceLine[]; match?: ThreeWayMatchResult }>> {
+    if (!input.lines?.length) return this.fail(400, 'empty-invoice', 'فاتورة فارغة', 'يجب إضافة سطر واحد على الأقل.');
+    if (!input.vendorInvoiceRef?.trim()) return this.fail(400, 'missing-ref', 'مرجع الفاتورة مطلوب', 'رقم فاتورة المورد إلزامي.');
+    const poFull = await this.storage.getPurchaseOrder(tenantId, input.poId);
+    if (!poFull.success || !poFull.data) return this.fail(404, 'po-not-found', 'أمر الشراء غير موجود', 'تعذر ربط الفاتورة بأمر شراء.');
+    const { po, lines: poLines } = poFull.data;
+    if (po.status === 'CANCELLED' || po.status === 'DRAFT') {
+      return this.fail(409, 'invalid-po-status', 'حالة أمر الشراء غير صالحة', 'لا تُقبل فاتورة على أمر ملغى أو مسودة.');
+    }
+    const vendors = await this.storage.listMasterPartners(tenantId, 'VENDOR');
+    if (!vendors.success) return vendors as any;
+    const vendor = (vendors.data || []).find((v: MasterPartner) => v.id === po.vendorId);
+    if (!vendor) return this.fail(404, 'vendor-not-found', 'المورد غير موجود', 'مورد أمر الشراء غير مسجّل.');
+    if (vendor.status === 'PENDING_APPROVAL' || vendor.status === 'REJECTED') {
+      return this.fail(409, 'vendor-not-approved', 'المورد غير معتمد', 'لا تُقبل فاتورة لمورد غير معتمد.');
+    }
+    const tol = await this.tolerancePct(tenantId);
+    const invLines: SupplierInvoiceLine[] = [];
+    let i = 0; let subtotal = 0;
+    for (const raw of input.lines) {
+      const qty = parsePositiveQuantity(raw.invoicedQty, 'كمية الفاتورة');
+      if (!qty.ok) return this.fail(400, 'invalid-qty', 'كمية غير صالحة', qty.detail);
+      const price = parseNonNegativeMoney(raw.unitPrice, 'سعر الوحدة');
+      if (!price.ok) return this.fail(400, 'invalid-price', 'سعر غير صالح', price.detail);
+      const pl = poLines.find((p) => p.id === raw.poLineId);
+      if (!pl) return this.fail(400, 'invalid-po-line', 'سطر أمر شراء غير صالح', `السطر ${raw.poLineId} لا يتبع أمر الشراء.`);
+      if (pl.itemId !== raw.itemId) return this.fail(400, 'item-mismatch', 'عدم تطابق الصنف', 'صنف سطر الفاتورة لا يطابق سطر أمر الشراء.');
+      i += 1;
+      const lineTotal = Number((qty.value * price.value).toFixed(4));
+      subtotal += lineTotal;
+      invLines.push({
+        id: `sil-${input.idempotencyKey}-${i}`.slice(0, 80), tenantId, invoiceId: '', lineNumber: i,
+        poLineId: raw.poLineId, itemId: raw.itemId, invoicedQty: qty.value, unitPrice: price.value, lineTotal,
+        taxAmount: raw.taxAmount, notes: raw.notes,
+      });
+    }
+    const taxAmount = Number(input.taxAmount || 0);
+    const seq = await this.numbering.generateNumber(tenantId, 'SUPPLIER_INVOICE', 'SINV', `${input.idempotencyKey}-num`);
+    if (!seq.success || !seq.data) return seq as any;
+    const invId = `sinv-${input.idempotencyKey}`.slice(0, 60);
+    for (const l of invLines) l.invoiceId = invId;
+    const inv: SupplierInvoice = {
+      id: invId, tenantId, invoiceNumber: seq.data.formattedCode, vendorInvoiceRef: input.vendorInvoiceRef.trim(),
+      poId: po.id, poNumber: po.poNumber, vendorId: po.vendorId, vendorName: po.vendorName, receiptId: input.receiptId,
+      status: 'MATCH_PENDING', invoiceDate: (input.invoiceDate || new Date().toISOString()).slice(0, 10),
+      dueDate: input.dueDate?.slice(0, 10), subtotal: Number(subtotal.toFixed(4)), taxAmount,
+      totalAmount: Number((subtotal + taxAmount).toFixed(4)), matchTolerancePct: tol, notes: input.notes,
+      createdBy: input.createdBy, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    };
+    const saved = await this.storage.saveSupplierInvoice(tenantId, inv, invLines, input.idempotencyKey);
+    if (!saved.success) return saved as any;
+    let match: ThreeWayMatchResult | undefined;
+    if (input.autoMatch !== false) {
+      const mr = await this.runThreeWayMatch(tenantId, invId);
+      if (mr.success && mr.data) match = mr.data;
+    }
+    const fresh = await this.storage.getSupplierInvoice(tenantId, invId);
+    return { success: true, data: { invoice: fresh.data?.invoice || saved.data!, lines: fresh.data?.lines || invLines, match } };
+  }
+
+  public async runThreeWayMatch(tenantId: string, invoiceId: string): Promise<SvcResult<ThreeWayMatchResult>> {
+    const full = await this.storage.getSupplierInvoice(tenantId, invoiceId);
+    if (!full.success || !full.data) return this.fail(404, 'invoice-not-found', 'فاتورة المورد غير موجودة', 'تعذر العثور على الفاتورة.');
+    const { invoice, lines } = full.data;
+    if (invoice.status === 'POSTED' || invoice.status === 'CANCELLED') {
+      return this.fail(409, 'invalid-invoice-status', 'حالة غير صالحة', 'لا تُعاد مطابقة فاتورة مرحّلة أو ملغاة.');
+    }
+    const poFull = await this.storage.getPurchaseOrder(tenantId, invoice.poId);
+    if (!poFull.success || !poFull.data) return this.fail(404, 'po-not-found', 'أمر الشراء غير موجود', 'تعذر تحميل أمر الشراء للمطابقة.');
+    const poLines = poFull.data.lines;
+    const tol = Number(invoice.matchTolerancePct) || 0;
+    const tolFactor = 1 + tol / 100;
+    const lineResults: ThreeWayMatchLineResult[] = [];
+    let allOk = true;
+    for (const il of lines) {
+      const pl = poLines.find((p) => p.id === il.poLineId);
+      if (!pl) {
+        allOk = false;
+        lineResults.push({ poLineId: il.poLineId, itemId: il.itemId, orderedQty: 0, receivedQty: 0, invoicedQty: il.invoicedQty, poUnitCost: 0, invoiceUnitPrice: il.unitPrice, qtyOk: false, priceOk: false, detailAr: 'سطر أمر الشراء غير موجود' });
+        continue;
+      }
+      const ordered = Number(pl.orderedQty), received = Number(pl.receivedQty), invoiced = Number(il.invoicedQty);
+      const poCost = Number(pl.unitCost), invPrice = Number(il.unitPrice);
+      const qtyOk = invoiced <= received * tolFactor + 1e-6 && invoiced <= ordered * tolFactor + 1e-6 && invoiced > 0;
+      let priceOk = true;
+      if (poCost === 0) priceOk = invPrice === 0;
+      else priceOk = Math.abs(invPrice - poCost) / poCost <= (tol / 100) + 1e-9;
+      if (!qtyOk || !priceOk) allOk = false;
+      const parts: string[] = [];
+      if (!qtyOk) parts.push(`كمية مفوترة ${invoiced} خارج التسامح (مستلم ${received} / مطلوب ${ordered}، ±${tol}%)`);
+      if (!priceOk) parts.push(`سعر ${invPrice} يختلف عن تكلفة الأمر ${poCost} بأكثر من ${tol}%`);
+      if (qtyOk && priceOk) parts.push('مطابق ضمن التسامح');
+      lineResults.push({ poLineId: il.poLineId, itemId: il.itemId, orderedQty: ordered, receivedQty: received, invoicedQty: invoiced, poUnitCost: poCost, invoiceUnitPrice: invPrice, qtyOk, priceOk, detailAr: parts.join('؛ ') });
+    }
+    const summaryAr = allOk ? `نجحت المطابقة الثلاثية ضمن تسامح ${tol}%` : `فشلت المطابقة الثلاثية: ${lineResults.filter((l) => !l.qtyOk || !l.priceOk).length} بند/بنود خارج التسامح`;
+    const result: ThreeWayMatchResult = { invoiceId, passed: allOk, tolerancePct: tol, lines: lineResults, summaryAr };
+    await this.storage.updateSupplierInvoice(tenantId, { ...invoice, status: allOk ? 'MATCHED' : 'MATCH_FAILED', matchSummary: summaryAr, updatedAt: new Date().toISOString() });
+    if (!allOk) {
+      await DomainEventBus.publish({ eventType: 'THREE_WAY_MATCH_FAILED', tenantId, actorId: invoice.createdBy, actorName: invoice.createdBy, payload: { invoiceId, poId: invoice.poId, summaryAr } });
+    }
+    return { success: true, data: result };
+  }
+
+  public async approveSupplierInvoice(tenantId: string, invoiceId: string, actorId: string, idempotencyKey: string): Promise<SvcResult<{ invoice: SupplierInvoice; journalEntryId?: string }>> {
+    const full = await this.storage.getSupplierInvoice(tenantId, invoiceId);
+    if (!full.success || !full.data) return this.fail(404, 'invoice-not-found', 'فاتورة المورد غير موجودة', 'تعذر العثور على الفاتورة.');
+    let invoice = full.data.invoice;
+    if (invoice.status === 'POSTED') return { success: true, data: { invoice, journalEntryId: invoice.journalEntryId } };
+    if (invoice.status === 'MATCH_FAILED' || invoice.status === 'MATCH_PENDING' || invoice.status === 'DRAFT') {
+      const mr = await this.runThreeWayMatch(tenantId, invoiceId);
+      if (!mr.success || !mr.data?.passed) {
+        return this.fail(422, 'three-way-match-failed', 'فشل المطابقة الثلاثية', mr.data?.summaryAr || mr.error?.detail || 'لا يمكن اعتماد فاتورة غير متطابقة.');
+      }
+      const refreshed = await this.storage.getSupplierInvoice(tenantId, invoiceId);
+      if (refreshed.success && refreshed.data) invoice = refreshed.data.invoice;
+    }
+    if (invoice.status !== 'MATCHED' && invoice.status !== 'APPROVED') {
+      return this.fail(409, 'invalid-invoice-status', 'حالة غير صالحة', 'يجب نجاح المطابقة قبل الاعتماد والترحيل.');
+    }
+    const jeId = `je-sinv-${invoice.id}`.slice(0, 60);
+    const entry = {
+      id: jeId, code: invoice.invoiceNumber, tenantId, date: invoice.invoiceDate, type: 'SUPPLIER_INVOICE',
+      description: `فاتورة مورد ${invoice.vendorInvoiceRef} / ${invoice.invoiceNumber} — أمر ${invoice.poNumber}`,
+      status: 'DRAFT' as const, totalAmount: invoice.totalAmount,
+      lines: [
+        { id: `${jeId}-d`, accountCode: '1105', debit: invoice.totalAmount, credit: 0, description: 'مخزون / مشتريات' },
+        { id: `${jeId}-c`, accountCode: '2106', debit: 0, credit: invoice.totalAmount, description: `ذمم ${invoice.vendorName}` },
+      ],
+      createdBy: actorId,
+    };
+    const created = await this.storage.createJournalEntry(tenantId, entry as any, `${idempotencyKey}-je`);
+    if (!created.success) return this.fail(created.error?.status || 500, 'journal-failed', 'فشل إنشاء القيد', created.error?.detail || 'تعذر إنشاء قيد الفاتورة.');
+    const posted = await this.storage.postJournalEntry(tenantId, created.data!.id, `${idempotencyKey}-post`);
+    if (!posted.success) return this.fail(posted.error?.status || 500, 'journal-post-failed', 'فشل ترحيل القيد', posted.error?.detail || 'تعذر ترحيل قيد الفاتورة.');
+    const updated: SupplierInvoice = {
+      ...invoice, status: 'POSTED', journalEntryId: created.data!.id, approvedBy: actorId,
+      approvedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    };
+    const up = await this.storage.updateSupplierInvoice(tenantId, updated);
+    if (!up.success) return up as any;
+    await DomainEventBus.publish({
+      eventType: 'SUPPLIER_INVOICE_APPROVED', tenantId, actorId, actorName: actorId,
+      payload: { invoiceId, journalEntryId: created.data!.id, poId: invoice.poId, totalAmount: invoice.totalAmount }, idempotencyKey,
+    });
+    return { success: true, data: { invoice: up.data!, journalEntryId: created.data!.id } };
+  }
+
+  public async rejectSupplierInvoice(tenantId: string, invoiceId: string, actorId: string, reason: string): Promise<SvcResult<SupplierInvoice>> {
+    const full = await this.storage.getSupplierInvoice(tenantId, invoiceId);
+    if (!full.success || !full.data) return this.fail(404, 'invoice-not-found', 'فاتورة المورد غير موجودة', 'تعذر العثور على الفاتورة.');
+    if (full.data.invoice.status === 'POSTED') return this.fail(409, 'already-posted', 'فاتورة مرحّلة', 'لا يمكن رفض فاتورة مرحّلة محاسبيًا.');
+    return this.storage.updateSupplierInvoice(tenantId, {
+      ...full.data.invoice, status: 'REJECTED', rejectedReason: reason || 'مرفوضة', updatedAt: new Date().toISOString(),
+    });
+  }
+
+  public async getSupplierInvoice(tenantId: string, id: string) { return this.storage.getSupplierInvoice(tenantId, id); }
+  public async listSupplierInvoices(tenantId: string, filter?: { status?: string; poId?: string; vendorId?: string }) {
+    return this.storage.listSupplierInvoices(tenantId, filter);
+  }
 
 }

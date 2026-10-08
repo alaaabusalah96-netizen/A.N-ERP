@@ -304,6 +304,12 @@ export class MongoDBSmokeAdapter implements StoragePort {
   listSupplierQuotes(..._a: any[]) { return this.smokeOnlyError<any>('listSupplierQuotes'); }
   updateSupplierQuote(..._a: any[]) { return this.smokeOnlyError<any>('updateSupplierQuote'); }
 
+  saveSupplierInvoice(..._a: any[]) { return this.smokeOnlyError<any>('saveSupplierInvoice'); }
+  getSupplierInvoice(..._a: any[]) { return this.smokeOnlyError<any>('getSupplierInvoice'); }
+  listSupplierInvoices(..._a: any[]) { return this.smokeOnlyError<any>('listSupplierInvoices'); }
+  updateSupplierInvoice(..._a: any[]) { return this.smokeOnlyError<any>('updateSupplierInvoice'); }
+
+
   saveGoodsReceipt(..._a: any[]) { return this.smokeOnlyError<any>('saveGoodsReceipt'); }
   getGoodsReceipt(..._a: any[]) { return this.smokeOnlyError<any>('getGoodsReceipt'); }
   listGoodsReceipts(..._a: any[]) { return this.smokeOnlyError<any>('listGoodsReceipts'); }

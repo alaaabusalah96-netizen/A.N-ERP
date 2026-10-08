@@ -18,6 +18,7 @@ import {
   PurchaseOrder, PurchaseOrderLine, GoodsReceipt, GoodsReceiptLine,
   PurchaseOrderStatus, CompleteGoodsReceiptAtomicInput, InventoryIntegrityRow,
   PurchaseRequest, PurchaseRequestLine, RequestForQuote, RfqLine, SupplierQuote, SupplierQuoteLine,
+  SupplierInvoice, SupplierInvoiceLine,
   planCostLayerConsumption,
   PostStockTransferAtomicInput,
   Invitation,
@@ -162,6 +163,8 @@ export class InMemoryAdapter implements StoragePort {
   private rfqLines = new Map<string, any[]>();
   private supplierQuotes = new Map<string, any>();
   private supplierQuoteLines = new Map<string, any[]>();
+  private supplierInvoices = new Map<string, any>();
+  private supplierInvoiceLines = new Map<string, any[]>();
   private custodyExpenseVouchers = new Map<string, CustodyExpenseVoucher>();
   private documentAttachments = new Map<string, DocumentAttachment>();
   private itemPrices = new Map<string, ItemPrice>();
@@ -2275,6 +2278,42 @@ export class InMemoryAdapter implements StoragePort {
     }
     const updated = { ...quote, updatedAt: new Date().toISOString() };
     this.supplierQuotes.set(key, updated);
+    return { success: true, data: updated };
+  }
+
+  
+  // Phase 8c (P2P-002): Supplier Invoice
+  public async saveSupplierInvoice(tenantId: string, inv: SupplierInvoice, lines: SupplierInvoiceLine[], idempotencyKey: string): Promise<StorageResult<SupplierInvoice>> {
+    const hit = await this.checkIdempotencyRecord(tenantId, idempotencyKey, 'saveSupplierInvoice');
+    if (hit.success && hit.data) return { success: true, data: hit.data as SupplierInvoice };
+    this.supplierInvoices.set(`${tenantId}:${inv.id}`, { ...inv });
+    this.supplierInvoiceLines.set(`${tenantId}:${inv.id}`, lines.map(l => ({ ...l })));
+    await this.saveIdempotencyRecord(tenantId, idempotencyKey, 'saveSupplierInvoice', inv);
+    return { success: true, data: inv };
+  }
+  public async getSupplierInvoice(tenantId: string, invoiceId: string): Promise<StorageResult<{ invoice: SupplierInvoice; lines: SupplierInvoiceLine[] } | null>> {
+    const inv = this.supplierInvoices.get(`${tenantId}:${invoiceId}`);
+    if (!inv) return { success: true, data: null };
+    const lines = this.supplierInvoiceLines.get(`${tenantId}:${invoiceId}`) || [];
+    return { success: true, data: { invoice: { ...inv }, lines: lines.map(l => ({ ...l })) } };
+  }
+  public async listSupplierInvoices(tenantId: string, filter?: { status?: string; poId?: string; vendorId?: string }): Promise<StorageResult<SupplierInvoice[]>> {
+    const list = Array.from(this.supplierInvoices.values()).filter((p: any) => {
+      if (p.tenantId !== tenantId) return false;
+      if (filter?.status && p.status !== filter.status) return false;
+      if (filter?.poId && p.poId !== filter.poId) return false;
+      if (filter?.vendorId && p.vendorId !== filter.vendorId) return false;
+      return true;
+    }).map((p: any) => ({ ...p }));
+    return { success: true, data: list };
+  }
+  public async updateSupplierInvoice(tenantId: string, inv: SupplierInvoice): Promise<StorageResult<SupplierInvoice>> {
+    const key = `${tenantId}:${inv.id}`;
+    if (!this.supplierInvoices.has(key)) {
+      return { success: false, error: { type: 'https://api.an-erp.local/errors/invoice-not-found', title: 'فاتورة المورد غير موجودة', status: 404, detail: inv.id } };
+    }
+    const updated = { ...inv, updatedAt: new Date().toISOString() };
+    this.supplierInvoices.set(key, updated);
     return { success: true, data: updated };
   }
 

@@ -795,6 +795,29 @@ export interface SupplierQuoteLine {
   notes?: string;
 }
 
+// Phase 8c (P2P-002): Supplier Invoice + Three-Way Matching
+export type SupplierInvoiceStatus = 'DRAFT' | 'MATCH_PENDING' | 'MATCH_FAILED' | 'MATCHED' | 'APPROVED' | 'POSTED' | 'REJECTED' | 'CANCELLED';
+export interface SupplierInvoice {
+  id: string; tenantId: string; invoiceNumber: string; vendorInvoiceRef: string;
+  poId: string; poNumber: string; vendorId: string; vendorName: string; receiptId?: string;
+  status: SupplierInvoiceStatus; invoiceDate: string; dueDate?: string; currency?: string;
+  subtotal: number; taxAmount: number; totalAmount: number; matchTolerancePct: number;
+  matchSummary?: string; journalEntryId?: string; notes?: string; createdBy: string;
+  approvedBy?: string; approvedAt?: string; rejectedReason?: string; createdAt: string; updatedAt: string;
+}
+export interface SupplierInvoiceLine {
+  id: string; tenantId: string; invoiceId: string; lineNumber: number; poLineId: string; itemId: string;
+  invoicedQty: number; unitPrice: number; lineTotal: number; taxAmount?: number; notes?: string;
+}
+export interface ThreeWayMatchLineResult {
+  poLineId: string; itemId: string; orderedQty: number; receivedQty: number; invoicedQty: number;
+  poUnitCost: number; invoiceUnitPrice: number; qtyOk: boolean; priceOk: boolean; detailAr: string;
+}
+export interface ThreeWayMatchResult {
+  invoiceId: string; passed: boolean; tolerancePct: number; lines: ThreeWayMatchLineResult[]; summaryAr: string;
+}
+
+
 // Phase 16 (REC-001): stock vs ledger integrity (read-only aggregates)
 export interface InventoryIntegrityRow {
   warehouseId: string;
@@ -1253,6 +1276,13 @@ export interface StoragePort {
   getSupplierQuote(tenantId: string, quoteId: string): Promise<StorageResult<{ quote: SupplierQuote; lines: SupplierQuoteLine[] } | null>>;
   listSupplierQuotes(tenantId: string, filter?: { rfqId?: string; vendorId?: string; status?: string }): Promise<StorageResult<SupplierQuote[]>>;
   updateSupplierQuote(tenantId: string, quote: SupplierQuote): Promise<StorageResult<SupplierQuote>>;
+
+  // Phase 8c (P2P-002): Supplier Invoice + Three-Way Match
+  saveSupplierInvoice(tenantId: string, inv: SupplierInvoice, lines: SupplierInvoiceLine[], idempotencyKey: string): Promise<StorageResult<SupplierInvoice>>;
+  getSupplierInvoice(tenantId: string, invoiceId: string): Promise<StorageResult<{ invoice: SupplierInvoice; lines: SupplierInvoiceLine[] } | null>>;
+  listSupplierInvoices(tenantId: string, filter?: { status?: string; poId?: string; vendorId?: string }): Promise<StorageResult<SupplierInvoice[]>>;
+  updateSupplierInvoice(tenantId: string, inv: SupplierInvoice): Promise<StorageResult<SupplierInvoice>>;
+
   // Phase 16 (REC-001)
   getInventoryIntegrityAggregates(tenantId: string): Promise<StorageResult<InventoryIntegrityRow[]>>;
   // Phase 18 (SCOPE-001): per-user warehouse scope

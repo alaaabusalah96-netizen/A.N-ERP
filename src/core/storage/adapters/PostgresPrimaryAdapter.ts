@@ -1135,6 +1135,51 @@ export class PostgresPrimaryAdapter implements StoragePort {
         notes TEXT,
         UNIQUE (quote_id, line_number)
       );
+      -- Phase 8c (P2P-002): Supplier Invoice
+      CREATE TABLE IF NOT EXISTS an_supplier_invoices (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        invoice_number VARCHAR(64) NOT NULL,
+        vendor_invoice_ref VARCHAR(128) NOT NULL,
+        po_id VARCHAR(64) NOT NULL,
+        po_number VARCHAR(64) NOT NULL,
+        vendor_id VARCHAR(64) NOT NULL,
+        vendor_name VARCHAR(200) NOT NULL,
+        receipt_id VARCHAR(64),
+        status VARCHAR(24) NOT NULL,
+        invoice_date DATE NOT NULL,
+        due_date DATE,
+        currency VARCHAR(8),
+        subtotal NUMERIC(16,4) NOT NULL DEFAULT 0,
+        tax_amount NUMERIC(16,4) NOT NULL DEFAULT 0,
+        total_amount NUMERIC(16,4) NOT NULL DEFAULT 0,
+        match_tolerance_pct NUMERIC(8,4) NOT NULL DEFAULT 5,
+        match_summary TEXT,
+        journal_entry_id VARCHAR(64),
+        notes TEXT,
+        created_by VARCHAR(64) NOT NULL,
+        approved_by VARCHAR(64),
+        approved_at TIMESTAMPTZ,
+        rejected_reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, invoice_number)
+      );
+      CREATE TABLE IF NOT EXISTS an_supplier_invoice_lines (
+        id VARCHAR(80) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        invoice_id VARCHAR(64) NOT NULL REFERENCES an_supplier_invoices(id) ON DELETE CASCADE,
+        line_number INT NOT NULL,
+        po_line_id VARCHAR(80) NOT NULL,
+        item_id VARCHAR(64) NOT NULL,
+        invoiced_qty NUMERIC(16,4) NOT NULL CHECK (invoiced_qty > 0),
+        unit_price NUMERIC(16,4) NOT NULL CHECK (unit_price >= 0),
+        line_total NUMERIC(16,4) NOT NULL,
+        tax_amount NUMERIC(16,4),
+        notes TEXT,
+        UNIQUE (invoice_id, line_number)
+      );
+
 
 
 
@@ -6488,6 +6533,80 @@ export class PostgresPrimaryAdapter implements StoragePort {
       id: row.id, tenantId: row.tenant_id, quoteId: row.quote_id, rfqLineId: row.rfq_line_id, lineNumber: row.line_number,
       itemId: row.item_id, quantity: Number(row.quantity), unitPrice: Number(row.unit_price),
       leadTimeDays: row.lead_time_days != null ? Number(row.lead_time_days) : undefined, notes: row.notes || undefined,
+    };
+  }
+
+  // Phase 8c (P2P-002)
+  public async saveSupplierInvoice(tenantId: string, inv: any, lines: any[], idempotencyKey: string): Promise<any> {
+    const hit = await this.checkIdempotency(tenantId, idempotencyKey, 'saveSupplierInvoice');
+    if (hit) return { success: true, data: hit };
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO an_supplier_invoices (id, tenant_id, invoice_number, vendor_invoice_ref, po_id, po_number, vendor_id, vendor_name, receipt_id, status, invoice_date, due_date, currency, subtotal, tax_amount, total_amount, match_tolerance_pct, notes, created_by, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NOW(),NOW())`,
+        [inv.id, tenantId, inv.invoiceNumber, inv.vendorInvoiceRef, inv.poId, inv.poNumber, inv.vendorId, inv.vendorName, inv.receiptId || null, inv.status, inv.invoiceDate, inv.dueDate || null, inv.currency || null, inv.subtotal, inv.taxAmount, inv.totalAmount, inv.matchTolerancePct, inv.notes || null, inv.createdBy]
+      );
+      for (const l of lines) {
+        await client.query(
+          `INSERT INTO an_supplier_invoice_lines (id, tenant_id, invoice_id, line_number, po_line_id, item_id, invoiced_qty, unit_price, line_total, tax_amount, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [l.id, tenantId, inv.id, l.lineNumber, l.poLineId, l.itemId, l.invoicedQty, l.unitPrice, l.lineTotal, l.taxAmount ?? null, l.notes || null]
+        );
+      }
+      await client.query('COMMIT');
+      await this.recordIdempotency(tenantId, idempotencyKey, 'saveSupplierInvoice', inv);
+      return { success: true, data: inv };
+    } catch (e: any) {
+      await client.query('ROLLBACK');
+      return { success: false, error: { type: 'pg', title: 'saveSupplierInvoice', status: 500, detail: e.message } };
+    } finally { client.release(); }
+  }
+  public async getSupplierInvoice(tenantId: string, invoiceId: string): Promise<any> {
+    const r = await this.pool.query(`SELECT * FROM an_supplier_invoices WHERE tenant_id=$1 AND id=$2`, [tenantId, invoiceId]);
+    if (!r.rows.length) return { success: true, data: null };
+    const lr = await this.pool.query(`SELECT * FROM an_supplier_invoice_lines WHERE tenant_id=$1 AND invoice_id=$2 ORDER BY line_number`, [tenantId, invoiceId]);
+    return { success: true, data: { invoice: this.mapSupplierInvoice(r.rows[0]), lines: lr.rows.map((x: any) => this.mapSupplierInvoiceLine(x)) } };
+  }
+  public async listSupplierInvoices(tenantId: string, filter?: any): Promise<any> {
+    let q = `SELECT * FROM an_supplier_invoices WHERE tenant_id=$1`;
+    const params: any[] = [tenantId];
+    if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
+    if (filter?.poId) { params.push(filter.poId); q += ` AND po_id=$${params.length}`; }
+    if (filter?.vendorId) { params.push(filter.vendorId); q += ` AND vendor_id=$${params.length}`; }
+    q += ' ORDER BY created_at DESC';
+    const r = await this.pool.query(q, params);
+    return { success: true, data: r.rows.map((x: any) => this.mapSupplierInvoice(x)) };
+  }
+  public async updateSupplierInvoice(tenantId: string, inv: any): Promise<any> {
+    const r = await this.pool.query(
+      `UPDATE an_supplier_invoices SET status=$1, match_summary=$2, journal_entry_id=$3, approved_by=$4, approved_at=$5, rejected_reason=$6, notes=$7, updated_at=NOW()
+       WHERE tenant_id=$8 AND id=$9 RETURNING *`,
+      [inv.status, inv.matchSummary || null, inv.journalEntryId || null, inv.approvedBy || null, inv.approvedAt || null, inv.rejectedReason || null, inv.notes || null, tenantId, inv.id]
+    );
+    if (!r.rows.length) return { success: false, error: { type: 'pg', title: 'invoice-not-found', status: 404, detail: inv.id } };
+    return { success: true, data: this.mapSupplierInvoice(r.rows[0]) };
+  }
+  private mapSupplierInvoice(row: any) {
+    return {
+      id: row.id, tenantId: row.tenant_id, invoiceNumber: row.invoice_number, vendorInvoiceRef: row.vendor_invoice_ref,
+      poId: row.po_id, poNumber: row.po_number, vendorId: row.vendor_id, vendorName: row.vendor_name,
+      receiptId: row.receipt_id || undefined, status: row.status,
+      invoiceDate: String(row.invoice_date).slice(0, 10), dueDate: row.due_date ? String(row.due_date).slice(0, 10) : undefined,
+      currency: row.currency || undefined, subtotal: Number(row.subtotal), taxAmount: Number(row.tax_amount), totalAmount: Number(row.total_amount),
+      matchTolerancePct: Number(row.match_tolerance_pct), matchSummary: row.match_summary || undefined,
+      journalEntryId: row.journal_entry_id || undefined, notes: row.notes || undefined, createdBy: row.created_by,
+      approvedBy: row.approved_by || undefined, approvedAt: row.approved_at ? new Date(row.approved_at).toISOString() : undefined,
+      rejectedReason: row.rejected_reason || undefined,
+      createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
+    };
+  }
+  private mapSupplierInvoiceLine(row: any) {
+    return {
+      id: row.id, tenantId: row.tenant_id, invoiceId: row.invoice_id, lineNumber: row.line_number, poLineId: row.po_line_id,
+      itemId: row.item_id, invoicedQty: Number(row.invoiced_qty), unitPrice: Number(row.unit_price), lineTotal: Number(row.line_total),
+      taxAmount: row.tax_amount != null ? Number(row.tax_amount) : undefined, notes: row.notes || undefined,
     };
   }
 

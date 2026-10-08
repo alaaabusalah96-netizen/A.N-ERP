@@ -4093,6 +4093,81 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
     } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
   });
 
+
+  // Phase 8c — Supplier Invoice + Three-Way Matching
+  app.get('/api/purchasing/invoices', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res); if (!svc) return;
+      const result = await svc.listSupplierInvoices(tenantId, { status: req.query.status as string, poId: req.query.poId as string, vendorId: req.query.vendorId as string });
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.get('/api/purchasing/invoices/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res); if (!svc) return;
+      const result = await svc.getSupplierInvoice(tenantId, req.params.id);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'فاتورة المورد غير موجودة' } });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/invoices', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'إنشاء فاتورة مورد'); if (!key) return;
+      const svc = getPurchasingService(req, res); if (!svc) return;
+      const b = req.body || {};
+      const result = await svc.createSupplierInvoice(tenantId, {
+        poId: b.po_id || b.poId, receiptId: b.receipt_id || b.receiptId,
+        vendorInvoiceRef: b.vendor_invoice_ref || b.vendorInvoiceRef,
+        invoiceDate: b.invoice_date || b.invoiceDate, dueDate: b.due_date || b.dueDate,
+        notes: b.notes, taxAmount: b.tax_amount ?? b.taxAmount, autoMatch: b.auto_match ?? b.autoMatch,
+        lines: (b.lines || []).map((l: any) => ({
+          poLineId: l.po_line_id || l.poLineId, itemId: l.item_id || l.itemId,
+          invoicedQty: l.invoiced_qty ?? l.invoicedQty, unitPrice: l.unit_price ?? l.unitPrice,
+          taxAmount: l.tax_amount ?? l.taxAmount, notes: l.notes,
+        })),
+        createdBy: userId, idempotencyKey: key,
+      });
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/invoices/:id/match', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res); if (!svc) return;
+      const result = await svc.runThreeWayMatch(tenantId, req.params.id);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/invoices/:id/approve', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'اعتماد فاتورة مورد'); if (!key) return;
+      const svc = getPurchasingService(req, res); if (!svc) return;
+      const result = await svc.approveSupplierInvoice(tenantId, req.params.id, userId, key);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/invoices/:id/reject', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const svc = getPurchasingService(req, res); if (!svc) return;
+      const result = await svc.rejectSupplierInvoice(tenantId, req.params.id, userId, (req.body || {}).reason || 'مرفوضة');
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+
   // Phase 14 (ACC-AUTO-001)
   app.get('/api/inventory/accounting-config', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
