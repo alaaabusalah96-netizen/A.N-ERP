@@ -1,5 +1,0 @@
-evidence/standards-intelligence/acceptance-rows-f2.md|f2b_new1
-evidence/standards-intelligence/usability-f2.md|f2b_new2
-scripts/lib/f2DecisionSuite.ts|f2b_new3
-scripts/verifyF2Decisions.ts|f2b_new4
-scripts/verifyF2DecisionsPg.ts|f2b_new5

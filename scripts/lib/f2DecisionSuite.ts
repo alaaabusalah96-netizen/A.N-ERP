@@ -172,7 +172,7 @@ export async function runF2Suite(st: StoragePort, tA: string, tB: string, tally:
   check('6.3 tax not requested but the treatment needs a rate -> REVIEW (taxRate); tax fact (supplyType) missing -> REVIEW (TAX_REVIEW)', t3.decision.missingFacts.includes('taxRate') && t3.decision.decisionStatus === 'REVIEW_REQUIRED' && t4.reasonCode === 'TAX_REVIEW' && t4.missingFacts.includes('fact:supplyType'));
   await taxRule(jTs, { status: 'SOURCE_REQUIRED', sourceVerified: false, sourceReference: null, rate: null });
   await taxRule(jTc, { rate: 0.1 }); await taxRule(jTc, { rate: 0.2 });
-  const t5 = await sv({ net: 100 }, { taxJurisdictionId: jTs }), t6 = await sv({ net: 100 }, { taxJurisdictionId: jTc }), t7 = await sv({ net: 100 }, { taxJurisdictionId: jS });
+  const t5 = await sv({ net: 100, supplyType: 'X' }, { taxJurisdictionId: jTs }), t6 = await sv({ net: 100 }, { taxJurisdictionId: jTc }), t7 = await sv({ net: 100 }, { taxJurisdictionId: jS });
   check('6.4 tax rules obey SI-6/SI-8: SOURCE_REQUIRED tax rule, conflicting tax rules and a non-TAX jurisdiction all end in REVIEW_REQUIRED', t5.reasonCode === 'TAX_REVIEW' && t5.taxTreatment?.reasonCode === 'TAX_NOT_AUTOMATABLE' && t6.decisionStatus === 'REVIEW_REQUIRED' && t6.taxTreatment?.reasonCode === 'CONFLICT' && t7.taxTreatment?.reasonCode === 'BAD_TAX_JURISDICTION' && t7.decisionStatus === 'REVIEW_REQUIRED');
   await taxRule(jTv, { effectiveTo: '2024-12-31', rate: 0.1 }); await taxRule(jTv, { version: 2, effectiveFrom: '2025-01-01', rate: 0.14 });
   const tv1 = await sv({ net: 1000 }, { taxJurisdictionId: jTv, date: '2024-06-01' }), tv2 = await sv({ net: 1000 }, { taxJurisdictionId: jTv, date: '2025-06-01' });
