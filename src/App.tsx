@@ -14,6 +14,7 @@ import { AccountingWorkspaceView } from './components/AccountingWorkspaceView';
 import { CashCustodyWorkspaceView } from './components/CashCustodyWorkspaceView';
 import { ExpensesWorkspaceView } from './components/ExpensesWorkspaceView';
 import { InventoryWorkspaceView } from './components/InventoryWorkspaceView';
+import { PurchasingWorkspaceView } from './components/PurchasingWorkspaceView';
 import { OperationalTransaction, UserProfile, UserRole } from './types/erp';
 
 export default function App() {
@@ -335,6 +336,12 @@ export default function App() {
             />
           )}
 
+          {activeSection === 'purchasing' && (
+            <PurchasingWorkspaceView
+              currentUser={currentUser}
+              onNotification={showNotification}
+            />
+          )}
           {activeSection === 'reports' && (
             <AccountingWorkspaceView
               currentUser={userProfile}

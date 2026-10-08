@@ -2233,6 +2233,21 @@ async function startServer() {
   });
 
   // 2F: Dual-Control Master Partners (Customer/Vendor)
+
+  app.get('/api/master-data/partners', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const type = (req.query.type as string) || undefined;
+      const result = await storage.listMasterPartners(tenantId, type as any);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.post('/api/master-data/partners', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
@@ -3829,6 +3844,252 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.retryPostReceipt(tenantId, req.params.id, key);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+
+
+  // Phase 8a/8b — Purchase Request / RFQ / Supplier Quotes API
+  app.get('/api/purchasing/requests', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.listPurchaseRequests(tenantId, { status: req.query.status as string, requestedBy: req.query.requestedBy as string });
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.get('/api/purchasing/requests/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.getPurchaseRequest(tenantId, req.params.id);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'طلب الشراء غير موجود' } });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/requests', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'إنشاء طلب شراء');
+      if (!key) return;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const b = req.body || {};
+      const result = await svc.createPurchaseRequest(tenantId, {
+        requestedBy: userId,
+        neededBy: b.needed_by || b.neededBy,
+        notes: b.notes,
+        costCenterId: b.cost_center_id || b.costCenterId,
+        projectId: b.project_id || b.projectId,
+        lines: (b.lines || []).map((l: any) => ({
+          itemId: l.item_id || l.itemId,
+          quantity: l.quantity ?? l.qty,
+          uom: l.uom,
+          neededBy: l.needed_by || l.neededBy,
+          costCenterId: l.cost_center_id || l.costCenterId,
+          projectId: l.project_id || l.projectId,
+          notes: l.notes,
+        })),
+        idempotencyKey: key,
+      });
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/requests/:id/submit', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.submitPurchaseRequest(tenantId, req.params.id, userId);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/requests/:id/approve', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.approvePurchaseRequest(tenantId, req.params.id, userId);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/requests/:id/reject', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const reason = (req.body || {}).reason || 'مرفوض';
+      const result = await svc.rejectPurchaseRequest(tenantId, req.params.id, userId, reason);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/requests/:id/convert-to-po', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'تحويل طلب شراء لأمر شراء');
+      if (!key) return;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const b = req.body || {};
+      const result = await svc.convertPurchaseRequestToPO(tenantId, {
+        prId: req.params.id,
+        vendorId: b.vendor_id || b.vendorId,
+        actorId: userId,
+        unitCosts: b.unit_costs || b.unitCosts || {},
+        idempotencyKey: key,
+      });
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  app.get('/api/purchasing/rfqs', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.listRfqs(tenantId, { status: req.query.status as string, prId: req.query.prId as string });
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.get('/api/purchasing/rfqs/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.getRfq(tenantId, req.params.id);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'طلب عرض السعر غير موجود' } });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/rfqs', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'إنشاء طلب عرض سعر');
+      if (!key) return;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const b = req.body || {};
+      const result = await svc.createRfq(tenantId, {
+        prId: b.pr_id || b.prId,
+        notes: b.notes,
+        createdBy: userId,
+        lines: b.lines ? (b.lines || []).map((l: any) => ({
+          itemId: l.item_id || l.itemId,
+          quantity: l.quantity ?? l.qty,
+          uom: l.uom,
+          notes: l.notes,
+        })) : undefined,
+        idempotencyKey: key,
+      });
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/rfqs/:id/send', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.sendRfq(tenantId, req.params.id, userId);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+
+  app.get('/api/purchasing/quotes', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.listSupplierQuotes(tenantId, {
+        rfqId: req.query.rfqId as string,
+        vendorId: req.query.vendorId as string,
+        status: req.query.status as string,
+      });
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.get('/api/purchasing/quotes/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.getSupplierQuote(tenantId, req.params.id);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'عرض المورد غير موجود' } });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/quotes', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'تسجيل عرض مورد');
+      if (!key) return;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const b = req.body || {};
+      const result = await svc.recordSupplierQuote(tenantId, {
+        rfqId: b.rfq_id || b.rfqId,
+        vendorId: b.vendor_id || b.vendorId,
+        quoteDate: b.quote_date || b.quoteDate,
+        validUntil: b.valid_until || b.validUntil,
+        notes: b.notes,
+        createdBy: userId,
+        lines: (b.lines || []).map((l: any) => ({
+          rfqLineId: l.rfq_line_id || l.rfqLineId,
+          itemId: l.item_id || l.itemId,
+          quantity: l.quantity ?? l.qty,
+          unitPrice: l.unit_price ?? l.unitPrice,
+          leadTimeDays: l.lead_time_days ?? l.leadTimeDays,
+          notes: l.notes,
+        })),
+        idempotencyKey: key,
+      });
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/quotes/:id/select', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.selectSupplierQuote(tenantId, req.params.id, userId);
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+  });
+  app.post('/api/purchasing/quotes/:id/convert-to-po', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const key = requireIdempotencyKey(req, res, 'تحويل عرض مورد لأمر شراء');
+      if (!key) return;
+      const svc = getPurchasingService(req, res);
+      if (!svc) return;
+      const result = await svc.convertQuoteToPO(tenantId, { quoteId: req.params.id, actorId: userId, idempotencyKey: key });
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data });
     } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
   });
 

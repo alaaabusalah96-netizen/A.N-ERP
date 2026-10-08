@@ -13,6 +13,7 @@ import {
   Wallet,
   CreditCard,
   Boxes,
+  Truck,
   X,
 } from 'lucide-react';
 
@@ -21,6 +22,7 @@ export type ActiveSection =
   | 'custody'
   | 'expenses'
   | 'inventory'
+  | 'purchasing'
   | 'profile'
   | 'company'
   | 'users_sod'
@@ -50,6 +52,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'custody' as ActiveSection, label: 'العهدة النقدية المستديمة', icon: Wallet },
     { id: 'expenses' as ActiveSection, label: 'المصروفات وطلبات الصرف', icon: CreditCard },
     { id: 'inventory' as ActiveSection, label: 'المستودعات والمخزون', icon: Boxes },
+    { id: 'purchasing' as ActiveSection, label: 'المشتريات والتوريد', icon: Truck },
     { id: 'accounting' as ActiveSection, label: 'القيود والسندات المالية', icon: FileText },
     {
       id: 'approvals' as ActiveSection,
