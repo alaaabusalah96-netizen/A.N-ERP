@@ -21,4 +21,4 @@ A **business event** passed to `StandardsDecisionService.decide()` carries: `ten
 ## Status of each event today
 - **Exercised end to end in tests (fixtures only):** GOODS_RECEIPT, DELIVERY, SALES_INVOICE, INVENTORY_WRITE_DOWN, INVENTORY_LOSS, INVENTORY_GAIN, ASSET_ACQUISITION, DEPRECIATION_RUN, FOREIGN_CURRENCY_SETTLEMENT.
 - **Cataloged only:** all the others. They have no rule, so a decision for them is `NOT_APPLICABLE` (no covered rule) and the originating module stays on its current path.
-- **Emitted by real modules today:** none. Wiring a module means building the event from its document and calling the decision service plus the bridge; that is a separate, per-module phase.
+- **Emitted by real modules today (F4):** `GOODS_RECEIPT`, from stock RECEIPT documents only, in **SHADOW mode** (see `STANDARDS_INTELLIGENCE_ARCHITECTURE.md`, section "F4"). Facts supplied: `amount` (sum of line costs), `lineCount`, `documentNumber`, `referenceType`. Every other event is still not emitted by any module; wiring one means building the event from its document and calling the decision service, a separate per-module phase.

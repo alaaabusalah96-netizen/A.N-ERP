@@ -7,6 +7,7 @@ import {
 } from '../storage/StoragePort';
 import { PostingEngine } from '../engines/PostingEngine';
 import { STANDARD_CHART_OF_ACCOUNTS } from '../accounting/defaultChartOfAccounts';
+import { StockStandardsShadow } from '../standards/StockStandardsShadow';
 
 export type JournalStatusResult = 'NONE' | 'POSTED' | 'PENDING_RETRY';
 export interface AutoJournalOutcome {
@@ -67,7 +68,7 @@ export class StockAccountingService {
     return { ok: true };
   }
 
-  private aggregate(pairs: Array<{ debitAccount: string; creditAccount: string; amount: number; desc: string }>): JournalLine[] {
+  private aggregate(pairs: Array<{ debitAccount: string; creditAccount: string; amount: number; desc: string }>, entryIdPrefix?: string): JournalLine[] {
     const map = new Map<string, { debit: number; credit: number; desc: string }>();
     for (const p of pairs) {
       const amt = r2(p.amount);
@@ -79,9 +80,10 @@ export class StockAccountingService {
     }
     const lines: JournalLine[] = [];
     let i = 0;
+    const prefix = entryIdPrefix ? `${entryIdPrefix}-` : `JL-RAND-${Math.random().toString(36).slice(2, 8)}-`;
     for (const [code, v] of map) {
       if (v.debit <= 0 && v.credit <= 0) continue;
-      lines.push({ id: `JL-${++i}`, accountCode: code, debit: v.debit, credit: v.credit, description: v.desc });
+      lines.push({ id: `${prefix}${++i}`.slice(0, 64), accountCode: code, debit: v.debit, credit: v.credit, description: v.desc });
     }
     return lines;
   }
@@ -95,11 +97,12 @@ export class StockAccountingService {
       if (amt <= 0) continue;
       pairs.push({ debitAccount: inv, creditAccount: cfg.grirAccountCode, amount: amt, desc: `استلام ${doc.documentNumber}` });
     }
-    const lines = this.aggregate(pairs);
+    const entryId = `JE-STK-RCV-${doc.id}`.slice(0, 64);
+    const lines = this.aggregate(pairs, entryId);
     if (lines.length < 2) return null;
     const total = r2(lines.reduce((s, l) => s + l.debit, 0));
     if (total <= 0) return null;
-    return { id: `JE-STK-RCV-${doc.id}`.slice(0, 64), code: `STK-RCV-${doc.documentNumber}`.slice(0, 32), tenantId: doc.tenantId, date: (doc.postedAt || doc.createdAt || new Date().toISOString()).slice(0, 10), type: 'قيد آلي لاستلام بضاعة', description: `قيد آلي لاستلام بضاعة — مستند ${doc.documentNumber}`, lines, totalAmount: total, status: 'APPROVED', createdBy: doc.performedBy || 'system' };
+    return { id: entryId, code: `STK-RCV-${doc.documentNumber}`.slice(0, 32), tenantId: doc.tenantId, date: (doc.postedAt || doc.createdAt || new Date().toISOString()).slice(0, 10), type: 'قيد آلي لاستلام بضاعة', description: `قيد آلي لاستلام بضاعة — مستند ${doc.documentNumber}`, lines, totalAmount: total, status: 'APPROVED', createdBy: doc.performedBy || 'system' };
   }
 
   public buildIssueEntry(doc: StockDocument, items: Map<string, StockItem>, cfg: StockAccountingConfig): JournalEntry | null {
@@ -112,11 +115,12 @@ export class StockAccountingService {
       if (amt <= 0) continue;
       pairs.push({ debitAccount: cogs, creditAccount: inv, amount: amt, desc: `صرف ${doc.documentNumber}` });
     }
-    const lines = this.aggregate(pairs);
+    const entryId = `JE-STK-ISS-${doc.id}`.slice(0, 64);
+    const lines = this.aggregate(pairs, entryId);
     if (lines.length < 2) return null;
     const total = r2(lines.reduce((s, l) => s + l.debit, 0));
     if (total <= 0) return null;
-    return { id: `JE-STK-ISS-${doc.id}`.slice(0, 64), code: `STK-ISS-${doc.documentNumber}`.slice(0, 32), tenantId: doc.tenantId, date: (doc.postedAt || doc.createdAt || new Date().toISOString()).slice(0, 10), type: 'قيد آلي لصرف بضاعة', description: `قيد آلي لصرف بضاعة — مستند ${doc.documentNumber}`, lines, totalAmount: total, status: 'APPROVED', createdBy: doc.performedBy || 'system' };
+    return { id: entryId, code: `STK-ISS-${doc.documentNumber}`.slice(0, 32), tenantId: doc.tenantId, date: (doc.postedAt || doc.createdAt || new Date().toISOString()).slice(0, 10), type: 'قيد آلي لصرف بضاعة', description: `قيد آلي لصرف بضاعة — مستند ${doc.documentNumber}`, lines, totalAmount: total, status: 'APPROVED', createdBy: doc.performedBy || 'system' };
   }
 
   public buildTransferDispatchEntry(transfer: StockTransfer, lines: StockTransferLine[], items: Map<string, StockItem>, cfg: StockAccountingConfig): JournalEntry | null {
@@ -128,11 +132,12 @@ export class StockAccountingService {
       if (amt <= 0) continue;
       pairs.push({ debitAccount: cfg.inTransitAccountCode, creditAccount: inv, amount: amt, desc: `إرسال تحويل ${transfer.transferNumber}` });
     }
-    const jl = this.aggregate(pairs);
+    const entryId = `JE-STK-TD-${transfer.id}`.slice(0, 64);
+    const jl = this.aggregate(pairs, entryId);
     if (jl.length < 2) return null;
     const total = r2(jl.reduce((s, l) => s + l.debit, 0));
     if (total <= 0) return null;
-    return { id: `JE-STK-TD-${transfer.id}`.slice(0, 64), code: `STK-TD-${transfer.transferNumber}`.slice(0, 32), tenantId: transfer.tenantId, date: (transfer.dispatchedAt || transfer.updatedAt || new Date().toISOString()).slice(0, 10), type: 'قيد آلي لإرسال تحويل مخزني', description: `قيد آلي لإرسال تحويل — ${transfer.transferNumber}`, lines: jl, totalAmount: total, status: 'APPROVED', createdBy: transfer.dispatchedBy || transfer.requestedBy || 'system' };
+    return { id: entryId, code: `STK-TD-${transfer.transferNumber}`.slice(0, 32), tenantId: transfer.tenantId, date: (transfer.dispatchedAt || transfer.updatedAt || new Date().toISOString()).slice(0, 10), type: 'قيد آلي لإرسال تحويل مخزني', description: `قيد آلي لإرسال تحويل — ${transfer.transferNumber}`, lines: jl, totalAmount: total, status: 'APPROVED', createdBy: transfer.dispatchedBy || transfer.requestedBy || 'system' };
   }
 
   public buildTransferReceiveEntry(transfer: StockTransfer, lines: StockTransferLine[], items: Map<string, StockItem>, cfg: StockAccountingConfig): JournalEntry | null {
@@ -144,11 +149,12 @@ export class StockAccountingService {
       if (amt <= 0) continue;
       pairs.push({ debitAccount: inv, creditAccount: cfg.inTransitAccountCode, amount: amt, desc: `استلام تحويل ${transfer.transferNumber}` });
     }
-    const jl = this.aggregate(pairs);
+    const entryId = `JE-STK-TR-${transfer.id}`.slice(0, 64);
+    const jl = this.aggregate(pairs, entryId);
     if (jl.length < 2) return null;
     const total = r2(jl.reduce((s, l) => s + l.debit, 0));
     if (total <= 0) return null;
-    return { id: `JE-STK-TR-${transfer.id}`.slice(0, 64), code: `STK-TR-${transfer.transferNumber}`.slice(0, 32), tenantId: transfer.tenantId, date: (transfer.receivedAt || transfer.updatedAt || new Date().toISOString()).slice(0, 10), type: 'قيد آلي لاستلام تحويل مخزني', description: `قيد آلي لاستلام تحويل — ${transfer.transferNumber}`, lines: jl, totalAmount: total, status: 'APPROVED', createdBy: transfer.receivedBy || transfer.requestedBy || 'system' };
+    return { id: entryId, code: `STK-TR-${transfer.transferNumber}`.slice(0, 32), tenantId: transfer.tenantId, date: (transfer.receivedAt || transfer.updatedAt || new Date().toISOString()).slice(0, 10), type: 'قيد آلي لاستلام تحويل مخزني', description: `قيد آلي لاستلام تحويل — ${transfer.transferNumber}`, lines: jl, totalAmount: total, status: 'APPROVED', createdBy: transfer.receivedBy || transfer.requestedBy || 'system' };
   }
 
   public async postForDocument(tenantId: string, doc: StockDocument, items: Map<string, StockItem>, mode: 'RECEIPT' | 'ISSUE', idempotencyKey: string): Promise<AutoJournalOutcome> {
@@ -167,6 +173,8 @@ export class StockAccountingService {
       return { journalStatus: 'PENDING_RETRY', journalEntryId: draft.data.id, messageAr: 'تم تسجيل حركة المخزون لكن القيد المحاسبي لم يُرحَّل بعد؛ أعد المحاولة من شاشة المستند' };
     }
     await this.storage.setStockDocumentJournal(tenantId, doc.id, posted.data.id, 'POSTED');
+    // F4: SHADOW observation by the Standards layer. Opt-in per tenant, never throws, never alters this outcome.
+    if (mode === 'RECEIPT') { try { await new StockStandardsShadow(this.storage).observeReceipt(tenantId, doc, posted.data.id, cfg); } catch { /* shadow must not affect posting */ } }
     return { journalStatus: 'POSTED', journalEntryId: posted.data.id };
   }
 

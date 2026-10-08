@@ -120,6 +120,9 @@ export const POLICY_DEFINITIONS: PolicyDefinition[] = [
   { key: 'cost_allocation_policy', labelAr: 'سياسة توزيع التكاليف', valueType: 'STRING' },
   { key: 'materiality_threshold', labelAr: 'حد الأهمية النسبية', valueType: 'NUMBER' },
   { key: 'tax_treatment_config', labelAr: 'إعداد المعالجة الضريبية', valueType: 'STRING' },
+  // F4 (stock integration): per-tenant switch for the standards layer on stock receipts. No policy = OFF (legacy path only).
+  { key: 'standards_decision_mode', labelAr: 'وضع طبقة المعايير على حركات المخزون', valueType: 'ENUM', allowedValues: ['OFF', 'SHADOW'] },
+  { key: 'reporting_jurisdiction', labelAr: 'الاختصاص المحاسبي للمنشأة (معرّف)', valueType: 'STRING' },
 ];
 
 /** Canonical, extensible event taxonomy shared by all modules. */

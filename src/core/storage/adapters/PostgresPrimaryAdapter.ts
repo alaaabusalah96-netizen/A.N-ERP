@@ -8378,6 +8378,8 @@ public async getWarehouseStock(
         performedBy: r.performed_by,
         performedByName: r.performed_by_name,
         idempotencyKey: r.idempotency_key,
+        journalEntryId: r.journal_entry_id || undefined,
+        journalStatus: r.journal_status || undefined,
         createdAt: r.created_at?.toISOString?.() || r.created_at,
         postedAt: r.posted_at?.toISOString?.() || r.posted_at,
       };

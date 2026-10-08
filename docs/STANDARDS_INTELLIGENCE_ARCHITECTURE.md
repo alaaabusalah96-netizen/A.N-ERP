@@ -39,8 +39,25 @@ Principle: **the standards layer decides, `PostingEngine` posts, `StoragePort` p
 - Explanations survive a restart: a fresh adapter instance explains the journal from PostgreSQL alone (`PGD1`).
 - Routes: three `GET` routes under `/api/standards`, behind `requireAuth` + `requirePermission` (`ENTRY_VIEW` for journal explanation, `AUDIT_LOG_VIEW` for decisions).
 
+## F4 — stock receipt, SHADOW mode (first real module)
+`StockAccountingService.postForDocument` posts the legacy receipt journal exactly as before. **After** it has finished, and only for `RECEIPT` documents, it calls `StockStandardsShadow.observeReceipt` inside a try/catch. The call never throws, never posts and never changes the document or the legacy outcome.
+
+Per-tenant switch (company policies, effective-dated, **default OFF** when no policy exists):
+- `standards_decision_mode` = `OFF` | `SHADOW`
+- `reporting_jurisdiction` = id of the tenant's reporting jurisdiction (without it a SHADOW decision is `REVIEW_REQUIRED`: missing jurisdiction)
+
+What SHADOW does with the result:
+| Standards decision | Effect |
+|---|---|
+| `APPLY` and its lines equal the posted legacy journal per account and side | The decision is linked to the **legacy** journal: that journal now has a durable rule reference and `GET /api/standards/explain/journal/:id` explains it. |
+| `APPLY` but different | Not linked. A `SHADOW_MISMATCH` entry (document, journal, decision, per-account differences) is written to the system change log. The legacy journal stays authoritative. |
+| `REVIEW_REQUIRED` | Stored by the decision service; no journal effect. |
+| No covered rule (`NOT_APPLICABLE`) | Not stored; nothing happens. |
+
+Out of scope in F4: ISSUE, return and count-adjustment documents, transfers, purchasing documents, and any mode where the Standards layer posts instead of the legacy path. Moving from SHADOW to authoritative posting is a separate, explicit decision that should wait for real, source-verified rules and a clean mismatch history.
+
 ## Known limits (stated, not hidden)
-1. **Not wired into existing modules.** Inventory, purchasing, stock accounting and other modules still post through their own paths. Only journals created by `DecisionPostingBridge` carry a decision (and therefore a durable `ruleId`/version/standard). Asking "why was this posted?" about a legacy journal returns an explicit "no standards decision" answer.
+1. **Only stock receipts are wired, and only in SHADOW mode.** Other modules still post through their own paths. Journals carry a decision only if created by `DecisionPostingBridge` or linked by a matching SHADOW observation. Asking "why was this posted?" about any other journal returns an explicit "no standards decision" answer.
 2. **Post then link is not one transaction.** `PostingEngine` is unchanged and owns its own persistence, so if a journal posts and the link write fails, the error is returned and the pair must be re-linked; re-running `postDecision` is idempotent by design (same journal id and idempotency keys).
 3. **The link does not verify the journal exists** (F2 storage design). `RuleExplanationService` reports a missing linked journal as `found=false` instead of hiding it.
 4. **No official content yet.** See `STANDARDS_COVERAGE_MATRIX.md`: every real standard is `NOT_IMPLEMENTED` and no real rule or tax rate is registered.
