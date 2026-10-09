@@ -2,22 +2,14 @@
   "project": {
     "name": "A.N ERP",
     "version": "7.2.0",
-    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل — تدقيق شامل معتمد ومحدث مع توحيد أعداد الاختبارات",
+    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل — تدقيق شامل معتمد ومحدث",
     "stack": {
-      "backend": [
-        "Node 22",
-        "Express 4",
-        "TypeScript"
-      ],
+      "backend": ["Node 22", "Express 4", "TypeScript"],
       "database": "PostgreSQL",
-      "frontend": [
-        "React 19",
-        "Vite",
-        "Tailwind CSS"
-      ]
+      "frontend": ["React 19", "Vite", "Tailwind CSS"]
     }
   },
-  "auditDate": "2026-10-09T14:30:00Z",
+  "auditDate": "2026-10-09T14:48:00Z",
   "authoritativeVerdict": "CONDITIONAL GO",
   "scorecard": {
     "architecture": 88,
@@ -33,109 +25,15 @@
     "idempotency": 96,
     "schema_management": 78,
     "testing_quality": 87,
-    "evidence_quality": 88,
-    "maintainability": 80,
-    "performance": 85,
-    "production_readiness": 84,
     "overall": 87
   },
   "defects": [
-    {
-      "id": "DEF-P1-001",
-      "severity": "P1",
-      "area": "Accounting / Inventory Atomicity",
-      "file": "src/core/inventory/InventoryService.ts",
-      "method": "approveAndPostStockCount",
-      "impact": "General Ledger journal posts before inventory adjustment loop; return of recordStockMovement is unchecked; no atomic rollback or outbox retry.",
-      "reproducible": true,
-      "recommendation": "Wrap stock adjustments and GL journal into an atomic transaction or register under PENDING_RETRY outbox."
-    },
-    {
-      "id": "DEF-P1-002",
-      "severity": "P1",
-      "area": "Accounting Reversal",
-      "file": "src/core/inventory/InventoryService.ts",
-      "method": "returnStock",
-      "impact": "postingEngine.postEntry return result is ignored at line 1418; method returns success:true even if reversal journal fails, with no PENDING_RETRY tracking.",
-      "reproducible": true,
-      "recommendation": "Check postEntry return result and attach journalStatus PENDING_RETRY on failure."
-    },
-    {
-      "id": "DEF-P1-003",
-      "severity": "P1",
-      "area": "Custody & Expense Reversal Accounting",
-      "file": "src/core/modules/custody/CashCustodyService.ts",
-      "method": "recordCustodyExpenseVoucher, cancelCustodyVoucher",
-      "impact": "postingEngine.postEntry return value is ignored; voucher status updates to POSTED even if posting fails.",
-      "reproducible": true,
-      "recommendation": "Verify postEntry outcome before updating document status."
-    },
-    {
-      "id": "DEF-P2-001",
-      "severity": "P2",
-      "area": "Purchasing Concurrency",
-      "file": "src/core/storage/adapters/PostgresPrimaryAdapter.ts",
-      "method": "saveGoodsReceipt",
-      "impact": "TOCTOU race on remaining PO line quantity; mitigated in DB adapter via FOR UPDATE row locking.",
-      "reproducible": false,
-      "recommendation": "Maintain FOR UPDATE row locks on PO lines during receipt processing."
-    },
-    {
-      "id": "DEF-P2-002",
-      "severity": "P2",
-      "area": "Database Migration",
-      "file": "src/core/storage/adapters/PostgresPrimaryAdapter.ts",
-      "method": "initDatabase",
-      "impact": "Absence of dedicated version-tracked migration engine with checksums.",
-      "reproducible": false,
-      "recommendation": "Implement structured migration runner with version tracking table."
-    }
+    { "id": "DEF-P1-001", "severity": "P1", "status": "OPEN", "impact": "General Ledger journal posts before inventory adjustment loop." },
+    { "id": "DEF-P1-002", "severity": "P1", "status": "OPEN", "impact": "postingEngine.postEntry return result ignored." },
+    { "id": "DEF-P1-003", "severity": "P1", "status": "OPEN", "impact": "postingEngine.postEntry return value ignored in custody." },
+    { "id": "DEF-P2-001", "severity": "P2", "status": "OPEN", "impact": "TOCTOU race on remaining PO line quantity." },
+    { "id": "DEF-P2-002", "severity": "P2", "status": "OPEN", "impact": "Absence of dedicated version-tracked migration engine." }
   ],
-  "resolvedHistoricalDefects": [
-    {
-      "id": "DEF-001",
-      "title": "an_stock_transfer_lines schema alignment",
-      "severity": "CRITICAL",
-      "status": "RESOLVED",
-      "evidence": "PostgresPrimaryAdapter insertStockTransferInTx and DDL aligned to exact 12 authoritative columns."
-    },
-    {
-      "id": "DEF-002",
-      "title": "an_active_sessions tenant_id column",
-      "severity": "HIGH",
-      "status": "RESOLVED",
-      "evidence": "Programmatic DDL ALTER TABLE an_active_sessions ADD COLUMN IF NOT EXISTS tenant_id present at line 368."
-    },
-    {
-      "id": "DEF-003",
-      "title": "an_custom_fields options column",
-      "severity": "MEDIUM",
-      "status": "RESOLVED",
-      "evidence": "Programmatic DDL ALTER TABLE an_custom_fields ADD COLUMN IF NOT EXISTS options JSONB present at line 3328."
-    },
-    {
-      "id": "DEF-004",
-      "title": "getStockTransfer read model mapping",
-      "severity": "LOW",
-      "status": "RESOLVED",
-      "evidence": "getStockTransfer fully maps all 12 columns conforming to StockTransferLine interface."
-    }
-  ],
-  "verifiedFeatures": {
-    "atomic_transfers": true,
-    "fail_closed_negative_stock": true,
-    "weighted_average_cost_locking": true,
-    "cost_layer_fifo_and_specific_lot": true,
-    "multi_step_policy_approvals": true,
-    "automatic_inventory_journals_with_retry": true,
-    "purchase_orders_and_goods_receipts": true,
-    "stock_vs_ledger_reconciliation_report": true,
-    "secure_document_attachments": true,
-    "per_user_warehouse_scope": true,
-    "two_factor_auth_sec1": true,
-    "row_level_security_sec2": true,
-    "standards_intelligence_f1_f3": true
-  },
   "testExecutionMetrics": {
     "totalPassedTests": 360,
     "totalFailedTests": 0,
