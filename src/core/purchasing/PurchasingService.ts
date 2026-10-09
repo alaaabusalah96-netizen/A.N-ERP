@@ -976,13 +976,29 @@ export class PurchasingService {
       if (tax > 0) jl.push({ id: `${jeId}-vat`, accountCode: vatCode, debit: tax, credit: 0, description: 'ضريبة مشتريات' });
       if (variance >= 0.01) jl.push({ id: `${jeId}-var`, accountCode: varCode, debit: variance, credit: 0, description: 'فرق سعر مشتريات' });
       if (variance <= -0.01) jl.push({ id: `${jeId}-var`, accountCode: varCode, debit: 0, credit: -variance, description: 'فرق سعر مشتريات' });
+      jl.push({ id: `${jeId}-ap`, accountCode: apCode, debit: 0, credit: total, description: `ذمم ${invoice.vendorName}` });
+      const entry: any = {
+        id: jeId, code: invoice.invoiceNumber, tenantId, date: invoice.invoiceDate, type: 'SUPPLIER_INVOICE',
+        description: `فاتورة مورد ${invoice.vendorInvoiceRef} / ${invoice.invoiceNumber} — أمر ${invoice.poNumber}`,
+        status: 'APPROVED', totalAmount: r2(jl.reduce((t, l) => t + l.debit, 0)), lines: jl, createdBy: actorId,
+      };
+      const drafted = await posting.draftEntry(tenantId, entry, `${idempotencyKey}-je`);
+      if (!drafted.success || !drafted.data) return this.fail(drafted.error?.status || 500, 'journal-failed', 'فشل إنشاء القيد', drafted.error?.detail || 'تعذر إنشاء قيد الفاتورة.');
+      journalId = drafted.data.id;
+    } else { journalId = existing.data.id; }
+    const posted = await posting.postEntry(tenantId, journalId, `${idempotencyKey}-post`);
+    if (!posted.success) return this.fail(posted.error?.status || 500, 'journal-post-failed', 'فشل ترحيل القيد', posted.error?.detail || 'تعذر ترحيل قيد الفاتورة. أعد المحاولة: القيد محفوظ ولن يتكرر.');
     const updated: SupplierInvoice = {
+      ...invoice, status: 'POSTED', journalEntryId: journalId, approvedBy: actorId,
       approvedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
     const up = await this.storage.updateSupplierInvoice(tenantId, updated);
+    if (!up.success) return this.fail(500, 'invoice-update-failed', 'القيد رُحّل لكن تحديث الفاتورة فشل', `القيد ${journalId} مرحّل. أعد استدعاء الاعتماد لإكمال تحديث حالة الفاتورة (لن يتكرر القيد).`);
     await DomainEventBus.publish({
       eventType: 'SUPPLIER_INVOICE_APPROVED', tenantId, actorId, actorName: actorId,
+      payload: { invoiceId, journalEntryId: journalId, poId: invoice.poId, totalAmount: total }, idempotencyKey,
     });
+    return { success: true, data: { invoice: up.data!, journalEntryId: journalId } };
   }
 
   public async rejectSupplierInvoice(tenantId: string, invoiceId: string, actorId: string, reason: string): Promise<SvcResult<SupplierInvoice>> {

@@ -106,4 +106,3 @@ async function main() {
   process.exit(fail ? 1 : 0);
 }
 main().catch((e) => { console.error('FATAL', e); process.exit(2); });
-# (No content was provided for this part by the user in the prompt - this is just a placeholder to avoid breaking the join script.)
