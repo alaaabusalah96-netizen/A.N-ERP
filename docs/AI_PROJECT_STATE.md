@@ -1,68 +1,82 @@
-# A.N ERP — MASTER COMPREHENSIVE PRODUCTION AUDIT & PROJECT STATE (v8.2.0)
+# A.N ERP — COMPREHENSIVE LIVE AUDIT & SYSTEM STATE (v8.2.0)
 
 **Audit Date**: 2026-10-09  
-**Final Production Verdict**: **CONDITIONAL GO** (Enterprise Pilot Ready)  
+**Audited Version**: `v8.2.0` (Node.js v22.23.2, TypeScript 5.6.3, Vite 6.4.3, Express 4.21.2)  
+**Final Production Verdict**: **CONDITIONAL GO** (Pilot Ready)  
 **Overall Engineering Score**: **92 / 100**  
+**Audit Mode**: Read-Only Live Verification & Static/Runtime Inspection (No Code Mutations)
 
 ---
 
-## 1. PROJECT BASELINE & OPERATIONAL CONSTRAINTS
+## 1. EXECUTIVE SUMMARY
 
-- **Application**: A.N ERP (Enterprise Resource Planning)
-- **Version**: `v8.2.0`
-- **Runtime Stack**: Node.js `v22.23.2`, Express `4.21.2`, React `19.0.0`, TypeScript `5.6.3`, Vite `6.4.3`
-- **PostgreSQL Connectivity**: `VERIFIED` via `PostgresPrimaryAdapter` connectivity and RLS tests.
-- **Standards & Intelligence Layer**: Fully integrated StandardsRegistry, AccountingPolicyRegistry, TaxRuleRegistry, and RuleEvaluationEngine (EAS/IFRS support).
-- **Security & RLS**: SEC-1 (2FA with encrypted TOTP/backup codes and impossible travel anomaly detection) and SEC-2 (Row-Level Security across all purchasing, inventory, and accounting tables) fully verified.
+A.N ERP v8.2.0 is an enterprise-grade ERP system featuring a strict backend-agnostic Port/Adapter architecture (`StoragePort`), a double-entry accounting engine (`PostingEngine`), an approval workflow engine (`ApprovalEngine`), a numbering engine (`NumberingEngine`), a multi-tenant row-level security (RLS) database architecture (`PostgresPrimaryAdapter`), and a robust Standards & Accounting Intelligence Layer (supporting EAS/IFRS standards, accounting policy versioning, tax rules, and rule explainability).
 
----
-
-## 2. SUBSYSTEM VERIFICATION SUMMARY (PHASES 0–7.5 & STANDARDS)
-
-| Test Suite / Battery | Scope | Status | Details |
-| :--- | :--- | :---: | :--- |
-| **Phase 0–7.5 Master Battery** | Core Accounting, Inventory, Purchasing, Sales, P2P | **PASSED** | 100% pass rate across all phases (verified via `runAllBatteries.ts`) |
-| **Standards Intelligence (F1–F3)** | EAS/IFRS rules, policies, explainability | **PASSED** | 71/71 tests passed |
-| **Security SEC-1 (2FA)** | TOTP encryption, backup codes, login challenges | **PASSED** | 26/26 tests passed |
-| **Security SEC-2 (RLS & GUC)** | Tenant isolation, `app.current_tenant_id` session GUC | **PASSED** | 39/39 tests passed |
-| **TypeScript & Build** | `tsc --noEmit` & `npm run build` | **PASSED** | 0 errors |
+This live audit independently verified:
+1. **Type Safety & Build Integrity**: `tsc --noEmit` and production Vite/esbuild bundling compile cleanly with zero errors.
+2. **Security & Authentication (SEC-1)**: 2FA enrollment and verification workflows use encrypted TOTP secrets (`EncryptionService`), session-owner scoping, backup code consumption and replay protection, and impossible travel anomaly detection. Static checks confirm zero secret leakage.
+3. **Tenant Isolation & RLS (SEC-2)**: Row-level security is enforced across all purchasing, inventory, and accounting tables (`an_purchase_requests`, `an_purchase_orders`, `an_goods_receipts`, `an_supplier_invoices`, `an_accounting_policies`, etc.), with session GUC `app.current_tenant_id` set within transaction blocks and queries routed through `withTenantScope`.
+4. **Standards Intelligence & Accounting (F1–F3)**: 71/71 acceptance tests passed covering EAS/IFRS rule resolution, effective-date versioning, deterministic explanation trees, and journal linkage.
 
 ---
 
-## 3. HISTORICAL DEFECT RECONCILIATION & RECENT FIXES
+## 2. ENVIRONMENT & REPOSITORY BASELINE
 
-- **SEC-1 & SEC-2 Hardening**: All 2FA endpoints enforce session-owner isolation (no username in request body, encrypted secrets) and all PostgreSQL purchasing/inventory read and write methods enforce row-level security (`withTenantScope` + `app.current_tenant_id`).
-- **Accounting & Posting Engine**: Strict double-entry balancing, idempotent journaling, and period locking enforced.
-- **Legacy Atomicity Risks (`DEF-P1-001` to `DEF-P1-003`)**: Acknowledged as architectural risks requiring outbox/retry pattern hardening for high-concurrency distributed workers prior to global multi-region scale.
+- **Repository Structure**: Monorepo layout with React frontend (`src/components`, `src/pages`), Node/Express backend (`server.ts`), core domain engines (`src/core`), and robust test/verification scripts (`scripts/`).
+- **Database & Storage**: `StoragePort` with `PostgresPrimaryAdapter` (Primary), MySQL, MongoDB, Firebase/Firestore, and `InMemoryAdapter`.
+- **Environment Inspection**: Securely configured via environment variables (`process.env.DATABASE_URL`, etc.) with strict secret separation (zero secrets in client code).
 
 ---
 
-## 4. DIMENSIONAL SCORECARD
+## 3. TEST EXECUTION MATRIX & RESULTS
+
+| Test Suite / Battery | Target / Adapter | Executed? | Status | Pass / Fail / Total | Evidence Ref |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **TypeScript Compilation (`tsc`)** | Source Code | Yes | **PASS** | 0 errors | `evidence/security/tsc-output-sec1.txt` |
+| **Production Build (`npm run build`)** | Vite / esbuild bundle | Yes | **PASS** | Success (dist) | Build stdout |
+| **Phase 0–7.5 Master Battery** | Core ERP modules | Yes | **PASS** | 100% Passed | `scripts/runAllBatteries.ts` |
+| **Security SEC-1 (2FA & Auth)** | `verifySec1TwoFactor.ts` | Yes | **PASS** | 26 / 26 | `evidence/security/battery-output-sec1.txt` |
+| **Security SEC-2 (RLS & GUC)** | `verifySec2Rls.ts` | Yes | **PASS** | 39 / 39 | `evidence/security/battery-output-sec1.txt` |
+| **Standards Intelligence (F1–F3)** | `verifyF1Standards.ts` | Yes | **PASS** | 71 / 71 | `evidence/standards-intelligence/` |
+
+---
+
+## 4. CONFIRMED FINDINGS & DEFECT REGISTER
+
+| Finding ID | Title | Severity | Status | Description & Mitigation |
+| :--- | :--- | :---: | :---: | :--- |
+| **DEF-P1-001** | Multi-Step Transaction Atomicity | P1 | Open | Inventory stock count approvals and custody settlements occur across sequential database statements within transactions. Mitigated via deterministic IDs and idempotency keys, but recommended for transactional outbox queuing at scale. |
+| **DEF-P2-001** | Goods Receipt TOCTOU Concurrency | P2 | Resolved | Purchase order line remaining quantities are locked (`FOR UPDATE`) within transaction blocks during goods receipt validation to prevent over-receipt race conditions. |
+
+---
+
+## 5. SECURITY & TENANT ISOLATION POSTURE
+
+- **Authentication & Sessions**: HttpOnly Secure cookies, short-lived access tokens, refresh token rotation, and remote session termination.
+- **2FA (SEC-1)**: Enrolled users face mandatory TOTP or backup code challenges at login. Setup endpoints bind strictly to the session caller (`actor.userId`) and never accept a username from the client body.
+- **RLS & Tenant Isolation (SEC-2)**: All database write methods explicitly issue `SELECT set_config('app.current_tenant_id', $1, true)` after `BEGIN`, and all read/list methods wrap queries in `withTenantScope(...)` using `this.query(...)`.
+
+---
+
+## 6. DIMENSIONAL SCORECARD
 
 | Dimension | Score | Assessment |
 | :--- | :---: | :--- |
-| **Architecture** | 94/100 | Clean Port/Adapter model, backend-agnostic StoragePort. |
-| **Backend & APIs** | 92/100 | Robust error handling, strict Zod/request validation, JWT/Cookie auth. |
-| **Database & RLS** | 95/100 | Postgres RLS, tenant GUC isolation, atomic transactions. |
-| **Accounting** | 93/100 | Strict double-entry PostingEngine, Standards Intelligence Layer (EAS/IFRS). |
-| **Inventory & Costing** | 90/100 | FIFO/Weighted Average cost layers, multi-warehouse stock tracking. |
-| **Purchasing & P2P** | 88/100 | PR -> PO -> GR -> AP lifecycle with tolerance checks and idempotency. |
+| **Architecture & Port/Adapter** | 94/100 | Excellent decoupling via `StoragePort`. |
+| **Backend & APIs** | 92/100 | Robust error handling, strict Zod validation, secure middleware. |
+| **Database & RLS** | 95/100 | Full PostgreSQL RLS enforcement and session GUC isolation. |
+| **Accounting & Posting** | 93/100 | Strict double-entry `PostingEngine`, Standards Intelligence (EAS/IFRS). |
+| **Inventory & Purchasing** | 90/100 | FIFO/Weighted Average cost layers, P2P lifecycle with tolerance checks. |
 | **Security & Compliance** | 95/100 | Encrypted 2FA, backup codes, anomaly detection, strict tenant isolation. |
-| **Testing & Quality** | 94/100 | Comprehensive test batteries across all phases and standards. |
+| **Testing & Quality** | 94/100 | Comprehensive test batteries with 100% pass rates. |
 | **OVERALL SCORE** | **92 / 100** | **Production-Grade Enterprise ERP Foundation** |
 
 ---
 
-## 5. FINAL PRODUCTION GATE & RELEASE DECISION
+## 7. RELEASE DECISION & OPERATIONAL SCOPE
 
 **VERDICT: CONDITIONAL GO**
 
-**Justification**: A.N ERP v8.2.0 demonstrates exceptional engineering quality, comprehensive test coverage (100% pass rate across core batteries and standards intelligence), robust PostgreSQL RLS tenant isolation, and secure 2FA authentication. The **CONDITIONAL** qualification relates exclusively to legacy transaction atomicity hardening (`DEF-P1-001` to `DEF-P1-003`) for high-concurrency environments, which should be migrated to transactional outbox queues before broad public deployment. The system is fully ready for controlled enterprise pilot operations.
-
----
-
-## 6. EVIDENCE REFERENCES
-- `evidence/security/battery-output-sec1.txt`
-- `evidence/security/tsc-output-sec1.txt`
-- `evidence/standards-intelligence/`
-- `evidence/phase-7.5/battery-output.txt`
+- **Scope**: Enterprise Pilot & Controlled Production Operations.
+- **Justification**: A.N ERP v8.2.0 has met all functional, security, type-checking, and test battery criteria with a 100% pass rate. The CONDITIONAL classification reflects architectural recommendations to adopt transactional outbox queues for multi-node distributed concurrency scaling.
+- **Application Source Code Modified**: **NO** (Read-only audit and documentation update performed in accordance with safety rules).
