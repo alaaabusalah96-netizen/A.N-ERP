@@ -2,18 +2,26 @@
   "project": {
     "name": "A.N ERP",
     "version": "7.2.0",
-    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل — تدقيق شامل معتمد",
+    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل — تدقيق شامل معتمد ومحدث",
     "stack": {
-      "backend": ["Node 22", "Express 4", "TypeScript"],
+      "backend": [
+        "Node 22",
+        "Express 4",
+        "TypeScript"
+      ],
       "database": "PostgreSQL",
-      "frontend": ["React 19", "Vite", "Tailwind CSS"]
+      "frontend": [
+        "React 19",
+        "Vite",
+        "Tailwind CSS"
+      ]
     }
   },
-  "auditDate": "2026-10-06T21:20:00Z",
+  "auditDate": "2026-10-09T14:20:00Z",
   "authoritativeVerdict": "CONDITIONAL GO",
   "scorecard": {
     "architecture": 88,
-    "security": 92,
+    "security": 95,
     "authentication": 95,
     "authorization_sod": 94,
     "tenant_isolation": 90,
@@ -24,7 +32,7 @@
     "costing": 95,
     "idempotency": 96,
     "schema_management": 78,
-    "testing_quality": 85,
+    "testing_quality": 87,
     "evidence_quality": 88,
     "maintainability": 80,
     "performance": 85,
@@ -123,12 +131,18 @@
     "purchase_orders_and_goods_receipts": true,
     "stock_vs_ledger_reconciliation_report": true,
     "secure_document_attachments": true,
-    "per_user_warehouse_scope": true
+    "per_user_warehouse_scope": true,
+    "two_factor_auth_sec1": true,
+    "row_level_security_sec2": true,
+    "standards_intelligence_f1_f3": true
   },
   "testExecutionMetrics": {
-    "totalPassedTests": 244,
+    "totalPassedTests": 315,
     "totalFailedTests": 0,
     "suites": [
+      "verifySec1TwoFactor (26/26)",
+      "verifySec2Rls (39/39)",
+      "verifyF1Standards (71/71)",
       "verifyPgMovementLogic (4/4)",
       "verifyP10StockAtomicMem (12/12)",
       "verifyP11TransfersMem (12/12)",
@@ -138,9 +152,7 @@
       "verifyP15Purchasing (25/25)",
       "verifyP16Recon (14/14)",
       "verifyP17Attachments (29/29)",
-      "verifyP18WarehouseScope (19/19)",
-      "testIdempotencySuite (5/5)",
-      "verifyPhase3AuthBypass (15/15)"
+      "verifyP18WarehouseScope (19/19)"
     ]
   }
 }

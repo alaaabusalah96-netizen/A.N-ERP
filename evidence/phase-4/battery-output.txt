@@ -3,22 +3,22 @@
   "passedCount": 6,
   "failedCount": 0,
   "allPassed": true,
-  "durationMs": 1409,
+  "durationMs": 1453,
   "tests": [
     {
       "testId": "P4.6-01-TENANT-RESOLUTION",
       "nameAr": "حسم هوية المستأجر قبل التوثيق عبر المعرف والصلاحية الصريحة",
       "category": "4.6_TENANT_RESOLUTION",
       "passed": true,
-      "durationMs": 28,
-      "evidence": "Successfully verified pre-auth tenant resolution: resolved ten-ded-b-119230 from body, ten-ded-c-119230 from header, rejected empty request with RFC7807 400."
+      "durationMs": 25,
+      "evidence": "Successfully verified pre-auth tenant resolution: resolved ten-ded-b-228820 from body, ten-ded-c-228820 from header, rejected empty request with RFC7807 400."
     },
     {
       "testId": "P4.6-02-STORAGE-ROUTING",
       "nameAr": "توجيه المحركات بدقة: مستأجر مشترك A ومستأجر مخصص B ومستأجر مخصص C",
       "category": "4.6_ROUTING",
       "passed": true,
-      "durationMs": 553,
+      "durationMs": 619,
       "evidence": "Verified adapter routing: Shared tenant A routed to Primary; Dedicated B & C received distinct dedicated adapters with initialized schemas."
     },
     {
@@ -26,7 +26,7 @@
       "nameAr": "عزل البيانات الكامل ومنع التسريب البيني بين 3 مستأجرين (Shared, Dedicated B, Dedicated C)",
       "category": "4.6_ISOLATION",
       "passed": true,
-      "durationMs": 169,
+      "durationMs": 180,
       "evidence": "Data isolation confirmed across 3 tenants: Tenant A has 0 entries, Tenant B has 0 entries, Tenant C has 0 entries. Zero cross-tenant leakage."
     },
     {
@@ -34,15 +34,15 @@
       "nameAr": "استقلالية مفتاح الإدهنية عبر المستأجرين ومنع التضارب البيني",
       "category": "4.6_ISOLATION",
       "passed": true,
-      "durationMs": 41,
-      "evidence": "Idempotency scoping verified: Key 'shared-idem-key-1791564120298' is strictly isolated to tenant 'ten-shared-a-119230' and invisible to 'ten-ded-b-119230'."
+      "durationMs": 43,
+      "evidence": "Idempotency scoping verified: Key 'shared-idem-key-1791581229942' is strictly isolated to tenant 'ten-shared-a-228820' and invisible to 'ten-ded-b-228820'."
     },
     {
       "testId": "P4.6-05-POOL-CAPACITY-LRU",
       "nameAr": "إدارة مجمع الاتصالات المخصصة والتحقق من سياسة الإخلاء الأقدم (LRU Eviction)",
       "category": "4.6_POOL_LRU",
       "passed": true,
-      "durationMs": 6,
+      "durationMs": 5,
       "evidence": "Pool capacity enforced: Successfully created 22 dedicated tenant requests. Active pools capped at 20 (max 20) via automatic LRU eviction."
     },
     {
