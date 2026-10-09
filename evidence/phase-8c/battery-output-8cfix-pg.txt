@@ -7,7 +7,7 @@
 [PASS] PG3 segregation of duties on PostgreSQL: the creator cannot approve their own invoice (403 sod-violation) and nothing is posted
 [phase-4] DECISION: DB role bypasses RLS -> global membership backfill
 [PASS] PG4 race: 6 parallel creates of the same vendor invoice ref leave exactly ONE invoice row; the others get a clean 409 (no 5xx)
-[FAIL] PG5 race: 6 parallel approvals of one invoice leave ONE journal, invoice POSTED, payable credited once (+20); every caller succeeded or got a clean 4xx (no 5xx) | je=1 status=POSTED statuses=500,500,500,500,200,500
+[FAIL] PG5 race: 6 parallel approvals of one invoice leave ONE journal, invoice POSTED, payable credited once (+20); every caller succeeded or got a clean 4xx (no 5xx) | je=1 status=POSTED statuses=200,200,200,200,200,200
 [PASS] PG6 recovery on PostgreSQL: update failure after posting is reported; a retry with a new key finishes the invoice and the payable moves once (+15)
 
 Passed: 6 | Failed: 1

@@ -2,12 +2,12 @@
 import { InMemoryAdapter } from '../src/core/storage/adapters/InMemoryAdapter';
 import { InventoryService } from '../src/core/inventory/InventoryService';
 import { PurchasingService } from '../src/core/purchasing/PurchasingService';
-import { PostingEngine } from '../src/core/engines/PostingEngine';
 import { NumberingEngine } from '../src/core/engines/NumberingEngine';
 import { ApprovalEngine } from '../src/core/engines/ApprovalEngine';
 import { AccountingPolicyRegistry } from '../src/core/standards/registries';
 import { ROLE_PERMISSION_MATRIX } from '../src/core/auth/PermissionMatrix';
 import fs from 'fs';
+import { PostingEngine } from '../src/core/engines/PostingEngine';
 
 let pass = 0, fail = 0;
 const check = (label: string, cond: boolean, extra = '') => {
@@ -179,6 +179,23 @@ async function main() {
     const src = fs.readFileSync('src/core/purchasing/PurchasingService.ts', 'utf8');
     const m = src.slice(src.indexOf('public async approveSupplierInvoice('), src.indexOf('public async rejectSupplierInvoice('));
     check('F9 approveSupplierInvoice posts only through PostingEngine (no direct storage createJournalEntry/postJournalEntry, no hard-coded 1105/2106/2101 in the method)', /posting\.draftEntry/.test(m) && /posting\.postEntry/.test(m) && !/storage\.(createJournalEntry|postJournalEntry)/.test(m) && !/'(1105|2106|2101)'\s*,\s*debit|accountCode:\s*'(1105|2106)'/.test(m.replace("'ap_account_code', invoice.invoiceDate, '2101'", '')));
+  }
+  // F10: lost races are not 5xx — emulate the PostgreSQL behaviour seen in the gate (the concurrent winner already created / posted the entry)
+  {
+    const mkInv = async (ctx: any, po: any, ref: string, key: string) => (await mk(ctx, po, ref, key, 10, 8)).data!.invoice.id as string;
+    const PE: any = PostingEngine.prototype; const origDraft = PE.draftEntry, origPost = PE.postEntry;
+    const c1 = await setup(); const p1 = await openPoWithReceipt(c1, 10, 8); const id1 = await mkInv(c1, p1.po, 'RACE-1', 'f10a');
+    PE.draftEntry = async function (...a: any[]) { await origDraft.apply(this, a); return { success: false, error: { type: 'x', title: 'x', status: 500, detail: 'duplicate key value violates unique constraint (injected)' } }; };
+    const r1 = await c1.svc.approveSupplierInvoice(c1.T, id1, 'cfo', `f10a-${c1.T}`); PE.draftEntry = origDraft;
+    check('F10a draft lost the race (entry already created by the winner): approval continues on the existing entry and succeeds; payable credited once (80)', r1.success && (await bal(c1, '2101')).c === 80, r1.error?.type);
+    const c2 = await setup(); const p2 = await openPoWithReceipt(c2, 10, 8); const id2 = await mkInv(c2, p2.po, 'RACE-2', 'f10b');
+    PE.postEntry = async function (...a: any[]) { await origPost.apply(this, a); return { success: false, error: { type: 'x', title: 'x', status: 500, detail: 'already posted by a concurrent request (injected)' } }; };
+    const r2 = await c2.svc.approveSupplierInvoice(c2.T, id2, 'cfo', `f10b-${c2.T}`); PE.postEntry = origPost;
+    check('F10b post lost the race (entry already POSTED by the winner): approval succeeds, no second posting (payable 80)', r2.success && r2.data!.invoice.status === 'POSTED' && (await bal(c2, '2101')).c === 80, r2.error?.type);
+    const c3 = await setup(); const p3 = await openPoWithReceipt(c3, 10, 8); const id3 = await mkInv(c3, p3.po, 'RACE-3', 'f10c');
+    PE.postEntry = async function () { return { success: false, error: { type: 'x', title: 'x', status: 500, detail: 'still posting elsewhere (injected)' } }; };
+    const r3 = await c3.svc.approveSupplierInvoice(c3.T, id3, 'cfo', `f10c-${c3.T}`); PE.postEntry = origPost;
+    check('F10c entry exists but is not posted yet and posting failed: clean 409 approval-in-progress (not 5xx), invoice not marked POSTED', r3.success === false && r3.error?.status === 409 && /approval-in-progress/.test(r3.error?.type || '') && (await c3.svc.getSupplierInvoice(c3.T, id3)).data!.invoice.status !== 'POSTED', r3.error?.type);
   }
   console.log(`\nPassed: ${pass} | Failed: ${fail}`);
   process.exit(fail ? 1 : 0);

@@ -983,11 +983,23 @@ export class PurchasingService {
         status: 'APPROVED', totalAmount: r2(jl.reduce((t, l) => t + l.debit, 0)), lines: jl, createdBy: actorId,
       };
       const drafted = await posting.draftEntry(tenantId, entry, `${idempotencyKey}-je`);
-      if (!drafted.success || !drafted.data) return this.fail(drafted.error?.status || 500, 'journal-failed', 'فشل إنشاء القيد', drafted.error?.detail || 'تعذر إنشاء قيد الفاتورة.');
-      journalId = drafted.data.id;
+      if (drafted.success && drafted.data) journalId = drafted.data.id;
+      else {
+        // A concurrent approval of the same invoice may have created the entry between our read and our insert: re-read before failing.
+        const raced = await this.storage.getJournalEntry(tenantId, jeId);
+        if (!raced.success || !raced.data) return this.fail(drafted.error?.status || 500, 'journal-failed', 'فشل إنشاء القيد', drafted.error?.detail || 'تعذر إنشاء قيد الفاتورة.');
+        journalId = raced.data.id;
+      }
     } else { journalId = existing.data.id; }
     const posted = await posting.postEntry(tenantId, journalId, `${idempotencyKey}-post`);
-    if (!posted.success) return this.fail(posted.error?.status || 500, 'journal-post-failed', 'فشل ترحيل القيد', posted.error?.detail || 'تعذر ترحيل قيد الفاتورة. أعد المحاولة: القيد محفوظ ولن يتكرر.');
+    if (!posted.success) {
+      const now = await this.storage.getJournalEntry(tenantId, journalId);
+      if (!(now.success && now.data && now.data.status === 'POSTED')) {
+        // Entry exists but another request is still posting it: ask the caller to retry (clean 409), never a 5xx for a lost race.
+        const inFlight = now.success && !!now.data;
+        return this.fail(inFlight ? 409 : (posted.error?.status || 500), inFlight ? 'approval-in-progress' : 'journal-post-failed', inFlight ? 'اعتماد الفاتورة قيد التنفيذ' : 'فشل ترحيل القيد', inFlight ? 'طلب اعتماد آخر لنفس الفاتورة قيد التنفيذ. أعد المحاولة بعد لحظات.' : (posted.error?.detail || 'تعذر ترحيل قيد الفاتورة. أعد المحاولة: القيد محفوظ ولن يتكرر.'));
+      }
+    }
     const updated: SupplierInvoice = {
       ...invoice, status: 'POSTED', journalEntryId: journalId, approvedBy: actorId,
       approvedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
