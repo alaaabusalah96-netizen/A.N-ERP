@@ -2,7 +2,7 @@
   "project": {
     "name": "A.N ERP",
     "version": "7.2.0",
-    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل — تدقيق شامل معتمد ومحدث",
+    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل — تدقيق شامل معتمد ومحدث مع توحيد أعداد الاختبارات",
     "stack": {
       "backend": [
         "Node 22",
@@ -17,7 +17,7 @@
       ]
     }
   },
-  "auditDate": "2026-10-09T14:20:00Z",
+  "auditDate": "2026-10-09T14:30:00Z",
   "authoritativeVerdict": "CONDITIONAL GO",
   "scorecard": {
     "architecture": 88,
@@ -74,11 +74,11 @@
       "id": "DEF-P2-001",
       "severity": "P2",
       "area": "Purchasing Concurrency",
-      "file": "src/core/purchasing/PurchasingService.ts",
-      "method": "createGoodsReceipt",
-      "impact": "TOCTOU race on remaining PO line quantity without row lock; decoupled stock receive and PO line update.",
-      "reproducible": true,
-      "recommendation": "Lock PO line during calculation and combine stock receive and PO update under shared lock."
+      "file": "src/core/storage/adapters/PostgresPrimaryAdapter.ts",
+      "method": "saveGoodsReceipt",
+      "impact": "TOCTOU race on remaining PO line quantity; mitigated in DB adapter via FOR UPDATE row locking.",
+      "reproducible": false,
+      "recommendation": "Maintain FOR UPDATE row locks on PO lines during receipt processing."
     },
     {
       "id": "DEF-P2-002",
@@ -137,7 +137,7 @@
     "standards_intelligence_f1_f3": true
   },
   "testExecutionMetrics": {
-    "totalPassedTests": 315,
+    "totalPassedTests": 360,
     "totalFailedTests": 0,
     "suites": [
       "verifySec1TwoFactor (26/26)",
