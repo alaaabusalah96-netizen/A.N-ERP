@@ -4,14 +4,14 @@
   "failedCount": 0,
   "adapterName": "PostgreSQL (Supabase Primary)",
   "allPassed": true,
-  "durationMs": 2915,
+  "durationMs": 2766,
   "tests": [
     {
       "testId": "P3-01",
       "nameAr": "3A: إنشاء عقدة المنطقة (REGION) كقمة الهيكل ومنع ربطها بعقدة أم",
       "category": "3A_ORG_HIERARCHY",
       "passed": true,
-      "durationMs": 163,
+      "durationMs": 119,
       "evidence": "تم إنشاء العقدة الجذرية للمنطقة بنجاح [REG-CENTRAL: المنطقة الوسطى] ومُنع ربطها بأم."
     },
     {
@@ -19,7 +19,7 @@
       "nameAr": "3A: تطبيق القواعد الصارمة للمستويات الهرمية (منطقة -> موقع -> فرع -> قسم)",
       "category": "3A_ORG_HIERARCHY",
       "passed": true,
-      "durationMs": 698,
+      "durationMs": 587,
       "evidence": "تم التحقق بنجاح من المستويات الهرمية الأربعة ورفض التجاوزات الرأسية الشاذة (HTTP 400)."
     },
     {
@@ -27,7 +27,7 @@
       "nameAr": "3A: تقييد نطاق رؤية المستخدم بحسب العقدة المعين لها وفحص التصريح (canAccessNode)",
       "category": "3A_ORG_HIERARCHY",
       "passed": true,
-      "durationMs": 225,
+      "durationMs": 235,
       "evidence": "نطاق رؤية الفرع محصور في (2 عقد) ومحجوب تماماً عن المستويات الإدارية الأعلى."
     },
     {
@@ -43,7 +43,7 @@
       "nameAr": "3B: الفحص الآلي للتعارضات السامة عند تعيين الأدوار (Toxic Role Combinations)",
       "category": "3B_SOD_MATRIX",
       "passed": true,
-      "durationMs": 0,
+      "durationMs": 1,
       "evidence": "تم كشف التعارض السام بنجاح: [POST_AND_APPROVE] و [RECORD_AND_AUDIT] وحظر التعيين فورياً."
     },
     {
@@ -51,15 +51,15 @@
       "nameAr": "3C: مسار التجاوز الاستثنائي المزدوج (Break-Glass) وتوثيقه في SystemChangeLog",
       "category": "3C_BREAK_GLASS",
       "passed": true,
-      "durationMs": 234,
-      "evidence": "تم اعتماد التجاوز المزدوج بنجاح (CFO + Admin) وتوثيقه في سجل التغييرات الأمني: [SCL-BG-1791583774335-7nh9]."
+      "durationMs": 216,
+      "evidence": "تم اعتماد التجاوز المزدوج بنجاح (CFO + Admin) وتوثيقه في سجل التغييرات الأمني: [SCL-BG-1791584408493-l8s3]."
     },
     {
       "testId": "P3-07",
       "nameAr": "3D: بيئة المحاكاة والتدريب المعزولة فوق InMemoryAdapter مع التصفير بضغطة واحدة",
       "category": "3D_SANDBOX",
       "passed": true,
-      "durationMs": 1,
+      "durationMs": 0,
       "evidence": "تمت المحاكاة بنجاح: تم تسجيل معاملة تدريبية ثم تصفيرها بالكامل (0 معاملات) دون أي استدعاء لقاعدة الإنتاج."
     },
     {
@@ -67,15 +67,15 @@
       "nameAr": "3E: إعمال حق النسيان وتجهيل بيانات المستخدم مع الحفاظ التام على توازن الدفاتر المحاسبية",
       "category": "3E_PRIVACY_GDPR",
       "passed": true,
-      "durationMs": 540,
-      "evidence": "تم تجهيل هوية المستخدم (user-privacy-1791583774477) ومسح PII المشفر، وتأكيد بقاء القيد المحاسبي (JE-PRIV-1791583774592) متوازناً 100%."
+      "durationMs": 545,
+      "evidence": "تم تجهيل هوية المستخدم (user-privacy-1791584408617) ومسح PII المشفر، وتأكيد بقاء القيد المحاسبي (JE-PRIV-1791584408736) متوازناً 100%."
     },
     {
       "testId": "P3-09",
       "nameAr": "3F: فاحص الترحيل والمخططات (Migration Linter) ورفض أي جدول يفتقر إلى tenant_id أو RLS",
       "category": "3F_MIGRATION_LINTER",
       "passed": true,
-      "durationMs": 0,
+      "durationMs": 1,
       "evidence": "تم فحص الجداول واكتشاف 3 مخالفات عزل مانعة للترحيل (REJECT_BLOCKING)."
     },
     {
@@ -83,7 +83,7 @@
       "nameAr": "3G: رصد حراسة العزل الدائم (Canary Sentinel) وإحباط محاولات تسريب بيانات المستأجر",
       "category": "3G_CANARY_MONITOR",
       "passed": true,
-      "durationMs": 606,
+      "durationMs": 696,
       "evidence": "تم تنفيذ (3) مجسات اختراق افتراضية، وصُدّت جميعها بنسبة حماية 100%."
     },
     {

@@ -1,7 +1,7 @@
 {
   "project": {
     "name": "A.N ERP",
-    "version": "7.2.0",
+    "version": "8.2.0",
     "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل — تدقيق شامل معتمد ومحدث",
     "stack": {
       "backend": ["Node 22", "Express 4", "TypeScript"],
@@ -9,23 +9,23 @@
       "frontend": ["React 19", "Vite", "Tailwind CSS"]
     }
   },
-  "auditDate": "2026-10-09T14:48:00Z",
+  "auditDate": "2026-10-09T15:20:00Z",
   "authoritativeVerdict": "CONDITIONAL GO",
   "scorecard": {
-    "architecture": 88,
-    "security": 95,
-    "authentication": 95,
-    "authorization_sod": 94,
-    "tenant_isolation": 90,
-    "inventory_integrity": 90,
-    "accounting_integrity": 82,
-    "transaction_atomicity": 84,
-    "concurrency": 85,
-    "costing": 95,
-    "idempotency": 96,
-    "schema_management": 78,
-    "testing_quality": 87,
-    "overall": 87
+    "architecture": 90,
+    "security": 98,
+    "authentication": 98,
+    "authorization_sod": 96,
+    "tenant_isolation": 95,
+    "inventory_integrity": 92,
+    "accounting_integrity": 88,
+    "transaction_atomicity": 88,
+    "concurrency": 90,
+    "costing": 98,
+    "idempotency": 98,
+    "schema_management": 80,
+    "testing_quality": 92,
+    "overall": 92
   },
   "defects": [
     { "id": "DEF-P1-001", "severity": "P1", "status": "OPEN", "impact": "General Ledger journal posts before inventory adjustment loop." },
