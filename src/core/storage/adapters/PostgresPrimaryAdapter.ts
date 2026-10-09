@@ -75,6 +75,7 @@ import {
   ConsumedInvitation,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
+import { pgDateToYmd } from '../pgDate';
 
 export class PostgresPrimaryAdapter implements StoragePort {
   readonly adapterName = 'PostgreSQL (Supabase Primary)';
@@ -6398,7 +6399,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
   private mapPr(row: any) {
     return {
       id: row.id, tenantId: row.tenant_id, prNumber: row.pr_number, status: row.status, requestedBy: row.requested_by,
-      neededBy: row.needed_by ? String(row.needed_by).slice(0, 10) : undefined, notes: row.notes || undefined,
+      neededBy: row.needed_by ? pgDateToYmd(row.needed_by) : undefined, notes: row.notes || undefined,
       costCenterId: row.cost_center_id || undefined, projectId: row.project_id || undefined,
       sourceReorderEventId: row.source_reorder_event_id || undefined, approvedBy: row.approved_by || undefined,
       approvedAt: row.approved_at ? new Date(row.approved_at).toISOString() : undefined,
@@ -6410,7 +6411,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     return {
       id: row.id, tenantId: row.tenant_id, prId: row.pr_id, lineNumber: row.line_number, itemId: row.item_id,
       quantity: Number(row.quantity), uom: row.uom || undefined,
-      neededBy: row.needed_by ? String(row.needed_by).slice(0, 10) : undefined,
+      neededBy: row.needed_by ? pgDateToYmd(row.needed_by) : undefined,
       costCenterId: row.cost_center_id || undefined, projectId: row.project_id || undefined, notes: row.notes || undefined,
     };
   }
@@ -6530,8 +6531,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
   private mapQuote(row: any) {
     return {
       id: row.id, tenantId: row.tenant_id, quoteNumber: row.quote_number, rfqId: row.rfq_id, vendorId: row.vendor_id,
-      vendorName: row.vendor_name, status: row.status, quoteDate: String(row.quote_date).slice(0, 10),
-      validUntil: row.valid_until ? String(row.valid_until).slice(0, 10) : undefined, notes: row.notes || undefined,
+      vendorName: row.vendor_name, status: row.status, quoteDate: pgDateToYmd(row.quote_date),
+      validUntil: row.valid_until ? pgDateToYmd(row.valid_until) : undefined, notes: row.notes || undefined,
       createdBy: row.created_by, selectedAt: row.selected_at ? new Date(row.selected_at).toISOString() : undefined,
       convertedPoId: row.converted_po_id || undefined,
       createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
@@ -6603,8 +6604,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
       id: row.id, tenantId: row.tenant_id, invoiceNumber: row.invoice_number, vendorInvoiceRef: row.vendor_invoice_ref,
       poId: row.po_id, poNumber: row.po_number, vendorId: row.vendor_id, vendorName: row.vendor_name,
       receiptId: row.receipt_id || undefined, status: row.status,
-      invoiceDate: row.invoice_date instanceof Date ? row.invoice_date.toISOString().slice(0, 10) : String(row.invoice_date).slice(0, 10),
-      dueDate: row.due_date ? (row.due_date instanceof Date ? row.due_date.toISOString().slice(0, 10) : String(row.due_date).slice(0, 10)) : undefined,
+      invoiceDate: pgDateToYmd(row.invoice_date),
+      dueDate: row.due_date ? pgDateToYmd(row.due_date) : undefined,
       currency: row.currency || undefined, subtotal: Number(row.subtotal), taxAmount: Number(row.tax_amount), totalAmount: Number(row.total_amount),
       matchTolerancePct: Number(row.match_tolerance_pct), matchSummary: row.match_summary || undefined,
       journalEntryId: row.journal_entry_id || undefined, notes: row.notes || undefined, createdBy: row.created_by,

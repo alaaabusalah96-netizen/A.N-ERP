@@ -1,0 +1,16 @@
+[PASS] D1 [UTC] pgDateToYmd(DATE 2026-10-09) = 2026-10-09
+[PASS] D2 [UTC] first day of year / month boundary stays correct (2026-01-01)
+[PASS] D1 [Africa/Cairo] pgDateToYmd(DATE 2026-10-09) = 2026-10-09
+[PASS] D2 [Africa/Cairo] first day of year / month boundary stays correct (2026-01-01)
+[PASS] D1 [Asia/Riyadh] pgDateToYmd(DATE 2026-10-09) = 2026-10-09
+[PASS] D2 [Asia/Riyadh] first day of year / month boundary stays correct (2026-01-01)
+[PASS] D1 [America/Los_Angeles] pgDateToYmd(DATE 2026-10-09) = 2026-10-09
+[PASS] D2 [America/Los_Angeles] first day of year / month boundary stays correct (2026-01-01)
+[PASS] D1 [Asia/Tokyo] pgDateToYmd(DATE 2026-10-09) = 2026-10-09
+[PASS] D2 [Asia/Tokyo] first day of year / month boundary stays correct (2026-01-01)
+[PASS] D3 the toISOString() reading is WRONG ahead of UTC (proves why local parts are needed): Cairo gives 2026-10-08
+[PASS] D4 strings pass through (2026-10-09 and 2026-10-09T00:00:00Z -> 2026-10-09)
+[PASS] D5 the adapter has no String(row.<date column>).slice(0, 10) left for needed_by / quote_date / valid_until / invoice_date / due_date
+[PASS] D6 the adapter imports pgDateToYmd
+
+Passed: 14 | Failed: 0
