@@ -1260,9 +1260,12 @@ async function startServer() {
     const storage = getRequestStorage(req, res);
     if (!storage) return;
     const r = await twoFactorService.startSetup(storage, { tenantId: auth.tenantId, userId: auth.userId });
-    if (!r.ok) return res.status(r.status).json({ type: r.type, title: r.title, status: r.status, detail: r.detail });
+    if (!r.ok) {
+      const err = r as any;
+      return res.status(err.status).json({ type: err.type, title: err.title, status: err.status, detail: err.detail });
+    }
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ success: true, secret: r.secret, qrCodeDataUrl: r.qrCodeDataUrl, otpauthUrl: r.otpauthUrl });
+    return res.json({ success: true, secret: (r as any).secret, qrCodeDataUrl: (r as any).qrCodeDataUrl, otpauthUrl: (r as any).otpauthUrl });
   });
 
   app.post('/api/auth/2fa/verify-setup', requireAuth, async (req: Request, res: Response) => {
@@ -1271,8 +1274,9 @@ async function startServer() {
     if (!storage) return;
     const r = await twoFactorService.confirmSetup(storage, { tenantId: auth.tenantId, userId: auth.userId }, String((req.body || {}).token || ''));
     if (!r.ok) {
-      if (r.code === 'invalid-2fa' && (r as any).username) await new AnomalyDetector(storage).recordFailedAttempt((r as any).username);
-      return res.status(r.status).json({ type: r.type, title: r.title, status: r.status, detail: r.detail });
+      const err = r as any;
+      if (err.code === 'invalid-2fa' && err.username) await new AnomalyDetector(storage).recordFailedAttempt(err.username);
+      return res.status(err.status).json({ type: err.type, title: err.title, status: err.status, detail: err.detail });
     }
     return res.json({ success: true, message: 'تم تفعيل التحقق بخطوتين بنجاح' });
   });

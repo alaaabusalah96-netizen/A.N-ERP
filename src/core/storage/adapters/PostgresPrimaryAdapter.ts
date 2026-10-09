@@ -1541,7 +1541,19 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_stock_cost_layers',
           'an_inventory_settings',
           'an_accounting_policies',
-          'an_accounting_decisions'
+          'an_accounting_decisions',
+          'an_purchase_requests',
+          'an_purchase_request_lines',
+          'an_rfqs',
+          'an_rfq_lines',
+          'an_supplier_quotes',
+          'an_supplier_quote_lines',
+          'an_purchase_orders',
+          'an_purchase_order_lines',
+          'an_goods_receipts',
+          'an_goods_receipt_lines',
+          'an_supplier_invoices',
+          'an_supplier_invoice_lines'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -6351,6 +6363,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
       await client.query(
         `INSERT INTO an_purchase_requests (id, tenant_id, pr_number, status, requested_by, needed_by, notes, cost_center_id, project_id, source_reorder_event_id, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW())`,
@@ -6372,29 +6385,35 @@ export class PostgresPrimaryAdapter implements StoragePort {
     } finally { client.release(); }
   }
   public async getPurchaseRequest(tenantId: string, prId: string): Promise<any> {
-    const r = await this.pool.query(`SELECT * FROM an_purchase_requests WHERE tenant_id=$1 AND id=$2`, [tenantId, prId]);
-    if (!r.rows.length) return { success: true, data: null };
-    const lr = await this.pool.query(`SELECT * FROM an_purchase_request_lines WHERE tenant_id=$1 AND pr_id=$2 ORDER BY line_number`, [tenantId, prId]);
-    const row = r.rows[0];
-    return { success: true, data: { pr: this.mapPr(row), lines: lr.rows.map((x: any) => this.mapPrLine(x)) } };
+    return this.withTenantScope(tenantId, async () => {
+      const r = await this.query(`SELECT * FROM an_purchase_requests WHERE tenant_id=$1 AND id=$2`, [tenantId, prId]);
+      if (!r.rows.length) return { success: true, data: null };
+      const lr = await this.query(`SELECT * FROM an_purchase_request_lines WHERE tenant_id=$1 AND pr_id=$2 ORDER BY line_number`, [tenantId, prId]);
+      const row = r.rows[0];
+      return { success: true, data: { pr: this.mapPr(row), lines: lr.rows.map((x: any) => this.mapPrLine(x)) } };
+    });
   }
   public async listPurchaseRequests(tenantId: string, filter?: any): Promise<any> {
-    let q = `SELECT * FROM an_purchase_requests WHERE tenant_id=$1`;
-    const params: any[] = [tenantId];
-    if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
-    if (filter?.requestedBy) { params.push(filter.requestedBy); q += ` AND requested_by=$${params.length}`; }
-    q += ' ORDER BY created_at DESC';
-    const r = await this.pool.query(q, params);
-    return { success: true, data: r.rows.map((x: any) => this.mapPr(x)) };
+    return this.withTenantScope(tenantId, async () => {
+      let q = `SELECT * FROM an_purchase_requests WHERE tenant_id=$1`;
+      const params: any[] = [tenantId];
+      if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
+      if (filter?.requestedBy) { params.push(filter.requestedBy); q += ` AND requested_by=$${params.length}`; }
+      q += ' ORDER BY created_at DESC';
+      const r = await this.query(q, params);
+      return { success: true, data: r.rows.map((x: any) => this.mapPr(x)) };
+    });
   }
   public async updatePurchaseRequest(tenantId: string, pr: any): Promise<any> {
-    const r = await this.pool.query(
-      `UPDATE an_purchase_requests SET status=$1, approved_by=$2, approved_at=$3, rejection_reason=$4, converted_po_id=$5, notes=$6, updated_at=NOW()
-       WHERE tenant_id=$7 AND id=$8 RETURNING *`,
-      [pr.status, pr.approvedBy || null, pr.approvedAt || null, pr.rejectionReason || null, pr.convertedPoId || null, pr.notes || null, tenantId, pr.id]
-    );
-    if (!r.rows.length) return { success: false, error: { type: 'pg', title: 'pr-not-found', status: 404, detail: pr.id } };
-    return { success: true, data: this.mapPr(r.rows[0]) };
+    return this.withTenantScope(tenantId, async () => {
+      const r = await this.query(
+        `UPDATE an_purchase_requests SET status=$1, approved_by=$2, approved_at=$3, rejection_reason=$4, converted_po_id=$5, notes=$6, updated_at=NOW()
+         WHERE tenant_id=$7 AND id=$8 RETURNING *`,
+        [pr.status, pr.approvedBy || null, pr.approvedAt || null, pr.rejectionReason || null, pr.convertedPoId || null, pr.notes || null, tenantId, pr.id]
+      );
+      if (!r.rows.length) return { success: false, error: { type: 'pg', title: 'pr-not-found', status: 404, detail: pr.id } };
+      return { success: true, data: this.mapPr(r.rows[0]) };
+    });
   }
   private mapPr(row: any) {
     return {
@@ -6421,6 +6440,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
       await client.query(
         `INSERT INTO an_rfqs (id, tenant_id, rfq_number, status, pr_id, notes, created_by, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`,
@@ -6441,27 +6461,33 @@ export class PostgresPrimaryAdapter implements StoragePort {
     } finally { client.release(); }
   }
   public async getRfq(tenantId: string, rfqId: string): Promise<any> {
-    const r = await this.pool.query(`SELECT * FROM an_rfqs WHERE tenant_id=$1 AND id=$2`, [tenantId, rfqId]);
-    if (!r.rows.length) return { success: true, data: null };
-    const lr = await this.pool.query(`SELECT * FROM an_rfq_lines WHERE tenant_id=$1 AND rfq_id=$2 ORDER BY line_number`, [tenantId, rfqId]);
-    return { success: true, data: { rfq: this.mapRfq(r.rows[0]), lines: lr.rows.map((x: any) => this.mapRfqLine(x)) } };
+    return this.withTenantScope(tenantId, async () => {
+      const r = await this.query(`SELECT * FROM an_rfqs WHERE tenant_id=$1 AND id=$2`, [tenantId, rfqId]);
+      if (!r.rows.length) return { success: true, data: null };
+      const lr = await this.query(`SELECT * FROM an_rfq_lines WHERE tenant_id=$1 AND rfq_id=$2 ORDER BY line_number`, [tenantId, rfqId]);
+      return { success: true, data: { rfq: this.mapRfq(r.rows[0]), lines: lr.rows.map((x: any) => this.mapRfqLine(x)) } };
+    });
   }
   public async listRfqs(tenantId: string, filter?: any): Promise<any> {
-    let q = `SELECT * FROM an_rfqs WHERE tenant_id=$1`;
-    const params: any[] = [tenantId];
-    if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
-    if (filter?.prId) { params.push(filter.prId); q += ` AND pr_id=$${params.length}`; }
-    q += ' ORDER BY created_at DESC';
-    const r = await this.pool.query(q, params);
-    return { success: true, data: r.rows.map((x: any) => this.mapRfq(x)) };
+    return this.withTenantScope(tenantId, async () => {
+      let q = `SELECT * FROM an_rfqs WHERE tenant_id=$1`;
+      const params: any[] = [tenantId];
+      if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
+      if (filter?.prId) { params.push(filter.prId); q += ` AND pr_id=$${params.length}`; }
+      q += ' ORDER BY created_at DESC';
+      const r = await this.query(q, params);
+      return { success: true, data: r.rows.map((x: any) => this.mapRfq(x)) };
+    });
   }
   public async updateRfq(tenantId: string, rfq: any): Promise<any> {
-    const r = await this.pool.query(
-      `UPDATE an_rfqs SET status=$1, sent_at=$2, closed_at=$3, notes=$4, updated_at=NOW() WHERE tenant_id=$5 AND id=$6 RETURNING *`,
-      [rfq.status, rfq.sentAt || null, rfq.closedAt || null, rfq.notes || null, tenantId, rfq.id]
-    );
-    if (!r.rows.length) return { success: false, error: { type: 'pg', title: 'rfq-not-found', status: 404, detail: rfq.id } };
-    return { success: true, data: this.mapRfq(r.rows[0]) };
+    return this.withTenantScope(tenantId, async () => {
+      const r = await this.query(
+        `UPDATE an_rfqs SET status=$1, sent_at=$2, closed_at=$3, notes=$4, updated_at=NOW() WHERE tenant_id=$5 AND id=$6 RETURNING *`,
+        [rfq.status, rfq.sentAt || null, rfq.closedAt || null, rfq.notes || null, tenantId, rfq.id]
+      );
+      if (!r.rows.length) return { success: false, error: { type: 'pg', title: 'rfq-not-found', status: 404, detail: rfq.id } };
+      return { success: true, data: this.mapRfq(r.rows[0]) };
+    });
   }
   private mapRfq(row: any) {
     return {
@@ -6484,6 +6510,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
       await client.query(
         `INSERT INTO an_supplier_quotes (id, tenant_id, quote_number, rfq_id, vendor_id, vendor_name, status, quote_date, valid_until, notes, created_by, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())`,
@@ -6505,28 +6532,34 @@ export class PostgresPrimaryAdapter implements StoragePort {
     } finally { client.release(); }
   }
   public async getSupplierQuote(tenantId: string, quoteId: string): Promise<any> {
-    const r = await this.pool.query(`SELECT * FROM an_supplier_quotes WHERE tenant_id=$1 AND id=$2`, [tenantId, quoteId]);
-    if (!r.rows.length) return { success: true, data: null };
-    const lr = await this.pool.query(`SELECT * FROM an_supplier_quote_lines WHERE tenant_id=$1 AND quote_id=$2 ORDER BY line_number`, [tenantId, quoteId]);
-    return { success: true, data: { quote: this.mapQuote(r.rows[0]), lines: lr.rows.map((x: any) => this.mapQuoteLine(x)) } };
+    return this.withTenantScope(tenantId, async () => {
+      const r = await this.query(`SELECT * FROM an_supplier_quotes WHERE tenant_id=$1 AND id=$2`, [tenantId, quoteId]);
+      if (!r.rows.length) return { success: true, data: null };
+      const lr = await this.query(`SELECT * FROM an_supplier_quote_lines WHERE tenant_id=$1 AND quote_id=$2 ORDER BY line_number`, [tenantId, quoteId]);
+      return { success: true, data: { quote: this.mapQuote(r.rows[0]), lines: lr.rows.map((x: any) => this.mapQuoteLine(x)) } };
+    });
   }
   public async listSupplierQuotes(tenantId: string, filter?: any): Promise<any> {
-    let q = `SELECT * FROM an_supplier_quotes WHERE tenant_id=$1`;
-    const params: any[] = [tenantId];
-    if (filter?.rfqId) { params.push(filter.rfqId); q += ` AND rfq_id=$${params.length}`; }
-    if (filter?.vendorId) { params.push(filter.vendorId); q += ` AND vendor_id=$${params.length}`; }
-    if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
-    q += ' ORDER BY created_at DESC';
-    const r = await this.pool.query(q, params);
-    return { success: true, data: r.rows.map((x: any) => this.mapQuote(x)) };
+    return this.withTenantScope(tenantId, async () => {
+      let q = `SELECT * FROM an_supplier_quotes WHERE tenant_id=$1`;
+      const params: any[] = [tenantId];
+      if (filter?.rfqId) { params.push(filter.rfqId); q += ` AND rfq_id=$${params.length}`; }
+      if (filter?.vendorId) { params.push(filter.vendorId); q += ` AND vendor_id=$${params.length}`; }
+      if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
+      q += ' ORDER BY created_at DESC';
+      const r = await this.query(q, params);
+      return { success: true, data: r.rows.map((x: any) => this.mapQuote(x)) };
+    });
   }
   public async updateSupplierQuote(tenantId: string, quote: any): Promise<any> {
-    const r = await this.pool.query(
-      `UPDATE an_supplier_quotes SET status=$1, selected_at=$2, converted_po_id=$3, notes=$4, updated_at=NOW() WHERE tenant_id=$5 AND id=$6 RETURNING *`,
-      [quote.status, quote.selectedAt || null, quote.convertedPoId || null, quote.notes || null, tenantId, quote.id]
-    );
-    if (!r.rows.length) return { success: false, error: { type: 'pg', title: 'quote-not-found', status: 404, detail: quote.id } };
-    return { success: true, data: this.mapQuote(r.rows[0]) };
+    return this.withTenantScope(tenantId, async () => {
+      const r = await this.query(
+        `UPDATE an_supplier_quotes SET status=$1, selected_at=$2, converted_po_id=$3, notes=$4, updated_at=NOW() WHERE tenant_id=$5 AND id=$6 RETURNING *`,
+        [quote.status, quote.selectedAt || null, quote.convertedPoId || null, quote.notes || null, tenantId, quote.id]
+      );
+      if (!r.rows.length) return { success: false, error: { type: 'pg', title: 'quote-not-found', status: 404, detail: quote.id } };
+      return { success: true, data: this.mapQuote(r.rows[0]) };
+    });
   }
   private mapQuote(row: any) {
     return {
@@ -6553,6 +6586,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
       await client.query(
         `INSERT INTO an_supplier_invoices (id, tenant_id, invoice_number, vendor_invoice_ref, po_id, po_number, vendor_id, vendor_name, receipt_id, status, invoice_date, due_date, currency, subtotal, tax_amount, total_amount, match_tolerance_pct, notes, created_by, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NOW(),NOW())`,
@@ -6575,20 +6609,28 @@ export class PostgresPrimaryAdapter implements StoragePort {
     } finally { client.release(); }
   }
   public async getSupplierInvoice(tenantId: string, invoiceId: string): Promise<any> {
-    const r = await this.pool.query(`SELECT * FROM an_supplier_invoices WHERE tenant_id=$1 AND id=$2`, [tenantId, invoiceId]);
-    if (!r.rows.length) return { success: true, data: null };
-    const lr = await this.pool.query(`SELECT * FROM an_supplier_invoice_lines WHERE tenant_id=$1 AND invoice_id=$2 ORDER BY line_number`, [tenantId, invoiceId]);
-    return { success: true, data: { invoice: this.mapSupplierInvoice(r.rows[0]), lines: lr.rows.map((x: any) => this.mapSupplierInvoiceLine(x)) } };
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const r = await this.query(`SELECT * FROM an_supplier_invoices WHERE tenant_id=$1 AND id=$2`, [tenantId, invoiceId]);
+        if (!r.rows.length) return { success: true, data: null };
+        const lr = await this.query(`SELECT * FROM an_supplier_invoice_lines WHERE tenant_id=$1 AND invoice_id=$2 ORDER BY line_number`, [tenantId, invoiceId]);
+        return { success: true, data: { invoice: this.mapSupplierInvoice(r.rows[0]), lines: lr.rows.map((x: any) => this.mapSupplierInvoiceLine(x)) } };
+      } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    });
   }
   public async listSupplierInvoices(tenantId: string, filter?: any): Promise<any> {
-    let q = `SELECT * FROM an_supplier_invoices WHERE tenant_id=$1`;
-    const params: any[] = [tenantId];
-    if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
-    if (filter?.poId) { params.push(filter.poId); q += ` AND po_id=$${params.length}`; }
-    if (filter?.vendorId) { params.push(filter.vendorId); q += ` AND vendor_id=$${params.length}`; }
-    q += ' ORDER BY created_at DESC';
-    const r = await this.pool.query(q, params);
-    return { success: true, data: r.rows.map((x: any) => this.mapSupplierInvoice(x)) };
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        let q = `SELECT * FROM an_supplier_invoices WHERE tenant_id=$1`;
+        const params: any[] = [tenantId];
+        if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
+        if (filter?.poId) { params.push(filter.poId); q += ` AND po_id=$${params.length}`; }
+        if (filter?.vendorId) { params.push(filter.vendorId); q += ` AND vendor_id=$${params.length}`; }
+        q += ' ORDER BY created_at DESC';
+        const r = await this.query(q, params);
+        return { success: true, data: r.rows.map((x: any) => this.mapSupplierInvoice(x)) };
+      } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    });
   }
   public async updateSupplierInvoice(tenantId: string, inv: any): Promise<any> {
     const r = await this.pool.query(
@@ -7300,6 +7342,7 @@ public async getWarehouseStock(
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
       await client.query(`INSERT INTO an_purchase_orders (id, tenant_id, po_number, vendor_id, vendor_name, status, order_date, expected_date, notes, created_by, created_at, updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW()) ON CONFLICT (id) DO NOTHING`,
         [po.id, tenantId, po.poNumber, po.vendorId, po.vendorName, po.status, po.orderDate, po.expectedDate || null, po.notes || null, po.createdBy]);
@@ -7314,13 +7357,15 @@ public async getWarehouseStock(
     finally { client.release(); }
   }
   public async getPurchaseOrder(tenantId: string, poId: string): Promise<any> {
-    try {
-      const r = await this.pool.query(`SELECT * FROM an_purchase_orders WHERE tenant_id=$1 AND id=$2`, [tenantId, poId]);
-      if (!r.rows.length) return { success: true, data: null };
-      const row = r.rows[0];
-      const lr = await this.pool.query(`SELECT * FROM an_purchase_order_lines WHERE tenant_id=$1 AND po_id=$2 ORDER BY line_number`, [tenantId, poId]);
-      return { success: true, data: { po: this.mapPo(row), lines: lr.rows.map((x: any) => this.mapPoLine(x)) } };
-    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const r = await this.query(`SELECT * FROM an_purchase_orders WHERE tenant_id=$1 AND id=$2`, [tenantId, poId]);
+        if (!r.rows.length) return { success: true, data: null };
+        const row = r.rows[0];
+        const lr = await this.query(`SELECT * FROM an_purchase_order_lines WHERE tenant_id=$1 AND po_id=$2 ORDER BY line_number`, [tenantId, poId]);
+        return { success: true, data: { po: this.mapPo(row), lines: lr.rows.map((x: any) => this.mapPoLine(x)) } };
+      } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    });
   }
   private mapPo(row: any) {
     return { id: row.id, tenantId: row.tenant_id, poNumber: row.po_number, vendorId: row.vendor_id, vendorName: row.vendor_name, status: row.status, orderDate: row.order_date, expectedDate: row.expected_date || undefined, notes: row.notes || undefined, createdBy: row.created_by, createdAt: row.created_at?.toISOString?.() || row.created_at, updatedAt: row.updated_at?.toISOString?.() || row.updated_at };
@@ -7406,14 +7451,16 @@ public async getWarehouseStock(
     return { id: row.id, tenantId: row.tenant_id, receiptId: row.receipt_id, poLineId: row.po_line_id, itemId: row.item_id, receivedQty: Number(row.received_qty), batchNumber: row.batch_number || undefined, serialNumber: row.serial_number || undefined, expiryDate: row.expiry_date || undefined };
   }
   public async listGoodsReceipts(tenantId: string, filter?: any): Promise<any> {
-    try {
-      let q = `SELECT * FROM an_goods_receipts WHERE tenant_id=$1`;
-      const params: any[] = [tenantId];
-      if (filter?.poId) { params.push(filter.poId); q += ` AND po_id=$${params.length}`; }
-      if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
-      const r = await this.pool.query(q, params);
-      return { success: true, data: r.rows.map((x: any) => this.mapGr(x)) };
-    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        let q = `SELECT * FROM an_goods_receipts WHERE tenant_id=$1`;
+        const params: any[] = [tenantId];
+        if (filter?.poId) { params.push(filter.poId); q += ` AND po_id=$${params.length}`; }
+        if (filter?.status) { params.push(filter.status); q += ` AND status=$${params.length}`; }
+        const r = await this.query(q, params);
+        return { success: true, data: r.rows.map((x: any) => this.mapGr(x)) };
+      } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    });
   }
   public async updateGoodsReceipt(tenantId: string, receipt: any): Promise<any> {
     try {
@@ -7426,6 +7473,7 @@ public async getWarehouseStock(
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantId]);
       for (const u of input.qtyUpdates) {
         await client.query(`UPDATE an_purchase_order_lines SET received_qty = received_qty + $1, rejected_qty = rejected_qty + $2 WHERE tenant_id=$3 AND id=$4`,
           [u.addReceived, u.addRejected, tenantId, u.poLineId]);
@@ -7440,12 +7488,14 @@ public async getWarehouseStock(
     finally { client.release(); }
   }
   public async sumOpenReceiptQtyForPoLine(tenantId: string, poLineId: string): Promise<any> {
-    try {
-      const r = await this.pool.query(`SELECT COALESCE(SUM(gl.received_qty),0) AS s FROM an_goods_receipt_lines gl
-        JOIN an_goods_receipts g ON g.id = gl.receipt_id AND g.tenant_id = gl.tenant_id
-        WHERE gl.tenant_id=$1 AND gl.po_line_id=$2 AND g.status='IN_APPROVAL'`, [tenantId, poLineId]);
-      return { success: true, data: Number(r.rows[0].s) };
-    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const r = await this.query(`SELECT COALESCE(SUM(gl.received_qty),0) AS s FROM an_goods_receipt_lines gl
+          JOIN an_goods_receipts g ON g.id = gl.receipt_id AND g.tenant_id = gl.tenant_id
+          WHERE gl.tenant_id=$1 AND gl.po_line_id=$2 AND g.status='IN_APPROVAL'`, [tenantId, poLineId]);
+        return { success: true, data: Number(r.rows[0].s) };
+      } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    });
   }
 
   public async recordStockMovement(
