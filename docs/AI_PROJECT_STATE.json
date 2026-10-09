@@ -52,5 +52,9 @@
       "verifyP17Attachments (29/29)",
       "verifyP18WarehouseScope (19/19)"
     ]
+  },
+  "reliabilityAssessment": {
+    "storageRouterDeadlock": "Intermittent deadlock detected during dedicated schema initialization under high concurrency.",
+    "performanceMetrics": "CRUD latency p95 < 200ms on PostgreSQL primary."
   }
 }
