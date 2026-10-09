@@ -4146,7 +4146,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       return res.json({ success: true, data: result.data });
     } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
   });
-  app.post('/api/purchasing/invoices/:id/approve', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+  app.post('/api/purchasing/invoices/:id/approve', requireAuth, requirePermission('SUPPLIER_INVOICE_APPROVE'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId || 'system';
@@ -4157,7 +4157,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       return res.json({ success: true, data: result.data });
     } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
   });
-  app.post('/api/purchasing/invoices/:id/reject', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+  app.post('/api/purchasing/invoices/:id/reject', requireAuth, requirePermission('SUPPLIER_INVOICE_APPROVE'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId || 'system';

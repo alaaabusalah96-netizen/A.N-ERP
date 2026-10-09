@@ -1165,6 +1165,15 @@ export class PostgresPrimaryAdapter implements StoragePort {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (tenant_id, invoice_number)
       );
+      DO $$
+      BEGIN
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_an_supplier_invoice_vendor_ref
+          ON an_supplier_invoices (tenant_id, vendor_id, lower(btrim(vendor_invoice_ref)))
+          WHERE status NOT IN ('REJECTED', 'CANCELLED');
+      EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'uq_an_supplier_invoice_vendor_ref not created (pre-existing duplicate vendor invoice refs?): %', SQLERRM;
+      END $$;
+
       CREATE TABLE IF NOT EXISTS an_supplier_invoice_lines (
         id VARCHAR(80) PRIMARY KEY,
         tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
@@ -6560,6 +6569,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
       return { success: true, data: inv };
     } catch (e: any) {
       await client.query('ROLLBACK');
+      if (e && e.code === '23505') return { success: false, error: { type: 'https://api.an-erp.local/errors/duplicate-vendor-invoice', title: 'فاتورة مورد مكررة', status: 409, detail: 'رقم فاتورة المورد مسجّل مسبقًا لنفس المورد.' } };
       return { success: false, error: { type: 'pg', title: 'saveSupplierInvoice', status: 500, detail: e.message } };
     } finally { client.release(); }
   }

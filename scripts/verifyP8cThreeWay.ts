@@ -22,6 +22,7 @@ async function setup() {
   const T = `t8c-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   for (const c of [
     { code: '1105', type: 'ASSET' }, { code: '2106', type: 'LIABILITY' }, { code: '5101', type: 'EXPENSE' },
+    { code: '2101', type: 'LIABILITY' }, { code: '1108', type: 'ASSET' },
   ] as const) {
     await st.saveAccount(T, { code: c.code, tenantId: T, nameAr: c.code, type: c.type as any, isActive: true, debitBalance: 0, creditBalance: 0, balance: 0 }, `a-${c.code}-${T}`);
   }

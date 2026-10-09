@@ -123,6 +123,10 @@ export const POLICY_DEFINITIONS: PolicyDefinition[] = [
   // F4 (stock integration): per-tenant switch for the standards layer on stock receipts. No policy = OFF (legacy path only).
   { key: 'standards_decision_mode', labelAr: 'وضع طبقة المعايير على حركات المخزون', valueType: 'ENUM', allowedValues: ['OFF', 'SHADOW'] },
   { key: 'reporting_jurisdiction', labelAr: 'الاختصاص المحاسبي للمنشأة (معرّف)', valueType: 'STRING' },
+  // 8c-FIX: accounts used by the supplier-invoice journal. Missing policy -> standard-chart default (AP 2101, VAT input 1108); the variance account has NO default.
+  { key: 'ap_account_code', labelAr: 'حساب الموردين (ذمم دائنة) لقيد فاتورة المورد', valueType: 'STRING' },
+  { key: 'vat_input_account_code', labelAr: 'حساب ضريبة المشتريات لقيد فاتورة المورد', valueType: 'STRING' },
+  { key: 'purchase_price_variance_account_code', labelAr: 'حساب فروق أسعار المشتريات', valueType: 'STRING' },
 ];
 
 /** Canonical, extensible event taxonomy shared by all modules. */
