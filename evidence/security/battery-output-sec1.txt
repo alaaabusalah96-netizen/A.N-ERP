@@ -1,0 +1,28 @@
+[PASS] T1 enrolled user, no code: challenge only (requires2FA, setupRequired=false)
+[PASS] T1/T7 the challenge contains NO secret, QR, otpauth or twoFactorSecret
+[PASS] T6 repeated challenges never create or change a secret
+[PASS] T12 impossible travel with an enrolled user: still a challenge only
+[PASS] T2 correct TOTP => valid
+[PASS] T3 wrong TOTP => invalid
+[PASS] T4 valid backup code => valid, consumed (2 left)
+[PASS] T5 replay of the consumed backup code => invalid
+[PASS] a user with NO 2FA enrolled can never pass the second-factor check (no auto-enable at login)
+[PASS] an undecryptable stored secret => failure, and NO new secret is generated or saved
+[PASS] T8 explicit setup by an un-enrolled user returns secret + QR + otpauth (this endpoint only)
+[PASS] the secret is stored ENCRYPTED, 2FA stays disabled until confirmed
+[PASS] the otpauth label is the username (no fake mail domain)
+[PASS] T9 setup with a wrong code => 400 and 2FA stays disabled
+[PASS] T10 setup with the right code => 2FA enabled
+[PASS] an ENROLLED account cannot be re-enrolled (409) and its secret is untouched
+[PASS] confirm on an enrolled account is refused (409)
+[PASS] T11 cross-tenant: tenant B cannot touch tenant A's user (404) and vice versa; nothing changed
+[PASS] the service API takes NO username: a request cannot name another user
+[PASS] (static) the login handler never mentions qrCodeDataUrl / otpauth / generateSecret / "secret:"
+[PASS] (static) no fabricated "Riyadh" / "SA" location anywhere in server.ts
+[PASS] (static) 2FA is demanded only from enrolled users (mustEnforce2fa = twoFactorEnabled)
+[PASS] (static) an unknown location is never stored as a last-login position
+[PASS] (static) wrong 2FA codes feed the same lockout as wrong passwords
+[PASS] (static) the 2FA setup routes never read a username from the request and use the session user
+[PASS] (static) no TOTP secret is logged
+
+Passed: 26 | Failed: 0

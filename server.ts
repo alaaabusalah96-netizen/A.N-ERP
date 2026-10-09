@@ -20,6 +20,7 @@ import crypto from 'crypto';
 import argon2 from 'argon2';
 import { generateSecret, verify, generateURI } from 'otplib';
 import QRCode from 'qrcode';
+import { TwoFactorService } from './src/core/auth/TwoFactorService';
 import { createServer as createViteServer } from 'vite';
 import { Phase0TestRunner } from './src/core/tests/Phase0TestRunner';
 import { executePrimaryBattery } from './src/core/tests/runPrimaryBattery';
@@ -798,6 +799,9 @@ async function startServer() {
 
   // 1A & 1D & 1I & 1J & 1K — Enterprise Authentication (Login)
   // 4.6C & 4.6F: Pre-auth tenant resolution and scoped credential lookup
+  // SEC-1: the single owner of TOTP secrets / backup codes (the TOTP library and QR renderer are injected)
+  const twoFactorService = new TwoFactorService({ generateSecret, generateURI, verify: (o) => verify(o) as any, qrDataUrl: (u: string) => QRCode.toDataURL(u) });
+
   app.post('/api/auth/login', authRateLimiter, async (req: Request, res: Response) => {
     // 4.6C & 4.6F: Resolve target tenant before accessing storage or credentials
     const tenantResolution = await TenantResolutionService.resolveTenantFromRequest(masterStorage, req);
@@ -904,16 +908,13 @@ async function startServer() {
       return res.status(401).json(problem);
     }
 
-    // 1J: Deterministic Impossible Travel Geo-Velocity Check
-    const location: GeoLocation = clientGeo || {
-      city: 'Riyadh',
-      country: 'SA',
-      lat: 24.7136,
-      lon: 46.6753,
-    };
-
-    const travelCheck = await anomalyDetector.checkImpossibleTravel(user.id, location);
-    const mustEnforce2fa = user.twoFactorEnabled || travelCheck.isAnomaly;
+    // 1J: Impossible-travel check. SEC-1: only with a REAL location; an omitted clientGeo is "unknown", never a made-up city
+    const location: GeoLocation | null = clientGeo || null;
+    const travelCheck: Awaited<ReturnType<typeof anomalyDetector.checkImpossibleTravel>> = location
+      ? await anomalyDetector.checkImpossibleTravel(user.id, location)
+      : { isAnomaly: false, message: 'الموقع الجغرافي غير متوفر؛ لم يُجرَ فحص الانتقال المستحيل.' };
+    // SEC-1: a second factor is demanded only from users who actually HAVE one (an anomaly raises an alert; it cannot create a factor)
+    const mustEnforce2fa = !!user.twoFactorEnabled;
 
     if (travelCheck.isAnomaly) {
       DomainEventBus.publish({
@@ -943,85 +944,28 @@ async function startServer() {
     // 1D: Verify 2FA via real TOTP (otplib) or Emergency Backup Code, with zero lockout mechanism
     if (mustEnforce2fa) {
       if (!twoFactorCode && !backupCode) {
-        let plainSecret = '';
-        if (user.twoFactorSecret) {
-          try {
-            const dec = EncryptionService.decryptPII<string>(user.twoFactorSecret);
-            if (typeof dec === 'string' && dec.length > 0) {
-              plainSecret = dec;
-            }
-          } catch (e) {
-            console.error(JSON.stringify({ level: 'CRITICAL', op: 'two_factor_secret_decrypt', trace: crypto.randomUUID(), err: String(e) }));
-          }
-        }
-        if (!plainSecret || typeof plainSecret !== 'string') {
-          plainSecret = generateSecret();
-          const encryptedSecret = EncryptionService.encryptPII(plainSecret);
-          await targetStorage.updateUser(user.id, { twoFactorSecret: encryptedSecret });
-        }
-
-        const otpauthUrl = generateURI({
-          label: `${username}@company.sa`,
-          issuer: 'A.N ERP',
-          secret: plainSecret,
-        });
-        const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl);
-
-        return res.status(200).json({
-          requires2FA: true,
-          setupRequired: !user.twoFactorEnabled,
-          secret: plainSecret,
-          qrCodeDataUrl,
-          anomalyDetected: travelCheck.isAnomaly,
-          securityNote: travelCheck.message || (!user.twoFactorEnabled ? 'يرجى مسح رمز الاستجابة السريعة أو إدخال المفتاح لتأكيد التحقق بخطوتين' : 'يلزم التحقق الثنائي لإتمام الدخول'),
-        });
+        // SEC-1: an enrolled user gets a plain challenge. NEVER a secret, QR code or otpauth URI; nothing is generated or saved here.
+        return res.status(200).json(TwoFactorService.loginChallenge(travelCheck.isAnomaly, travelCheck.message));
       }
 
-      let twoFactorValid = false;
-      if (twoFactorCode) {
-        if (user.twoFactorSecret) {
-          let plainSecret = '';
-          try {
-            const dec = EncryptionService.decryptPII<string>(user.twoFactorSecret);
-            if (typeof dec === 'string' && dec.length > 0) {
-              plainSecret = dec;
-            }
-          } catch (e) {
-            console.error(JSON.stringify({ level: 'CRITICAL', op: 'two_factor_verify_decrypt', trace: crypto.randomUUID(), err: String(e) }));
-          }
-          if (plainSecret) {
-            const verifyResult = await verify({ token: twoFactorCode, secret: plainSecret });
-            twoFactorValid = !!verifyResult.valid;
-            if (twoFactorValid && !user.twoFactorEnabled) {
-              await targetStorage.updateUser(user.id, { twoFactorEnabled: true });
-            }
-          }
-        }
-      } else if (backupCode) {
-        // Verify and consume 1 of 8 one-time emergency backup codes
-        const userCodes = user.backupCodes || user.hashedBackupCodes || [];
-        const consumeRes = EncryptionService.verifyAndConsumeBackupCode(
-          backupCode,
-          userCodes
+      const second = await twoFactorService.verifyLoginSecondFactor(targetStorage, user, { twoFactorCode, backupCode });
+      if (second.usedBackupCode) {
+        await recordAudit(
+          user.id,
+          user.fullName,
+          'EMERGENCY_BACKUP_CODE_CONSUMED',
+          'AUTH',
+          user.id,
+          { remainingCodes: second.remainingBackupCodes },
+          req.ip || '127.0.0.1',
+          user.tenantId,
+          targetStorage
         );
-        if (consumeRes.valid) {
-          twoFactorValid = true;
-          await targetStorage.updateUser(user.id, {
-            backupCodes: consumeRes.remainingHashedCodes,
-            hashedBackupCodes: consumeRes.remainingHashedCodes,
-          });
-          await recordAudit(
-            user.id,
-            user.fullName,
-            'EMERGENCY_BACKUP_CODE_CONSUMED',
-            'AUTH',
-            user.id,
-            { remainingCodes: consumeRes.remainingHashedCodes.length },
-            req.ip || '127.0.0.1',
-            user.tenantId,
-            targetStorage
-          );
-        }
+      }
+      const twoFactorValid = second.valid;
+      if (!twoFactorValid) {
+        // SEC-1: wrong codes feed the SAME progressive lockout as wrong passwords (no brute-force path through the 2FA branch)
+        await anomalyDetector.recordFailedAttempt(username);
       }
 
       if (!twoFactorValid) {
@@ -1084,7 +1028,7 @@ async function startServer() {
       role: user.role,
       deviceType: req.headers['user-agent']?.includes('Mobile') ? 'Mobile Device' : 'Desktop Browser',
       ipAddress: req.ip || '127.0.0.1',
-      location,
+      location: location || { city: 'غير معروف', country: '', lat: 0, lon: 0 },
       familyId,
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
@@ -1092,7 +1036,7 @@ async function startServer() {
 
     await targetStorage.saveActiveSession(sessionRecord);
     await anomalyDetector.registerActiveSession(sessionRecord);
-    await anomalyDetector.recordSuccessfulLogin(user.id, location, req.ip || '127.0.0.1', userTenantId);
+    if (location) await anomalyDetector.recordSuccessfulLogin(user.id, location, req.ip || '127.0.0.1', userTenantId);   // SEC-1: an unknown location is never stored as a position
 
     // 1A: Set HttpOnly, Secure, SameSite Cookies — Zero tokens in localStorage!
     const isProd = process.env.NODE_ENV === 'production';
@@ -1301,7 +1245,7 @@ async function startServer() {
         sessionId: auth.sessionId,
         deviceType: session?.deviceType || 'Desktop Browser',
         ipAddress: session?.ipAddress || req.ip,
-        location: session?.location || { city: 'Riyadh', country: 'SA' },
+        location: session?.location || { city: 'غير معروف', country: '' },
         createdAt: session?.createdAt,
       },
       tenant,
@@ -1310,54 +1254,26 @@ async function startServer() {
   });
 
   // Section B.2: 2FA Setup with Real TOTP & QR Code (otplib + qrcode) via StoragePort
+  // SEC-1: enrollment works ONLY on the caller's own account (the user id comes from the session; a username in the body is ignored)
   app.post('/api/auth/2fa/setup', requireAuth, async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
+    const auth = (req as any).authContext;
     const storage = getRequestStorage(req, res);
     if (!storage) return;
-    const { username } = req.body;
-    const userRes = await storage.getUserByUsername(tenantId, username);
-    if (!userRes.success || !userRes.data) {
-      return res.status(404).json({ error: 'المستخدم غير موجود' });
-    }
-    const user = userRes.data;
-
-    const plainSecret = generateSecret();
-    const encryptedSecret = EncryptionService.encryptPII(plainSecret);
-    await storage.updateUser(user.id, { twoFactorSecret: encryptedSecret });
-
-    const otpauthUrl = generateURI({
-      label: `${username}@company.sa`,
-      issuer: 'A.N ERP',
-      secret: plainSecret,
-    });
-
-    const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl);
-    return res.json({
-      success: true,
-      secret: plainSecret,
-      qrCodeDataUrl,
-      otpauthUrl,
-    });
+    const r = await twoFactorService.startSetup(storage, { tenantId: auth.tenantId, userId: auth.userId });
+    if (!r.ok) return res.status(r.status).json({ type: r.type, title: r.title, status: r.status, detail: r.detail });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({ success: true, secret: r.secret, qrCodeDataUrl: r.qrCodeDataUrl, otpauthUrl: r.otpauthUrl });
   });
 
   app.post('/api/auth/2fa/verify-setup', requireAuth, async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
+    const auth = (req as any).authContext;
     const storage = getRequestStorage(req, res);
     if (!storage) return;
-    const { username, token } = req.body;
-    const userRes = await storage.getUserByUsername(tenantId, username);
-    if (!userRes.success || !userRes.data || !userRes.data.twoFactorSecret) {
-      return res.status(400).json({ error: 'لم يتم تهيئة 2FA لهذا الحساب' });
+    const r = await twoFactorService.confirmSetup(storage, { tenantId: auth.tenantId, userId: auth.userId }, String((req.body || {}).token || ''));
+    if (!r.ok) {
+      if (r.code === 'invalid-2fa' && (r as any).username) await new AnomalyDetector(storage).recordFailedAttempt((r as any).username);
+      return res.status(r.status).json({ type: r.type, title: r.title, status: r.status, detail: r.detail });
     }
-    const user = userRes.data;
-
-    const plainSecret = EncryptionService.decryptPII<string>(user.twoFactorSecret);
-    const verifyResult = await verify({ token, secret: plainSecret });
-    if (!verifyResult.valid) {
-      return res.status(400).json({ success: false, error: 'رمز TOTP غير صحيح أو منتهي الصلاحية' });
-    }
-
-    await storage.updateUser(user.id, { twoFactorEnabled: true });
     return res.json({ success: true, message: 'تم تفعيل التحقق بخطوتين بنجاح' });
   });
 
