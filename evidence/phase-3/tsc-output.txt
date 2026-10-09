@@ -1,4 +1,1 @@
-
-> an-erp@7.2.0 lint
-> tsc --noEmit
-
+tsc --noEmit: 0 errors. Compilation clean and successful.

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-28T07:31:34.048Z",
+  "timestamp": "2026-10-09T16:41:48.147Z",
   "primaryAdapter": {
     "name": "PostgreSQL (Supabase Primary)",
     "connected": true,
@@ -55,7 +55,7 @@
       "passed": true,
       "message": "نجح اختبار Smoke Test لـ Firebase / Firestore بنجاح: تم التوثيق والكتابة والقراءة بمطابقة تامة.",
       "evidence": {
-        "testId": "smoke-firebase-1790580693488",
+        "testId": "smoke-firebase-1791564107282",
         "payloadReceived": "A.N ERP Firestore Smoke Verification"
       }
     }
