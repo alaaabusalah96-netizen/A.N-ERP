@@ -1725,7 +1725,7 @@ async function startServer() {
       return res.status(400).json(validationError('بيانات القيد (entry) مطلوبة.'));
     }
     const jv = validateJournalInput(entry.date, entry.lines);
-    if (!jv.ok) return res.status(400).json(validationError(jv.detail));
+    if (!jv.ok) return res.status(400).json(validationError((jv as { ok: false; detail: string }).detail));
     if (jv.date !== undefined) entry.date = jv.date;
     entry.lines.forEach((l: any, i: number) => {
       l.debit = jv.amounts[i].debit;

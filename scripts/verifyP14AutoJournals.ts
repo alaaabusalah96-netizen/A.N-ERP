@@ -166,7 +166,7 @@ async function main() {
     const { st, pe, T, item } = await setup();
     const sa = new StockAccountingService(st, pe);
     const it = await item('U');
-    const entry = sa.buildReceiptEntry({ id: 'd', tenantId: T, documentNumber: 'R1', performedBy: 'u', postedAt: new Date().toISOString(), lines: [{ itemId: it.id, quantity: 2, unitCost: 5, totalCost: 10 }] } as any, new Map([[it.id, it]]), { tenantId: T, autoPostEnabled: true, grirAccountCode: '2106', inTransitAccountCode: '1109', defaultInventoryAccountCode: '1105', defaultCogsAccountCode: '5101' });
+    const entry = sa.buildReceiptEntry({ id: 'd', tenantId: T, documentNumber: 'R1', performedBy: 'u', postedAt: new Date().toISOString(), lines: [{ itemId: it.id, quantity: 2, unitCost: 5, totalCost: 10 }] } as any, new Map([[it.id, it]]), { tenantId: T, autoPostEnabled: true, grirAccountCode: '2106', inTransitAccountCode: '1109', defaultInventoryAccountCode: '1105', defaultCogsAccountCode: '5101', adjustmentExpenseAccountCode: '5209', adjustmentGainAccountCode: '4203', purchaseReturnClearingAccountCode: '2101' });
     check('builder receipt', !!entry && near(entry!.totalAmount, 10));
   }
 

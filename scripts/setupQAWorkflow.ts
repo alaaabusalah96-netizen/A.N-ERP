@@ -1,14 +1,18 @@
 import { PurchasingService } from '../src/core/purchasing/PurchasingService';
 import { InventoryService } from '../src/core/inventory/InventoryService';
 import { ApprovalEngine } from '../src/core/engines/ApprovalEngine';
+import { PostingEngine } from '../src/core/engines/PostingEngine';
+import { NumberingEngine } from '../src/core/engines/NumberingEngine';
 import { PostgresPrimaryAdapter } from '../src/core/storage/adapters/PostgresPrimaryAdapter';
 import pg from 'pg';
 import dotenv from 'dotenv';
 dotenv.config();
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-const st = new PostgresPrimaryAdapter(pool);
-const inv = new InventoryService(st);
+const st = new PostgresPrimaryAdapter(process.env.DATABASE_URL);
+const pe = new PostingEngine(st);
+const ne = new NumberingEngine(st);
+const inv = new InventoryService(st, pe, ne);
 
 async function run() {
   const T = 'int-e37f2141';

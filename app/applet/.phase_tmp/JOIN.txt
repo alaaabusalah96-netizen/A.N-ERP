@@ -1,3 +1,0 @@
-AI_CONTEXT.md|docf2_new1
-docs/AI_PROJECT_STATE.md|docf2_new2
-docs/AI_PROJECT_STATE.json|docf2_new3

@@ -191,7 +191,6 @@ export function parseAttachmentSize(v: unknown): ParseResult<number> {
 }
 
 export const ATTACHMENT_LIMITS = { maxPerDocument: 50, maxBytes: MAX_ATTACHMENT_BYTES } as const;
-
 /**
  * Phase 9 (VAL-001): shared check for the journal-entry creation routes.
  * `date` is optional (validated when sent); `lines` must be a non-empty array of objects whose debit/credit are

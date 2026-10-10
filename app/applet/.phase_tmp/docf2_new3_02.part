@@ -1,8 +1,0 @@
-    "f2AfterS1Fix": "evidence/reconcile-audit-b/F2Decisions-after-s1-fix.txt"
-  },
-  "lastFix": {
-    "id": "F2-S1-FIX",
-    "summary": "verifyF2Decisions S1 no longer requires an_accounting_decisions to be last in RLS array",
-    "result": "Passed: 51 | Failed: 0"
-  }
-}

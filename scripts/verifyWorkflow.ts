@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-const st = new PostgresPrimaryAdapter(pool);
+const st = new PostgresPrimaryAdapter(process.env.DATABASE_URL);
 
 async function run() {
   const T = 'int-e37f2141';

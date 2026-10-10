@@ -90,6 +90,7 @@ function unitTests() {
   check('(أ) validateJournalInput rejects negative debit', !J('2026-10-10', [L(-5, 0)]).ok);
   check('(أ) validateJournalInput rejects debit "abc"', !J('2026-10-10', [L('abc', 0)]).ok);
   check('(أ) validateJournalInput rejects debit Infinity', !J('2026-10-10', [L(Infinity, 0)]).ok);
+
   check('(أ) validateJournalInput rejects empty / non-array lines', !J('2026-10-10', []).ok && !J('2026-10-10', 'x').ok && !J('2026-10-10', undefined).ok);
   check('(أ) validateJournalInput rejects a null line', !J('2026-10-10', [null]).ok);
 }
@@ -171,6 +172,7 @@ async function dbTests() {
     check('(ج) valid expiryDate / batchNumber / notes accepted', r4.success, r4.success ? '' : JSON.stringify(r4.error));
 
     // (هـ) saveStockItem
+
     const base = { nameAr: 'صنف اختبار', category: 'INT', uom: 'PCS', inventoryAccountCode: '1105', cogsAccountCode: '5101', adjustmentExpenseAccountCode: '5101', adjustmentGainAccountCode: '4202', isActive: true };
     const bad = await inventory.saveStockItem(tid, { ...base, itemCode: 'P9-FOO', valuationMethod: 'FOO' as any }, t.uid('k-it'));
     check('(هـ) saveStockItem valuationMethod "FOO" rejected 400', !bad.success && bad.error?.status === 400, `status=${bad.error?.status ?? 'n/a'}`);
@@ -245,6 +247,7 @@ async function httpTests() {
 
     const t1 = await post('/api/transactions/post', { idempotencyKey: `p9-${jid()}`, entry: { id: jid(), date: 'not-a-date', type: 'P9', description: 'p9', lines: [jl(1, 0), jl(0, 1, '4101')] } });
     check('(د) transactions/post date "not-a-date" ⇒ 400 validation-failed', isValidationRejection(t1), `status=${t1.status}`);
+
     const t2 = await post('/api/transactions/post', { idempotencyKey: `p9-${jid()}`, entry: { id: jid(), date: '2026-10-10', type: 'P9', description: 'p9', lines: [jl(5, 5), jl(0, 0, '4101')] } });
     check('(د) transactions/post line with debit AND credit ⇒ 400 validation-failed', isValidationRejection(t2), `status=${t2.status}`);
 
@@ -270,3 +273,4 @@ async function main() {
   process.exit(fail > 0 ? 1 : 0);
 }
 main().catch(e => { console.error('FATAL', e?.message); process.exit(1); });
+
