@@ -24,7 +24,7 @@ async function main() {
   const src = fs.readFileSync('src/core/storage/adapters/PostgresPrimaryAdapter.ts', 'utf8');
   const mem = fs.readFileSync('src/core/storage/adapters/InMemoryAdapter.ts', 'utf8');
   const smokes = ['MySQLSmokeAdapter', 'MongoDBSmokeAdapter', 'FirebaseSmokeAdapter'].map(n => fs.readFileSync(`src/core/storage/adapters/${n}.ts`, 'utf8'));
-  check('S1 an_accounting_decisions is in the FORCE-RLS tenant table list', /'an_accounting_policies',\s*'an_accounting_decisions'\s*\]/.test(src));
+  check('S1 an_accounting_decisions is in the FORCE-RLS tenant table list', /tables text\[\] := ARRAY\[[\s\S]*?'an_accounting_decisions'[\s\S]*?\]/.test(src));
   check('S2 DB-level guards: APPLY needs a rule reference; only APPLY may carry a journal link; (tenant, decision_key) is unique', /CHECK \(decision_status <> 'APPLY' OR \(rule_id IS NOT NULL AND rule_version IS NOT NULL AND standard_id IS NOT NULL\)\)/.test(src) && /CHECK \(journal_entry_id IS NULL OR decision_status = 'APPLY'\)/.test(src) && /UNIQUE \(tenant_id, decision_key\)/.test(src));
   check('S3 decision insert is ON CONFLICT DO NOTHING and the stored row is read back (replay returns the original)', /INSERT INTO an_accounting_decisions[\s\S]*ON CONFLICT \(tenant_id, decision_key\) DO NOTHING/.test(src) && /WHERE tenant_id=\$1 AND decision_key=\$2/.test(src));
   check('S4 journal link UPDATE only fills an empty link on an APPLY decision', /UPDATE an_accounting_decisions SET journal_entry_id=\$3 WHERE tenant_id=\$1 AND id=\$2 AND journal_entry_id IS NULL AND decision_status='APPLY'/.test(src));
