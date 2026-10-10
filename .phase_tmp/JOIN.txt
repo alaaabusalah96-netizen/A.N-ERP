@@ -1,0 +1,6 @@
+src/core/migrations/MigrationEngine.ts|p2002_new1
+src/core/migrations/registry.ts|p2002_new2
+scripts/verifyP2002Migrations.ts|p2002_new3
+AI_CONTEXT.md|p2002_new4
+docs/AI_PROJECT_STATE.md|p2002_new5
+docs/AI_PROJECT_STATE.json|p2002_new6

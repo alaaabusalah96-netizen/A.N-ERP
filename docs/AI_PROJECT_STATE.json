@@ -3,66 +3,36 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "reconcileDate": "2026-10-10T21:30:00Z",
-  "auditKind": "SEC_3",
+  "reconcileDate": "2026-10-10T22:00:00Z",
+  "auditKind": "DEF_P2_002",
   "authoritativeVerdict": "CONDITIONAL_GO",
   "lastFix": {
-    "id": "SEC-3",
-    "summary": "Journal code unique per tenant; stable reverse ids; production DATABASE_URL boot guard"
+    "id": "DEF-P2-002",
+    "summary": "Version-tracked MigrationEngine with an_schema_migrations registry"
   },
-  "canonicalAuditFiles": [
-    "AI_CONTEXT.md",
-    "docs/AI_PROJECT_STATE.md",
-    "docs/AI_PROJECT_STATE.json"
-  ],
-  "securityPackages": [
-    {
-      "id": "SEC-1",
-      "status": "DONE"
-    },
-    {
-      "id": "SEC-2",
-      "status": "DONE"
-    },
-    {
-      "id": "SEC-2b",
-      "status": "DONE"
-    },
-    {
-      "id": "SEC-3",
-      "status": "DONE"
-    }
-  ],
-  "completedFixes": [
-    {
-      "id": "FIX-J1",
-      "status": "DONE"
-    },
-    {
-      "id": "F2-S1-FIX",
-      "status": "DONE"
-    },
-    {
-      "id": "P9-VAL-001",
-      "status": "DONE"
-    },
-    {
-      "id": "EVID-1",
-      "status": "DONE"
-    },
-    {
-      "id": "SEC-3",
-      "status": "DONE"
-    }
-  ],
   "defects": [
     {
       "id": "DEF-P2-002",
-      "status": "OPEN"
+      "status": "FIXED"
     },
     {
       "id": "PROD-ROLE-BYPASSRLS",
       "status": "CHECK"
     }
+  ],
+  "completedFixes": [
+    {
+      "id": "SEC-3",
+      "status": "DONE"
+    },
+    {
+      "id": "DEF-P2-002",
+      "status": "FIXED"
+    }
+  ],
+  "canonicalAuditFiles": [
+    "AI_CONTEXT.md",
+    "docs/AI_PROJECT_STATE.md",
+    "docs/AI_PROJECT_STATE.json"
   ]
 }

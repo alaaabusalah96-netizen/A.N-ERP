@@ -1,0 +1,53 @@
+/**
+ * DEF-P2-002 — version-tracked MigrationEngine.
+ * Run: npx tsx scripts/verifyP2002Migrations.ts
+ */
+import fs from 'fs';
+import { MigrationEngine } from '../src/core/migrations/MigrationEngine';
+import { SCHEMA_MIGRATIONS } from '../src/core/migrations/registry';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const engSrc = fs.readFileSync('src/core/migrations/MigrationEngine.ts', 'utf8');
+const regSrc = fs.readFileSync('src/core/migrations/registry.ts', 'utf8');
+const pg = fs.readFileSync('src/core/storage/adapters/PostgresPrimaryAdapter.ts', 'utf8');
+
+check('S1 MigrationEngine exports applyPending', /applyPending/.test(engSrc));
+check('S2 registry has ordered versions', SCHEMA_MIGRATIONS.length >= 1 && (SCHEMA_MIGRATIONS.length === 1 || SCHEMA_MIGRATIONS.every((m,i,a)=> i===0 || a[i-1].version < m.version)));
+check('S3 initializeSchema invokes MigrationEngine', /new MigrationEngine\(SCHEMA_MIGRATIONS\)/.test(pg));
+check('S4 an_schema_migrations created in engine', /an_schema_migrations/.test(engSrc));
+check('S5 journal unique index is a versioned migration', SCHEMA_MIGRATIONS.some((m) => m.sql.includes('uq_an_journal_entries_tenant_code')));
+
+const store = new Map<string, { version: string; name: string; checksum: string }>();
+const query = async (sql: string, params?: unknown[]) => {
+  const s = sql.replace(/\s+/g, ' ').trim();
+  if (/CREATE TABLE IF NOT EXISTS an_schema_migrations/i.test(sql)) return { rows: [] };
+  if (/SELECT version FROM an_schema_migrations/i.test(sql)) {
+    return { rows: [...store.keys()].sort().map((version) => ({ version })) };
+  }
+  if (/^BEGIN$/i.test(s) || /^COMMIT$/i.test(s) || /^ROLLBACK$/i.test(s)) return { rows: [] };
+  if (/INSERT INTO an_schema_migrations/i.test(sql) && params) {
+    const [version, name, checksum] = params as string[];
+    if (!store.has(version)) store.set(version, { version, name, checksum });
+    return { rows: [] };
+  }
+  return { rows: [] };
+};
+
+async function main() {
+  const engine = new MigrationEngine(SCHEMA_MIGRATIONS);
+  const r1 = await engine.applyPending(query);
+  check('B1 first apply runs all migrations', r1.applied.length === SCHEMA_MIGRATIONS.length && r1.already.length === 0);
+  const r2 = await engine.applyPending(query);
+  check('B2 second apply is no-op (idempotent)', r2.applied.length === 0 && r2.already.length === SCHEMA_MIGRATIONS.length);
+  check('B3 registry rows stored', store.size === SCHEMA_MIGRATIONS.length);
+
+  console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+  process.exit(fail ? 1 : 0);
+}
+
+main().catch(e => { console.error(e); process.exit(2); });

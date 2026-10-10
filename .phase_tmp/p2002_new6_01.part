@@ -1,0 +1,38 @@
+{
+  "project": {
+    "name": "A.N ERP",
+    "version": "7.2.0"
+  },
+  "reconcileDate": "2026-10-10T22:00:00Z",
+  "auditKind": "DEF_P2_002",
+  "authoritativeVerdict": "CONDITIONAL_GO",
+  "lastFix": {
+    "id": "DEF-P2-002",
+    "summary": "Version-tracked MigrationEngine with an_schema_migrations registry"
+  },
+  "defects": [
+    {
+      "id": "DEF-P2-002",
+      "status": "FIXED"
+    },
+    {
+      "id": "PROD-ROLE-BYPASSRLS",
+      "status": "CHECK"
+    }
+  ],
+  "completedFixes": [
+    {
+      "id": "SEC-3",
+      "status": "DONE"
+    },
+    {
+      "id": "DEF-P2-002",
+      "status": "FIXED"
+    }
+  ],
+  "canonicalAuditFiles": [
+    "AI_CONTEXT.md",
+    "docs/AI_PROJECT_STATE.md",
+    "docs/AI_PROJECT_STATE.json"
+  ]
+}

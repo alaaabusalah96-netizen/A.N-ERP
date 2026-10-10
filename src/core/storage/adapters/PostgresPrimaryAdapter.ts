@@ -6,6 +6,8 @@
  */
 
 import { Pool, PoolClient } from 'pg';
+import { MigrationEngine } from '../../migrations/MigrationEngine';
+import { SCHEMA_MIGRATIONS } from '../../migrations/registry';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import * as crypto from 'node:crypto';
 import { requestContextALS } from '../../context/RequestContext';
@@ -1594,7 +1596,31 @@ export class PostgresPrimaryAdapter implements StoragePort {
       } finally {
         client.release();
       }
+      
+      // DEF-P2-002: apply version-tracked migrations after base DDL
+      try {
+        const engine = new MigrationEngine(SCHEMA_MIGRATIONS);
+        const q = async (sql: string, params?: unknown[]) => {
+          const r = await this.pool!.query(sql, params as any);
+          return { rowCount: r.rowCount, rows: r.rows };
+        };
+        const mig = await engine.applyPending(q);
+        if (mig.applied.length) {
+          console.log('[migrations] applied:', mig.applied.join(', '));
+        }
+      } catch (migErr: any) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/db-migration-failed',
+            title: 'فشل تطبيق ترحيلات المخطط',
+            status: 500,
+            detail: migErr?.message || String(migErr),
+          },
+        };
+      }
       this.isInitialized = true;
+    
       return { success: true, data: true };
     } catch (err: any) {
       return {

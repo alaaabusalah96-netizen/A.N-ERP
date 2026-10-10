@@ -1,0 +1,43 @@
+--- a/src/core/storage/adapters/PostgresPrimaryAdapter.ts
++++ b/src/core/storage/adapters/PostgresPrimaryAdapter.ts
+@@ -3,6 +3,8 @@
+  * @description PostgreSQL / Supabase Primary Storage Adapter for A.N ERP (Phase 0)
+  * Uses official 'pg' library with connection pooling and atomic transactions.
+  * Connection string is read from process.env.DATABASE_URL.
++import { MigrationEngine } from '../../migrations/MigrationEngine';
++import { SCHEMA_MIGRATIONS } from '../../migrations/registry';
+  */
+ 
+ import { Pool, PoolClient } from 'pg';
+@@ -1594,6 +1596,31 @@
+       } finally {
+         client.release();
+       }
++      } finally {
++        client.release();
++      }
++      // DEF-P2-002: apply version-tracked migrations after base DDL
++      try {
++        const engine = new MigrationEngine(SCHEMA_MIGRATIONS);
++        const q = async (sql: string, params?: unknown[]) => {
++          const r = await this.pool!.query(sql, params as any);
++          return { rowCount: r.rowCount, rows: r.rows };
++        };
++        const mig = await engine.applyPending(q);
++        if (mig.applied.length) {
++          console.log('[migrations] applied:', mig.applied.join(', '));
++        }
++      } catch (migErr: any) {
++        return {
++          success: false,
++          error: {
++            type: 'https://api.an-erp.local/errors/db-migration-failed',
++            title: 'فشل تطبيق ترحيلات المخطط',
++            status: 500,
++            detail: migErr?.message || String(migErr),
++          },
++        };
++      }
+       this.isInitialized = true;
+       return { success: true, data: true };
+     } catch (err: any) {
