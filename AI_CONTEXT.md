@@ -1,18 +1,14 @@
 # A.N ERP AI Context
 
-Authoritative codebase **A.N ERP (v7.2.0)**.
+**A.N ERP (v7.2.0)**. Code + `evidence/` are the source of truth.
 
-Consult `docs/AI_PROJECT_STATE.md` and `docs/AI_PROJECT_STATE.json`.
-
-**Rule:** Code + `evidence/` supersede stale prose. Last update: **FIX-J1** on **2026-10-10**.
+Last update: **SEC-2b** on **2026-10-10** (after FIX-J1).
 
 ## Verdict
 | Field | Value |
 |---|---|
 | **Authoritative verdict** | **CONDITIONAL GO** |
-| **Last fix** | FIX-J1 (count/return journals → StockAccountingConfig + COA 1105/5101/5209/4203/2101) |
-| **Open defect** | DEF-P2-002 (migration engine) |
-| **F2Decisions** | PASS 51/0 |
-| **F-07** | PASS |
+| **Last security** | SEC-2b — RLS on stock_accounting_config, last_successful_logins, active_sessions + GUC on config/session paths |
+| **Prior** | SEC-1, SEC-2 (purchasing), FIX-J1 |
+| **Open** | DEF-P2-002 · production role must not BYPASSRLS |
 
-Do not treat hard-coded legacy account codes 520101/110301 as current — removed by FIX-J1.

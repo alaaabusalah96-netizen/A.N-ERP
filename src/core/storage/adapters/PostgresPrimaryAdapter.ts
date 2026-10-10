@@ -1559,7 +1559,10 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_goods_receipts',
           'an_goods_receipt_lines',
           'an_supplier_invoices',
-          'an_supplier_invoice_lines'
+          'an_supplier_invoice_lines',
+          'an_stock_accounting_config',
+          'an_last_successful_logins',
+          'an_active_sessions'
         ];
       BEGIN
         FOREACH tbl IN ARRAY tables LOOP
@@ -2170,22 +2173,20 @@ export class PostgresPrimaryAdapter implements StoragePort {
 
   public async recordSuccessfulLogin(record: LoginAttemptRecord): Promise<StorageResult<void>> {
     if (!this.pool) return this.missingConnError();
-    try {
-      await this.query(
-        `INSERT INTO an_last_successful_logins (user_id, tenant_id, location, ip, timestamp)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (user_id) DO UPDATE SET
-           tenant_id = EXCLUDED.tenant_id,
-           location = EXCLUDED.location,
-           ip = EXCLUDED.ip,
-           timestamp = EXCLUDED.timestamp`,
-        [record.userId, record.tenantId || null, JSON.stringify(record.location), record.ip, record.timestamp]
-      );
-      await this.clearFailedLoginAttempts(record.userId);
-      return { success: true, data: undefined };
-    } catch (err: any) {
-      return this.dbError(err);
-    }
+    const run = async () => {
+      try {
+        await this.query(
+          `INSERT INTO an_last_successful_logins (user_id, tenant_id, location, ip, timestamp) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, location = EXCLUDED.location, ip = EXCLUDED.ip, timestamp = EXCLUDED.timestamp`,
+          [record.userId, record.tenantId || null, JSON.stringify(record.location), record.ip, record.timestamp]
+        );
+        await this.clearFailedLoginAttempts(record.userId);
+        return { success: true as const, data: undefined };
+      } catch (err: any) {
+        return this.dbError(err);
+      }
+    };
+    if (record.tenantId) return this.withTenantScope(record.tenantId, run);
+    return run();
   }
 
   public async getFailedLoginAttempts(userId: string): Promise<StorageResult<FailedAttemptRecord | null>> {
@@ -2322,6 +2323,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
 
   public async listActiveSessions(tenantId: string): Promise<StorageResult<ActiveSessionRecord[]>> {
     if (!this.pool) return this.missingConnError();
+    return this.withTenantScope(tenantId, async () => {
     try {
       const res = await this.query(
         'SELECT * FROM an_active_sessions WHERE tenant_id = $1 ORDER BY created_at DESC',
@@ -2345,6 +2347,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
     } catch (err: any) {
       return this.dbError(err);
     }
+    });
   }
 
   public async deleteActiveSession(sessionId: string): Promise<StorageResult<void>> {
@@ -7121,29 +7124,33 @@ public async getWarehouseStock(
 
   public async getStockAccountingConfig(tenantId: string): Promise<any> {
     const { defaultStockAccountingConfig } = await import('../StoragePort');
-    try {
-      const r = await this.pool.query(`SELECT * FROM an_stock_accounting_config WHERE tenant_id = $1`, [tenantId]);
-      if (!r.rows.length) return { success: true, data: defaultStockAccountingConfig(tenantId) };
-      const row = r.rows[0];
-      return { success: true, data: {
-        tenantId, autoPostEnabled: !!row.auto_post_enabled, grirAccountCode: row.grir_account_code,
-        inTransitAccountCode: row.in_transit_account_code, defaultInventoryAccountCode: row.default_inventory_account_code,
-        defaultCogsAccountCode: row.default_cogs_account_code, adjustmentExpenseAccountCode: row.adjustment_expense_account_code || '5209', adjustmentGainAccountCode: row.adjustment_gain_account_code || '4203', purchaseReturnClearingAccountCode: row.purchase_return_clearing_account_code || '2101', updatedBy: row.updated_by || undefined,
-        updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : undefined,
-      }};
-    } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    return this.withTenantScope(tenantId, async () => {
+      try {
+        const r = await this.query(`SELECT * FROM an_stock_accounting_config WHERE tenant_id = $1`, [tenantId]);
+        if (!r.rows.length) return { success: true, data: defaultStockAccountingConfig(tenantId) };
+        const row = r.rows[0];
+        return { success: true, data: {
+          tenantId, autoPostEnabled: !!row.auto_post_enabled, grirAccountCode: row.grir_account_code,
+          inTransitAccountCode: row.in_transit_account_code, defaultInventoryAccountCode: row.default_inventory_account_code,
+          defaultCogsAccountCode: row.default_cogs_account_code, adjustmentExpenseAccountCode: row.adjustment_expense_account_code || '5209', adjustmentGainAccountCode: row.adjustment_gain_account_code || '4203', purchaseReturnClearingAccountCode: row.purchase_return_clearing_account_code || '2101', updatedBy: row.updated_by || undefined,
+          updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : undefined,
+        }};
+      } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    });
   }
   public async saveStockAccountingConfig(tenantId: string, settings: any, actorId: string, _k: string): Promise<any> {
     const { defaultStockAccountingConfig } = await import('../StoragePort');
+    return this.withTenantScope(tenantId, async () => {
     try {
       const curRes = await this.getStockAccountingConfig(tenantId);
       const cur = curRes.success && curRes.data ? curRes.data : defaultStockAccountingConfig(tenantId);
       const next = { ...cur, ...settings, tenantId, updatedBy: actorId, updatedAt: new Date().toISOString() };
-      await this.pool.query(`INSERT INTO an_stock_accounting_config (tenant_id, auto_post_enabled, grir_account_code, in_transit_account_code, default_inventory_account_code, default_cogs_account_code, adjustment_expense_account_code, adjustment_gain_account_code, purchase_return_clearing_account_code, updated_by, updated_at)
+      await this.query(`INSERT INTO an_stock_accounting_config (tenant_id, auto_post_enabled, grir_account_code, in_transit_account_code, default_inventory_account_code, default_cogs_account_code, adjustment_expense_account_code, adjustment_gain_account_code, purchase_return_clearing_account_code, updated_by, updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW()) ON CONFLICT (tenant_id) DO UPDATE SET auto_post_enabled=EXCLUDED.auto_post_enabled, grir_account_code=EXCLUDED.grir_account_code, in_transit_account_code=EXCLUDED.in_transit_account_code, default_inventory_account_code=EXCLUDED.default_inventory_account_code, default_cogs_account_code=EXCLUDED.default_cogs_account_code, adjustment_expense_account_code=EXCLUDED.adjustment_expense_account_code, adjustment_gain_account_code=EXCLUDED.adjustment_gain_account_code, purchase_return_clearing_account_code=EXCLUDED.purchase_return_clearing_account_code, updated_by=EXCLUDED.updated_by, updated_at=NOW()`,
         [tenantId, !!next.autoPostEnabled, next.grirAccountCode, next.inTransitAccountCode, next.defaultInventoryAccountCode, next.defaultCogsAccountCode, next.adjustmentExpenseAccountCode || '5209', next.adjustmentGainAccountCode || '4203', next.purchaseReturnClearingAccountCode || '2101', actorId]);
       return { success: true, data: next };
     } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
+    });
   }
   // ===== F1 Standards Intelligence (SI-1..SI-10): global reference tables + tenant policies =====
   private async insertOnceStd(table: string, pk: string[], cols: string[], vals: any[], key: string): Promise<StorageResult<any>> {

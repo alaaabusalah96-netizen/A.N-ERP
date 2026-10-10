@@ -3,56 +3,35 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "reconcileDate": "2026-10-10T15:00:00Z",
-  "auditKind": "FIX_J1",
+  "reconcileDate": "2026-10-10T16:00:00Z",
+  "auditKind": "SEC_2B",
   "authoritativeVerdict": "CONDITIONAL_GO",
   "lastFix": {
-    "id": "FIX-J1",
-    "summary": "Count/return journals use StockAccountingConfig + standard COA codes",
-    "removedHardcodes": [
-      "520101",
-      "110301",
-      "410101",
-      "210101",
-      "510101"
-    ],
-    "defaults": {
-      "inventory": "1105",
-      "cogs": "5101",
-      "adjExpense": "5209",
-      "adjGain": "4203",
-      "purchaseReturnClearing": "2101"
-    }
+    "id": "SEC-2b",
+    "summary": "RLS on stock_accounting_config, last_successful_logins, active_sessions; GUC on config/session paths"
   },
+  "securityPackages": [
+    {
+      "id": "SEC-1",
+      "status": "DONE"
+    },
+    {
+      "id": "SEC-2",
+      "status": "DONE"
+    },
+    {
+      "id": "SEC-2b",
+      "status": "DONE"
+    }
+  ],
   "defects": [
-    {
-      "id": "DEF-P1-001",
-      "status": "FIXED"
-    },
-    {
-      "id": "DEF-P1-002",
-      "status": "FIXED"
-    },
-    {
-      "id": "DEF-P1-003",
-      "status": "FIXED"
-    },
-    {
-      "id": "DEF-P2-001",
-      "status": "FIXED"
-    },
-    {
-      "id": "R2-S9-hardcoded-accounts",
-      "status": "FIXED",
-      "via": "FIX-J1"
-    },
     {
       "id": "DEF-P2-002",
       "status": "OPEN"
     },
     {
-      "id": "SEC-2b",
-      "status": "OPEN"
+      "id": "PROD-ROLE-BYPASSRLS",
+      "status": "CHECK"
     }
   ]
 }
