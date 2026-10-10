@@ -1366,11 +1366,27 @@ export interface StockAccountingConfig {
   inTransitAccountCode: string;
   defaultInventoryAccountCode: string;
   defaultCogsAccountCode: string;
+  /** FIX-J1: shortage / count loss expense (must exist in COA) */
+  adjustmentExpenseAccountCode: string;
+  /** FIX-J1: count surplus gain (must exist in COA) */
+  adjustmentGainAccountCode: string;
+  /** FIX-J1: clearing for purchase returns (typically trade payables) */
+  purchaseReturnClearingAccountCode: string;
   updatedBy?: string;
   updatedAt?: string;
 }
 export function defaultStockAccountingConfig(tenantId: string): StockAccountingConfig {
-  return { tenantId, autoPostEnabled: false, grirAccountCode: '2106', inTransitAccountCode: '1109', defaultInventoryAccountCode: '1105', defaultCogsAccountCode: '5101' };
+  return {
+    tenantId,
+    autoPostEnabled: false,
+    grirAccountCode: '2106',
+    inTransitAccountCode: '1109',
+    defaultInventoryAccountCode: '1105',
+    defaultCogsAccountCode: '5101',
+    adjustmentExpenseAccountCode: '5209',
+    adjustmentGainAccountCode: '4203',
+    purchaseReturnClearingAccountCode: '2101',
+  };
 }
 
 // Phase 13 (COST-001): selectable inventory costing -------------------------------------------------

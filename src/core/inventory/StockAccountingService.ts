@@ -28,7 +28,7 @@ export class StockAccountingService {
   }
 
   public async ensureDefaultAccounts(tenantId: string, _actorId: string): Promise<StorageResult<void>> {
-    for (const code of ['1109', '2106']) {
+    for (const code of ['1105', '1109', '2101', '2106', '5101', '5209', '4203']) {
       const existing = await this.storage.getAccount(tenantId, code);
       if (existing.success && existing.data) continue;
       const tpl = STANDARD_CHART_OF_ACCOUNTS.find((a) => a.code === code);
@@ -208,18 +208,22 @@ export class StockAccountingService {
   }
 
   // Repair batch 1 (DEF-P1-002): the stock return journal. Stable entry id and idempotency keys (derived from the document) so a retry never duplicates it.
-  public buildReturnEntry(doc: StockDocument): JournalEntry | null {
+  public buildReturnEntry(doc: StockDocument, cfg?: StockAccountingConfig): JournalEntry | null {
     const total = r2(Number(doc.totalCost) || 0);
     if (total <= 0) return null;
+    const c = cfg || defaultStockAccountingConfig(doc.tenantId);
+    const inv = (c.defaultInventoryAccountCode || '1105').trim();
+    const cogs = (c.defaultCogsAccountCode || '5101').trim();
+    const clearing = (c.purchaseReturnClearingAccountCode || c.grirAccountCode || '2101').trim();
     const vendorReturn = doc.documentType === 'RETURN_RECEIPT';
     const lines: JournalLine[] = vendorReturn
       ? [
-          { id: `line-1-${doc.id}`, accountCode: '210101', debit: total, credit: 0, description: `إثبات مرتجع مشتريات/توريد ${doc.documentNumber} للمستند ${doc.referenceNumber}` },
-          { id: `line-2-${doc.id}`, accountCode: '110301', debit: 0, credit: total, description: `تخفيض المخزون بموجب إذن مرتجع توريد ${doc.documentNumber}` },
+          { id: `line-1-${doc.id}`, accountCode: clearing, debit: total, credit: 0, description: `إثبات مرتجع مشتريات/توريد ${doc.documentNumber} للمستند ${doc.referenceNumber}` },
+          { id: `line-2-${doc.id}`, accountCode: inv, debit: 0, credit: total, description: `تخفيض المخزون بموجب إذن مرتجع توريد ${doc.documentNumber}` },
         ]
       : [
-          { id: `line-1-${doc.id}`, accountCode: '110301', debit: total, credit: 0, description: `إعادة إدخال المخزون بموجب مرتجع صرف ${doc.documentNumber}` },
-          { id: `line-2-${doc.id}`, accountCode: '510101', debit: 0, credit: total, description: `تخفيض تكلفة المنصرف بموجب مرتجع صرف ${doc.documentNumber}` },
+          { id: `line-1-${doc.id}`, accountCode: inv, debit: total, credit: 0, description: `إعادة إدخال المخزون بموجب مرتجع صرف ${doc.documentNumber}` },
+          { id: `line-2-${doc.id}`, accountCode: cogs, debit: 0, credit: total, description: `تخفيض تكلفة المنصرف بموجب مرتجع صرف ${doc.documentNumber}` },
         ];
     return {
       id: `je-ret-${doc.id}`.slice(0, 64),
@@ -236,7 +240,9 @@ export class StockAccountingService {
   }
 
   public async postReturnJournal(tenantId: string, doc: StockDocument): Promise<AutoJournalOutcome> {
-    const entry = this.buildReturnEntry(doc);
+    const cfgRes = await this.storage.getStockAccountingConfig(tenantId);
+    const cfg = (cfgRes.success && cfgRes.data) ? cfgRes.data : defaultStockAccountingConfig(tenantId);
+    const entry = this.buildReturnEntry(doc, cfg);
     if (!entry) return { journalStatus: 'NONE' };
     const pendingMsg = 'تم تسجيل حركة المرتجع لكن القيد المحاسبي لم يُرحَّل بعد؛ أعد المحاولة من شاشة المستند';
     const draft = await this.postingEngine.draftEntry(tenantId, entry, `ret-${doc.id}-je-draft`);

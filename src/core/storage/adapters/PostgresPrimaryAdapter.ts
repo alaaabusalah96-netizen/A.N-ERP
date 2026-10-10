@@ -831,8 +831,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
         uom VARCHAR(64) NOT NULL DEFAULT 'حبة',
         inventory_account_code VARCHAR(64) NOT NULL DEFAULT '1050',
         cogs_account_code VARCHAR(64) NOT NULL DEFAULT '5010',
-        adjustment_expense_account_code VARCHAR(64) NOT NULL DEFAULT '5090',
-        adjustment_gain_account_code VARCHAR(64) NOT NULL DEFAULT '4090',
+        adjustment_expense_account_code VARCHAR(64) NOT NULL DEFAULT '5209',
+        adjustment_gain_account_code VARCHAR(64) NOT NULL DEFAULT '4203',
         valuation_method VARCHAR(32) NOT NULL DEFAULT 'WEIGHTED_AVERAGE',
         standard_cost NUMERIC(16, 4) NOT NULL DEFAULT 0,
         average_cost NUMERIC(16, 4) NOT NULL DEFAULT 0,
@@ -972,9 +972,15 @@ export class PostgresPrimaryAdapter implements StoragePort {
         in_transit_account_code VARCHAR(32) NOT NULL DEFAULT '1109',
         default_inventory_account_code VARCHAR(32) NOT NULL DEFAULT '1105',
         default_cogs_account_code VARCHAR(32) NOT NULL DEFAULT '5101',
+        adjustment_expense_account_code VARCHAR(32) NOT NULL DEFAULT '5209',
+        adjustment_gain_account_code VARCHAR(32) NOT NULL DEFAULT '4203',
+        purchase_return_clearing_account_code VARCHAR(32) NOT NULL DEFAULT '2101',
         updated_by VARCHAR(64),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE an_stock_accounting_config ADD COLUMN IF NOT EXISTS adjustment_expense_account_code VARCHAR(32) NOT NULL DEFAULT '5209';
+      ALTER TABLE an_stock_accounting_config ADD COLUMN IF NOT EXISTS adjustment_gain_account_code VARCHAR(32) NOT NULL DEFAULT '4203';
+      ALTER TABLE an_stock_accounting_config ADD COLUMN IF NOT EXISTS purchase_return_clearing_account_code VARCHAR(32) NOT NULL DEFAULT '2101';
       ALTER TABLE an_stock_documents ADD COLUMN IF NOT EXISTS journal_entry_id VARCHAR(64);
       ALTER TABLE an_stock_documents ADD COLUMN IF NOT EXISTS journal_status VARCHAR(16);
       ALTER TABLE an_stock_transfers ADD COLUMN IF NOT EXISTS dispatch_journal_entry_id VARCHAR(64);
@@ -6137,8 +6143,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
               item.uom || 'حبة',
               item.inventoryAccountCode || '1050',
               item.cogsAccountCode || '5010',
-              item.adjustmentExpenseAccountCode || '5090',
-              item.adjustmentGainAccountCode || '4090',
+              item.adjustmentExpenseAccountCode || '5209',
+              item.adjustmentGainAccountCode || '4203',
               item.valuationMethod || 'WEIGHTED_AVERAGE',
               item.standardCost || 0,
               item.averageCost || 0,
@@ -7122,7 +7128,7 @@ public async getWarehouseStock(
       return { success: true, data: {
         tenantId, autoPostEnabled: !!row.auto_post_enabled, grirAccountCode: row.grir_account_code,
         inTransitAccountCode: row.in_transit_account_code, defaultInventoryAccountCode: row.default_inventory_account_code,
-        defaultCogsAccountCode: row.default_cogs_account_code, updatedBy: row.updated_by || undefined,
+        defaultCogsAccountCode: row.default_cogs_account_code, adjustmentExpenseAccountCode: row.adjustment_expense_account_code || '5209', adjustmentGainAccountCode: row.adjustment_gain_account_code || '4203', purchaseReturnClearingAccountCode: row.purchase_return_clearing_account_code || '2101', updatedBy: row.updated_by || undefined,
         updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : undefined,
       }};
     } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
@@ -7133,9 +7139,9 @@ public async getWarehouseStock(
       const curRes = await this.getStockAccountingConfig(tenantId);
       const cur = curRes.success && curRes.data ? curRes.data : defaultStockAccountingConfig(tenantId);
       const next = { ...cur, ...settings, tenantId, updatedBy: actorId, updatedAt: new Date().toISOString() };
-      await this.pool.query(`INSERT INTO an_stock_accounting_config (tenant_id, auto_post_enabled, grir_account_code, in_transit_account_code, default_inventory_account_code, default_cogs_account_code, updated_by, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,NOW()) ON CONFLICT (tenant_id) DO UPDATE SET auto_post_enabled=EXCLUDED.auto_post_enabled, grir_account_code=EXCLUDED.grir_account_code, in_transit_account_code=EXCLUDED.in_transit_account_code, default_inventory_account_code=EXCLUDED.default_inventory_account_code, default_cogs_account_code=EXCLUDED.default_cogs_account_code, updated_by=EXCLUDED.updated_by, updated_at=NOW()`,
-        [tenantId, !!next.autoPostEnabled, next.grirAccountCode, next.inTransitAccountCode, next.defaultInventoryAccountCode, next.defaultCogsAccountCode, actorId]);
+      await this.pool.query(`INSERT INTO an_stock_accounting_config (tenant_id, auto_post_enabled, grir_account_code, in_transit_account_code, default_inventory_account_code, default_cogs_account_code, adjustment_expense_account_code, adjustment_gain_account_code, purchase_return_clearing_account_code, updated_by, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW()) ON CONFLICT (tenant_id) DO UPDATE SET auto_post_enabled=EXCLUDED.auto_post_enabled, grir_account_code=EXCLUDED.grir_account_code, in_transit_account_code=EXCLUDED.in_transit_account_code, default_inventory_account_code=EXCLUDED.default_inventory_account_code, default_cogs_account_code=EXCLUDED.default_cogs_account_code, adjustment_expense_account_code=EXCLUDED.adjustment_expense_account_code, adjustment_gain_account_code=EXCLUDED.adjustment_gain_account_code, purchase_return_clearing_account_code=EXCLUDED.purchase_return_clearing_account_code, updated_by=EXCLUDED.updated_by, updated_at=NOW()`,
+        [tenantId, !!next.autoPostEnabled, next.grirAccountCode, next.inTransitAccountCode, next.defaultInventoryAccountCode, next.defaultCogsAccountCode, next.adjustmentExpenseAccountCode || '5209', next.adjustmentGainAccountCode || '4203', next.purchaseReturnClearingAccountCode || '2101', actorId]);
       return { success: true, data: next };
     } catch (e: any) { return { success: false, error: { type: 'db', title: 'db', status: 500, detail: e.message } }; }
   }

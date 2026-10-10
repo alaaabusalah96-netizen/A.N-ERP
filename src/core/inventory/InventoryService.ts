@@ -40,7 +40,7 @@ import {
   ItemLedgerReport,
   ItemLedgerEntry,
   InventorySettings,
-} from '../storage/StoragePort';
+, defaultStockAccountingConfig } from '../storage/StoragePort';
 import { PostingEngine } from '../engines/PostingEngine';
 import { StockAccountingService, AutoJournalOutcome } from './StockAccountingService';
 import { NumberingEngine } from '../engines/NumberingEngine';
@@ -621,10 +621,10 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
       nameEn: itemData.nameEn,
       category: itemData.category,
       uom: itemData.uom || 'قطعة',
-      inventoryAccountCode: itemData.inventoryAccountCode || '110301',
-      cogsAccountCode: itemData.cogsAccountCode || '510101',
-      adjustmentExpenseAccountCode: itemData.adjustmentExpenseAccountCode || '520101',
-      adjustmentGainAccountCode: itemData.adjustmentGainAccountCode || '410101',
+      inventoryAccountCode: itemData.inventoryAccountCode || '1105',
+      cogsAccountCode: itemData.cogsAccountCode || '5101',
+      adjustmentExpenseAccountCode: itemData.adjustmentExpenseAccountCode || '5209',
+      adjustmentGainAccountCode: itemData.adjustmentGainAccountCode || '4203',
       valuationMethod,
       standardCost: money.standardCost ?? 0,
       averageCost: money.averageCost ?? 0,
@@ -1956,41 +1956,44 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
       const journalLines: JournalLine[] = [];
       const absAmount = Math.abs(count.netVarianceAmount);
 
+      // FIX-J1: resolve accounts from StockAccountingConfig (aligned with STANDARD_CHART_OF_ACCOUNTS)
+      const cfgRes = await this.storage.getStockAccountingConfig(tenantId);
+      const cfg = (cfgRes.success && cfgRes.data) ? cfgRes.data : defaultStockAccountingConfig(tenantId);
+      const invAcc = (cfg.defaultInventoryAccountCode || '1105').trim();
+      const expAcc = (cfg.adjustmentExpenseAccountCode || '5209').trim();
+      const gainAcc = (cfg.adjustmentGainAccountCode || '4203').trim();
+
       if (count.netVarianceAmount < 0) {
-        // Deficit (عجز مخزني):
-        // Dr: 520101 (Inventory Adjustment Loss/Expense - مصروف عجز الجرد المخزني)
-        // Cr: 110301 (Inventory Asset - مخزون البضاعة)
+        // Deficit: Dr expense / Cr inventory
         journalLines.push(
           {
             id: `jl-${count.id}-1`,
-            accountCode: '520101',
+            accountCode: expAcc,
             debit: absAmount,
             credit: 0,
             description: `تسوية عجز جرد ${count.warehouseNameAr} بموجب المحضر ${count.countNumber}`,
           },
           {
             id: `jl-${count.id}-2`,
-            accountCode: '110301',
+            accountCode: invAcc,
             debit: 0,
             credit: absAmount,
             description: `تخفيض المخزون بالمستودع بموجب المحضر ${count.countNumber}`,
           }
         );
       } else {
-        // Surplus (زيادة مخزنية):
-        // Dr: 110301 (Inventory Asset - مخزون البضاعة)
-        // Cr: 410101 (Inventory Gain - أرباح تسوية زيادة الجرد المخزني)
+        // Surplus: Dr inventory / Cr gain
         journalLines.push(
           {
             id: `jl-${count.id}-1`,
-            accountCode: '110301',
+            accountCode: invAcc,
             debit: absAmount,
             credit: 0,
             description: `إثبات زيادة المخزون بموجب محضر الجرد ${count.countNumber}`,
           },
           {
             id: `jl-${count.id}-2`,
-            accountCode: '410101',
+            accountCode: gainAcc,
             debit: 0,
             credit: absAmount,
             description: `إيرادات أرباح فروقات زيادة الجرد بموجب ${count.countNumber}`,

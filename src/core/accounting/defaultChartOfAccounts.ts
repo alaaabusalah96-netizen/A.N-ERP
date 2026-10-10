@@ -57,6 +57,7 @@ export const STANDARD_CHART_OF_ACCOUNTS: Omit<ChartAccount, 'tenantId' | 'debitB
   { code: '42', parentCode: '4', nameAr: 'إيرادات وأرباح أخرى', type: 'REVENUE', nature: 'CREDIT', currency: 'SAR', isActive: true, isParent: true, level: 2 },
   { code: '4201', parentCode: '42', nameAr: 'إيرادات عوائد ودائع واستثمارات', type: 'REVENUE', nature: 'CREDIT', currency: 'SAR', isActive: true, isParent: false, level: 3 },
   { code: '4202', parentCode: '42', nameAr: 'إيرادات متنوعة غير تشغيلية', type: 'REVENUE', nature: 'CREDIT', currency: 'SAR', isActive: true, isParent: false, level: 3 },
+  { code: '4203', parentCode: '42', nameAr: 'أرباح تسوية زيادة المخزون', type: 'REVENUE', nature: 'CREDIT', currency: 'SAR', isActive: true, isParent: false, level: 3 },
 
   // 5: المصروفات والتكاليف (EXPENSES)
   { code: '5', parentCode: null, nameAr: 'المصروفات والتكاليف', type: 'EXPENSE', nature: 'DEBIT', currency: 'SAR', isActive: true, isParent: true, level: 1 },
@@ -73,4 +74,5 @@ export const STANDARD_CHART_OF_ACCOUNTS: Omit<ChartAccount, 'tenantId' | 'debitB
   { code: '5206', parentCode: '52', nameAr: 'مصاريف التسويق والإعلانات والعلاقات العامة', type: 'EXPENSE', nature: 'DEBIT', currency: 'SAR', isActive: true, isParent: false, level: 3 },
   { code: '5207', parentCode: '52', nameAr: 'رسوم بنكية ومصرفية', type: 'EXPENSE', nature: 'DEBIT', currency: 'SAR', isActive: true, isParent: false, level: 3 },
   { code: '5208', parentCode: '52', nameAr: 'مصروفات الضيافة والنثريات', type: 'EXPENSE', nature: 'DEBIT', currency: 'SAR', isActive: true, isParent: false, level: 3 },
+  { code: '5209', parentCode: '52', nameAr: 'مصروف عجز وتسوية المخزون', type: 'EXPENSE', nature: 'DEBIT', currency: 'SAR', isActive: true, isParent: false, level: 3 },
 ];
