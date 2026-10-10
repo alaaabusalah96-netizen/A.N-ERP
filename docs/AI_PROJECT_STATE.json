@@ -3,12 +3,12 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "reconcileDate": "2026-10-10T20:00:00Z",
-  "auditKind": "PHASE_9_VAL_001",
+  "reconcileDate": "2026-10-10T21:00:00Z",
+  "auditKind": "EVID_1",
   "authoritativeVerdict": "CONDITIONAL_GO",
   "lastFix": {
-    "id": "P9-VAL-001",
-    "summary": "validateJournalInput on POST /api/transactions/post before numbering/draft"
+    "id": "EVID-1",
+    "summary": "Restored runReconcileAuditB.ts + verifyF07StorageRouter.ts; baseline SUPERSEDED"
   },
   "canonicalAuditFiles": [
     "AI_CONTEXT.md",
@@ -16,7 +16,6 @@
     "docs/AI_PROJECT_STATE.json"
   ],
   "historicalOnly": [
-    "evidence/reconcile-audit-b/REPORT.md",
     "evidence/integrity/baseline-report.md",
     "evidence/repair/"
   ],
@@ -45,6 +44,10 @@
     },
     {
       "id": "P9-VAL-001",
+      "status": "DONE"
+    },
+    {
+      "id": "EVID-1",
       "status": "DONE"
     }
   ],
