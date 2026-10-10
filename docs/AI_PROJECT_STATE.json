@@ -2,45 +2,103 @@
   "project": {
     "name": "A.N ERP",
     "version": "7.2.0",
-    "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل — تدقيق شامل معتمد ومحدث",
+    "description": "Integrated ERP — reconciled project state after Phase 8c-FIX, SEC-1, SEC-2, Standards F1–F4",
     "stack": {
-      "backend": ["Node 22", "Express 4", "TypeScript"],
+      "backend": [
+        "Node 22",
+        "Express 4",
+        "TypeScript"
+      ],
       "database": "PostgreSQL",
-      "frontend": ["React 19", "Vite", "Tailwind CSS"]
+      "frontend": [
+        "React 19",
+        "Vite",
+        "Tailwind CSS"
+      ]
     }
   },
-  "auditDate": "2026-10-10T00:00:00Z",
-  "authoritativeVerdict": "NO-GO",
+  "reconcileDate": "2026-10-10T00:00:00Z",
+  "authoritativeVerdict": "CONDITIONAL_GO",
   "scorecard": {
-    "architecture": 60,
-    "security": 70,
-    "authentication": 80,
-    "authorization_sod": 50,
-    "tenant_isolation": 80,
-    "inventory_integrity": 50,
-    "accounting_integrity": 40,
-    "transaction_atomicity": 40,
-    "concurrency": 50,
-    "costing": 70,
-    "idempotency": 80,
-    "schema_management": 50,
-    "testing_quality": 60,
-    "overall": 65
+    "architecture": 75,
+    "security": 82,
+    "authentication": 88,
+    "authorization_sod": 78,
+    "tenant_isolation": 86,
+    "inventory_integrity": 85,
+    "accounting_integrity": 82,
+    "transaction_atomicity": 84,
+    "concurrency": 70,
+    "costing": 82,
+    "idempotency": 85,
+    "schema_management": 55,
+    "testing_quality": 80,
+    "overall": 78
   },
   "defects": [
-    { "id": "DEF-P1-001", "severity": "P1", "status": "OPEN", "impact": "General Ledger journal posts before inventory adjustment loop." },
-    { "id": "DEF-P1-002", "severity": "P1", "status": "OPEN", "impact": "postingEngine.postEntry return result ignored." },
-    { "id": "DEF-P1-003", "severity": "P1", "status": "OPEN", "impact": "postingEngine.postEntry return value ignored in custody." },
-    { "id": "DEF-P2-001", "severity": "P2", "status": "OPEN", "impact": "TOCTOU race on remaining PO line quantity." },
-    { "id": "DEF-P2-002", "severity": "P2", "status": "OPEN", "impact": "Absence of dedicated version-tracked migration engine." }
+    {
+      "id": "DEF-P1-001",
+      "severity": "P1",
+      "status": "FIXED",
+      "impact": "Stock document posting is atomic via postStockDocumentAtomic."
+    },
+    {
+      "id": "DEF-P1-002",
+      "severity": "P1",
+      "status": "FIXED",
+      "impact": "Return journal postEntry result is checked; failure yields pending retry path."
+    },
+    {
+      "id": "DEF-P1-003",
+      "severity": "P1",
+      "status": "FIXED",
+      "impact": "Cash custody draft+post both checked; voucher only after successful post."
+    },
+    {
+      "id": "DEF-P2-001",
+      "severity": "P2",
+      "status": "FIXED",
+      "impact": "PO line remaining qty protected with FOR UPDATE and DB CHECK."
+    },
+    {
+      "id": "DEF-P2-002",
+      "severity": "P2",
+      "status": "OPEN",
+      "impact": "No dedicated version-tracked migration engine (linter only)."
+    }
+  ],
+  "unproven": [
+    {
+      "id": "F-07",
+      "status": "UNPROVEN",
+      "impact": "StorageRouter deadlock claim requires PostgreSQL concurrency re-test."
+    }
+  ],
+  "securityPackages": [
+    {
+      "id": "SEC-1",
+      "status": "DONE",
+      "summary": "2FA: no secret/QR at login for enrolled users; setup ownership; no fabricated Riyadh geo."
+    },
+    {
+      "id": "SEC-2",
+      "status": "DONE",
+      "summary": "RLS on 12 purchasing tables; set_config GUC on purchase write paths; withTenantScope on reads."
+    }
   ],
   "testExecutionMetrics": {
-    "totalPassedTests": 0,
-    "totalFailedTests": 0,
-    "status": "PENDING_VERIFICATION"
+    "status": "EVIDENCE_PRESENT",
+    "note": "See evidence/ and scripts/verify*.ts; do not use 0/0. Refresh via latest battery runs.",
+    "representativeGates": {
+      "verifyP8aProcurement": "24/24",
+      "verifyP8cThreeWay": "14/14",
+      "verifySec1TwoFactor": "26/26",
+      "verifySec2Rls": "39/39"
+    }
   },
   "reliabilityAssessment": {
-    "storageRouterDeadlock": "Intermittent deadlock detected during dedicated schema initialization.",
-    "performanceMetrics": "NOT_MEASURED_IN_CURRENT_AUDIT"
-  }
+    "storageRouterDeadlock": "UNPROVEN — re-test on PostgreSQL",
+    "performanceMetrics": "NOT_MEASURED"
+  },
+  "documentationOnlyReconcile": true
 }

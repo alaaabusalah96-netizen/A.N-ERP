@@ -1,0 +1,3 @@
+AI_CONTEXT.md|doc_new1
+docs/AI_PROJECT_STATE.md|doc_new2
+docs/AI_PROJECT_STATE.json|doc_new3

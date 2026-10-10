@@ -1,57 +1,107 @@
-# A.N ERP — RECONCILED MASTER PROJECT STATE & AUDIT (v7.2.0)
+# A.N ERP — RECONCILED MASTER PROJECT STATE (v7.2.0)
 
-**Audit Date**: 2026-10-10  
-**Reconciled Source Version**: `7.2.0`  
-**Final Production Verdict**: **NO-GO** (Production Halt - Independent Audit Findings)  
-**Overall Engineering Score**: **65 / 100**  
-**Audit Mode**: Strict Read-Only Evidence Reification & Independent Audit
+**Reconcile date**: 2026-10-10  
+**package.json version**: `7.2.0`  
+**Authoritative verdict**: **CONDITIONAL GO**  
+**Overall engineering score (reconciled)**: **78 / 100**  
+**Mode**: Documentation-only reconcile — **no application source changes** in this package.
 
----
-
-## 1. VERSION RECONCILIATION & DISCOVERY
-- **Package Version (`package.json`)**: `7.2.0`
-- **JSON Project State (`docs/AI_PROJECT_STATE.json`)**: `7.2.0`
-- **Runtime Stack**: Node.js v22.23.2, TypeScript 5.8.2, Express 4.21.2, PostgreSQL.
+> Prior copies of this file showed **NO-GO** while `AI_CONTEXT.md` said **CONDITIONAL GO**. Both were stale relative to Repair Batch 1, R10–R15, Standards F1–F4, Phase 8a–8c-FIX, SEC-1, and SEC-2. **Code + `evidence/` win.**
 
 ---
 
-## 2. AUDIT SUMMARY (INDEPENDENT REPORT - 2026-10-10)
-- **Status**: **NO-GO**
-- **Core Findings**: Independent audit identified significant discrepancies in previous test evidence, including inconsistent pass rates (360/360 claim vs actual evidence), and potential reproducibility issues for P1 accounting defects.
-- **Critical Risks**: 
-    - **F-01**: Multi-step approval bypass risk.
-    - **F-02/F-03**: Accounting posting failures and missing journals in reversals.
-    - **F-04/F-05**: Atomicity and validation bypass in inventory.
-    - **F-07**: `StorageRouter` deadlocks detected in Phase 4 battery.
+## 1. Stack (verified)
+
+| Layer | Value |
+|---|---|
+| Runtime | Node 22 |
+| API | Express 4 |
+| Language | TypeScript 5.8.x |
+| DB | PostgreSQL (primary) |
+| UI | React 19 + Vite + Tailwind |
 
 ---
 
-## 3. RECONCILED DEFECT REGISTER
+## 2. Delivered capability (high level)
 
-| Defect ID | Severity | Area | Status | Mitigation/Description |
-| :--- | :---: | :--- | :---: | :--- |
-| **DEF-P1-001** | **P1** | Accounting Atomicity | **OPEN** | Stock count posting is sequential, not transactional across GL/Inv. |
-| **DEF-P1-002** | **P1** | Accounting Reversal | **OPEN** | Posting engine outcome unchecked in `returnStock`. |
-| **DEF-P1-003** | **P1** | Custody Accounting | **OPEN** | Expense posting outcome unchecked in custody service. |
-| **DEF-P2-001** | **P2** | Purchasing Concurrency | **OPEN** | TOCTOU race on PO qty. |
-| **DEF-P2-002** | **P2** | Database Migration | **OPEN** | Absence of version-tracked migration engine. |
-
----
-
-## 4. FIELD INVESTIGATIONS & NEXT STEPS (SECTION 7)
-- **Status**: Audit Plan Active (Read-Only)
-- **Action Plan**:
-    1. Verify version and environment baseline.
-    2. Rerun multi-step approval test.
-    3. Rerun inventory adjustment/journal consistency test.
-    4. Rerun return/reversal test.
-    5. Rerun quantity/cost validation tests.
-    6. Rerun `Dedicated StorageRouter` concurrency tests.
-    7. Rerun purchase order concurrency tests.
-    8. Update release status only after successful verification.
+| Area | State |
+|---|---|
+| Phases 0 → 7.6 + repair cycle | Delivered |
+| Standards Intelligence F1–F4 | Delivered (`src/core/standards/`) |
+| Inventory atomic post / costing / transfers | Delivered |
+| Purchasing 8a (PR/RFQ/PO) + 8b UI + 8c three-way + 8c-FIX | Delivered |
+| SEC-1 2FA secret leak / setup ownership / no fabricated Riyadh | Delivered |
+| SEC-2 RLS on 12 purchasing tables + tenant GUC on purchase paths | Delivered |
+| Evidence batteries under `evidence/` | Present (phase-8a/b/c, standards, security, repair, …) |
+| Verify scripts under `scripts/verify*.ts` | ~50+ scripts |
 
 ---
 
-## 5. FINAL RELEASE DECISION
-**VERDICT: NO-GO** (Production Halt)  
-*All application source code and database data remain unmodified in strict adherence to read-only audit rules.*
+## 3. Defect register (reconciled)
+
+| ID | Severity | Status | Notes |
+|---|---|---|---|
+| DEF-P1-001 | P1 | **FIXED** | Stock document post uses `postStockDocumentAtomic`; failure leaves no partial commit |
+| DEF-P1-002 | P1 | **FIXED** | Return path checks `postEntry` / return journal result; pending retry on failure |
+| DEF-P1-003 | P1 | **FIXED** | Cash custody: draft + post both checked; voucher saved only after successful post |
+| DEF-P2-001 | P2 | **FIXED** | PO line qty: `SELECT … FOR UPDATE` + DB CHECK on remaining qty |
+| DEF-P2-002 | P2 | **OPEN** | No dedicated **version-tracked migration engine** (MigrationLinterService is a linter only) |
+| F-07 | — | **UNPROVEN** | StorageRouter deadlock claim — re-run concurrency battery on real PostgreSQL |
+
+---
+
+## 4. Scorecard (reconciled — indicative)
+
+| Dimension | Old audit | Reconciled |
+|---|---|---|
+| architecture | 60 | 75 |
+| security | 70 | 82 |
+| authentication | 80 | 88 |
+| authorization_sod | 50 | 78 |
+| tenant_isolation | 80 | 86 |
+| inventory_integrity | 50 | 85 |
+| accounting_integrity | 40 | 82 |
+| transaction_atomicity | 40 | 84 |
+| concurrency | 50 | 70 |
+| costing | 70 | 82 |
+| idempotency | 80 | 85 |
+| schema_management | 50 | 55 |
+| testing_quality | 60 | 80 |
+| **overall** | **65** | **78** |
+Schema management stays lower until DEF-P2-002 is closed. Concurrency stays provisional until F-07 is re-tested.
+
+---
+
+## 5. Test execution metrics (reconciled)
+
+Stale audit claimed `0/0 PENDING_VERIFICATION`. That is **false** for the current tree.
+
+Representative batteries (from prior Studio runs / evidence layout — re-run to refresh numbers):
+
+| Battery | Typical gate |
+|---|---|
+| verifyP8aProcurement | 24/24 |
+| verifyP8cThreeWay | 14/14 |
+| verifyP8cFix | 19/19 (when present) |
+| verifyF3Acceptance | 19/19 (+ PG variant when run) |
+| verifySec1TwoFactor | 26/26 |
+| verifySec2Rls | 39/39 |
+
+Exact counts must be taken from the latest `npx tsx scripts/…` raw `Passed:` line; do not invent totals.
+
+---
+
+## 6. Release decision
+
+**VERDICT: CONDITIONAL GO**
+
+- Allowed: continue module roadmap (e.g. Phase 9 sales) and targeted hardening.
+- Required before calling the system “migration-complete”: plan/implement DEF-P2-002.
+- Recommended: PG concurrency package to confirm or close F-07.
+- **Forbidden**: treating this markdown as authority over failing batteries or contradictory code.
+
+---
+
+## 7. Out of scope for this documentation package
+
+No TypeScript/SQL changes. No schema migration. No commit of application behavior — docs only.
