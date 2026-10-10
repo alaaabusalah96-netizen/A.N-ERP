@@ -3,13 +3,35 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "reconcileDate": "2026-10-10T22:00:00Z",
-  "auditKind": "DEF_P2_002",
+  "reconcileDate": "2026-10-10T22:30:00Z",
+  "auditKind": "SEC_4",
   "authoritativeVerdict": "CONDITIONAL_GO",
   "lastFix": {
-    "id": "DEF-P2-002",
-    "summary": "Version-tracked MigrationEngine with an_schema_migrations registry"
+    "id": "SEC-4",
+    "summary": "Production PG role guide + BYPASSRLS probe (AN_ENFORCE_PROD_ROLE)"
   },
+  "securityPackages": [
+    {
+      "id": "SEC-1",
+      "status": "DONE"
+    },
+    {
+      "id": "SEC-2",
+      "status": "DONE"
+    },
+    {
+      "id": "SEC-2b",
+      "status": "DONE"
+    },
+    {
+      "id": "SEC-3",
+      "status": "DONE"
+    },
+    {
+      "id": "SEC-4",
+      "status": "DONE"
+    }
+  ],
   "defects": [
     {
       "id": "DEF-P2-002",
@@ -17,17 +39,7 @@
     },
     {
       "id": "PROD-ROLE-BYPASSRLS",
-      "status": "CHECK"
-    }
-  ],
-  "completedFixes": [
-    {
-      "id": "SEC-3",
-      "status": "DONE"
-    },
-    {
-      "id": "DEF-P2-002",
-      "status": "FIXED"
+      "status": "PROBE_READY"
     }
   ],
   "canonicalAuditFiles": [

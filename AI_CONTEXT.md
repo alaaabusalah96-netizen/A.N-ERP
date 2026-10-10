@@ -2,11 +2,11 @@
 
 **A.N ERP (v7.2.0)**. Canonical: AI_CONTEXT + AI_PROJECT_STATE.*
 
-Last update: **DEF-P2-002** on **2026-10-10**.
+Last update: **SEC-4** on **2026-10-10**.
 
 ## Verdict
 | Field | Value |
 |---|---|
 | **Authoritative verdict** | **CONDITIONAL GO** |
-| **Last fix** | DEF-P2-002 — version-tracked MigrationEngine + an_schema_migrations |
-| **Open** | production DB role BYPASSRLS check |
+| **Last fix** | SEC-4 — prod PG role guide + verifySec4ProdRole (BYPASSRLS check) |
+| **Open** | None architectural; enforce app role on real production DB |
