@@ -191,3 +191,40 @@ export function parseAttachmentSize(v: unknown): ParseResult<number> {
 }
 
 export const ATTACHMENT_LIMITS = { maxPerDocument: 50, maxBytes: MAX_ATTACHMENT_BYTES } as const;
+
+/**
+ * Phase 9 (VAL-001): shared check for the journal-entry creation routes.
+ * `date` is optional (validated when sent); `lines` must be a non-empty array of objects whose debit/credit are
+ * non-negative money (missing/null/'' count as 0) and never both > 0 on the same line.
+ * Returns parsed numbers so callers can use them instead of the raw input.
+ */
+export function validateJournalInput(
+  date: unknown,
+  lines: unknown
+): { ok: true; date?: string; amounts: Array<{ debit: number; credit: number }> } | { ok: false; detail: string } {
+  let parsedDate: string | undefined;
+  if (date !== undefined && date !== null && date !== '') {
+    const d = parseIsoDate(date, 'تاريخ القيد (date)');
+    if (!d.ok) return { ok: false, detail: d.detail };
+    parsedDate = d.value;
+  }
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return { ok: false, detail: 'أسطر القيد (lines) مطلوبة ويجب أن تحتوي على سطر واحد على الأقل.' };
+  }
+  const amounts: Array<{ debit: number; credit: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l: any = lines[i];
+    if (l === null || typeof l !== 'object') return { ok: false, detail: `السطر رقم ${i + 1} من القيد (lines[${i}]) غير صالح.` };
+    const amt = (v: unknown, label: string): ParseResult<number> =>
+      v === undefined || v === null || v === '' ? { ok: true, value: 0 } : parseNonNegativeMoney(v, label);
+    const d = amt(l.debit, `المدين (debit) في السطر رقم ${i + 1}`);
+    if (!d.ok) return { ok: false, detail: d.detail };
+    const c = amt(l.credit, `الدائن (credit) في السطر رقم ${i + 1}`);
+    if (!c.ok) return { ok: false, detail: c.detail };
+    if (d.value > 0 && c.value > 0) {
+      return { ok: false, detail: `السطر رقم ${i + 1} يحتوي على مدين ودائن معًا؛ يجب أن يكون أحدهما صفرًا.` };
+    }
+    amounts.push({ debit: d.value as number, credit: c.value as number });
+  }
+  return { ok: true, date: parsedDate, amounts };
+}

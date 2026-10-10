@@ -1,0 +1,151 @@
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[PASS] (أ) parsePositiveQuantity rejects NaN
+[PASS] (أ) parsePositiveQuantity rejects Infinity
+[PASS] (أ) parsePositiveQuantity rejects -Infinity
+[PASS] (أ) parsePositiveQuantity rejects "abc"
+[PASS] (أ) parsePositiveQuantity rejects ""
+[PASS] (أ) parsePositiveQuantity rejects null
+[PASS] (أ) parsePositiveQuantity rejects undefined
+[PASS] (أ) parsePositiveQuantity rejects -1
+[PASS] (أ) parsePositiveQuantity rejects 0
+[PASS] (أ) parsePositiveQuantity rejects 1e+30
+[PASS] (أ) parsePositiveQuantity rejects 0.00001
+[PASS] (أ) parsePositiveQuantity rejects "1e3"
+[PASS] (أ) parsePositiveQuantity rejects " 5"
+[PASS] (أ) parsePositiveQuantity rejects "5 "
+[PASS] (أ) parsePositiveQuantity rejects "1,000"
+[PASS] (أ) parsePositiveQuantity rejects "-1"
+[PASS] (أ) parsePositiveQuantity rejects "+1"
+[PASS] (أ) parsePositiveQuantity rejects [object Object]
+[PASS] (أ) parsePositiveQuantity rejects 
+[PASS] (أ) parsePositiveQuantity rejects true
+[PASS] (أ) parsePositiveQuantity accepts 0.5 | value=0.5
+[PASS] (أ) parsePositiveQuantity accepts "12.25" | value=12.25
+[PASS] (أ) parsePositiveQuantity accepts 1234.5678 | value=1234.5678
+[PASS] (أ) parsePositiveQuantity accepts 1 | value=1
+[PASS] (أ) parsePositiveQuantity accepts "3" | value=3
+[PASS] (أ) parsePositiveQuantity accepts 1000000000 | value=1000000000
+[PASS] (أ) parsePositiveQuantity rejects 1_000_000_001
+[PASS] (أ) parsePositiveQuantity rejects 5 decimals (1.12345)
+[PASS] (أ) failure detail is Arabic and names the field | الكمية (quantity) يجب أن تكون رقمًا أكبر من صفر وحتى 1,000,000,000 بحد أقصى 4 خانات عشرية.
+[PASS] (أ) parseNonNegativeQuantity accepts 0
+[PASS] (أ) parseNonNegativeQuantity rejects -1
+[PASS] (أ) parseNonNegativeQuantity rejects NaN
+[PASS] (أ) parseNonNegativeMoney rejects NaN
+[PASS] (أ) parseNonNegativeMoney rejects Infinity
+[PASS] (أ) parseNonNegativeMoney rejects "abc"
+[PASS] (أ) parseNonNegativeMoney rejects ""
+[PASS] (أ) parseNonNegativeMoney rejects null
+[PASS] (أ) parseNonNegativeMoney rejects undefined
+[PASS] (أ) parseNonNegativeMoney rejects -1
+[PASS] (أ) parseNonNegativeMoney rejects -0.0001
+[PASS] (أ) parseNonNegativeMoney rejects 1e+30
+[PASS] (أ) parseNonNegativeMoney rejects 1000000000001
+[PASS] (أ) parseNonNegativeMoney rejects "1e3"
+[PASS] (أ) parseNonNegativeMoney rejects 0.00001
+[PASS] (أ) parseNonNegativeMoney rejects [object Object]
+[PASS] (أ) parseNonNegativeMoney accepts 0 | value=0
+[PASS] (أ) parseNonNegativeMoney accepts "0" | value=0
+[PASS] (أ) parseNonNegativeMoney accepts 12.5 | value=12.5
+[PASS] (أ) parseNonNegativeMoney accepts "1234.5678" | value=1234.5678
+[PASS] (أ) parseNonNegativeMoney accepts 1000000000000 | value=1000000000000
+[PASS] (أ) parseIsoDate rejects "2026-02-31"
+[PASS] (أ) parseIsoDate rejects "2026-13-01"
+[PASS] (أ) parseIsoDate rejects "2026-00-10"
+[PASS] (أ) parseIsoDate rejects "not-a-date"
+[PASS] (أ) parseIsoDate rejects ""
+[PASS] (أ) parseIsoDate rejects null
+[PASS] (أ) parseIsoDate rejects undefined
+[PASS] (أ) parseIsoDate rejects 20260101
+[PASS] (أ) parseIsoDate rejects "1999-12-31"
+[PASS] (أ) parseIsoDate rejects "2101-01-01"
+[PASS] (أ) parseIsoDate rejects "2026-1-1"
+[PASS] (أ) parseIsoDate rejects "2026-02-30T10:00:00Z"
+[PASS] (أ) parseIsoDate rejects "2026-01-01T25:00:00Z"
+[PASS] (أ) parseIsoDate accepts "2026-10-10"
+[PASS] (أ) parseIsoDate accepts "2000-01-01"
+[PASS] (أ) parseIsoDate accepts "2100-12-31"
+[PASS] (أ) parseIsoDate accepts "2024-02-29"
+[PASS] (أ) parseIsoDate accepts "2026-10-10T12:30:00Z"
+[PASS] (أ) parseIsoDate accepts "2026-10-10T12:30:00.123+03:00"
+[PASS] (أ) parseIsoDate rejects 2025-02-29 (not a leap year)
+[PASS] (أ) parseBoundedString trims
+[PASS] (أ) parseBoundedString rejects control char
+[PASS] (أ) parseBoundedString rejects NUL
+[PASS] (أ) parseBoundedString rejects too long
+[PASS] (أ) parseBoundedString accepts exactly max
+[PASS] (أ) parseBoundedString rejects empty when min=1
+[PASS] (أ) parseBoundedString rejects non-string
+[PASS] (أ) parseEnum accepts a listed value
+[PASS] (أ) parseEnum rejects "FOO"
+[PASS] (أ) parseEnum rejects ""
+[PASS] (أ) parseEnum rejects null
+[PASS] (أ) parseEnum rejects undefined
+[PASS] (أ) parseEnum rejects 1
+[PASS] (أ) parseEnum rejects "fifo"
+[PASS] (أ) validationError is RFC7807 400
+[PASS] (أ) validateJournalInput accepts a valid entry
+[PASS] (أ) validateJournalInput accepts a missing date
+[PASS] (أ) validateJournalInput rejects date not-a-date
+[PASS] (أ) validateJournalInput rejects debit+credit on one line
+[PASS] (أ) validateJournalInput rejects negative debit
+[PASS] (أ) validateJournalInput rejects debit "abc"
+[PASS] (أ) validateJournalInput rejects debit Infinity
+[PASS] (أ) validateJournalInput rejects empty / non-array lines
+[PASS] (أ) validateJournalInput rejects a null line
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+[phase-4] DECISION: DB role bypasses RLS -> global membership backfill
+[PASS] (ب) seed receipt succeeds
+[PASS] (ب) receiveStock quantity=NaN | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=NaN | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity="abc" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity="abc" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=-999999999 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=-999999999 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=Infinity | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=Infinity | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=1e+30 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=1e+30 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=0 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=0 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity="" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity="" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=null | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=null | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity="1e3" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity="1e3" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=0.00001 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=0.00001 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=-5 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost="hello" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=NaN | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=Infinity | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=1e+30 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost="1e3" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock expiryDate=2026-02-31 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock batchNumber 65 chars | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock serialNumber 129 chars | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock notes 2001 chars | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock notes with control char | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock: second line invalid → nothing saved | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock: second line invalid → nothing saved | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) createTransfer quantity="abc" rejected 400, no transfer row | status=400 transfers 0→0
+[PASS] (ب) createStockCount countedQty=-3 rejected 400 | status=400
+[PASS] (ج) receive quantity 0.5 / unitCost 0 accepted
+[PASS] (ج) stored qty = 0.5 | qty=0.5
+[PASS] (ج) receive quantity "12.25" (numeric text) accepted
+[PASS] (ج) stored qty = 12.75 (text parsed to a number) | qty=12.75
+[PASS] (ج) receive quantity 1234.5678 accepted
+[PASS] (ج) stored qty = 1247.3178 | qty=1247.3178
+[PASS] (ج) issue quantity "0.5" accepted
+[PASS] (ج) stored qty after issue = 1246.8178 | qty=1246.8178
+[PASS] (ج) valid expiryDate / batchNumber / notes accepted
+[PASS] (هـ) saveStockItem valuationMethod "FOO" rejected 400 | status=400
+[PASS] (هـ) saveStockItem valuationMethod "FIFO" accepted
+[PASS] (هـ) saveStockItem standardCost -5 rejected 400 | status=400
+[PASS] (هـ) saveStockItem itemCode 65 chars rejected 400 | status=400
+[PASS] (هـ) saveStockItem blank itemCode rejected 400 | status=400
+[NOT RUN] (د) HTTP validation (receive, journal-entries, transactions/post) | writes to tenant MAIN if a value is wrongly accepted (and for the valid entry); set P9_ALLOW_MAIN_WRITES=1 on a dev/throw-away database
+
+SUMMARY: PASS=144 FAIL=0 NOT_RUN=1
+NOTE: NOT RUN items are not passes — run them in an environment that has what they need.

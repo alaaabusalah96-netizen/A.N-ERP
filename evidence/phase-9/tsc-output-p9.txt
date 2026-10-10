@@ -1,0 +1,7 @@
+scripts/setupQAWorkflow.ts(10,39): error TS2345: Argument of type 'Pool' is not assignable to parameter of type 'string'.
+scripts/setupQAWorkflow.ts(11,13): error TS2554: Expected 3 arguments, but got 1.
+scripts/verifyP14AutoJournals.ts(169,242): error TS2345: Argument of type '{ tenantId: string; autoPostEnabled: true; grirAccountCode: string; inTransitAccountCode: string; defaultInventoryAccountCode: string; defaultCogsAccountCode: string; }' is not assignable to parameter of type 'StockAccountingConfig'.
+  Type '{ tenantId: string; autoPostEnabled: true; grirAccountCode: string; inTransitAccountCode: string; defaultInventoryAccountCode: string; defaultCogsAccountCode: string; }' is missing the following properties from type 'StockAccountingConfig': adjustmentExpenseAccountCode, adjustmentGainAccountCode, purchaseReturnClearingAccountCode
+scripts/verifyWorkflow.ts(9,39): error TS2345: Argument of type 'Pool' is not assignable to parameter of type 'string'.
+server.ts(1728,64): error TS2339: Property 'detail' does not exist on type '{ ok: true; date?: string; amounts: { debit: number; credit: number; }[]; } | { ok: false; detail: string; }'.
+  Property 'detail' does not exist on type '{ ok: true; date?: string; amounts: { debit: number; credit: number; }[]; }'.

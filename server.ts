@@ -61,7 +61,7 @@ import { TenantResolutionService } from './src/core/tenant/TenantResolutionServi
 import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
 import { requirePermission, hasPermission, PermissionGroup } from './src/core/auth/PermissionMatrix';
 import { requestContextALS } from './src/core/context/RequestContext';
-import { parseIsoDate, parseNonNegativeMoney, validationError, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
+import { parseIsoDate, parseNonNegativeMoney, validationError, validateJournalInput, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
 
 // Wave 0: Security Hardening — Strict Environment Secrets Enforcement
 export function requireEnv(name: string): string {
@@ -1719,6 +1719,18 @@ async function startServer() {
       };
       return res.status(400).json(problem);
     }
+
+    // Phase 9 (VAL-001): validate date and every line BEFORE any numbering or draft is created
+    if (entry === null || typeof entry !== 'object') {
+      return res.status(400).json(validationError('بيانات القيد (entry) مطلوبة.'));
+    }
+    const jv = validateJournalInput(entry.date, entry.lines);
+    if (!jv.ok) return res.status(400).json(validationError(jv.detail));
+    if (jv.date !== undefined) entry.date = jv.date;
+    entry.lines.forEach((l: any, i: number) => {
+      l.debit = jv.amounts[i].debit;
+      l.credit = jv.amounts[i].credit;
+    });
 
     const storage = getRequestStorage(req, res);
     if (!storage) return;
