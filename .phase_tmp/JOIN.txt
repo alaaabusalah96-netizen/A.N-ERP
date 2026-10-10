@@ -1,2 +1,0 @@
-scripts/verifyF07StorageRouter.ts|audb_new1
-scripts/runReconcileAuditB.ts|audb_new2

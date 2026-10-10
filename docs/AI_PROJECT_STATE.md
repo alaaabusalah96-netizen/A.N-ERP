@@ -1,14 +1,14 @@
 # A.N ERP — RECONCILED MASTER PROJECT STATE (v7.2.0)
 
-**Audit B date**: 2026-10-10  
+**Last update**: 2026-10-10 (F2-S1-FIX)  
 **package.json version**: `7.2.0`  
 **Authoritative verdict**: **CONDITIONAL GO**  
 **F-07 probe**: **PASS**  
-**Mode**: Reconcile Audit B — batteries re-executed; docs refreshed from raw outputs.
+**F2Decisions**: **PASS 51/0** (was 50/1 before S1 test fix)
 
 ---
 
-## 1. Gate results (this run)
+## 1. Gate results
 
 | Gate | Status | Passed | Failed |
 |---|---|---|---|
@@ -19,25 +19,26 @@
 | P8cFix | PASS | 22 | 0 |
 | P15Purchasing | PASS | 25 | 0 |
 | F3Acceptance | PASS | 19 | 0 |
-| F2Decisions | FAIL | 50 | 1 |
+| F2Decisions | PASS | 51 | 0 |
 | F4StockShadow | PASS | 14 | 0 |
 | P13Costing | PASS | 50 | 0 |
 | F07StorageRouter | PASS | 8 | 0 |
 
-Full logs: `evidence/reconcile-audit-b/`.
+Evidence: `evidence/reconcile-audit-b/` · F2 after fix: `F2Decisions-after-s1-fix.txt`.
 
 ---
 
 ## 2. Defect register
 
-| ID | Severity | Status | Notes |
-|---|---|---|---|
-| DEF-P1-001 | P1 | **FIXED** | Stock document post uses `postStockDocumentAtomic`; failure leaves no partial commit |
-| DEF-P1-002 | P1 | **FIXED** | Return path checks `postEntry` / return journal result; pending retry on failure |
-| DEF-P1-003 | P1 | **FIXED** | Cash custody: draft + post both checked; voucher only after successful post |
-| DEF-P2-001 | P2 | **FIXED** | PO line qty: `SELECT … FOR UPDATE` + DB CHECK on remaining qty |
-| DEF-P2-002 | P2 | **OPEN** | No dedicated **version-tracked migration engine** (MigrationLinterService is a linter only) |
-| F-07 | PROBE_PASS | StorageRouter concurrency probe this run |
+| ID | Status | Notes |
+|---|---|---|
+| DEF-P1-001 | FIXED | postStockDocumentAtomic |
+| DEF-P1-002 | FIXED | return journal result checked |
+| DEF-P1-003 | FIXED | custody post checked before voucher |
+| DEF-P2-001 | FIXED | PO FOR UPDATE + CHECK |
+| DEF-P2-002 | **OPEN** | no version-tracked migration engine |
+| F-07 | PROBE_PASS | StorageRouter concurrency PASS on PG |
+| F2-S1 (test drift) | **FIXED** | S1 checks membership in RLS ARRAY, not last-element position |
 
 ---
 
@@ -45,8 +46,8 @@ Full logs: `evidence/reconcile-audit-b/`.
 
 | ID | Status |
 |---|---|
-| SEC-1 | DONE (gate Sec1TwoFactor: PASS) |
-| SEC-2 | DONE (gate Sec2Rls: PASS) |
+| SEC-1 | DONE |
+| SEC-2 | DONE |
 
 ---
 
@@ -54,6 +55,6 @@ Full logs: `evidence/reconcile-audit-b/`.
 
 **VERDICT: CONDITIONAL GO**
 
+- All listed regression gates PASS after F2-S1-FIX.
 - DEF-P2-002 remains open (architectural).
-- F-07 this run: PASS.
-- Do not override failing critical gates with documentation claims.
+- Do not invent gate numbers; re-run batteries to refresh.

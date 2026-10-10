@@ -17,8 +17,8 @@
       ]
     }
   },
-  "reconcileDate": "2026-10-10T00:00:00Z",
-  "auditKind": "RECONCILE_B",
+  "reconcileDate": "2026-10-10T12:00:00Z",
+  "auditKind": "F2_S1_FIX",
   "authoritativeVerdict": "CONDITIONAL_GO",
   "f07": {
     "verdict": "PASS",
@@ -78,10 +78,11 @@
     },
     {
       "name": "F2Decisions",
-      "status": "FAIL",
-      "passed": 50,
-      "failed": 1,
-      "expected": 51
+      "status": "PASS",
+      "passed": 51,
+      "failed": 0,
+      "expected": 51,
+      "note": "F2-S1-FIX: membership check for an_accounting_decisions in RLS array"
     },
     {
       "name": "F4StockShadow",
@@ -143,7 +144,13 @@
     }
   ],
   "testExecutionMetrics": {
-    "status": "HAS_FAILURES",
-    "evidenceDir": "evidence/reconcile-audit-b"
+    "status": "GATES_EXECUTED",
+    "evidenceDir": "evidence/reconcile-audit-b",
+    "f2AfterS1Fix": "evidence/reconcile-audit-b/F2Decisions-after-s1-fix.txt"
+  },
+  "lastFix": {
+    "id": "F2-S1-FIX",
+    "summary": "verifyF2Decisions S1 no longer requires an_accounting_decisions to be last in RLS array",
+    "result": "Passed: 51 | Failed: 0"
   }
 }
