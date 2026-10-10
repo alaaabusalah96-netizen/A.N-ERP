@@ -239,6 +239,17 @@ async function initSeedUsers(storage: StoragePort, tenantId: string = companyPro
 }
 
 async function startServer() {
+  // SEC-3: refuse silent InMemory fallback in production (or when AN_REQUIRE_DATABASE=1)
+  const requireDatabase =
+    process.env.AN_REQUIRE_DATABASE === '1' ||
+    (process.env.NODE_ENV || '').toLowerCase() === 'production';
+  if (requireDatabase && !process.env.DATABASE_URL) {
+    console.error(
+      '[SEC-3] Refusing to start: DATABASE_URL is required when NODE_ENV=production or AN_REQUIRE_DATABASE=1. Silent InMemory fallback is not allowed.'
+    );
+    process.exit(1);
+  }
+
   const masterStorage: StoragePort = process.env.DATABASE_URL
     ? globalStorageRouter.getPrimaryAdapter()
     : globalStorageRouter.getDevInMemoryAdapter();

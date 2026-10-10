@@ -3,21 +3,17 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "reconcileDate": "2026-10-10T21:00:00Z",
-  "auditKind": "EVID_1",
+  "reconcileDate": "2026-10-10T21:30:00Z",
+  "auditKind": "SEC_3",
   "authoritativeVerdict": "CONDITIONAL_GO",
   "lastFix": {
-    "id": "EVID-1",
-    "summary": "Restored runReconcileAuditB.ts + verifyF07StorageRouter.ts; baseline SUPERSEDED"
+    "id": "SEC-3",
+    "summary": "Journal code unique per tenant; stable reverse ids; production DATABASE_URL boot guard"
   },
   "canonicalAuditFiles": [
     "AI_CONTEXT.md",
     "docs/AI_PROJECT_STATE.md",
     "docs/AI_PROJECT_STATE.json"
-  ],
-  "historicalOnly": [
-    "evidence/integrity/baseline-report.md",
-    "evidence/repair/"
   ],
   "securityPackages": [
     {
@@ -30,6 +26,10 @@
     },
     {
       "id": "SEC-2b",
+      "status": "DONE"
+    },
+    {
+      "id": "SEC-3",
       "status": "DONE"
     }
   ],
@@ -48,6 +48,10 @@
     },
     {
       "id": "EVID-1",
+      "status": "DONE"
+    },
+    {
+      "id": "SEC-3",
       "status": "DONE"
     }
   ],

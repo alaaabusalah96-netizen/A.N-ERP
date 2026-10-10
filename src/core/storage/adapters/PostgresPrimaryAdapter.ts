@@ -259,6 +259,7 @@ export class PostgresPrimaryAdapter implements StoragePort {
         reversed_by_entry_id VARCHAR(64),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_an_journal_entries_tenant_code ON an_journal_entries (tenant_id, code);
 
       -- Journal Lines
       CREATE TABLE IF NOT EXISTS an_journal_lines (
@@ -2623,8 +2624,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }));
 
     const reversalEntry: JournalEntry = {
-      id: `REV-${Date.now()}`,
-      code: `REV-${original.code}`,
+      id: `REV-${entryId}`.slice(0, 60),
+      code: `REV-${original.code}-${entryId}`.slice(0, 64),
       tenantId,
       date: new Date().toISOString().split('T')[0],
       type: 'قيد عكسي',
