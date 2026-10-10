@@ -1,7 +1,7 @@
 {
   "project": {
     "name": "A.N ERP",
-    "version": "8.2.0",
+    "version": "7.2.0",
     "description": "نظام تخطيط وإدارة موارد المؤسسات المتكامل — تدقيق شامل معتمد ومحدث",
     "stack": {
       "backend": ["Node 22", "Express 4", "TypeScript"],
@@ -9,23 +9,23 @@
       "frontend": ["React 19", "Vite", "Tailwind CSS"]
     }
   },
-  "auditDate": "2026-10-09T15:20:00Z",
-  "authoritativeVerdict": "CONDITIONAL GO",
+  "auditDate": "2026-10-10T00:00:00Z",
+  "authoritativeVerdict": "NO-GO",
   "scorecard": {
-    "architecture": 90,
-    "security": 98,
-    "authentication": 98,
-    "authorization_sod": 96,
-    "tenant_isolation": 95,
-    "inventory_integrity": 92,
-    "accounting_integrity": 88,
-    "transaction_atomicity": 88,
-    "concurrency": 90,
-    "costing": 98,
-    "idempotency": 98,
-    "schema_management": 80,
-    "testing_quality": 92,
-    "overall": 92
+    "architecture": 60,
+    "security": 70,
+    "authentication": 80,
+    "authorization_sod": 50,
+    "tenant_isolation": 80,
+    "inventory_integrity": 50,
+    "accounting_integrity": 40,
+    "transaction_atomicity": 40,
+    "concurrency": 50,
+    "costing": 70,
+    "idempotency": 80,
+    "schema_management": 50,
+    "testing_quality": 60,
+    "overall": 65
   },
   "defects": [
     { "id": "DEF-P1-001", "severity": "P1", "status": "OPEN", "impact": "General Ledger journal posts before inventory adjustment loop." },
@@ -35,26 +35,12 @@
     { "id": "DEF-P2-002", "severity": "P2", "status": "OPEN", "impact": "Absence of dedicated version-tracked migration engine." }
   ],
   "testExecutionMetrics": {
-    "totalPassedTests": 360,
+    "totalPassedTests": 0,
     "totalFailedTests": 0,
-    "suites": [
-      "verifySec1TwoFactor (26/26)",
-      "verifySec2Rls (39/39)",
-      "verifyF1Standards (71/71)",
-      "verifyPgMovementLogic (4/4)",
-      "verifyP10StockAtomicMem (12/12)",
-      "verifyP11TransfersMem (12/12)",
-      "verifyP12ApprovalsMem (35/35)",
-      "verifyP13Costing (50/50)",
-      "verifyP14AutoJournals (24/24)",
-      "verifyP15Purchasing (25/25)",
-      "verifyP16Recon (14/14)",
-      "verifyP17Attachments (29/29)",
-      "verifyP18WarehouseScope (19/19)"
-    ]
+    "status": "PENDING_VERIFICATION"
   },
   "reliabilityAssessment": {
-    "storageRouterDeadlock": "Intermittent deadlock detected during dedicated schema initialization under high concurrency.",
-    "performanceMetrics": "CRUD latency p95 < 200ms on PostgreSQL primary."
+    "storageRouterDeadlock": "Intermittent deadlock detected during dedicated schema initialization.",
+    "performanceMetrics": "NOT_MEASURED_IN_CURRENT_AUDIT"
   }
 }
