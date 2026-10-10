@@ -40,7 +40,8 @@ import {
   ItemLedgerReport,
   ItemLedgerEntry,
   InventorySettings,
-, defaultStockAccountingConfig } from '../storage/StoragePort';
+  defaultStockAccountingConfig,
+} from '../storage/StoragePort';
 import { PostingEngine } from '../engines/PostingEngine';
 import { StockAccountingService, AutoJournalOutcome } from './StockAccountingService';
 import { NumberingEngine } from '../engines/NumberingEngine';
