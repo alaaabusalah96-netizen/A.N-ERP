@@ -1,0 +1,23 @@
+--- Part 1: acceptance suite (Foundation §23) on InMemoryAdapter ---
+[PASS] F3-1 inventory purchase: accounting rule + separate tax rule + inventory effect select the path; journal D inventory 1000 / D VAT 100 / C GR-IR 1100 posted through PostingEngine
+[PASS] F3-2 sales: invoice path (revenue + VAT, tax rule cited) and delivery path (COGS/inventory) pick different rules; both journals posted, linked and explained
+[PASS] F3-3 foreign currency: v1 before 2025 and v2 after use different effective-date rules; a missing amount/rate fact -> REVIEW_REQUIRED (no invented rate)
+[PASS] F3-4 fixed asset: capitalize -> asset account, below-threshold -> expense, depreciation event is its own rule; undecided capitalization (fact missing) -> REVIEW_REQUIRED
+[PASS] F3-5 missing fact: REVIEW_REQUIRED with the missing list, no lines, DETERMINISTIC never claimed, bridge refuses to post, explanation shows what is missing
+[PASS] F3-6 jurisdiction change: IFRS-pack vs EAS-pack give a different rule, framework and journal for identical facts; each explained with its own framework
+[PASS] F3-7 historical transaction: a 2024 event uses v1 (expense 5201) and a 2025 event uses v2 (5101); the stored 2024 explanation still names v1
+[PASS] F3-8 each of the 12 posted journals carries a durable decision reference (ruleId, version, standard, framework, jurisdiction) retrievable by journal id
+[PASS] F3-9 "why was this entry posted?": every section present (event, facts, framework, jurisdiction, standard, rule+source, decision, mapping, journal check, tax, inventory effect), AR+EN text
+[PASS] F3-9b a journal that no decision produced is reported as such (no invented explanation); another tenant sees nothing
+[PASS] F3-10 journals reached the ledger through PostingEngine/StoragePort: status POSTED, balanced, the account balance reflects the posting; re-posting a decision is refused and creates no second journal
+[PASS] F3-11 company policy: no policy -> REVIEW_REQUIRED; FIFO period and weighted-average period post different journals and the explanation shows the policy and its version
+[PASS] F3-12 a SOURCE_REQUIRED rule blocks automation end to end: REVIEW_REQUIRED, bridge refuses, no journal exists for the event
+[PASS] F3-13 a decision linked to a journal that is missing is explained honestly (journal.found=false, matchesTreatment=null)
+--- Part 2: static checks ---
+[PASS] S1 the decision + explanation layers never post or write journals (no PostingEngine/postEntry/draftEntry/journal write in code, comments excluded)
+[PASS] S2 the bridge posts ONLY through PostingEngine.draftEntry/postEntry (no direct storage journal write)
+[PASS] S3 PostingEngine does not import anything from the standards layer (the layer decides, PostingEngine posts)
+[PASS] S4 every /api/standards route is GET-only and sits behind requireAuth + requirePermission
+[PASS] S5 explanation reads only through StoragePort getters with the caller tenantId (no raw SQL / no cross-tenant read)
+
+Passed: 19 | Failed: 0

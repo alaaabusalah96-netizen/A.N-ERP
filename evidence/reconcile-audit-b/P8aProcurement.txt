@@ -1,0 +1,26 @@
+[PASS] 1. create PR 3 lines
+[PASS] 1b. PR DRAFT
+[PASS] 1c. PR number assigned
+[PASS] 2. empty PR rejected
+[PASS] 3a. submit → PENDING_APPROVAL
+[PASS] 3b. SoD blocks self-approve
+[PASS] 3c. manager approves
+[PASS] 4a. unapproved vendor blocked
+[PASS] 4b. PR→PO success
+[PASS] 4c. PR status CONVERTED
+[PASS] 4d. PO line cost from unitCosts
+[PASS] 4e. double convert rejected
+[PASS] 5a. RFQ from PR has 2 lines
+[PASS] 5b. RFQ SENT
+[PASS] 5c. supplier quote recorded
+[PASS] 5d. quote SELECTED
+[PASS] 5e. quote→PO success
+[PASS] 5f. PO unit costs from quote
+[PASS] 5g. RFQ closed after convert
+[PASS] 6. PR idempotency same id
+[PASS] 7. cross-tenant PR → null
+[PASS] 8. reject PR
+[PASS] 9a. PURCHASE_REQUESTED emitted
+[PASS] 9b. RFQ_SENT or PO_ISSUED emitted
+
+Passed: 24 | Failed: 0

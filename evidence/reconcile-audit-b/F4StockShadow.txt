@@ -1,0 +1,18 @@
+--- Part 1: F4 suite on InMemoryAdapter ---
+[PASS] F4-1 default (no policy): receipt posts the legacy journal D1105 / C2106 = 50 and the Standards layer stores NOTHING
+[PASS] F4-2 SHADOW without a reporting jurisdiction: legacy journal unchanged (D1105 / C2106 = 20); the standards decision is REVIEW_REQUIRED (missing jurisdiction), recorded, NOT linked, no journal effect
+[PASS] F4-3 SHADOW with a jurisdiction but no rule: legacy posts normally and no decision row is stored (NOT_APPLICABLE is not persisted)
+[PASS] F4-4 matching rule: legacy journal is untouched (D1105 / C2106 = 30) AND the decision is linked to it; "why was this posted?" now explains the LEGACY journal with rule id, version and an exact line match
+[PASS] F4-5 replay (retry of the same document): still exactly one decision for the document, link unchanged
+[PASS] F4-6 a rule that disagrees with the legacy journal: legacy journal unchanged (D1105 / C2106 = 15), decision recorded but NOT linked, and the mismatch is visible to the shadow caller
+[PASS] F4-7 the shadow outcome reports MISMATCH with the per-account differences (standards=15 on COGS vs legacy GRIR) and writes a SHADOW_MISMATCH entry to the system change log naming the document, journal and decision
+[PASS] F4-8 tenant isolation: tenant A has no decision for tenant B's document and B's SHADOW switch does not enable A for other dates/docs
+[PASS] F4-9 failure injection: decision service throws -> receipt still succeeds, journal POSTED (D1105 / C2106 = 5), no exception reaches the caller
+[PASS] F4-10 mode is effective-dated: a later OFF version does not affect today (SHADOW still active) — observation continues until that date
+[PASS] F4-11 ISSUE documents are untouched by F4 (legacy COGS journal posts, zero decisions for the issue document)
+--- Part 2: static checks ---
+[PASS] S1 exactly one hook in StockAccountingService, inside a try/catch, only for mode RECEIPT, after the legacy posting is complete
+[PASS] S2 the shadow class never posts or writes journals (no PostingEngine/draftEntry/postEntry/saveJournal/postJournal/createJournalEntry/setStockDocumentJournal) and its whole body is guarded by try/catch
+[PASS] S3 InventoryService is untouched by F4 (no reference to the standards layer)
+
+Passed: 14 | Failed: 0

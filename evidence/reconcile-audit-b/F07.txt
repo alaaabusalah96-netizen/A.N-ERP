@@ -1,0 +1,11 @@
+[PASS] T1 StorageRouter constructs with primary + in-memory
+[PASS] T2 parallel InMemory saveUser (20) completes
+[PASS] T3 tenant A users do not appear in tenant B list
+[PASS] T4 both tenants received users
+[PASS] T5 MAX_DEDICATED_POOLS is positive finite
+[PASS] T6 active dedicated pools count is non-negative
+[PASS] T7 parallel withTenantScope (8) on Postgres completes
+[PASS] T9 StorageRouter still distinguishes Shared vs Dedicated
+
+Passed: 8 | Failed: 0
+F07_VERDICT: PASS

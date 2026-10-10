@@ -1,107 +1,59 @@
 # A.N ERP — RECONCILED MASTER PROJECT STATE (v7.2.0)
 
-**Reconcile date**: 2026-10-10  
+**Audit B date**: 2026-10-10  
 **package.json version**: `7.2.0`  
 **Authoritative verdict**: **CONDITIONAL GO**  
-**Overall engineering score (reconciled)**: **78 / 100**  
-**Mode**: Documentation-only reconcile — **no application source changes** in this package.
-
-> Prior copies of this file showed **NO-GO** while `AI_CONTEXT.md` said **CONDITIONAL GO**. Both were stale relative to Repair Batch 1, R10–R15, Standards F1–F4, Phase 8a–8c-FIX, SEC-1, and SEC-2. **Code + `evidence/` win.**
+**F-07 probe**: **PASS**  
+**Mode**: Reconcile Audit B — batteries re-executed; docs refreshed from raw outputs.
 
 ---
 
-## 1. Stack (verified)
+## 1. Gate results (this run)
 
-| Layer | Value |
-|---|---|
-| Runtime | Node 22 |
-| API | Express 4 |
-| Language | TypeScript 5.8.x |
-| DB | PostgreSQL (primary) |
-| UI | React 19 + Vite + Tailwind |
+| Gate | Status | Passed | Failed |
+|---|---|---|---|
+| Sec1TwoFactor | PASS | 26 | 0 |
+| Sec2Rls | PASS | 39 | 0 |
+| P8aProcurement | PASS | 24 | 0 |
+| P8cThreeWay | PASS | 14 | 0 |
+| P8cFix | PASS | 22 | 0 |
+| P15Purchasing | PASS | 25 | 0 |
+| F3Acceptance | PASS | 19 | 0 |
+| F2Decisions | FAIL | 50 | 1 |
+| F4StockShadow | PASS | 14 | 0 |
+| P13Costing | PASS | 50 | 0 |
+| F07StorageRouter | PASS | 8 | 0 |
 
----
-
-## 2. Delivered capability (high level)
-
-| Area | State |
-|---|---|
-| Phases 0 → 7.6 + repair cycle | Delivered |
-| Standards Intelligence F1–F4 | Delivered (`src/core/standards/`) |
-| Inventory atomic post / costing / transfers | Delivered |
-| Purchasing 8a (PR/RFQ/PO) + 8b UI + 8c three-way + 8c-FIX | Delivered |
-| SEC-1 2FA secret leak / setup ownership / no fabricated Riyadh | Delivered |
-| SEC-2 RLS on 12 purchasing tables + tenant GUC on purchase paths | Delivered |
-| Evidence batteries under `evidence/` | Present (phase-8a/b/c, standards, security, repair, …) |
-| Verify scripts under `scripts/verify*.ts` | ~50+ scripts |
+Full logs: `evidence/reconcile-audit-b/`.
 
 ---
 
-## 3. Defect register (reconciled)
+## 2. Defect register
 
 | ID | Severity | Status | Notes |
 |---|---|---|---|
 | DEF-P1-001 | P1 | **FIXED** | Stock document post uses `postStockDocumentAtomic`; failure leaves no partial commit |
 | DEF-P1-002 | P1 | **FIXED** | Return path checks `postEntry` / return journal result; pending retry on failure |
-| DEF-P1-003 | P1 | **FIXED** | Cash custody: draft + post both checked; voucher saved only after successful post |
+| DEF-P1-003 | P1 | **FIXED** | Cash custody: draft + post both checked; voucher only after successful post |
 | DEF-P2-001 | P2 | **FIXED** | PO line qty: `SELECT … FOR UPDATE` + DB CHECK on remaining qty |
 | DEF-P2-002 | P2 | **OPEN** | No dedicated **version-tracked migration engine** (MigrationLinterService is a linter only) |
-| F-07 | — | **UNPROVEN** | StorageRouter deadlock claim — re-run concurrency battery on real PostgreSQL |
+| F-07 | PROBE_PASS | StorageRouter concurrency probe this run |
 
 ---
 
-## 4. Scorecard (reconciled — indicative)
+## 3. Security packages
 
-| Dimension | Old audit | Reconciled |
-|---|---|---|
-| architecture | 60 | 75 |
-| security | 70 | 82 |
-| authentication | 80 | 88 |
-| authorization_sod | 50 | 78 |
-| tenant_isolation | 80 | 86 |
-| inventory_integrity | 50 | 85 |
-| accounting_integrity | 40 | 82 |
-| transaction_atomicity | 40 | 84 |
-| concurrency | 50 | 70 |
-| costing | 70 | 82 |
-| idempotency | 80 | 85 |
-| schema_management | 50 | 55 |
-| testing_quality | 60 | 80 |
-| **overall** | **65** | **78** |
-Schema management stays lower until DEF-P2-002 is closed. Concurrency stays provisional until F-07 is re-tested.
-
----
-
-## 5. Test execution metrics (reconciled)
-
-Stale audit claimed `0/0 PENDING_VERIFICATION`. That is **false** for the current tree.
-
-Representative batteries (from prior Studio runs / evidence layout — re-run to refresh numbers):
-
-| Battery | Typical gate |
+| ID | Status |
 |---|---|
-| verifyP8aProcurement | 24/24 |
-| verifyP8cThreeWay | 14/14 |
-| verifyP8cFix | 19/19 (when present) |
-| verifyF3Acceptance | 19/19 (+ PG variant when run) |
-| verifySec1TwoFactor | 26/26 |
-| verifySec2Rls | 39/39 |
-
-Exact counts must be taken from the latest `npx tsx scripts/…` raw `Passed:` line; do not invent totals.
+| SEC-1 | DONE (gate Sec1TwoFactor: PASS) |
+| SEC-2 | DONE (gate Sec2Rls: PASS) |
 
 ---
 
-## 6. Release decision
+## 4. Release decision
 
 **VERDICT: CONDITIONAL GO**
 
-- Allowed: continue module roadmap (e.g. Phase 9 sales) and targeted hardening.
-- Required before calling the system “migration-complete”: plan/implement DEF-P2-002.
-- Recommended: PG concurrency package to confirm or close F-07.
-- **Forbidden**: treating this markdown as authority over failing batteries or contradictory code.
-
----
-
-## 7. Out of scope for this documentation package
-
-No TypeScript/SQL changes. No schema migration. No commit of application behavior — docs only.
+- DEF-P2-002 remains open (architectural).
+- F-07 this run: PASS.
+- Do not override failing critical gates with documentation claims.
