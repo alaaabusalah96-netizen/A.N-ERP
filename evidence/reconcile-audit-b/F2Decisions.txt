@@ -45,11 +45,11 @@
 [PASS] 8.7 tenant isolation: another tenant cannot read or list the decision
 [PASS] 8.8 SI-9: every stored APPLY decision carries a durable rule reference (rule id, version, standard)
 --- Part 2: static checks on the real adapter source ---
-[FAIL] S1 an_accounting_decisions is in the FORCE-RLS tenant table list
+[PASS] S1 an_accounting_decisions is in the FORCE-RLS tenant table list
 [PASS] S2 DB-level guards: APPLY needs a rule reference; only APPLY may carry a journal link; (tenant, decision_key) is unique
 [PASS] S3 decision insert is ON CONFLICT DO NOTHING and the stored row is read back (replay returns the original)
 [PASS] S4 journal link UPDATE only fills an empty link on an APPLY decision
 [PASS] S5 adapter parity: all 4 decision methods exist on Postgres, InMemory and the 3 Smoke adapters (smokeOnlyError)
 [PASS] S6 the decision layer never posts: no PostingEngine / postEntry / draftEntry / journal write in the code (comments excluded)
 
-Passed: 50 | Failed: 1
+Passed: 51 | Failed: 0

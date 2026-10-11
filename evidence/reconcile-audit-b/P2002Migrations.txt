@@ -1,0 +1,10 @@
+[PASS] S1 MigrationEngine exports applyPending
+[PASS] S2 registry has ordered versions
+[PASS] S3 initializeSchema invokes MigrationEngine
+[PASS] S4 an_schema_migrations created in engine
+[PASS] S5 journal unique index is a versioned migration
+[PASS] B1 first apply runs all migrations
+[PASS] B2 second apply is no-op (idempotent)
+[PASS] B3 registry rows stored
+
+Passed: 8 | Failed: 0

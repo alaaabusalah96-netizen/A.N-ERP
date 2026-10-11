@@ -1,35 +1,916 @@
-Running Sec1TwoFactor...
-Running Sec2Rls...
-Running P8aProcurement...
-Running P8cThreeWay...
-Running P8cFix...
-Running P15Purchasing...
-Running F3Acceptance...
-Running F2Decisions...
-Running F4StockShadow...
-Running P13Costing...
-Running F07...
+=== Sec1TwoFactor ===
+[PASS] T1 enrolled user, no code: challenge only (requires2FA, setupRequired=false)
+[PASS] T1/T7 the challenge contains NO secret, QR, otpauth or twoFactorSecret
+[PASS] T6 repeated challenges never create or change a secret
+[PASS] T12 impossible travel with an enrolled user: still a challenge only
+[PASS] T2 correct TOTP => valid
+[PASS] T3 wrong TOTP => invalid
+[PASS] T4 valid backup code => valid, consumed (2 left)
+[PASS] T5 replay of the consumed backup code => invalid
+[PASS] a user with NO 2FA enrolled can never pass the second-factor check (no auto-enable at login)
+[PASS] an undecryptable stored secret => failure, and NO new secret is generated or saved
+[PASS] T8 explicit setup by an un-enrolled user returns secret + QR + otpauth (this endpoint only)
+[PASS] the secret is stored ENCRYPTED, 2FA stays disabled until confirmed
+[PASS] the otpauth label is the username (no fake mail domain)
+[PASS] T9 setup with a wrong code => 400 and 2FA stays disabled
+[PASS] T10 setup with the right code => 2FA enabled
+[PASS] an ENROLLED account cannot be re-enrolled (409) and its secret is untouched
+[PASS] confirm on an enrolled account is refused (409)
+[PASS] T11 cross-tenant: tenant B cannot touch tenant A's user (404) and vice versa; nothing changed
+[PASS] the service API takes NO username: a request cannot name another user
+[PASS] (static) the login handler never mentions qrCodeDataUrl / otpauth / generateSecret / "secret:"
+[PASS] (static) no fabricated "Riyadh" / "SA" location anywhere in server.ts
+[PASS] (static) 2FA is demanded only from enrolled users (mustEnforce2fa = twoFactorEnabled)
+[PASS] (static) an unknown location is never stored as a last-login position
+[PASS] (static) wrong 2FA codes feed the same (tenant-scoped) lockout as wrong passwords
+[PASS] (static) the 2FA setup routes never read a username from the request and use the session user
+[PASS] (static) no TOTP secret is logged
 
-=== AUDIT B SUMMARY ===
-# Reconcile Audit B — 2026-10-10
-Verdict: CONDITIONAL_GO
-F07: PASS
-DATABASE_URL: set
+Passed: 26 | Failed: 0
 
-| Gate | Status | Passed | Failed | Expected |
-|---|---|---|---|---|
-| Sec1TwoFactor | PASS | 26 | 0 | 26 |
-| Sec2Rls | PASS | 39 | 0 | 39 |
-| P8aProcurement | PASS | 24 | 0 | 24 |
-| P8cThreeWay | PASS | 14 | 0 | 14 |
-| P8cFix | PASS | 22 | 0 | 19 |
-| P15Purchasing | PASS | 25 | 0 | 25 |
-| F3Acceptance | PASS | 19 | 0 | 19 |
-| F2Decisions | FAIL | 50 | 1 | 51 |
-| F4StockShadow | PASS | 14 | 0 | 14 |
-| P13Costing | PASS | 50 | 0 | 50 |
-| F07StorageRouter | PASS | 8 | 0 | - |
+=== Sec2Rls ===
+[PASS] S1 RLS tables array exists
+[PASS] S2 RLS array includes an_purchase_requests
+[PASS] S2 RLS array includes an_purchase_request_lines
+[PASS] S2 RLS array includes an_rfqs
+[PASS] S2 RLS array includes an_rfq_lines
+[PASS] S2 RLS array includes an_supplier_quotes
+[PASS] S2 RLS array includes an_supplier_quote_lines
+[PASS] S2 RLS array includes an_purchase_orders
+[PASS] S2 RLS array includes an_purchase_order_lines
+[PASS] S2 RLS array includes an_goods_receipts
+[PASS] S2 RLS array includes an_goods_receipt_lines
+[PASS] S2 RLS array includes an_supplier_invoices
+[PASS] S2 RLS array includes an_supplier_invoice_lines
+[PASS] S3 ENABLE ROW LEVEL SECURITY in loop
+[PASS] S4 FORCE ROW LEVEL SECURITY in loop
+[PASS] S5 policy uses app.current_tenant_id
+[PASS] S6 savePurchaseRequest sets app.current_tenant_id after BEGIN
+[PASS] S6 saveRfq sets app.current_tenant_id after BEGIN
+[PASS] S6 saveSupplierQuote sets app.current_tenant_id after BEGIN
+[PASS] S6 saveSupplierInvoice sets app.current_tenant_id after BEGIN
+[PASS] S6 savePurchaseOrder sets app.current_tenant_id after BEGIN
+[PASS] S6 saveGoodsReceipt sets app.current_tenant_id after BEGIN
+[PASS] S6 completeGoodsReceiptAtomic sets app.current_tenant_id after BEGIN
+[PASS] S7 getPurchaseRequest uses withTenantScope
+[PASS] S8 getPurchaseRequest uses this.query (not bare pool) inside scope
+[PASS] S7 listPurchaseRequests uses withTenantScope
+[PASS] S8 listPurchaseRequests uses this.query (not bare pool) inside scope
+[PASS] S7 getSupplierInvoice uses withTenantScope
+[PASS] S8 getSupplierInvoice uses this.query (not bare pool) inside scope
+[PASS] S7 listSupplierInvoices uses withTenantScope
+[PASS] S8 listSupplierInvoices uses this.query (not bare pool) inside scope
+[PASS] S7 getPurchaseOrder uses withTenantScope
+[PASS] S8 getPurchaseOrder uses this.query (not bare pool) inside scope
+[PASS] S7 listGoodsReceipts uses withTenantScope
+[PASS] S8 listGoodsReceipts uses this.query (not bare pool) inside scope
+[PASS] S7 sumOpenReceiptQtyForPoLine uses withTenantScope
+[PASS] S8 sumOpenReceiptQtyForPoLine uses this.query (not bare pool) inside scope
+[PASS] S9 accounting_decisions table DDL still present once
+[PASS] S10 recordStockMovement still a top-level method
 
-Hard failures: F2Decisions
+Passed: 39 | Failed: 0
 
-Docs refreshed: AI_CONTEXT.md, docs/AI_PROJECT_STATE.md, docs/AI_PROJECT_STATE.json
+=== Sec2bRls ===
+[PASS] S1 RLS array exists
+[PASS] S2 RLS array includes an_stock_accounting_config
+[PASS] S2 RLS array includes an_last_successful_logins
+[PASS] S2 RLS array includes an_active_sessions
+[PASS] S3 FORCE still in loop
+[PASS] S4 policy uses app.current_tenant_id
+[PASS] S5 getStockAccountingConfig uses withTenantScope
+[PASS] S6 getStockAccountingConfig uses this.query
+[PASS] S7 saveStockAccountingConfig uses withTenantScope
+[PASS] S8 recordSuccessfulLogin scopes when tenantId present
+[PASS] S9 listActiveSessions(tenantId) uses withTenantScope
+[PASS] S10 SEC-2 still lists an_purchase_orders
+[PASS] S10 SEC-2 still lists an_supplier_invoices
+[FAIL] P1 PG probe failed | password authentication failed for user "postgres"
+SEC2B_PG: ERROR
+
+Passed: 13 | Failed: 1
+
+=== Sec3Ids ===
+[PASS] S1 unique index tenant_id+code on journal entries
+[PASS] S2 reverse entry id not Date.now()
+[PASS] S3 reverse entry id derives from original entryId
+[PASS] S4 reverse code includes entryId for uniqueness
+[PASS] S5 production guard AN_REQUIRE_DATABASE or NODE_ENV=production
+[PASS] S6 guard calls process.exit(1) when missing DATABASE_URL
+[PASS] S7 InMemory still allowed when not production and no AN_REQUIRE_DATABASE
+
+Passed: 7 | Failed: 0
+
+=== Sec4ProdRole ===
+[PASS] S1 ops guide exists
+[PASS] S2 guide mentions rolbypassrls false
+[PASS] S3 guide has CREATE ROLE example
+[PASS] S4 guide forbids superuser for app
+[INFO] AN_ENFORCE_PROD_ROLE=0
+[FAIL] P1 PG probe | password authentication failed for user "postgres"
+SEC4_PG: ERROR
+
+Passed: 4 | Failed: 1
+
+=== SecA ===
+[PASS] C1 default (no env) => development (Vite dev needs inline/eval)
+[PASS] C2 NODE_ENV=production and no CSP_PROFILE => PRODUCTION (the safe default)
+[PASS] C3 explicit CSP_PROFILE=production wins even in dev
+[PASS] C4 explicit development in a production deployment is allowed but WARNS
+[PASS] C5 a garbage CSP_PROFILE falls back to the NODE_ENV rule (never silently weaker in production)
+[PASS] P1 nothing set => not set (do not trust X-Forwarded-For by default)
+[PASS] P2 Cloud Run / AI Studio (K_SERVICE) => exactly 1 hop
+[PASS] P3 TRUST_PROXY numeric hops, "true" is capped to 1 hop (never an unbounded chain), false/0 turn it off
+[PASS] P4 TRUST_PROXY subnet list is passed through; explicit value beats K_SERVICE; blank falls back
+[PASS] F1 fuzz iterations: default 1000, upper bound accepted, numeric string accepted
+[PASS] F2 fuzz iterations: above the cap, zero, negative, fractional, NaN, text are rejected
+[PASS] L1 same username in two tenants => different keys; same tenant+username => same key (case and spaces ignored)
+[PASS] L2 key fits the 64-char column, has a fixed prefix, handles Arabic and long names
+[PASS] L3 5 failures for admin@tenant-A lock A only; admin@tenant-B is untouched
+[PASS] L4 (contrast) the OLD bare-username key locks the same username everywhere — what this fix removes
+[PASS] L5 a successful login clears this tenant+user counter (next failure counts as 1, no lock)
+[PASS] E1 a database error is NOT returned: generic Arabic text + reference id, raw text only in the server log
+[PASS] E2 JS runtime errors and connection errors are hidden
+[PASS] E3 an Arabic business message written by our code passes through unchanged and is not logged
+[PASS] E4 an Arabic message that carries SQL/stack markers, multi-line text or huge text is still hidden
+[PASS] E5 err.expose=true is returned as is; the debug switch (expose option) returns the raw message
+[PASS] E6 reference ids are unique per occurrence; non-Error values never throw
+[PASS] S1 no response in server.ts returns a raw error.message any more
+[PASS] S2 at least 120 error responses go through publicErrorMessage
+[PASS] S3 login lockout uses the tenant-scoped key everywhere (no bare username) and a success clears it
+[PASS] S4 CSP profile and trust proxy come from the tested resolvers; trust proxy is set before helmet and the rate limiter
+[PASS] S5 the fuzz endpoint validates iterations (bounded) and no longer trusts Number(req.body.iterations)
+
+Passed: 27 | Failed: 0
+
+=== RepairBatch1 ===
+[PASS] (count) create count 1
+[PASS] (count) approve ok, count POSTED with a journal id
+[PASS] (count) stock adjusted: A=80, B=55
+[PASS] (count) journal POSTED: Dr 5209 = 100, Cr 1105 = 100
+[PASS] (count) a line that cannot be adjusted => the whole approval is rejected (422)
+[PASS] (count) rejected approval changed NO balance (A=10, B=55)
+[PASS] (count) rejected approval posted NO journal and the count is NOT POSTED
+[PASS] (count) inactive journal account => 422 and no stock change
+[PASS] (count) journal post failure is reported (not hidden) and the count is NOT POSTED
+[PASS] (count) stock was adjusted exactly once so far (A=5)
+[PASS] (count) retry with a new key completes: POSTED + journal id
+[PASS] (count) retry did NOT adjust the stock again (A still 5)
+[PASS] (count) exactly one journal entry for that count
+[PASS] (return) normal return: journalStatus POSTED with a journal id
+[PASS] (return) journal post fails => stock moved but document is PENDING_RETRY (not silently OK)
+[PASS] (return) retry route posts the return journal
+[PASS] (return) exactly one entry: Dr 2101 = 100, Cr 1105 = 100
+[PASS] (return) a second retry is harmless (still one entry)
+[PASS] (return) journal DRAFT fails => PENDING_RETRY with no journal id
+[PASS] (return) retry after a draft failure posts: Dr 1105, Cr 5101
+[PASS] (custody) journal draft fails => error returned, voucher NOT saved, balance NOT touched
+[PASS] (custody) journal post fails => error returned, voucher NOT saved, balance NOT touched
+[PASS] (custody) journal ok => voucher saved WITH its journalEntryId
+[PASS] (custody-return) reversal draft fails => error, voucher NOT reversed, custody balance NOT restored
+[PASS] (custody-return) reversal post fails => error, voucher NOT reversed, custody balance NOT restored
+[PASS] (custody-return) reversal ok => balance restored once and voucher reversed
+[PASS] (expense) reversal draft fails => error and the request is NOT marked cancelled
+[PASS] (expense) reversal post fails => error and the request is NOT marked cancelled
+[PASS] (expense) reversal ok => request marked cancelled
+[PASS] (gr-race) two concurrent receipts of 60 on a 100 line: exactly one succeeds
+[PASS] (gr-race) the other is rejected as over-receipt (422)
+[PASS] (gr-race) stock never exceeds the ordered quantity (60 in stock)
+[PASS] (gr-race) the remaining 40 can still be received
+[PASS] (gr-race) one more unit is rejected after the line is complete
+[PASS] (gr-pg-fake) allowed receipt: the PO line is locked BEFORE the first insert, then COMMIT
+[PASS] (gr-pg-fake) over-receipt (60 already open of 100, asking 60) => 422, ROLLBACK, no insert
+[PASS] (gr-pg-fake) tolerance 10% on a remaining of 40: 44 allowed, 45 rejected
+
+Passed: 37 | Failed: 0
+
+=== P8aProcurement ===
+[PASS] 1. create PR 3 lines
+[PASS] 1b. PR DRAFT
+[PASS] 1c. PR number assigned
+[PASS] 2. empty PR rejected
+[PASS] 3a. submit → PENDING_APPROVAL
+[PASS] 3b. SoD blocks self-approve
+[PASS] 3c. manager approves
+[PASS] 4a. unapproved vendor blocked
+[PASS] 4b. PR→PO success
+[PASS] 4c. PR status CONVERTED
+[PASS] 4d. PO line cost from unitCosts
+[PASS] 4e. double convert rejected
+[PASS] 5a. RFQ from PR has 2 lines
+[PASS] 5b. RFQ SENT
+[PASS] 5c. supplier quote recorded
+[PASS] 5d. quote SELECTED
+[PASS] 5e. quote→PO success
+[PASS] 5f. PO unit costs from quote
+[PASS] 5g. RFQ closed after convert
+[PASS] 6. PR idempotency same id
+[PASS] 7. cross-tenant PR → null
+[PASS] 8. reject PR
+[PASS] 9a. PURCHASE_REQUESTED emitted
+[PASS] 9b. RFQ_SENT or PO_ISSUED emitted
+
+Passed: 24 | Failed: 0
+
+=== P8cThreeWay ===
+[PASS] 1a. invoice created
+[PASS] 1b. match passed
+[PASS] 1c. status MATCHED
+[PASS] 1d. approve+post
+[PASS] 1e. journal id set
+[PASS] 2a. match failed on qty
+[PASS] 2b. status MATCH_FAILED
+[PASS] 2c. approve blocked
+[PASS] 3. price mismatch fails
+[PASS] 4. price within tol passes
+[PASS] 5. reject invoice
+[PASS] 6. empty invoice 400
+[PASS] 7. cross-tenant null
+[PASS] 8. invoice idempotency
+
+Passed: 14 | Failed: 0
+
+=== P8cFix ===
+[PASS] F1a approved invoice journal = D 2106 (GR/IR) 80 / C 2101 (payable) 80 — no second debit to inventory
+[PASS] F1b balances: inventory stays 80 (receipt only), GR/IR nets to 0 (D80 C80), payable credited 80
+[PASS] F2 with 11.2 tax: D 2106 80 + D 1108 11.2 / C 2101 91.2
+[PASS] F3a price variance 40 with no variance account configured: approval blocked (422), invoice NOT posted
+[PASS] F3b with the variance account configured: D 2106 1000 + D 5999 40 / C 2101 1040
+[PASS] F3c favourable variance (invoice 970 vs PO 1000): D 2106 1000 / C 2101 970 + C 5999 30
+[PASS] F4a second invoice for the already-invoiced quantity: match FAILS (cumulative 20 > 10), approval blocked, THREE_WAY details in Arabic
+[PASS] F4b nothing was posted for the blocked invoice: payable still 80 (one invoice)
+[PASS] F4c partial invoices 6 + 4 both match; a third for 1 more (cumulative 11 > 10.5) fails
+[PASS] F5a same vendor invoice ref (case/space-insensitive) is refused with 409
+[PASS] F5b after the first is rejected the same reference can be entered again
+[PASS] F5c replaying the same request (same idempotency key) is not mistaken for a duplicate
+[PASS] F6a the creator cannot approve their own invoice (403 sod-violation); another user can
+[PASS] F6b re-approving an already posted invoice is an idempotent success (no second journal)
+[PASS] F6c SUPPLIER_INVOICE_APPROVE: admin and financial_approver have it; accountant and warehouse_manager (who keep PURCHASE_MANAGE) do not; approve/reject routes require it, create/match still PURCHASE_MANAGE
+[PASS] F7a the payable account comes from the company policy (2150), not from code
+[PASS] F7b a configured account that does not exist in the chart blocks approval (422 account-not-usable); nothing posted
+[PASS] F8 invoice update fails after posting (injected): first call reports it, a retry with a NEW idempotency key finishes the invoice and the payable is credited exactly once (80)
+[PASS] F9 approveSupplierInvoice posts only through PostingEngine (no direct storage createJournalEntry/postJournalEntry, no hard-coded 1105/2106/2101 in the method)
+[PASS] F10a draft lost the race (entry already created by the winner): approval continues on the existing entry and succeeds; payable credited once (80)
+[PASS] F10b post lost the race (entry already POSTED by the winner): approval succeeds, no second posting (payable 80)
+[PASS] F10c entry exists but is not posted yet and posting failed: clean 409 approval-in-progress (not 5xx), invoice not marked POSTED
+
+Passed: 22 | Failed: 0
+
+=== P15Purchasing ===
+[PASS] (أ) create PO
+[PASS] (أ) open PO
+[PASS] (أ) DIRECT receipt APPROVED
+[PASS] (أ) stock qty 100
+[PASS] (أ) PO RECEIVED + received_qty 100
+[PASS] (أ) journal posted
+[PASS] (ح) unknown vendor 404
+[PASS] (ح) zero qty rejected
+[PASS] (ح) receipt on DRAFT rejected
+[PASS] (د) first 60 ok
+[PASS] (د) PARTIALLY_RECEIVED
+[PASS] (د) rest 40 ok
+[PASS] (د) RECEIVED
+[PASS] (د) over-receipt 422
+[PASS] (هـ) +5% allowed
+[PASS] (هـ) +6% rejected
+[PASS] (ب) STEPS → IN_APPROVAL
+[PASS] (ب) stock still 0
+[PASS] (ب) step1 approve
+[PASS] (ب) final approve posts stock
+[PASS] (ب) stock 50 after final
+[PASS] (ج) RETURNED_TO_SUPPLIER
+[PASS] (ج) rejected_qty increased
+[PASS] (ج) no stock impact
+[PASS] (ي) cross-tenant get → null
+
+Passed: 25 | Failed: 0
+
+=== P10StockAtomicMem ===
+[PASS] (a) receipt ok, one document, two movements
+[PASS] (a) balances: A 10 @5 = 50, B 4 @25 = 100
+[PASS] (a) document total cost = 150 | 150
+[PASS] (b) mismatching line/movement -> 400 invalid-document and NOTHING written
+[PASS] (b) late-line failure -> 422, earlier line rolled back (no movement, no doc, balance unchanged) | status=422
+[PASS] (c) two concurrent issues (7 and 6 of 10), 20 rounds: exactly one succeeds, balance 3 or 4, never negative
+[PASS] (d) same key in parallel: one document, one movement, balance 5 | docs=1 movs=1
+[PASS] (d) both callers got the same document
+[PASS] (e) duplicate document number -> success:false, NO movement written, balance still 5 | رقم المستند REC-000001 مستخدم بالفعل.
+[PASS] (f) issue movement cost 15 / total 750 and the document says the same | unit=15 total=750 doc=750
+[PASS] (g) trackBatch receipt creates the batch row
+[PASS] (h) issue above balance rejected by the service (400 early check), no movements
+
+Passed: 12 | Failed: 0
+
+=== P11TransfersMem ===
+[PASS] (a) transfer created IN_TRANSIT
+[PASS] (a) source 70 (value 1050)
+[PASS] (a) received: target 30 (value 450), status RECEIVED, total value unchanged 1500
+[PASS] (a) transfer total cost stays 450 | 450
+[PASS] (b) duplicate transfer number -> failure and the source is NOT deducted | qty=90
+[PASS] (c) concurrent receives: exactly one wins, the other gets 409, target +30 once | wins=1 loser=409 target=30
+[PASS] (d) concurrent 60+60 of 100: one succeeds, one is rejected (422 from the atomic check), source = 40 >= 0 | wins=1 loser=422 src=40
+[PASS] (e) transfer above the balance rejected, no movements | status=400
+[PASS] (f) replay with the same key: same transfer returned, no new movements, target still 30
+[PASS] (g) transfer line cost = 15/unit (total 600) and the target average = 15 | lineUnit=15 dstAvg=15 dstValue=600
+[PASS] (h) two lines -> two TRANSFER_OUT movements with different numbers, both deducted | MOV-TRF-000001-OUT-1,MOV-TRF-000001-OUT-2
+[PASS] (i) unknown transfer -> 404
+
+Passed: 12 | Failed: 0
+
+=== P12ApprovalsMem ===
+[PASS] (a) first approval keeps the request PENDING and moves to step 2 | "PENDING"
+[PASS] (a) second approval completes the request
+[PASS] (b) wrong role -> 403 role-not-allowed
+[PASS] (b) missing role is rejected
+[PASS] (b) user other than the assigned one at a USER step -> 403 not-assigned-approver
+[PASS] (c) initiator approving own request -> 403 sod-violation
+[PASS] (c) same person on two steps with enforceDistinct -> 403 duplicate-approver
+[PASS] (c) same person on two steps with enforceDistinct=false -> allowed
+[PASS] (d) reject without a reason -> 400
+[PASS] (d) reject with reason -> REJECTED with rejectReason and rejectedStep=1
+[PASS] (d) later steps cannot run after a reject -> 409 request-not-pending
+[PASS] (d) the second step stayed PENDING (not executed)
+[PASS] (e) two concurrent approvals of the same step (20 rounds): exactly one succeeds, one step advances
+[PASS] (f) no policy -> DIRECT and no request created
+[PASS] (f) DIRECT policy -> DIRECT, no request
+[PASS] (f) inactive STEPS policy -> DIRECT
+[PASS] (g) editing the policy does not change a running request (2 steps kept) and the policy version increased | steps=2 version=2
+[PASS] (g) submitting the same document again returns the same open request
+[PASS] (h) valid role policy accepted
+[PASS] (h) valid ACTIVE-user policy accepted
+[PASS] (h) unknown role -> 400
+[PASS] (h) user from another tenant -> 400
+[PASS] (h) suspended user -> 400
+[PASS] (h) 11 steps -> 400
+[PASS] (h) DIRECT with steps -> 400
+[PASS] (h) STEPS without steps -> 400
+[PASS] (h) bad document type / label too long / bad kind -> 400
+[PASS] (i) legacy single-step request approved by any non-initiator (no role passed)
+[PASS] (i) legacy two-step request now needs both steps (the bug fix): PENDING then APPROVED
+[PASS] (i) unknown request -> 404
+[PASS] (j) step 1 is in the inbox of the role holder only (not the creator, not the step-2 user yet)
+[PASS] (j) after step 1 the request moves to the step-2 user and leaves the role holder inbox
+[PASS] (k) replay of the same key returns the same result and does not advance again
+[PASS] (l) another tenant cannot touch the request (404)
+[PASS] (l) APPROVAL_POLICY_MANAGE is held by exactly super_admin, admin, platform_admin, system_admin | admin,platform_admin,super_admin,system_admin
+
+Passed: 35 | Failed: 0
+
+=== P13Costing ===
+MODE: InMemory (no database)
+[PASS] [pg-fake] FIFO receipts create two layers tagged with their PO numbers
+[PASS] [pg-fake] FIFO issue 50 (service said 15) => unit 10, total 500, stock value 2500 | unit=10 total=500 value=2500
+[PASS] [pg-fake] FIFO issue 100 => total 1500, balance 50, value 1000, open layers 50 = qty | total=1500 qty=50 value=1000 layers=50
+[PASS] [pg-fake] the exhausted layer is closed (remaining 0, is_closed true)
+[PASS] [pg-fake] FIFO issue above the layers => ok:false 422 insufficient-stock BEFORE any write | ok=false status=422 writes+=0
+[PASS] [pg-fake] SPECIFIC_LOT issue 50 from PO-2 => 1000 (not the older PO-1 layer) | total=1000
+[PASS] [pg-fake] SPECIFIC_LOT 150 from PO-2 (50 left) => 422 insufficient-lot-stock, no writes | status=422
+[PASS] [pg-fake] SPECIFIC_LOT without a PO behaves as FIFO (100@10 + 20@20 = 1400) | total=1400
+[PASS] [pg-fake] provided-cost exit keeps the provided unit cost (12) but the stock VALUE falls by the layer cost (500) | unit=12 value=2500
+[PASS] [pg-fake] TRANSFER_IN keeps the exact transferred value (2000) and adds one layer | value=2000
+[PASS] [pg-fake] WEIGHTED_AVERAGE: no layer query or write; issue cost = locked average (1700/110) | layerQueries=0 unit=15.454545454545455
+[PASS] [pg-fake] legacy STANDARD_COST item is treated as WEIGHTED_AVERAGE (cost 750, no layers) | total=750
+[PASS] (a) WEIGHTED_AVERAGE issue 50 => cost 750 | cost=750 err=
+[PASS] (a) WEIGHTED_AVERAGE balance 150, value 2250 | qty=150 value=2250
+[PASS] (a) WEIGHTED_AVERAGE creates NO cost layers
+[PASS] (d) invariant after receipt 1: layers 100 = qty 100
+[PASS] (d) invariant after receipt 2: layers 200 = qty 200
+[PASS] (d) invariant after issue 50: layers 150 = qty 150
+[PASS] (b) FIFO issue 50 => cost 500 | cost=500 err=
+[PASS] (d) invariant after issue 100: layers 50 = qty 50
+[PASS] (b) FIFO issue 100 more => cost 1500 (50@10 + 50@20) | cost=1500
+[PASS] (b) FIFO balance 50, value 1000 | qty=50 value=1000
+[PASS] (b) FIFO issue above the balance is rejected and nothing changes | status=400
+[PASS] (c) SPECIFIC_LOT issue 50 from PO-2 => cost 1000 | cost=1000 err=
+[PASS] (c) 150 from PO-2 (50 left) => 422 insufficient-lot-stock | status=422 type=https://api.an-erp.local/errors/insufficient-lot-stock
+[PASS] (c) the message names the PO and the available quantity | رصيد أمر الشراء PO-2 للصنف صنف LOT (50) أقل من الكمية المطلوبة (150). فشلت العملية بالكامل ذرياً.
+[PASS] (c) no movements written, balance still 150 | qty=150
+[PASS] (c) SPECIFIC_LOT without a PO behaves as FIFO (20 from PO-1 => 200) | cost=200
+[PASS] (e) concurrent FIFO issues 7 + 6 from 10: exactly one succeeds | wins=1
+[PASS] (e) layers never negative and equal the balance | layers=3 qty=3
+[PASS] (e) the winning cost comes from the layers | cost=90 expected=90
+[PASS] (f) before: WAC balance 150, value 2250, average 15 | qty=150 value=2250 avg=15
+[PASS] (f) saving the item as FIFO succeeds
+[PASS] (f) OPENING layer created: layers = 150
+[PASS] (f) FIFO issue 10 after the change => cost 150 (10 @ 15) | cost=150 err=
+[PASS] (f) back to WEIGHTED_AVERAGE: layers closed, average 15 | avg=15 qty=140
+[PASS] (g) transfer dispatched
+[PASS] (g) dispatch cost = 100@10 + 50@20 = 2000 | cost=2000
+[PASS] (g) target value = source exit cost (2000); total value preserved (3000) | src=1000 dst=2000
+[PASS] (g) layers: source 50, target 150
+[PASS] (h) default settings: WEIGHTED_AVERAGE, negative stock off, tolerance 0
+[PASS] (h) settings with STANDARD_COST => 400
+[PASS] (h) settings saved (FIFO default)
+[PASS] (h) new item without a method takes the tenant default (FIFO) | method=FIFO
+[PASS] (h) saving an item as STANDARD_COST => 400 valuation-method-unsupported | status=400
+[PASS] (h) re-saving an existing item without a method keeps its method
+[PASS] (j) document with a failing LOT line => whole document rejected (422) | status=422
+[PASS] (j) the FIFO line was rolled back: balance 10, layers 10
+[PASS] (k) negative stock off (default): issue above the balance rejected
+[PASS] (k) negative stock on: WAC issue above the balance is allowed (balance -50) | qty=-50 err=
+
+Passed: 50 | Failed: 0
+[phase-13] item A is stored as STANDARD_COST (unsupported) -> treated as WEIGHTED_AVERAGE
+
+=== P14AutoJournals ===
+[PASS] (هـ) settings off receive ok
+[PASS] (هـ) journal NONE
+[PASS] (هـ) no JE
+[PASS] (أ) receive ok
+[PASS] (أ) POSTED
+[PASS] (أ) one JE
+[PASS] (أ) Dr1105=1000
+[PASS] (أ) Cr2106=1000
+[PASS] (ب) issue ok
+[PASS] (ب) Dr5101=400
+[PASS] (ب) Cr1105=400
+[PASS] (ج) dispatch ok
+[PASS] (ج) receive ok
+[PASS] (ج) net 1109 = 0
+[PASS] (د) multi-account ok
+[PASS] (د) balanced
+[PASS] (و) closed → 422
+[PASS] (و) no movement
+[PASS] (ز) bad account rejected
+[PASS] (ح) stock ok + PENDING_RETRY
+[PASS] (ح) retry POSTED
+[PASS] (ط) all balanced
+[PASS] (ي) default auto off
+[PASS] builder receipt
+
+Passed: 24 | Failed: 0
+
+=== P16Recon ===
+[PASS] (أ) report ok
+[PASS] (أ) stockValue 600
+[PASS] (أ) ledger MATCHED
+[PASS] (أ) inTransit MATCHED
+[PASS] (أ) qtyMismatches 0
+[PASS] (ب) DIFFERENT when auto off
+[PASS] (ب) note explains
+[PASS] (ب) inTransit NOT_APPLICABLE
+[PASS] (ج) qtyMismatches >= 1
+[PASS] (د) pendingJournals >= 1
+[PASS] (و) read-only stable accounts
+[PASS] (ح) aggregates ok
+[PASS] (ح) stockQty = movementsQty
+[PASS] (ز) other tenant sees no foreign stock
+
+Passed: 14 | Failed: 0
+
+=== P17Attachments ===
+[PASS] (د) reject http://files.example.com/a.pdf
+[PASS] (د) reject javascript:alert(1)
+[PASS] (د) reject data:text/html,hi
+[PASS] (د) reject file:///etc/passwd
+[PASS] (د) reject https://user:pass@x.com/a.pdf
+[PASS] (د) reject https://127.0.0.1/a.pdf
+[PASS] (د) reject https://localhost/a.pdf
+[PASS] (د) reject https://192.168.1.5/a.pdf
+[PASS] (د) reject https://10.0.0.1/a.pdf
+[PASS] (د) reject https://172.16.5.1/a.pdf
+[PASS] (د) reject https://169.254.1.1/a.pdf
+[PASS] (د) reject https://files.example.com/aaaaaaaaaaaaaa
+[PASS] (د) accept https public
+[PASS] (هـ) ../../etc/passwd rejected (no safe ext)
+[PASS] (هـ) ../../etc/passwd.pdf becomes basename
+[PASS] (هـ) ok name report.pdf
+[PASS] (هـ) .exe rejected
+[PASS] (هـ) .html rejected
+[PASS] (هـ) .svg rejected
+[PASS] (هـ) bad mime
+[PASS] (هـ) good mime pdf
+[PASS] (هـ) size 0 rejected
+[PASS] (هـ) negative rejected
+[PASS] (هـ) 30MB rejected
+[PASS] (هـ) 1MB ok
+[PASS] (ز) maxPerDocument 50
+
+Passed: 26 | Failed: 0
+[PASS] (أ) storage save ok
+[PASS] (أ) listed
+[PASS] (ح) other tenant empty
+
+Passed: 29 | Failed: 0
+
+=== P18WarehouseScope ===
+[PASS] (ح) empty list = no restriction rows
+[PASS] (ح) set cairo only
+[PASS] (ح) list returns cairo
+[PASS] (ح) unknown warehouse 404
+[PASS] (ح) empty array clears restriction
+[PASS] (أ) restricted set
+[PASS] (أ) filtered stock only cairo
+[PASS] (أ) giza stock excluded
+[PASS] (ب) giza query blocked
+[PASS] (ج) cannot write giza
+[PASS] (ج) can write cairo
+[PASS] (ج) receive cairo succeeds
+[PASS] (هـ) salem unrestricted (null)
+[PASS] (هـ) admin exempt despite rows
+[PASS] (د) create from giza blocked
+[PASS] (د) receive at cairo allowed
+[PASS] (د) transfer giz→cai visible to ahmed
+[PASS] (ز) foreign warehouse 404
+[PASS] (ط) no rows = unrestricted
+
+Passed: 19 | Failed: 0
+
+=== P2002Migrations ===
+[PASS] S1 MigrationEngine exports applyPending
+[PASS] S2 registry has ordered versions
+[PASS] S3 initializeSchema invokes MigrationEngine
+[PASS] S4 an_schema_migrations created in engine
+[PASS] S5 journal unique index is a versioned migration
+[PASS] B1 first apply runs all migrations
+[PASS] B2 second apply is no-op (idempotent)
+[PASS] B3 registry rows stored
+
+Passed: 8 | Failed: 0
+
+=== F1Standards ===
+--- Part 1: shared suite on InMemoryAdapter ---
+[PASS] A1 boundary: effectiveFrom is inclusive
+[PASS] A2 boundary: effectiveTo is inclusive
+[PASS] A3 day before / after window is not effective
+[PASS] A4 open-ended window and malformed date
+[PASS] A5 historical date resolves v1 regardless of input order
+[PASS] A6 current date resolves v2
+[PASS] A7 date before any version -> NONE
+[PASS] A8 two effective versions with the same number -> CONFLICT (no guessing)
+[PASS] A9 early adoption needs explicit opt-in
+[PASS] A10 early adoption not before earlyAdoptionFrom, not if not allowed
+[PASS] A11 validateWindow rejects reversed / malformed windows
+[PASS] A12 validateNewVersion rejects overlap and reused version, accepts adjacent
+[PASS] B1 taxonomy has the 42 spec events
+[PASS] B2 taxonomy is extensible but rejects malformed names
+[PASS] B3 seed: no errors, every seed jurisdiction and standard present
+[PASS] B4 re-seed is idempotent (adds nothing, no errors)
+[PASS] B5 SI-10: every seeded standard is NOT_IMPLEMENTED, unverified, no asserted date
+[PASS] B6 SI-3: Egypt is EAS (not IFRS), EAS->IFRS mapping is UNVERIFIED, tax is its own jurisdiction
+[PASS] B7 no invented EAS numbers for revenue/leases (placeholder ids only)
+[PASS] B8 coverage report lists IAS 2 as NOT_IMPLEMENTED
+[PASS] C1 IMPLEMENTED without evidence is rejected
+[PASS] C2 cannot mark an unverified-source standard as implemented
+[PASS] C3 registering PARTIAL without evidence is rejected
+[PASS] C4 verified fixtures (IFRS + EAS) register
+[PASS] C5 duplicate (standard, version) is rejected, history immutable
+[PASS] C6 storage: same idempotencyKey replays OK, a different key conflicts (409)
+[PASS] C7 EQUIVALENT_VERIFIED mapping without source is rejected (mapping is not equivalence)
+[PASS] C8 coverage upgrade with evidence on a verified standard is accepted
+[PASS] D1 test jurisdictions register; unknown parent rejected
+[PASS] D2 ACTIVE without a verified source is rejected (SI-6/SI-10)
+[PASS] D3 ACTIVE with the unasserted-date sentinel is rejected
+[PASS] D4 account numbers inside a treatment are rejected (roles only), even nested
+[PASS] D5 unknown event / bad tier rejected
+[PASS] D6 SI-8: accounting rule in a TAX jurisdiction rejected; framework mismatch rejected; unknown standard rejected
+[PASS] D7 ACTIVE rule needs a covered standard (IAS 2 is NOT_IMPLEMENTED)
+[PASS] D8 valid ACTIVE rule (verified fixture) registers
+[PASS] D9 overlapping window and reused version number are rejected
+[PASS] D10 v2 (adjacent window) registers; v1 untouched
+[PASS] D11 historical transaction resolves to the rule effective on its date
+[PASS] D12 SOURCE_REQUIRED rule registers but is never a posting candidate (SI-6)
+[PASS] D13 jurisdiction change yields a different applicable rule
+[PASS] D14 "which rule applied on this date?" answers rule id + version + source
+[PASS] D15 candidates ordered explicitly (tier, then priority), not by insertion
+[PASS] E1 tax rule in a non-TAX jurisdiction rejected (SI-8)
+[PASS] E2 invented rate (unverified source) and out-of-range rate rejected
+[PASS] E3 SOURCE_REQUIRED tax rule without a rate registers (no invented numbers)
+[PASS] E4 verified tax rule registers; v2 adjacent ok; overlap rejected
+[PASS] E5 tax rule resolves by transaction date
+[PASS] E6 tax rules never appear in the accounting-rule registry
+[PASS] F1 unknown policy, invalid enum value, non-numeric threshold, bad date rejected
+[PASS] F2 first policy version created (v1, open-ended)
+[PASS] F3 new version closes the previous window the day before
+[PASS] F4 getEffective is date-aware (before / inside v1 / v2 start)
+[PASS] F5 backdating / same-day change rejected (409) and history unchanged
+[PASS] F6 idempotent replay returns the same version, creates no extra row
+[PASS] F7 tenant isolation: another tenant sees no history and no effective value
+[PASS] F8 concurrent appends serialize: contiguous versions, increasing dates, exactly one open window
+[PASS] G1 registry writes were logged to SystemChangeLog (module=standards)
+--- Part 2: real PostgresPrimaryAdapter code vs scripted fake client ---
+[PASS] P1 policy append (PG code): BEGIN -> tenant scope -> advisory lock -> FOR UPDATE read -> close previous -> INSERT -> COMMIT
+[PASS] P2 previous version is closed with the NEW effectiveFrom (minus one day in SQL), new row gets version 2
+[PASS] P3 backdating: 409, ROLLBACK, nothing written (no INSERT, no UPDATE, no COMMIT)
+[PASS] P4 idempotent replay (same derived id): success, ROLLBACK, no INSERT/UPDATE
+[PASS] P5 saveStandard (PG code): insert is ON CONFLICT DO NOTHING; same key replays OK, different key -> 409
+[PASS] P6 mapping column is cast to jsonb and jsonb params are not double-encoded
+[PASS] P7 rule JSON columns are sent as JSON strings with ::jsonb casts (conditions/treatment/required_data/exceptions)
+[PASS] P8 no DB connection -> fail-closed error, no throw
+--- Part 3: static checks on the real adapter source (DDL / RLS text) ---
+[PASS] S1 an_accounting_policies is in the FORCE-RLS tenant table list
+[PASS] S2 DB-level guard: ACTIVE rules (accounting + tax) need verified source and a real date
+[PASS] S3 DB-level guard: IMPLEMENTED/PARTIAL standards need evidence and a verified source; tax rate needs verified source
+[PASS] S4 policies table: tenant FK + unique (tenant, key, version); global tables have composite primary keys per version
+[PASS] S5 adapter parity: all 11 new methods exist on Postgres, InMemory and the 3 Smoke adapters (smokeOnlyError)
+
+Passed: 71 | Failed: 0
+
+=== F2Decisions ===
+--- Part 1: shared F2 suite on InMemoryAdapter ---
+[PASS] U1 conditions: literal eq, in, gt/lte, notIn and ne
+[PASS] U2 conditions: missing fact is reported (not guessed); exists:false tolerates absence; bad operator is invalid
+[PASS] U3 nested fact paths work; empty string counts as missing
+[PASS] U4 expressions: add/sub/mul/div, taxOn needs a rate, division by zero and bad shapes are errors
+[PASS] 1.1 happy path: APPLY, DETERMINISTIC, journal lines from configured role map only (balanced)
+[PASS] 1.2 treatment carries rule id/version/standard, measurement basis, timing, reversal and inventory effect
+[PASS] 1.3 dimensions are copied from facts (cost center)
+[PASS] 1.4 boundary: zero amount -> NOT_APPLICABLE/ZERO_AMOUNT (not stored); 0.005 rounds to 0.01; decimals=0 rounds to whole units
+[PASS] 1.5 missing amount -> REVIEW_REQUIRED listing the missing fact, no lines, confidence NONE, stored
+[PASS] 1.6 negative or non-numeric amount is REVIEW_REQUIRED (never posted)
+[PASS] 1.7 classification: non-stock item -> NOT_APPLICABLE; unknown class (fact missing) -> REVIEW_REQUIRED
+[PASS] 1.8 account mapping: unmapped role -> REVIEW (accountRole:...), account missing from the chart -> REVIEW, valid chart -> APPLY
+[PASS] 2.1 version boundary: last day of v1 uses v1, first day of v2 uses v2, before any version is not covered
+[PASS] 2.2 a stored historical decision keeps its rule version even though a newer version now exists
+[PASS] 3.1 jurisdiction difference: same event/facts give a different rule, framework and accounts per jurisdiction
+[PASS] 3.2 reporting jurisdiction missing / a TAX jurisdiction / unknown -> REVIEW_REQUIRED
+[PASS] 4.1 no policy set -> REVIEW_REQUIRED naming the missing policy (never a default)
+[PASS] 4.2 alternative policy case: FIFO rule before the change, weighted-average rule after, effective-dated
+[PASS] 4.3 before the first policy version -> REVIEW_REQUIRED; another tenant has no policy -> REVIEW_REQUIRED
+[PASS] 5.1 a lower-tier rule never overrides a mandatory one (even with a higher priority); the loser is recorded
+[PASS] 5.2 conflicting rules of equal precedence -> REVIEW_REQUIRED listing both, no lines, explanation mentions the conflict
+[PASS] 5.3 same tier, different priority: higher priority wins without conflict; identical duplicates apply with a warning
+[PASS] 5.4 SI-6: a higher-precedence SOURCE_REQUIRED rule blocks automation (REVIEW_REQUIRED, rule listed), nothing is posted
+[PASS] 5.5 a lower-precedence non-automatable rule does not block; REFERENCE_ONLY/DRAFT alone never auto-posts (REVIEW)
+[PASS] 5.6 a higher-precedence rule that cannot be evaluated (fact missing) blocks the lower one; once the fact is known the right rule applies
+[PASS] 5.7 a verified SUPERSEDED rule still decides transactions inside its own window; RETIRED never applies
+[PASS] 5.8 a malformed rule condition is REVIEW_REQUIRED (INVALID_RULE), never ignored
+[PASS] 5.9 exceptions run in array order: NOT_APPLICABLE / unknown fact -> REVIEW / large amount -> REVIEW / normal -> APPLY
+[PASS] 5.10 malformed (single line) and unbalanced treatments are REVIEW_REQUIRED; a zero line is dropped with a warning
+[PASS] 6.1 tax assertion: accounting rule + separate tax rule => receivable 1100 / revenue 1000 / VAT 100, explanation cites the tax rule
+[PASS] 6.2 zero-rated supply: VAT line dropped (rate 0), balanced 1000/1000
+[PASS] 6.3 tax not requested but the treatment needs a rate -> REVIEW (taxRate); tax fact (supplyType) missing -> REVIEW (TAX_REVIEW)
+[PASS] 6.4 tax rules obey SI-6/SI-8: SOURCE_REQUIRED tax rule, conflicting tax rules and a non-TAX jurisdiction all end in REVIEW_REQUIRED
+[PASS] 6.5 tax rate follows the transaction date (v1 10% before 2025, v2 14% after)
+[PASS] 7.1 invalid events (unknown type / bad date / no id) are REJECT and are never stored
+[PASS] 7.2 determinism: same facts (any key order, repeated runs) give identical evaluation and treatment
+[PASS] 7.3 DETERMINISTIC confidence only when APPLY: every non-APPLY decision has confidence NONE and no lines
+[PASS] 8.1 stored decision is replay-safe: same event twice stores once and returns the ORIGINAL decision (immutable)
+[PASS] 8.2 audit explanation: Arabic and English text name the rule, version, standard, framework, jurisdiction and source
+[PASS] 8.3 durable record has source event, facts, framework, jurisdiction, standard, rule+version, tier and created-by
+[PASS] 8.4 NOT_APPLICABLE is not stored by default but can be (persistNotApplicable)
+[PASS] 8.5 journal link is one-way: same journal is a no-op, a different journal is 409; decisions are findable by journal
+[PASS] 8.6 only APPLY decisions can be linked to a journal (409); unknown decision is 404
+[PASS] 8.7 tenant isolation: another tenant cannot read or list the decision
+[PASS] 8.8 SI-9: every stored APPLY decision carries a durable rule reference (rule id, version, standard)
+--- Part 2: static checks on the real adapter source ---
+[PASS] S1 an_accounting_decisions is in the FORCE-RLS tenant table list
+[PASS] S2 DB-level guards: APPLY needs a rule reference; only APPLY may carry a journal link; (tenant, decision_key) is unique
+[PASS] S3 decision insert is ON CONFLICT DO NOTHING and the stored row is read back (replay returns the original)
+[PASS] S4 journal link UPDATE only fills an empty link on an APPLY decision
+[PASS] S5 adapter parity: all 4 decision methods exist on Postgres, InMemory and the 3 Smoke adapters (smokeOnlyError)
+[PASS] S6 the decision layer never posts: no PostingEngine / postEntry / draftEntry / journal write in the code (comments excluded)
+
+Passed: 51 | Failed: 0
+
+=== F3Acceptance ===
+--- Part 1: acceptance suite (Foundation §23) on InMemoryAdapter ---
+[PASS] F3-1 inventory purchase: accounting rule + separate tax rule + inventory effect select the path; journal D inventory 1000 / D VAT 100 / C GR-IR 1100 posted through PostingEngine
+[PASS] F3-2 sales: invoice path (revenue + VAT, tax rule cited) and delivery path (COGS/inventory) pick different rules; both journals posted, linked and explained
+[PASS] F3-3 foreign currency: v1 before 2025 and v2 after use different effective-date rules; a missing amount/rate fact -> REVIEW_REQUIRED (no invented rate)
+[PASS] F3-4 fixed asset: capitalize -> asset account, below-threshold -> expense, depreciation event is its own rule; undecided capitalization (fact missing) -> REVIEW_REQUIRED
+[PASS] F3-5 missing fact: REVIEW_REQUIRED with the missing list, no lines, DETERMINISTIC never claimed, bridge refuses to post, explanation shows what is missing
+[PASS] F3-6 jurisdiction change: IFRS-pack vs EAS-pack give a different rule, framework and journal for identical facts; each explained with its own framework
+[PASS] F3-7 historical transaction: a 2024 event uses v1 (expense 5201) and a 2025 event uses v2 (5101); the stored 2024 explanation still names v1
+[PASS] F3-8 each of the 12 posted journals carries a durable decision reference (ruleId, version, standard, framework, jurisdiction) retrievable by journal id
+[PASS] F3-9 "why was this entry posted?": every section present (event, facts, framework, jurisdiction, standard, rule+source, decision, mapping, journal check, tax, inventory effect), AR+EN text
+[PASS] F3-9b a journal that no decision produced is reported as such (no invented explanation); another tenant sees nothing
+[PASS] F3-10 journals reached the ledger through PostingEngine/StoragePort: status POSTED, balanced, the account balance reflects the posting; re-posting a decision is refused and creates no second journal
+[PASS] F3-11 company policy: no policy -> REVIEW_REQUIRED; FIFO period and weighted-average period post different journals and the explanation shows the policy and its version
+[PASS] F3-12 a SOURCE_REQUIRED rule blocks automation end to end: REVIEW_REQUIRED, bridge refuses, no journal exists for the event
+[PASS] F3-13 a decision linked to a journal that is missing is explained honestly (journal.found=false, matchesTreatment=null)
+--- Part 2: static checks ---
+[PASS] S1 the decision + explanation layers never post or write journals (no PostingEngine/postEntry/draftEntry/journal write in code, comments excluded)
+[PASS] S2 the bridge posts ONLY through PostingEngine.draftEntry/postEntry (no direct storage journal write)
+[PASS] S3 PostingEngine does not import anything from the standards layer (the layer decides, PostingEngine posts)
+[PASS] S4 every /api/standards route is GET-only and sits behind requireAuth + requirePermission
+[PASS] S5 explanation reads only through StoragePort getters with the caller tenantId (no raw SQL / no cross-tenant read)
+
+Passed: 19 | Failed: 0
+
+=== F4StockShadow ===
+--- Part 1: F4 suite on InMemoryAdapter ---
+[PASS] F4-1 default (no policy): receipt posts the legacy journal D1105 / C2106 = 50 and the Standards layer stores NOTHING
+[PASS] F4-2 SHADOW without a reporting jurisdiction: legacy journal unchanged (D1105 / C2106 = 20); the standards decision is REVIEW_REQUIRED (missing jurisdiction), recorded, NOT linked, no journal effect
+[PASS] F4-3 SHADOW with a jurisdiction but no rule: legacy posts normally and no decision row is stored (NOT_APPLICABLE is not persisted)
+[PASS] F4-4 matching rule: legacy journal is untouched (D1105 / C2106 = 30) AND the decision is linked to it; "why was this posted?" now explains the LEGACY journal with rule id, version and an exact line match
+[PASS] F4-5 replay (retry of the same document): still exactly one decision for the document, link unchanged
+[PASS] F4-6 a rule that disagrees with the legacy journal: legacy journal unchanged (D1105 / C2106 = 15), decision recorded but NOT linked, and the mismatch is visible to the shadow caller
+[PASS] F4-7 the shadow outcome reports MISMATCH with the per-account differences (standards=15 on COGS vs legacy GRIR) and writes a SHADOW_MISMATCH entry to the system change log naming the document, journal and decision
+[PASS] F4-8 tenant isolation: tenant A has no decision for tenant B's document and B's SHADOW switch does not enable A for other dates/docs
+[PASS] F4-9 failure injection: decision service throws -> receipt still succeeds, journal POSTED (D1105 / C2106 = 5), no exception reaches the caller
+[PASS] F4-10 mode is effective-dated: a later OFF version does not affect today (SHADOW still active) — observation continues until that date
+[PASS] F4-11 ISSUE documents are untouched by F4 (legacy COGS journal posts, zero decisions for the issue document)
+--- Part 2: static checks ---
+[PASS] S1 exactly one hook in StockAccountingService, inside a try/catch, only for mode RECEIPT, after the legacy posting is complete
+[PASS] S2 the shadow class never posts or writes journals (no PostingEngine/draftEntry/postEntry/saveJournal/postJournal/createJournalEntry/setStockDocumentJournal) and its whole body is guarded by try/catch
+[PASS] S3 InventoryService is untouched by F4 (no reference to the standards layer)
+
+Passed: 14 | Failed: 0
+
+=== FixJ1Accounts ===
+[PASS] D1 default inventory is 1105 and in COA
+[PASS] D2 default COGS is 5101 and in COA
+[PASS] D3 adjustment expense 5209 in COA
+[PASS] D4 adjustment gain 4203 in COA
+[PASS] D5 purchase return clearing 2101 in COA
+[PASS] D6 GR/IR 2106 in COA
+[PASS] S1 no hard-coded 520101 in InventoryService
+[PASS] S2 no hard-coded 520101 in StockAccountingService
+[PASS] S1 no hard-coded 110301 in InventoryService
+[PASS] S2 no hard-coded 110301 in StockAccountingService
+[PASS] S1 no hard-coded 410101 in InventoryService
+[PASS] S2 no hard-coded 410101 in StockAccountingService
+[PASS] S1 no hard-coded 210101 in InventoryService
+[PASS] S2 no hard-coded 210101 in StockAccountingService
+[PASS] S1 no hard-coded 510101 in InventoryService
+[PASS] S2 no hard-coded 510101 in StockAccountingService
+[PASS] S3 InventoryService loads getStockAccountingConfig for count
+[PASS] S5 buildReturnEntry accepts cfg
+[PASS] S6 postReturnJournal loads config before buildReturnEntry
+[PASS] S7 StoragePort defaults include new fields
+[PASS] S8 item create defaults use 1105/5101/5209/4203
+[PASS] S9 ensureDefaultAccounts seeds adjustment accounts
+[PASS] B1 return entry uses clearing 2101 and inv 1105
+[PASS] B2 issue-return uses inv 1105 and cogs 5101
+
+Passed: 24 | Failed: 0
+
+=== PgDateMapping ===
+[PASS] D1 [UTC] pgDateToYmd(DATE 2026-10-09) = 2026-10-09
+[PASS] D2 [UTC] first day of year / month boundary stays correct (2026-01-01)
+[PASS] D1 [Africa/Cairo] pgDateToYmd(DATE 2026-10-09) = 2026-10-09
+[PASS] D2 [Africa/Cairo] first day of year / month boundary stays correct (2026-01-01)
+[PASS] D1 [Asia/Riyadh] pgDateToYmd(DATE 2026-10-09) = 2026-10-09
+[PASS] D2 [Asia/Riyadh] first day of year / month boundary stays correct (2026-01-01)
+[PASS] D1 [America/Los_Angeles] pgDateToYmd(DATE 2026-10-09) = 2026-10-09
+[PASS] D2 [America/Los_Angeles] first day of year / month boundary stays correct (2026-01-01)
+[PASS] D1 [Asia/Tokyo] pgDateToYmd(DATE 2026-10-09) = 2026-10-09
+[PASS] D2 [Asia/Tokyo] first day of year / month boundary stays correct (2026-01-01)
+[PASS] D3 the toISOString() reading is WRONG ahead of UTC (proves why local parts are needed): Cairo gives 2026-10-08
+[PASS] D4 strings pass through (2026-10-09 and 2026-10-09T00:00:00Z -> 2026-10-09)
+[PASS] D5 the adapter has no String(row.<date column>).slice(0, 10) left for needed_by / quote_date / valid_until / invoice_date / due_date
+[PASS] D6 the adapter imports pgDateToYmd
+
+Passed: 14 | Failed: 0
+
+=== PgMovementLogic ===
+[PASS] issue 9 of 5 with rejectNegative -> ok:false, status 422, nothing written | ok=false status=422 writes=0
+[PASS] issue 50 @ locked average 15 (caller said 10) -> unitCostUsed 15, total 750 | unit=15 total=750
+[PASS] no options: keeps the provided cost (10) and does not reject (legacy recordStockMovement path) | ok=true unit=10 newQty=-4
+[PASS] receipt 10 @ 20 on balance 5 @ 15 -> ok, newQty 15, cost 20 kept | ok=true newQty=15
+
+Passed: 4 | Failed: 0
+
+=== P9Validation ===
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[PASS] (أ) parsePositiveQuantity rejects NaN
+[PASS] (أ) parsePositiveQuantity rejects Infinity
+[PASS] (أ) parsePositiveQuantity rejects -Infinity
+[PASS] (أ) parsePositiveQuantity rejects "abc"
+[PASS] (أ) parsePositiveQuantity rejects ""
+[PASS] (أ) parsePositiveQuantity rejects null
+[PASS] (أ) parsePositiveQuantity rejects undefined
+[PASS] (أ) parsePositiveQuantity rejects -1
+[PASS] (أ) parsePositiveQuantity rejects 0
+[PASS] (أ) parsePositiveQuantity rejects 1e+30
+[PASS] (أ) parsePositiveQuantity rejects 0.00001
+[PASS] (أ) parsePositiveQuantity rejects "1e3"
+[PASS] (أ) parsePositiveQuantity rejects " 5"
+[PASS] (أ) parsePositiveQuantity rejects "5 "
+[PASS] (أ) parsePositiveQuantity rejects "1,000"
+[PASS] (أ) parsePositiveQuantity rejects "-1"
+[PASS] (أ) parsePositiveQuantity rejects "+1"
+[PASS] (أ) parsePositiveQuantity rejects [object Object]
+[PASS] (أ) parsePositiveQuantity rejects 
+[PASS] (أ) parsePositiveQuantity rejects true
+[PASS] (أ) parsePositiveQuantity accepts 0.5 | value=0.5
+[PASS] (أ) parsePositiveQuantity accepts "12.25" | value=12.25
+[PASS] (أ) parsePositiveQuantity accepts 1234.5678 | value=1234.5678
+[PASS] (أ) parsePositiveQuantity accepts 1 | value=1
+[PASS] (أ) parsePositiveQuantity accepts "3" | value=3
+[PASS] (أ) parsePositiveQuantity accepts 1000000000 | value=1000000000
+[PASS] (أ) parsePositiveQuantity rejects 1_000_000_001
+[PASS] (أ) parsePositiveQuantity rejects 5 decimals (1.12345)
+[PASS] (أ) failure detail is Arabic and names the field | الكمية (quantity) يجب أن تكون رقمًا أكبر من صفر وحتى 1,000,000,000 بحد أقصى 4 خانات عشرية.
+[PASS] (أ) parseNonNegativeQuantity accepts 0
+[PASS] (أ) parseNonNegativeQuantity rejects -1
+[PASS] (أ) parseNonNegativeQuantity rejects NaN
+[PASS] (أ) parseNonNegativeMoney rejects NaN
+[PASS] (أ) parseNonNegativeMoney rejects Infinity
+[PASS] (أ) parseNonNegativeMoney rejects "abc"
+[PASS] (أ) parseNonNegativeMoney rejects ""
+[PASS] (أ) parseNonNegativeMoney rejects null
+[PASS] (أ) parseNonNegativeMoney rejects undefined
+[PASS] (أ) parseNonNegativeMoney rejects -1
+[PASS] (أ) parseNonNegativeMoney rejects -0.0001
+[PASS] (أ) parseNonNegativeMoney rejects 1e+30
+[PASS] (أ) parseNonNegativeMoney rejects 1000000000001
+[PASS] (أ) parseNonNegativeMoney rejects "1e3"
+[PASS] (أ) parseNonNegativeMoney rejects 0.00001
+[PASS] (أ) parseNonNegativeMoney rejects [object Object]
+[PASS] (أ) parseNonNegativeMoney accepts 0 | value=0
+[PASS] (أ) parseNonNegativeMoney accepts "0" | value=0
+[PASS] (أ) parseNonNegativeMoney accepts 12.5 | value=12.5
+[PASS] (أ) parseNonNegativeMoney accepts "1234.5678" | value=1234.5678
+[PASS] (أ) parseNonNegativeMoney accepts 1000000000000 | value=1000000000000
+[PASS] (أ) parseIsoDate rejects "2026-02-31"
+[PASS] (أ) parseIsoDate rejects "2026-13-01"
+[PASS] (أ) parseIsoDate rejects "2026-00-10"
+[PASS] (أ) parseIsoDate rejects "not-a-date"
+[PASS] (أ) parseIsoDate rejects ""
+[PASS] (أ) parseIsoDate rejects null
+[PASS] (أ) parseIsoDate rejects undefined
+[PASS] (أ) parseIsoDate rejects 20260101
+[PASS] (أ) parseIsoDate rejects "1999-12-31"
+[PASS] (أ) parseIsoDate rejects "2101-01-01"
+[PASS] (أ) parseIsoDate rejects "2026-1-1"
+[PASS] (أ) parseIsoDate rejects "2026-02-30T10:00:00Z"
+[PASS] (أ) parseIsoDate rejects "2026-01-01T25:00:00Z"
+[PASS] (أ) parseIsoDate accepts "2026-10-10"
+[PASS] (أ) parseIsoDate accepts "2000-01-01"
+[PASS] (أ) parseIsoDate accepts "2100-12-31"
+[PASS] (أ) parseIsoDate accepts "2024-02-29"
+[PASS] (أ) parseIsoDate accepts "2026-10-10T12:30:00Z"
+[PASS] (أ) parseIsoDate accepts "2026-10-10T12:30:00.123+03:00"
+[PASS] (أ) parseIsoDate rejects 2025-02-29 (not a leap year)
+[PASS] (أ) parseBoundedString trims
+[PASS] (أ) parseBoundedString rejects control char
+[PASS] (أ) parseBoundedString rejects NUL
+[PASS] (أ) parseBoundedString rejects too long
+[PASS] (أ) parseBoundedString accepts exactly max
+[PASS] (أ) parseBoundedString rejects empty when min=1
+[PASS] (أ) parseBoundedString rejects non-string
+[PASS] (أ) parseEnum accepts a listed value
+[PASS] (أ) parseEnum rejects "FOO"
+[PASS] (أ) parseEnum rejects ""
+[PASS] (أ) parseEnum rejects null
+[PASS] (أ) parseEnum rejects undefined
+[PASS] (أ) parseEnum rejects 1
+[PASS] (أ) parseEnum rejects "fifo"
+[PASS] (أ) validationError is RFC7807 400
+[PASS] (أ) validateJournalInput accepts a valid entry
+[PASS] (أ) validateJournalInput accepts a missing date
+[PASS] (أ) validateJournalInput rejects date not-a-date
+[PASS] (أ) validateJournalInput rejects debit+credit on one line
+[PASS] (أ) validateJournalInput rejects negative debit
+[PASS] (أ) validateJournalInput rejects debit "abc"
+[PASS] (أ) validateJournalInput rejects debit Infinity
+[PASS] (أ) validateJournalInput rejects empty / non-array lines
+[PASS] (أ) validateJournalInput rejects a null line
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[phase-4] DECISION: DB role bypasses RLS -> global membership backfill
+[PASS] (ب) seed receipt succeeds
+[PASS] (ب) receiveStock quantity=NaN | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=NaN | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity="abc" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity="abc" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=-999999999 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=-999999999 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=Infinity | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=Infinity | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=1e+30 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=1e+30 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=0 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=0 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity="" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity="" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=null | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=null | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity="1e3" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity="1e3" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=0.00001 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=0.00001 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=-5 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost="hello" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=NaN | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=Infinity | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=1e+30 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost="1e3" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock expiryDate=2026-02-31 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock batchNumber 65 chars | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock serialNumber 129 chars | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock notes 2001 chars | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock notes with control char | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock: second line invalid → nothing saved | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock: second line invalid → nothing saved | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) createTransfer quantity="abc" rejected 400, no transfer row | status=400 transfers 0→0
+[PASS] (ب) createStockCount countedQty=-3 rejected 400 | status=400
+[PASS] (ج) receive quantity 0.5 / unitCost 0 accepted
+[PASS] (ج) stored qty = 0.5 | qty=0.5
+[PASS] (ج) receive quantity "12.25" (numeric text) accepted
+[PASS] (ج) stored qty = 12.75 (text parsed to a number) | qty=12.75
+[PASS] (ج) receive quantity 1234.5678 accepted
+[PASS] (ج) stored qty = 1247.3178 | qty=1247.3178
+[PASS] (ج) issue quantity "0.5" accepted
+[PASS] (ج) stored qty after issue = 1246.8178 | qty=1246.8178
+[PASS] (ج) valid expiryDate / batchNumber / notes accepted
+[PASS] (هـ) saveStockItem valuationMethod "FOO" rejected 400 | status=400
+[PASS] (هـ) saveStockItem valuationMethod "FIFO" accepted
+[PASS] (هـ) saveStockItem standardCost -5 rejected 400 | status=400
+[PASS] (هـ) saveStockItem itemCode 65 chars rejected 400 | status=400
+[PASS] (هـ) saveStockItem blank itemCode rejected 400 | status=400
+[NOT RUN] (د) HTTP validation (receive, journal-entries, transactions/post) | writes to tenant MAIN if a value is wrongly accepted (and for the valid entry); set P9_ALLOW_MAIN_WRITES=1 on a dev/throw-away database
+
+SUMMARY: PASS=144 FAIL=0 NOT_RUN=1
+NOTE: NOT RUN items are not passes — run them in an environment that has what they need.

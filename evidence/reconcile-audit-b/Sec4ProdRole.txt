@@ -1,0 +1,9 @@
+[PASS] S1 ops guide exists
+[PASS] S2 guide mentions rolbypassrls false
+[PASS] S3 guide has CREATE ROLE example
+[PASS] S4 guide forbids superuser for app
+[INFO] AN_ENFORCE_PROD_ROLE=0
+[FAIL] P1 PG probe | password authentication failed for user "postgres"
+SEC4_PG: ERROR
+
+Passed: 4 | Failed: 1

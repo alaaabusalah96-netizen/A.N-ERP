@@ -1,0 +1,14 @@
+[PASS] (a) receipt ok, one document, two movements
+[PASS] (a) balances: A 10 @5 = 50, B 4 @25 = 100
+[PASS] (a) document total cost = 150 | 150
+[PASS] (b) mismatching line/movement -> 400 invalid-document and NOTHING written
+[PASS] (b) late-line failure -> 422, earlier line rolled back (no movement, no doc, balance unchanged) | status=422
+[PASS] (c) two concurrent issues (7 and 6 of 10), 20 rounds: exactly one succeeds, balance 3 or 4, never negative
+[PASS] (d) same key in parallel: one document, one movement, balance 5 | docs=1 movs=1
+[PASS] (d) both callers got the same document
+[PASS] (e) duplicate document number -> success:false, NO movement written, balance still 5 | رقم المستند REC-000001 مستخدم بالفعل.
+[PASS] (f) issue movement cost 15 / total 750 and the document says the same | unit=15 total=750 doc=750
+[PASS] (g) trackBatch receipt creates the batch row
+[PASS] (h) issue above balance rejected by the service (400 early check), no movements
+
+Passed: 12 | Failed: 0

@@ -21,7 +21,7 @@
 [PASS] (static) no fabricated "Riyadh" / "SA" location anywhere in server.ts
 [PASS] (static) 2FA is demanded only from enrolled users (mustEnforce2fa = twoFactorEnabled)
 [PASS] (static) an unknown location is never stored as a last-login position
-[PASS] (static) wrong 2FA codes feed the same lockout as wrong passwords
+[PASS] (static) wrong 2FA codes feed the same (tenant-scoped) lockout as wrong passwords
 [PASS] (static) the 2FA setup routes never read a username from the request and use the session user
 [PASS] (static) no TOTP secret is logged
 

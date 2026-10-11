@@ -3,48 +3,404 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "reconcileDate": "2026-10-10T22:30:00Z",
-  "auditKind": "SEC_4",
-  "authoritativeVerdict": "CONDITIONAL_GO",
-  "lastFix": {
-    "id": "SEC-4",
-    "summary": "Production PG role guide + BYPASSRLS probe (AN_ENFORCE_PROD_ROLE)"
-  },
-  "securityPackages": [
+  "lastUpdated": "2026-10-11",
+  "lastChange": "SEC-A + REPO-B (CSP default, trust proxy, per-tenant lockout, error hygiene, fuzz cap, test drift, repo cleanup, state register)",
+  "packages": [
     {
-      "id": "SEC-1",
-      "status": "DONE"
+      "id": "PH0-7.6",
+      "status": "DONE",
+      "scope": "Core, accounting, inventory, approvals, atomic stock documents",
+      "evidence": "evidence/phase-0 .. phase-7.6"
     },
     {
-      "id": "SEC-2",
-      "status": "DONE"
+      "id": "REPAIR-1",
+      "status": "DONE",
+      "scope": "DEF-P1-001/002/003, DEF-P2-001 (see defects for what remains)",
+      "evidence": "evidence/repair, scripts/verifyRepairBatch1.ts (37)"
     },
     {
-      "id": "SEC-2b",
-      "status": "DONE"
+      "id": "PH8a-8c",
+      "status": "DONE",
+      "scope": "Purchase requests, RFQ, quotes, orders, goods receipt, supplier invoice + 3-way match (8c-FIX)",
+      "evidence": "evidence/phase-8a, 8b, 8c"
     },
     {
-      "id": "SEC-3",
-      "status": "DONE"
+      "id": "PH9",
+      "status": "DONE",
+      "scope": "Validation phase",
+      "evidence": "evidence/phase-9 (SUMMARY: PASS=144 FAIL=0 NOT_RUN=1)"
     },
     {
-      "id": "SEC-4",
-      "status": "DONE"
+      "id": "F1-F4",
+      "status": "DONE",
+      "scope": "Standards & accounting intelligence layer (registries, decision engines, shadow mode)",
+      "evidence": "evidence/standards-intelligence"
+    },
+    {
+      "id": "SEC-1..SEC-4",
+      "status": "DONE",
+      "scope": "2FA, RLS on all tenant tables, ids, production DB role guard",
+      "evidence": "evidence/security, scripts/verifySec*.ts"
+    },
+    {
+      "id": "SEC-A",
+      "status": "DONE",
+      "scope": "Strict CSP by default in production, trust proxy, per-tenant login lockout, no raw internal errors to clients, bounded fuzz",
+      "evidence": "scripts/verifySecA.ts (27), scripts/verifySecAPg.ts"
+    },
+    {
+      "id": "REPO-B",
+      "status": "DONE",
+      "scope": "Repository cleanup, npm test, engines, state register",
+      "evidence": "this file + scripts/runReconcileAuditB.ts"
+    },
+    {
+      "id": "PH8-REMAINDER",
+      "status": "OPEN",
+      "scope": "Purchase returns, auto purchase request from reorder point, supplier-invoices tab in the purchasing UI",
+      "evidence": "not built"
     }
   ],
   "defects": [
     {
-      "id": "DEF-P2-002",
-      "status": "FIXED"
+      "id": "DEF-CUSTODY-REVERSAL-DOUBLE-REFUND",
+      "severity": "P1",
+      "status": "OPEN",
+      "title": "Reversing a custody expense voucher restores the custody balance twice",
+      "evidence": "Reproduced on v73 (InMemory): custody 700, reverse a 300 voucher => 1300 (expected 1000). CashCustodyService.returnCustodyExpense calls updateCashCustody(+amount) and the adapter reverseCustodyExpenseVoucher (PostgreSQL and InMemory) also adds the amount.",
+      "fix": "Restore the balance in exactly one place, add a regression test on balance after reversal."
+    },
+    {
+      "id": "DEF-P2P-AUTOPOST-OFF",
+      "severity": "P1",
+      "status": "OPEN",
+      "title": "Supplier invoice approval is wrong under the default stock-accounting config (autoPostEnabled=false)",
+      "evidence": "Reproduced on v73 (InMemory): receive 10 x 8 then approve the invoice => AP -80, GR/IR +80, inventory asset 0 (correct only when autoPostEnabled=true: inventory +80, AP -80, GR/IR 0). approveSupplierInvoice debits GR/IR regardless of autoPostEnabled.",
+      "fix": "When autoPostEnabled=false debit the inventory accounts instead of GR/IR (or refuse approval), plus a two-mode regression test."
     },
     {
       "id": "PROD-ROLE-BYPASSRLS",
-      "status": "PROBE_READY"
+      "severity": "P2",
+      "status": "CONFIG",
+      "title": "The application database role may bypass RLS",
+      "evidence": "INFO: DB role bypasses RLS = true in evidence/standards-intelligence/battery-output-f2-pg.txt. Guide: docs/ops/PROD-PG-ROLE.md; probe: scripts/verifySec4ProdRole.ts.",
+      "fix": "Use a NOSUPERUSER NOBYPASSRLS application role and set AN_ENFORCE_PROD_ROLE=1 in production."
+    },
+    {
+      "id": "DEF-P1-001",
+      "severity": "P1",
+      "status": "FIXED",
+      "title": "Stock count approval atomicity",
+      "evidence": "scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review)"
+    },
+    {
+      "id": "DEF-P1-002",
+      "severity": "P1",
+      "status": "FIXED",
+      "title": "Stock return atomicity (PENDING_RETRY instead of silent success)",
+      "evidence": "scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review)"
+    },
+    {
+      "id": "DEF-P1-003",
+      "severity": "P1",
+      "status": "FIXED",
+      "title": "Custody reversal posts the journal before changing balances",
+      "evidence": "Ordering fixed; the separate double-refund defect above is still OPEN."
+    },
+    {
+      "id": "DEF-P2-001",
+      "severity": "P2",
+      "status": "FIXED",
+      "title": "Goods receipt over-receipt race (TOCTOU)",
+      "evidence": "PostgreSQL saveGoodsReceipt locks PO lines (FOR UPDATE) and re-checks inside the transaction (code inspection; InMemory tests)"
+    },
+    {
+      "id": "DEF-P2-002",
+      "severity": "P2",
+      "status": "FIXED",
+      "title": "Version-tracked schema migrations",
+      "evidence": "scripts/verifyP2002Migrations.ts (8)"
+    },
+    {
+      "id": "SEC-A-CSP",
+      "severity": "P2",
+      "status": "FIXED",
+      "title": "CSP defaulted to development (unsafe-inline/unsafe-eval)",
+      "evidence": "runtimeSecurity.resolveCspProfile; verifySecA C1-C5"
+    },
+    {
+      "id": "SEC-A-LOCKOUT",
+      "severity": "P2",
+      "status": "FIXED",
+      "title": "Login lockout counter shared by username across tenants and never reset by a successful login",
+      "evidence": "loginLockKey(tenant, username); verifySecA L1-L5; verifySecAPg"
+    },
+    {
+      "id": "SEC-A-PROXY",
+      "severity": "P2",
+      "status": "FIXED",
+      "title": "No trust proxy behind Cloud Run: rate limits keyed on the proxy IP",
+      "evidence": "runtimeSecurity.resolveTrustProxy; verifySecA P1-P4. Verify the real client IP in the deployed environment."
+    },
+    {
+      "id": "SEC-A-ERRORS",
+      "severity": "P3",
+      "status": "FIXED",
+      "title": "Raw error.message returned to clients (123 places)",
+      "evidence": "publicErrorMessage; verifySecA E1-E6, S1-S2"
+    },
+    {
+      "id": "SEC-A-FUZZ",
+      "severity": "P3",
+      "status": "FIXED",
+      "title": "Unbounded fuzz iterations",
+      "evidence": "parseFuzzIterations (max 5000); verifySecA F1-F2"
+    },
+    {
+      "id": "REPAIRBATCH1-TEST-DRIFT",
+      "severity": "P3",
+      "status": "FIXED",
+      "title": "verifyRepairBatch1 seeded legacy account codes after FIX-J1",
+      "evidence": "13 failures before, 37/37 after"
     }
   ],
+  "knownRisks": [
+    "PostgreSQL gates (verify*Pg.ts) need DATABASE_URL; they print PG_NOT_RUN without it and prove nothing then.",
+    "Behind a proxy, confirm the real client IP reaches the app (set TRUST_PROXY, or rely on K_SERVICE on Cloud Run).",
+    "Internal battery endpoints (/api/internal/*) are limited to developer/auditor roles; keep them off public production roles.",
+    "Maintainability: server.ts is about 5,150 lines, PostgresPrimaryAdapter about 9,400 lines, roughly 1,800 uses of `any`."
+  ],
+  "ops": {
+    "tests": "npm test (runs scripts/runReconcileAuditB.ts: every non-PG gate with expected counts; refreshes these docs)",
+    "pgGates": [
+      "verifySecAPg",
+      "verifyF1StandardsPg",
+      "verifyF2DecisionsPg",
+      "verifySec2Rls"
+    ],
+    "env": {
+      "JWT_SECRET": "required, no default",
+      "DATABASE_URL": "required when NODE_ENV=production",
+      "CSP_PROFILE": "production|development; default follows NODE_ENV",
+      "TRUST_PROXY": "hops or subnet list; K_SERVICE implies 1 hop",
+      "AN_ENFORCE_PROD_ROLE": "1 = fail when the DB role bypasses RLS",
+      "EXPOSE_ERROR_DETAILS": "1 = return raw error messages (local debugging only)"
+    }
+  },
+  "policy": "Edit docs/STATE_REGISTER.json by hand. AI_CONTEXT.md and docs/AI_PROJECT_STATE.* are rendered from it by scripts/runReconcileAuditB.ts and must not be replaced by a template.",
+  "renderedAt": "2026-10-11T00:00:00Z",
+  "authoritativeVerdict": "NO_GO",
+  "f07": {
+    "verdict": "PASS",
+    "passed": 8,
+    "failed": 0
+  },
+  "gates": [
+    {
+      "name": "Sec1TwoFactor",
+      "status": "PASS",
+      "passed": 26,
+      "failed": 0,
+      "expected": 26
+    },
+    {
+      "name": "Sec2Rls",
+      "status": "PASS",
+      "passed": 39,
+      "failed": 0,
+      "expected": 39
+    },
+    {
+      "name": "Sec2bRls",
+      "status": "FAIL",
+      "passed": 13,
+      "failed": 1,
+      "expected": 14
+    },
+    {
+      "name": "Sec3Ids",
+      "status": "PASS",
+      "passed": 7,
+      "failed": 0,
+      "expected": 7
+    },
+    {
+      "name": "Sec4ProdRole",
+      "status": "FAIL",
+      "passed": 4,
+      "failed": 1,
+      "expected": 5
+    },
+    {
+      "name": "SecA",
+      "status": "PASS",
+      "passed": 27,
+      "failed": 0,
+      "expected": 27
+    },
+    {
+      "name": "RepairBatch1",
+      "status": "PASS",
+      "passed": 37,
+      "failed": 0,
+      "expected": 37
+    },
+    {
+      "name": "P8aProcurement",
+      "status": "PASS",
+      "passed": 24,
+      "failed": 0,
+      "expected": 24
+    },
+    {
+      "name": "P8cThreeWay",
+      "status": "PASS",
+      "passed": 14,
+      "failed": 0,
+      "expected": 14
+    },
+    {
+      "name": "P8cFix",
+      "status": "PASS",
+      "passed": 22,
+      "failed": 0,
+      "expected": 22
+    },
+    {
+      "name": "P15Purchasing",
+      "status": "PASS",
+      "passed": 25,
+      "failed": 0,
+      "expected": 25
+    },
+    {
+      "name": "P10StockAtomicMem",
+      "status": "PASS",
+      "passed": 12,
+      "failed": 0,
+      "expected": 12
+    },
+    {
+      "name": "P11TransfersMem",
+      "status": "PASS",
+      "passed": 12,
+      "failed": 0,
+      "expected": 12
+    },
+    {
+      "name": "P12ApprovalsMem",
+      "status": "PASS",
+      "passed": 35,
+      "failed": 0,
+      "expected": 35
+    },
+    {
+      "name": "P13Costing",
+      "status": "PASS",
+      "passed": 50,
+      "failed": 0,
+      "expected": 50
+    },
+    {
+      "name": "P14AutoJournals",
+      "status": "PASS",
+      "passed": 24,
+      "failed": 0,
+      "expected": 24
+    },
+    {
+      "name": "P16Recon",
+      "status": "PASS",
+      "passed": 14,
+      "failed": 0,
+      "expected": 14
+    },
+    {
+      "name": "P17Attachments",
+      "status": "PASS",
+      "passed": 29,
+      "failed": 0,
+      "expected": 29
+    },
+    {
+      "name": "P18WarehouseScope",
+      "status": "PASS",
+      "passed": 19,
+      "failed": 0,
+      "expected": 19
+    },
+    {
+      "name": "P2002Migrations",
+      "status": "PASS",
+      "passed": 8,
+      "failed": 0,
+      "expected": 8
+    },
+    {
+      "name": "F1Standards",
+      "status": "PASS",
+      "passed": 71,
+      "failed": 0,
+      "expected": 71
+    },
+    {
+      "name": "F2Decisions",
+      "status": "PASS",
+      "passed": 51,
+      "failed": 0,
+      "expected": 51
+    },
+    {
+      "name": "F3Acceptance",
+      "status": "PASS",
+      "passed": 19,
+      "failed": 0,
+      "expected": 19
+    },
+    {
+      "name": "F4StockShadow",
+      "status": "PASS",
+      "passed": 14,
+      "failed": 0,
+      "expected": 14
+    },
+    {
+      "name": "FixJ1Accounts",
+      "status": "PASS",
+      "passed": 24,
+      "failed": 0,
+      "expected": 24
+    },
+    {
+      "name": "PgDateMapping",
+      "status": "PASS",
+      "passed": 14,
+      "failed": 0,
+      "expected": 14
+    },
+    {
+      "name": "PgMovementLogic",
+      "status": "PASS",
+      "passed": 4,
+      "failed": 0,
+      "expected": 4
+    },
+    {
+      "name": "P9Validation",
+      "status": "PASS",
+      "passed": 144,
+      "failed": 0,
+      "expected": null
+    }
+  ],
+  "testExecutionMetrics": {
+    "status": "HAS_FAILURES",
+    "evidenceDir": "evidence/reconcile-audit-b"
+  },
   "canonicalAuditFiles": [
     "AI_CONTEXT.md",
     "docs/AI_PROJECT_STATE.md",
-    "docs/AI_PROJECT_STATE.json"
+    "docs/AI_PROJECT_STATE.json",
+    "docs/STATE_REGISTER.json"
   ]
 }

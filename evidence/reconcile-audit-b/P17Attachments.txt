@@ -1,0 +1,33 @@
+[PASS] (د) reject http://files.example.com/a.pdf
+[PASS] (د) reject javascript:alert(1)
+[PASS] (د) reject data:text/html,hi
+[PASS] (د) reject file:///etc/passwd
+[PASS] (د) reject https://user:pass@x.com/a.pdf
+[PASS] (د) reject https://127.0.0.1/a.pdf
+[PASS] (د) reject https://localhost/a.pdf
+[PASS] (د) reject https://192.168.1.5/a.pdf
+[PASS] (د) reject https://10.0.0.1/a.pdf
+[PASS] (د) reject https://172.16.5.1/a.pdf
+[PASS] (د) reject https://169.254.1.1/a.pdf
+[PASS] (د) reject https://files.example.com/aaaaaaaaaaaaaa
+[PASS] (د) accept https public
+[PASS] (هـ) ../../etc/passwd rejected (no safe ext)
+[PASS] (هـ) ../../etc/passwd.pdf becomes basename
+[PASS] (هـ) ok name report.pdf
+[PASS] (هـ) .exe rejected
+[PASS] (هـ) .html rejected
+[PASS] (هـ) .svg rejected
+[PASS] (هـ) bad mime
+[PASS] (هـ) good mime pdf
+[PASS] (هـ) size 0 rejected
+[PASS] (هـ) negative rejected
+[PASS] (هـ) 30MB rejected
+[PASS] (هـ) 1MB ok
+[PASS] (ز) maxPerDocument 50
+
+Passed: 26 | Failed: 0
+[PASS] (أ) storage save ok
+[PASS] (أ) listed
+[PASS] (ح) other tenant empty
+
+Passed: 29 | Failed: 0

@@ -1,226 +1,160 @@
 /**
- * Reconcile Audit B — run regression + F07, write evidence, refresh canonical audit docs.
- * Run: npx tsx scripts/runReconcileAuditB.ts
- * Restored/updated by EVID-1 (was 0-byte on some builds).
+ * Reconcile Audit B — run every non-PostgreSQL gate (with EXPECTED counts), write evidence, render the canonical state docs.
+ * Run:  npx tsx scripts/runReconcileAuditB.ts            (this is `npm test`)
+ *       npx tsx scripts/runReconcileAuditB.ts --docs-only (render docs from docs/STATE_REGISTER.json, run nothing)
+ * REPO-B: the docs are RENDERED from docs/STATE_REGISTER.json (edited by hand). This script never replaces the defect register with a template.
  */
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const root = process.cwd();
+const docsOnly = process.argv.includes('--docs-only');
 const evidenceDir = path.join(root, 'evidence', 'reconcile-audit-b');
-fs.mkdirSync(evidenceDir, { recursive: true });
 
-type Gate = {
-  name: string;
-  script: string;
-  expected?: number;
-  passed: number | null;
-  failed: number | null;
-  raw: string;
-  status: 'PASS' | 'FAIL' | 'SKIP' | 'ERROR';
-};
+type Gate = { name: string; script: string; expected?: number; passed: number | null; failed: number | null; raw: string; status: 'PASS' | 'FAIL' | 'SKIP' | 'ERROR' };
+type Defect = { id: string; severity: 'P1' | 'P2' | 'P3'; status: 'OPEN' | 'FIXED' | 'MITIGATED' | 'CONFIG'; title: string; evidence?: string; fix?: string };
+type Register = { project: { name: string; version: string }; lastUpdated: string; lastChange: string; packages: Array<{ id: string; status: string; scope: string; evidence?: string }>; defects: Defect[]; knownRisks: string[]; ops: { tests: string; pgGates: string[]; env: Record<string, string> }; policy: string };
+const reg: Register = JSON.parse(fs.readFileSync(path.join(root, 'docs', 'STATE_REGISTER.json'), 'utf8'));
 
 function runTsx(scriptRel: string): { code: number; out: string } {
   const scriptPath = path.join(root, scriptRel);
-  if (!fs.existsSync(scriptPath) || fs.statSync(scriptPath).size === 0) {
-    return { code: 127, out: `SKIP missing-or-empty ${scriptRel}\n` };
-  }
-  const r = spawnSync('npx', ['tsx', scriptRel], {
-    cwd: root,
-    encoding: 'utf8',
-    env: process.env,
-    timeout: 180_000,
-    maxBuffer: 8 * 1024 * 1024,
-  });
+  if (!fs.existsSync(scriptPath) || fs.statSync(scriptPath).size === 0) return { code: 127, out: `SKIP missing-or-empty ${scriptRel}\n` };
+  const r = spawnSync('npx', ['tsx', scriptRel], { cwd: root, encoding: 'utf8', env: process.env, timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
   return { code: r.status ?? 1, out: `${r.stdout || ''}${r.stderr || ''}` };
 }
-
 function parsePassed(out: string): { passed: number | null; failed: number | null } {
-  const m = out.match(/Passed:\s*(\d+)\s*\|\s*Failed:\s*(\d+)/);
-  if (!m) {
-    const s = out.match(/SUMMARY:\s*PASS=(\d+)\s*FAIL=(\d+)/);
-    if (s) return { passed: Number(s[1]), failed: Number(s[2]) };
-    return { passed: null, failed: null };
-  }
-  return { passed: Number(m[1]), failed: Number(m[2]) };
+  const m = out.match(/Passed:\s*(\d+)\s*\|\s*Failed:\s*(\d+)/g);
+  if (m) { const last = m[m.length - 1].match(/(\d+)\D+(\d+)/)!; return { passed: Number(last[1]), failed: Number(last[2]) }; }
+  const s = out.match(/SUMMARY:\s*PASS=(\d+)\s*FAIL=(\d+)/);
+  return s ? { passed: Number(s[1]), failed: Number(s[2]) } : { passed: null, failed: null };
 }
 
+// Expected counts come from the last verified run. A count that changes is a FAIL (silent test loss is a regression).
 const BATTERIES: { name: string; script: string; expected?: number }[] = [
   { name: 'Sec1TwoFactor', script: 'scripts/verifySec1TwoFactor.ts', expected: 26 },
   { name: 'Sec2Rls', script: 'scripts/verifySec2Rls.ts', expected: 39 },
-  { name: 'Sec2bRls', script: 'scripts/verifySec2bRls.ts' },
+  { name: 'Sec2bRls', script: 'scripts/verifySec2bRls.ts', expected: 14 },
+  { name: 'Sec3Ids', script: 'scripts/verifySec3Ids.ts', expected: 7 },
+  { name: 'Sec4ProdRole', script: 'scripts/verifySec4ProdRole.ts', expected: 5 },
+  { name: 'SecA', script: 'scripts/verifySecA.ts', expected: 27 },
+  { name: 'RepairBatch1', script: 'scripts/verifyRepairBatch1.ts', expected: 37 },
   { name: 'P8aProcurement', script: 'scripts/verifyP8aProcurement.ts', expected: 24 },
   { name: 'P8cThreeWay', script: 'scripts/verifyP8cThreeWay.ts', expected: 14 },
-  { name: 'P8cFix', script: 'scripts/verifyP8cFix.ts' },
+  { name: 'P8cFix', script: 'scripts/verifyP8cFix.ts', expected: 22 },
   { name: 'P15Purchasing', script: 'scripts/verifyP15Purchasing.ts', expected: 25 },
-  { name: 'F3Acceptance', script: 'scripts/verifyF3Acceptance.ts', expected: 19 },
-  { name: 'F2Decisions', script: 'scripts/verifyF2Decisions.ts', expected: 51 },
-  { name: 'F4StockShadow', script: 'scripts/verifyF4StockShadow.ts', expected: 14 },
+  { name: 'P10StockAtomicMem', script: 'scripts/verifyP10StockAtomicMem.ts', expected: 12 },
+  { name: 'P11TransfersMem', script: 'scripts/verifyP11TransfersMem.ts', expected: 12 },
+  { name: 'P12ApprovalsMem', script: 'scripts/verifyP12ApprovalsMem.ts', expected: 35 },
   { name: 'P13Costing', script: 'scripts/verifyP13Costing.ts', expected: 50 },
-  { name: 'FixJ1Accounts', script: 'scripts/verifyFixJ1Accounts.ts' },
+  { name: 'P14AutoJournals', script: 'scripts/verifyP14AutoJournals.ts', expected: 24 },
+  { name: 'P16Recon', script: 'scripts/verifyP16Recon.ts', expected: 14 },
+  { name: 'P17Attachments', script: 'scripts/verifyP17Attachments.ts', expected: 29 },
+  { name: 'P18WarehouseScope', script: 'scripts/verifyP18WarehouseScope.ts', expected: 19 },
+  { name: 'P2002Migrations', script: 'scripts/verifyP2002Migrations.ts', expected: 8 },
+  { name: 'F1Standards', script: 'scripts/verifyF1Standards.ts', expected: 71 },
+  { name: 'F2Decisions', script: 'scripts/verifyF2Decisions.ts', expected: 51 },
+  { name: 'F3Acceptance', script: 'scripts/verifyF3Acceptance.ts', expected: 19 },
+  { name: 'F4StockShadow', script: 'scripts/verifyF4StockShadow.ts', expected: 14 },
+  { name: 'FixJ1Accounts', script: 'scripts/verifyFixJ1Accounts.ts', expected: 24 },
+  { name: 'PgDateMapping', script: 'scripts/verifyPgDateMapping.ts', expected: 14 },
+  { name: 'PgMovementLogic', script: 'scripts/verifyPgMovementLogic.ts', expected: 4 },
   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
 ];
+const CRITICAL = ['Sec1TwoFactor', 'Sec2Rls', 'Sec2bRls', 'Sec3Ids', 'Sec4ProdRole', 'SecA', 'RepairBatch1', 'P8aProcurement', 'P8cThreeWay', 'F2Decisions'];
 
 const gates: Gate[] = [];
-for (const b of BATTERIES) {
-  process.stdout.write(`Running ${b.name}...\n`);
-  const { code, out } = runTsx(b.script);
-  const { passed, failed } = parsePassed(out);
-  let status: Gate['status'] = 'ERROR';
-  if (code === 127 || out.startsWith('SKIP')) status = 'SKIP';
-  else if (failed === 0 && passed !== null) status = 'PASS';
-  else if (failed !== null && failed > 0) status = 'FAIL';
-  else if (code === 0) status = 'PASS';
-  else status = 'ERROR';
-  gates.push({ name: b.name, script: b.script, expected: b.expected, passed, failed, raw: out, status });
-  fs.writeFileSync(path.join(evidenceDir, `${b.name}.txt`), out, 'utf8');
+let f07Verdict = 'NOT_RUN', f07Parse: { passed: number | null; failed: number | null } = { passed: null, failed: null };
+if (!docsOnly) {
+  fs.mkdirSync(evidenceDir, { recursive: true });
+  for (const b of BATTERIES) {
+    process.stdout.write(`Running ${b.name}...\n`);
+    const { code, out } = runTsx(b.script);
+    const { passed, failed } = parsePassed(out);
+    let status: Gate['status'] = 'ERROR';
+    if (code === 127 || out.startsWith('SKIP')) status = 'SKIP';
+    else if (failed !== null && failed > 0) status = 'FAIL';
+    else if (failed === 0 && passed !== null) status = b.expected !== undefined && passed !== b.expected ? 'FAIL' : 'PASS';
+    else if (code === 0) status = 'PASS';
+    gates.push({ name: b.name, script: b.script, expected: b.expected, passed, failed, raw: out, status });
+    fs.writeFileSync(path.join(evidenceDir, `${b.name}.txt`), out, 'utf8');
+  }
+  process.stdout.write('Running F07StorageRouter...\n');
+  const f07 = runTsx('scripts/verifyF07StorageRouter.ts');
+  f07Parse = parsePassed(f07.out);
+  fs.writeFileSync(path.join(evidenceDir, 'F07.txt'), f07.out, 'utf8');
+  f07Verdict = f07.code === 127 || f07.out.startsWith('SKIP') || f07.out.includes('SKIPPED') ? 'SKIP' : (f07Parse.failed === 0 || f07.out.includes('PASS') ? 'PASS' : 'FAIL');
 }
 
-process.stdout.write('Running F07StorageRouter...\n');
-const f07 = runTsx('scripts/verifyF07StorageRouter.ts');
-const f07Parse = parsePassed(f07.out);
-fs.writeFileSync(path.join(evidenceDir, 'F07.txt'), f07.out, 'utf8');
-let f07Verdict = 'ERROR';
-if (f07.code === 127 || f07.out.startsWith('SKIP') || f07.out.includes('SKIPPED')) f07Verdict = 'SKIP';
-else if (f07Parse.failed === 0 || f07.out.includes('PASS')) f07Verdict = 'PASS';
-else f07Verdict = 'FAIL';
-
-const hardFails = gates.filter((g) => g.status === 'FAIL' || g.status === 'ERROR');
-const critical = ['Sec1TwoFactor', 'Sec2Rls', 'Sec2bRls', 'P8aProcurement', 'P8cThreeWay', 'F2Decisions'];
-const criticalFail = gates.some((g) => critical.includes(g.name) && g.status !== 'PASS' && g.status !== 'SKIP');
-const verdict = criticalFail ? 'NO_GO' : 'CONDITIONAL_GO';
+const hardFails = gates.filter(g => g.status === 'FAIL' || g.status === 'ERROR');
+const criticalFail = gates.some(g => CRITICAL.includes(g.name) && g.status !== 'PASS' && g.status !== 'SKIP');
+const openP1 = reg.defects.filter(d => d.status === 'OPEN' && d.severity === 'P1');
+const openOther = reg.defects.filter(d => (d.status === 'OPEN' && d.severity !== 'P1') || d.status === 'CONFIG');
+// NO_GO: a critical gate failed or an OPEN P1 defect exists. CONDITIONAL_GO: only open P2/P3 or configuration conditions. GO: none.
+const verdict = criticalFail || openP1.length ? 'NO_GO' : openOther.length ? 'CONDITIONAL_GO' : 'GO';
 const when = new Date().toISOString().slice(0, 10);
+const label = verdict.replace('_', ' ');
+const gateTable = gates.length
+  ? ['| Gate | Status | Passed | Failed | Expected |', '|---|---|---|---|---|', ...gates.map(g => `| ${g.name} | ${g.status} | ${g.passed ?? '—'} | ${g.failed ?? '—'} | ${g.expected ?? '—'} |`)].join('\n')
+  : '_Gates were not run in this render. Run `npm test` to execute them and refresh this file._';
+const defectTable = ['| ID | Severity | Status | What | Evidence |', '|---|---|---|---|---|', ...reg.defects.map(d => `| ${d.id} | ${d.severity} | **${d.status}** | ${d.title} | ${d.evidence ?? ''}${d.status === 'OPEN' && d.fix ? ` — Fix: ${d.fix}` : ''} |`)].join('\n');
 
-const reportLines = [
-  `# Reconcile Audit B — ${when}`,
-  `Verdict: ${verdict}`,
-  `F07: ${f07Verdict}`,
-  `DATABASE_URL: ${process.env.DATABASE_URL ? 'set' : 'unset'}`,
-  '',
-  '| Gate | Status | Passed | Failed | Expected |',
-  '|---|---|---|---|---|',
-  ...gates.map(
-    (g) =>
-      `| ${g.name} | ${g.status} | ${g.passed ?? '—'} | ${g.failed ?? '—'} | ${g.expected ?? '—'} |`
-  ),
-  '',
-  `F07: ${f07Verdict} (passed=${f07Parse.passed} failed=${f07Parse.failed})`,
-  '',
-  '> This REPORT is a **live snapshot** of this run. Canonical ongoing state remains in AI_CONTEXT + AI_PROJECT_STATE.* after this script refreshes them.',
-];
-fs.writeFileSync(path.join(evidenceDir, 'REPORT.md'), reportLines.join('\n') + '\n', 'utf8');
-fs.writeFileSync(path.join(evidenceDir, 'console.txt'), gates.map((g) => `=== ${g.name} ===\n${g.raw}`).join('\n'), 'utf8');
+if (!docsOnly) {
+  fs.writeFileSync(path.join(evidenceDir, 'REPORT.md'), [`# Reconcile Audit B — ${when}`, `Verdict: ${verdict}`, `F07: ${f07Verdict}`, `DATABASE_URL: ${process.env.DATABASE_URL ? 'set' : 'unset'}`, '', gateTable, '', `F07: ${f07Verdict} (passed=${f07Parse.passed} failed=${f07Parse.failed})`, '', '> Live snapshot of this run. Canonical state: AI_CONTEXT.md + docs/AI_PROJECT_STATE.* (rendered from docs/STATE_REGISTER.json).'].join('\n') + '\n', 'utf8');
+  fs.writeFileSync(path.join(evidenceDir, 'console.txt'), gates.map(g => `=== ${g.name} ===\n${g.raw}`).join('\n'), 'utf8');
+}
 
-const gateRow = (name: string) => {
-  const g = gates.find((x) => x.name === name);
-  if (!g) return `| ${name} | — | — | — |`;
-  return `| ${g.name} | ${g.status} | ${g.passed ?? '—'} | ${g.failed ?? '—'} |`;
-};
-
+const openList = [...openP1, ...openOther].map(d => `- **${d.id}** (${d.severity}, ${d.status}) — ${d.title}`).join('\n') || '- none';
 const aiContext = `# A.N ERP AI Context
 
-**A.N ERP (v7.2.0)**. Code + live \`evidence/\` supersede stale prose.
+**A.N ERP (v${reg.project.version})**. Code + live \`evidence/\` supersede stale prose.
 
-**Canonical audit files:** \`AI_CONTEXT.md\` · \`docs/AI_PROJECT_STATE.md\` · \`docs/AI_PROJECT_STATE.json\`
+**Canonical files:** \`AI_CONTEXT.md\` · \`docs/AI_PROJECT_STATE.md\` · \`docs/AI_PROJECT_STATE.json\` — rendered from \`docs/STATE_REGISTER.json\` (edit that file by hand, then run \`npm test\`).
 
-Last reconcile: **EVID-1 / Audit B** on **${when}**.
+Last update: **${reg.lastUpdated}** — ${reg.lastChange}
 
 ## Verdict
 | Field | Value |
 |---|---|
-| **Authoritative verdict** | **${verdict.replace('_', ' ')}** |
-| **F-07** | ${f07Verdict} |
-| **Last tooling** | EVID-1 restored \`runReconcileAuditB.ts\` + \`verifyF07StorageRouter.ts\` |
-| **Open** | DEF-P2-002 · production role BYPASSRLS check |
+| **Authoritative verdict** | **${label}** |
+| **Rule** | NO GO = a critical gate failed or an OPEN P1 defect exists · CONDITIONAL GO = only open P2/P3 or configuration conditions · GO = none |
+| **Gates this render** | ${gates.length ? `${gates.filter(g => g.status === 'PASS').length}/${gates.length} PASS, F07 ${f07Verdict}` : 'not run (docs-only)'} |
 
-Gates this run: Sec1/Sec2/Sec2b · P8 · F2 · FixJ1 · P9 — see \`evidence/reconcile-audit-b/REPORT.md\`.
+## Open items
+${openList}
+
+Full register: \`docs/AI_PROJECT_STATE.md\`.
 `;
+const stateMd = `# A.N ERP — PROJECT STATE (v${reg.project.version})
 
-const stateMd = `# A.N ERP — PROJECT STATE (v7.2.0)
+**Last update**: ${reg.lastUpdated} — ${reg.lastChange}
+**Verdict**: **${label}** (rendered ${when})
 
-**Last update**: ${when} (EVID-1 + Audit B refresh)  
-**Verdict**: **${verdict.replace('_', ' ')}**
+## Gates
+${gateTable}
 
-## Gates (this run)
+## Packages
+${reg.packages.map(p => `- **${p.id}** — ${p.status} — ${p.scope}${p.evidence ? ` _(evidence: ${p.evidence})_` : ''}`).join('\n')}
 
-| Gate | Status | Passed | Failed |
-|---|---|---|---|
-${gates.map((g) => `| ${g.name} | ${g.status} | ${g.passed ?? '—'} | ${g.failed ?? '—'} |`).join('\n')}
-| F07StorageRouter | ${f07Verdict} | ${f07Parse.passed ?? '—'} | ${f07Parse.failed ?? '—'} |
+## Defect register
+${defectTable}
 
-## Completed packages
-SEC-1 · SEC-2 · SEC-2b · FIX-J1 · F2-S1-FIX · P9-VAL-001 · **EVID-1**
+## Known risks
+${reg.knownRisks.map(r => `- ${r}`).join('\n')}
 
-## Defects
-| ID | Status |
-|---|---|
-| DEF-P2-002 | OPEN |
-| PROD-ROLE-BYPASSRLS | CHECK |
+## How to run
+- Tests: ${reg.ops.tests}
+- PostgreSQL gates: ${reg.ops.pgGates.join(', ')} (print \`PG_NOT_RUN\` without \`DATABASE_URL\`; that proves nothing)
+- Environment: ${Object.entries(reg.ops.env).map(([k, v]) => `\`${k}\` (${v})`).join('; ')}
 
-## Audit policy
-Only the three canonical files + the latest \`evidence/reconcile-audit-b/REPORT.md\` from this runner are live.
-\`evidence/integrity/baseline-report.md\` is historical unless regenerated by \`verifyIntegrity\`.
+## Policy
+${reg.policy}
 `;
-
-const stateJson = {
-  project: { name: 'A.N ERP', version: '7.2.0' },
-  reconcileDate: `${when}T00:00:00Z`,
-  auditKind: 'EVID_1_AUDIT_B',
-  authoritativeVerdict: verdict,
-  lastFix: {
-    id: 'EVID-1',
-    summary: 'Restored runReconcileAuditB.ts + verifyF07StorageRouter.ts; unified audit runner',
-  },
-  canonicalAuditFiles: [
-    'AI_CONTEXT.md',
-    'docs/AI_PROJECT_STATE.md',
-    'docs/AI_PROJECT_STATE.json',
-  ],
-  historicalOnly: [
-    'evidence/integrity/baseline-report.md',
-    'evidence/repair/',
-  ],
-  f07: {
-    verdict: f07Verdict,
-    databaseUrlPresent: Boolean(process.env.DATABASE_URL),
-    passed: f07Parse.passed,
-    failed: f07Parse.failed,
-  },
-  gates: gates.map((g) => ({
-    name: g.name,
-    status: g.status,
-    passed: g.passed,
-    failed: g.failed,
-    expected: g.expected ?? null,
-  })),
-  securityPackages: [
-    { id: 'SEC-1', status: 'DONE' },
-    { id: 'SEC-2', status: 'DONE' },
-    { id: 'SEC-2b', status: 'DONE' },
-  ],
-  completedFixes: [
-    { id: 'FIX-J1', status: 'DONE' },
-    { id: 'F2-S1-FIX', status: 'DONE' },
-    { id: 'P9-VAL-001', status: 'DONE' },
-    { id: 'EVID-1', status: 'DONE' },
-  ],
-  defects: [
-    { id: 'DEF-P2-002', status: 'OPEN' },
-    { id: 'PROD-ROLE-BYPASSRLS', status: 'CHECK' },
-  ],
-  testExecutionMetrics: {
-    status: hardFails.length ? 'HAS_FAILURES' : 'GATES_EXECUTED',
-    evidenceDir: 'evidence/reconcile-audit-b',
-  },
-};
+const stateJson = { ...reg, renderedAt: `${when}T00:00:00Z`, authoritativeVerdict: verdict, f07: { verdict: f07Verdict, passed: f07Parse.passed, failed: f07Parse.failed }, gates: gates.map(g => ({ name: g.name, status: g.status, passed: g.passed, failed: g.failed, expected: g.expected ?? null })), testExecutionMetrics: { status: docsOnly ? 'NOT_RUN' : hardFails.length ? 'HAS_FAILURES' : 'GATES_EXECUTED', evidenceDir: 'evidence/reconcile-audit-b' }, canonicalAuditFiles: ['AI_CONTEXT.md', 'docs/AI_PROJECT_STATE.md', 'docs/AI_PROJECT_STATE.json', 'docs/STATE_REGISTER.json'] };
 
 fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
 fs.writeFileSync(path.join(root, 'AI_CONTEXT.md'), aiContext.trim() + '\n', 'utf8');
 fs.writeFileSync(path.join(root, 'docs/AI_PROJECT_STATE.md'), stateMd.trim() + '\n', 'utf8');
 fs.writeFileSync(path.join(root, 'docs/AI_PROJECT_STATE.json'), JSON.stringify(stateJson, null, 2) + '\n', 'utf8');
-
-console.log('\n=== AUDIT B SUMMARY ===');
-console.log(reportLines.join('\n'));
-console.log('\nDocs refreshed: AI_CONTEXT.md, docs/AI_PROJECT_STATE.md, docs/AI_PROJECT_STATE.json');
-process.exit(criticalFail ? 1 : 0);
+console.log(`\n=== AUDIT B SUMMARY ===\nVerdict: ${verdict}\nGates: ${gates.length ? `${gates.filter(g => g.status === 'PASS').length}/${gates.length} PASS, ${hardFails.length} failing` : 'not run (docs-only)'}\nOpen P1: ${openP1.length} | other open/config: ${openOther.length}\nDocs refreshed: AI_CONTEXT.md, docs/AI_PROJECT_STATE.md, docs/AI_PROJECT_STATE.json`);
+process.exit(criticalFail || hardFails.length ? 1 : 0);

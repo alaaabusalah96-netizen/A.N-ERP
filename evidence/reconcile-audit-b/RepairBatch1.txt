@@ -1,0 +1,39 @@
+[PASS] (count) create count 1
+[PASS] (count) approve ok, count POSTED with a journal id
+[PASS] (count) stock adjusted: A=80, B=55
+[PASS] (count) journal POSTED: Dr 5209 = 100, Cr 1105 = 100
+[PASS] (count) a line that cannot be adjusted => the whole approval is rejected (422)
+[PASS] (count) rejected approval changed NO balance (A=10, B=55)
+[PASS] (count) rejected approval posted NO journal and the count is NOT POSTED
+[PASS] (count) inactive journal account => 422 and no stock change
+[PASS] (count) journal post failure is reported (not hidden) and the count is NOT POSTED
+[PASS] (count) stock was adjusted exactly once so far (A=5)
+[PASS] (count) retry with a new key completes: POSTED + journal id
+[PASS] (count) retry did NOT adjust the stock again (A still 5)
+[PASS] (count) exactly one journal entry for that count
+[PASS] (return) normal return: journalStatus POSTED with a journal id
+[PASS] (return) journal post fails => stock moved but document is PENDING_RETRY (not silently OK)
+[PASS] (return) retry route posts the return journal
+[PASS] (return) exactly one entry: Dr 2101 = 100, Cr 1105 = 100
+[PASS] (return) a second retry is harmless (still one entry)
+[PASS] (return) journal DRAFT fails => PENDING_RETRY with no journal id
+[PASS] (return) retry after a draft failure posts: Dr 1105, Cr 5101
+[PASS] (custody) journal draft fails => error returned, voucher NOT saved, balance NOT touched
+[PASS] (custody) journal post fails => error returned, voucher NOT saved, balance NOT touched
+[PASS] (custody) journal ok => voucher saved WITH its journalEntryId
+[PASS] (custody-return) reversal draft fails => error, voucher NOT reversed, custody balance NOT restored
+[PASS] (custody-return) reversal post fails => error, voucher NOT reversed, custody balance NOT restored
+[PASS] (custody-return) reversal ok => balance restored once and voucher reversed
+[PASS] (expense) reversal draft fails => error and the request is NOT marked cancelled
+[PASS] (expense) reversal post fails => error and the request is NOT marked cancelled
+[PASS] (expense) reversal ok => request marked cancelled
+[PASS] (gr-race) two concurrent receipts of 60 on a 100 line: exactly one succeeds
+[PASS] (gr-race) the other is rejected as over-receipt (422)
+[PASS] (gr-race) stock never exceeds the ordered quantity (60 in stock)
+[PASS] (gr-race) the remaining 40 can still be received
+[PASS] (gr-race) one more unit is rejected after the line is complete
+[PASS] (gr-pg-fake) allowed receipt: the PO line is locked BEFORE the first insert, then COMMIT
+[PASS] (gr-pg-fake) over-receipt (60 already open of 100, asking 60) => 422, ROLLBACK, no insert
+[PASS] (gr-pg-fake) tolerance 10% on a remaining of 40: 44 allowed, 45 rejected
+
+Passed: 37 | Failed: 0

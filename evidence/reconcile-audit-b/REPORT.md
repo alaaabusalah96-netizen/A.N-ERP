@@ -1,23 +1,39 @@
-# Reconcile Audit B — HISTORICAL SNAPSHOT
+# Reconcile Audit B — 2026-10-11
+Verdict: NO_GO
+F07: PASS
+DATABASE_URL: set
 
-> **SUPERSEDED** for verdict purposes on 2026-10-10.
-> Current authoritative state: `docs/AI_PROJECT_STATE.json` (`lastFix`, `authoritativeVerdict`).
->
-> This file retains the raw gate table from the original Audit B run for evidence only.
-> Known later fixes not reflected in the table below: **F2-S1-FIX** (F2 51/0), **FIX-J1**, **SEC-2b**, **P9-VAL-001**.
+| Gate | Status | Passed | Failed | Expected |
+|---|---|---|---|---|
+| Sec1TwoFactor | PASS | 26 | 0 | 26 |
+| Sec2Rls | PASS | 39 | 0 | 39 |
+| Sec2bRls | FAIL | 13 | 1 | 14 |
+| Sec3Ids | PASS | 7 | 0 | 7 |
+| Sec4ProdRole | FAIL | 4 | 1 | 5 |
+| SecA | PASS | 27 | 0 | 27 |
+| RepairBatch1 | PASS | 37 | 0 | 37 |
+| P8aProcurement | PASS | 24 | 0 | 24 |
+| P8cThreeWay | PASS | 14 | 0 | 14 |
+| P8cFix | PASS | 22 | 0 | 22 |
+| P15Purchasing | PASS | 25 | 0 | 25 |
+| P10StockAtomicMem | PASS | 12 | 0 | 12 |
+| P11TransfersMem | PASS | 12 | 0 | 12 |
+| P12ApprovalsMem | PASS | 35 | 0 | 35 |
+| P13Costing | PASS | 50 | 0 | 50 |
+| P14AutoJournals | PASS | 24 | 0 | 24 |
+| P16Recon | PASS | 14 | 0 | 14 |
+| P17Attachments | PASS | 29 | 0 | 29 |
+| P18WarehouseScope | PASS | 19 | 0 | 19 |
+| P2002Migrations | PASS | 8 | 0 | 8 |
+| F1Standards | PASS | 71 | 0 | 71 |
+| F2Decisions | PASS | 51 | 0 | 51 |
+| F3Acceptance | PASS | 19 | 0 | 19 |
+| F4StockShadow | PASS | 14 | 0 | 14 |
+| FixJ1Accounts | PASS | 24 | 0 | 24 |
+| PgDateMapping | PASS | 14 | 0 | 14 |
+| PgMovementLogic | PASS | 4 | 0 | 4 |
+| P9Validation | PASS | 144 | 0 | — |
 
----
+F07: PASS (passed=8 failed=0)
 
-# Original content (Audit B)
-
-Verdict at time of run: CONDITIONAL_GO (F2 was 50/1 before S1 test fix)
-
-| Gate | Status (at Audit B) | Notes after later fixes |
-|---|---|---|
-| Sec1TwoFactor | PASS | still PASS |
-| Sec2Rls | PASS | still PASS; SEC-2b extended tables |
-| F2Decisions | was FAIL 50/1 | **PASS 51/0** after F2-S1-FIX |
-| F07StorageRouter | PASS | still PASS |
-| P8a / P8c / P15 | PASS | still PASS |
-
-Do not use this file to override JSON/MD/CONTEXT.
+> Live snapshot of this run. Canonical state: AI_CONTEXT.md + docs/AI_PROJECT_STATE.* (rendered from docs/STATE_REGISTER.json).
