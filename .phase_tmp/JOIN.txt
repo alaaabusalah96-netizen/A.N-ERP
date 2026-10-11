@@ -1,4 +1,0 @@
-scripts/verifySecA.ts|seca_new1
-scripts/verifySecAPg.ts|seca_new2
-src/core/security/publicError.ts|seca_new3
-src/core/security/runtimeSecurity.ts|seca_new4
