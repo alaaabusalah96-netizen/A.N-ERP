@@ -3,8 +3,8 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "lastUpdated": "2026-10-11",
-  "lastChange": "SEC-A + REPO-B (CSP default, trust proxy, per-tenant lockout, error hygiene, fuzz cap, test drift, repo cleanup, state register)",
+  "lastUpdated": "2026-10-12",
+  "lastChange": "FIX-P1-CUSTODY: expense voucher reversal restores custody balance exactly once",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -59,16 +59,22 @@
       "status": "OPEN",
       "scope": "Purchase returns, auto purchase request from reorder point, supplier-invoices tab in the purchasing UI",
       "evidence": "not built"
+    },
+    {
+      "id": "FIX-P1-CUSTODY",
+      "status": "DONE",
+      "scope": "DEF-CUSTODY-REVERSAL-DOUBLE-REFUND — single balance restore on reverse",
+      "evidence": "scripts/verifyFixP1Custody.ts"
     }
   ],
   "defects": [
     {
       "id": "DEF-CUSTODY-REVERSAL-DOUBLE-REFUND",
       "severity": "P1",
-      "status": "OPEN",
+      "status": "FIXED",
       "title": "Reversing a custody expense voucher restores the custody balance twice",
-      "evidence": "Reproduced on v73 (InMemory): custody 700, reverse a 300 voucher => 1300 (expected 1000). CashCustodyService.returnCustodyExpense calls updateCashCustody(+amount) and the adapter reverseCustodyExpenseVoucher (PostgreSQL and InMemory) also adds the amount.",
-      "fix": "Restore the balance in exactly one place, add a regression test on balance after reversal."
+      "evidence": "scripts/verifyFixP1Custody.ts; single restore in reverseCustodyExpenseVoucher only",
+      "fix": "Removed service-level updateCashCustody after journal; adapters remain sole restore path."
     },
     {
       "id": "DEF-P2P-AUTOPOST-OFF",
@@ -191,210 +197,13 @@
   "renderedAt": "2026-10-11T00:00:00Z",
   "authoritativeVerdict": "NO_GO",
   "f07": {
-    "verdict": "PASS",
-    "passed": 8,
-    "failed": 0
+    "verdict": "NOT_RUN",
+    "passed": null,
+    "failed": null
   },
-  "gates": [
-    {
-      "name": "Sec1TwoFactor",
-      "status": "PASS",
-      "passed": 26,
-      "failed": 0,
-      "expected": 26
-    },
-    {
-      "name": "Sec2Rls",
-      "status": "PASS",
-      "passed": 39,
-      "failed": 0,
-      "expected": 39
-    },
-    {
-      "name": "Sec2bRls",
-      "status": "FAIL",
-      "passed": 13,
-      "failed": 1,
-      "expected": 14
-    },
-    {
-      "name": "Sec3Ids",
-      "status": "PASS",
-      "passed": 7,
-      "failed": 0,
-      "expected": 7
-    },
-    {
-      "name": "Sec4ProdRole",
-      "status": "FAIL",
-      "passed": 4,
-      "failed": 1,
-      "expected": 5
-    },
-    {
-      "name": "SecA",
-      "status": "PASS",
-      "passed": 27,
-      "failed": 0,
-      "expected": 27
-    },
-    {
-      "name": "RepairBatch1",
-      "status": "PASS",
-      "passed": 37,
-      "failed": 0,
-      "expected": 37
-    },
-    {
-      "name": "P8aProcurement",
-      "status": "PASS",
-      "passed": 24,
-      "failed": 0,
-      "expected": 24
-    },
-    {
-      "name": "P8cThreeWay",
-      "status": "PASS",
-      "passed": 14,
-      "failed": 0,
-      "expected": 14
-    },
-    {
-      "name": "P8cFix",
-      "status": "PASS",
-      "passed": 22,
-      "failed": 0,
-      "expected": 22
-    },
-    {
-      "name": "P15Purchasing",
-      "status": "PASS",
-      "passed": 25,
-      "failed": 0,
-      "expected": 25
-    },
-    {
-      "name": "P10StockAtomicMem",
-      "status": "PASS",
-      "passed": 12,
-      "failed": 0,
-      "expected": 12
-    },
-    {
-      "name": "P11TransfersMem",
-      "status": "PASS",
-      "passed": 12,
-      "failed": 0,
-      "expected": 12
-    },
-    {
-      "name": "P12ApprovalsMem",
-      "status": "PASS",
-      "passed": 35,
-      "failed": 0,
-      "expected": 35
-    },
-    {
-      "name": "P13Costing",
-      "status": "PASS",
-      "passed": 50,
-      "failed": 0,
-      "expected": 50
-    },
-    {
-      "name": "P14AutoJournals",
-      "status": "PASS",
-      "passed": 24,
-      "failed": 0,
-      "expected": 24
-    },
-    {
-      "name": "P16Recon",
-      "status": "PASS",
-      "passed": 14,
-      "failed": 0,
-      "expected": 14
-    },
-    {
-      "name": "P17Attachments",
-      "status": "PASS",
-      "passed": 29,
-      "failed": 0,
-      "expected": 29
-    },
-    {
-      "name": "P18WarehouseScope",
-      "status": "PASS",
-      "passed": 19,
-      "failed": 0,
-      "expected": 19
-    },
-    {
-      "name": "P2002Migrations",
-      "status": "PASS",
-      "passed": 8,
-      "failed": 0,
-      "expected": 8
-    },
-    {
-      "name": "F1Standards",
-      "status": "PASS",
-      "passed": 71,
-      "failed": 0,
-      "expected": 71
-    },
-    {
-      "name": "F2Decisions",
-      "status": "PASS",
-      "passed": 51,
-      "failed": 0,
-      "expected": 51
-    },
-    {
-      "name": "F3Acceptance",
-      "status": "PASS",
-      "passed": 19,
-      "failed": 0,
-      "expected": 19
-    },
-    {
-      "name": "F4StockShadow",
-      "status": "PASS",
-      "passed": 14,
-      "failed": 0,
-      "expected": 14
-    },
-    {
-      "name": "FixJ1Accounts",
-      "status": "PASS",
-      "passed": 24,
-      "failed": 0,
-      "expected": 24
-    },
-    {
-      "name": "PgDateMapping",
-      "status": "PASS",
-      "passed": 14,
-      "failed": 0,
-      "expected": 14
-    },
-    {
-      "name": "PgMovementLogic",
-      "status": "PASS",
-      "passed": 4,
-      "failed": 0,
-      "expected": 4
-    },
-    {
-      "name": "P9Validation",
-      "status": "PASS",
-      "passed": 144,
-      "failed": 0,
-      "expected": null
-    }
-  ],
+  "gates": [],
   "testExecutionMetrics": {
-    "status": "HAS_FAILURES",
+    "status": "NOT_RUN",
     "evidenceDir": "evidence/reconcile-audit-b"
   },
   "canonicalAuditFiles": [

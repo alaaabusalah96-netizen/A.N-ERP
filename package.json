@@ -26,6 +26,7 @@
     "verify:f2:pg": "tsx scripts/verifyF2DecisionsPg.ts",
     "verify:seca": "tsx scripts/verifySecA.ts",
     "verify:seca:pg": "tsx scripts/verifySecAPg.ts",
+    "verify:fix-p1-custody": "tsx scripts/verifyFixP1Custody.ts",
     "test:e2e": "tsx scripts/runPhase4_6E2E.ts"
   },
   "dependencies": {

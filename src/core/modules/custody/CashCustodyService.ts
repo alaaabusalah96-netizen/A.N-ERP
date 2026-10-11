@@ -620,15 +620,8 @@ export class CashCustodyService {
       }
     }
 
-    // Load custody to restore balance (only after the reversal journal really posted)
-    const custodyRes = await this.port.getCashCustody(tenantId, voucher.custodyId);
-    if (custodyRes.success && custodyRes.data) {
-      const custody = custodyRes.data;
-      await this.port.updateCashCustody(tenantId, custody.id, {
-        currentBalance: custody.currentBalance + voucher.totalAmount,
-      });
-    }
-
+    // DEF-CUSTODY-REVERSAL-DOUBLE-REFUND: balance restored ONLY inside
+    // reverseCustodyExpenseVoucher (InMemory + Postgres). Do not credit here.
     return this.port.reverseCustodyExpenseVoucher(tenantId, voucher.id, input.performedBy, input.idempotencyKey);
   }
 

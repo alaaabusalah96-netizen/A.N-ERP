@@ -1,39 +1,10 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-11 — SEC-A + REPO-B (CSP default, trust proxy, per-tenant lockout, error hygiene, fuzz cap, test drift, repo cleanup, state register)
+**Last update**: 2026-10-12 — FIX-P1-CUSTODY: expense voucher reversal restores custody balance exactly once
 **Verdict**: **NO GO** (rendered 2026-10-11)
 
 ## Gates
-| Gate | Status | Passed | Failed | Expected |
-|---|---|---|---|---|
-| Sec1TwoFactor | PASS | 26 | 0 | 26 |
-| Sec2Rls | PASS | 39 | 0 | 39 |
-| Sec2bRls | FAIL | 13 | 1 | 14 |
-| Sec3Ids | PASS | 7 | 0 | 7 |
-| Sec4ProdRole | FAIL | 4 | 1 | 5 |
-| SecA | PASS | 27 | 0 | 27 |
-| RepairBatch1 | PASS | 37 | 0 | 37 |
-| P8aProcurement | PASS | 24 | 0 | 24 |
-| P8cThreeWay | PASS | 14 | 0 | 14 |
-| P8cFix | PASS | 22 | 0 | 22 |
-| P15Purchasing | PASS | 25 | 0 | 25 |
-| P10StockAtomicMem | PASS | 12 | 0 | 12 |
-| P11TransfersMem | PASS | 12 | 0 | 12 |
-| P12ApprovalsMem | PASS | 35 | 0 | 35 |
-| P13Costing | PASS | 50 | 0 | 50 |
-| P14AutoJournals | PASS | 24 | 0 | 24 |
-| P16Recon | PASS | 14 | 0 | 14 |
-| P17Attachments | PASS | 29 | 0 | 29 |
-| P18WarehouseScope | PASS | 19 | 0 | 19 |
-| P2002Migrations | PASS | 8 | 0 | 8 |
-| F1Standards | PASS | 71 | 0 | 71 |
-| F2Decisions | PASS | 51 | 0 | 51 |
-| F3Acceptance | PASS | 19 | 0 | 19 |
-| F4StockShadow | PASS | 14 | 0 | 14 |
-| FixJ1Accounts | PASS | 24 | 0 | 24 |
-| PgDateMapping | PASS | 14 | 0 | 14 |
-| PgMovementLogic | PASS | 4 | 0 | 4 |
-| P9Validation | PASS | 144 | 0 | — |
+_Gates were not run in this render. Run `npm test` to execute them and refresh this file._
 
 ## Packages
 - **PH0-7.6** — DONE — Core, accounting, inventory, approvals, atomic stock documents _(evidence: evidence/phase-0 .. phase-7.6)_
@@ -45,11 +16,12 @@
 - **SEC-A** — DONE — Strict CSP by default in production, trust proxy, per-tenant login lockout, no raw internal errors to clients, bounded fuzz _(evidence: scripts/verifySecA.ts (27), scripts/verifySecAPg.ts)_
 - **REPO-B** — DONE — Repository cleanup, npm test, engines, state register _(evidence: this file + scripts/runReconcileAuditB.ts)_
 - **PH8-REMAINDER** — OPEN — Purchase returns, auto purchase request from reorder point, supplier-invoices tab in the purchasing UI _(evidence: not built)_
+- **FIX-P1-CUSTODY** — DONE — DEF-CUSTODY-REVERSAL-DOUBLE-REFUND — single balance restore on reverse _(evidence: scripts/verifyFixP1Custody.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
 |---|---|---|---|---|
-| DEF-CUSTODY-REVERSAL-DOUBLE-REFUND | P1 | **OPEN** | Reversing a custody expense voucher restores the custody balance twice | Reproduced on v73 (InMemory): custody 700, reverse a 300 voucher => 1300 (expected 1000). CashCustodyService.returnCustodyExpense calls updateCashCustody(+amount) and the adapter reverseCustodyExpenseVoucher (PostgreSQL and InMemory) also adds the amount. — Fix: Restore the balance in exactly one place, add a regression test on balance after reversal. |
+| DEF-CUSTODY-REVERSAL-DOUBLE-REFUND | P1 | **FIXED** | Reversing a custody expense voucher restores the custody balance twice | scripts/verifyFixP1Custody.ts; single restore in reverseCustodyExpenseVoucher only |
 | DEF-P2P-AUTOPOST-OFF | P1 | **OPEN** | Supplier invoice approval is wrong under the default stock-accounting config (autoPostEnabled=false) | Reproduced on v73 (InMemory): receive 10 x 8 then approve the invoice => AP -80, GR/IR +80, inventory asset 0 (correct only when autoPostEnabled=true: inventory +80, AP -80, GR/IR 0). approveSupplierInvoice debits GR/IR regardless of autoPostEnabled. — Fix: When autoPostEnabled=false debit the inventory accounts instead of GR/IR (or refuse approval), plus a two-mode regression test. |
 | PROD-ROLE-BYPASSRLS | P2 | **CONFIG** | The application database role may bypass RLS | INFO: DB role bypasses RLS = true in evidence/standards-intelligence/battery-output-f2-pg.txt. Guide: docs/ops/PROD-PG-ROLE.md; probe: scripts/verifySec4ProdRole.ts. |
 | DEF-P1-001 | P1 | **FIXED** | Stock count approval atomicity | scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review) |
