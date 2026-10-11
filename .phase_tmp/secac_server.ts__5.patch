@@ -1,0 +1,118 @@
+--- a/server.ts
++++ b/server.ts
+@@ -4594,7 +4594,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم ترحيل إذن المرتجع المخزني وعكس الأثر المالي بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4628,7 +4628,7 @@
+         return res.json({ success: true, data });
+       }
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4642,7 +4642,7 @@
+       if (!result.success) return res.status(500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4662,7 +4662,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ تسعيرة الصنف بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4678,7 +4678,7 @@
+       if (!result.success) return res.status(500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4695,7 +4695,7 @@
+       res.setHeader('Content-Type', 'image/svg+xml');
+       return res.send(svg);
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4835,7 +4835,7 @@
+       if (!result.success) return res.status(500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4914,7 +4914,7 @@
+       if (!result.success) return res.status((result.error as any)?.status || 500).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ المرفق بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4929,7 +4929,7 @@
+       if (!result.success) return res.status(500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4943,7 +4943,7 @@
+       if (!result.data) return res.status(404).json({ error: 'سند الصرف غير موجود' });
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4968,7 +4968,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم إلغاء سند الصرف وعكس القيد وإعادة الرصيد للعهدة بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4993,7 +4993,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم إلغاء المصروف وترحيل القيد العكسي بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -5068,7 +5068,7 @@
+ 
+       return res.json({ success: true, html });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });

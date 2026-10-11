@@ -8,8 +8,15 @@
 
 import type { StoragePort, GeoLocation, LoginAttemptRecord, ActiveSessionRecord } from '../storage/StoragePort';
 import { InMemoryAdapter } from '../storage/adapters/InMemoryAdapter';
+import crypto from 'crypto';
 
 export type { GeoLocation, LoginAttemptRecord, ActiveSessionRecord };
+
+/** SEC-A: failed-login counters are keyed by (tenant, username), never by the bare username. Fits user_id VARCHAR(64). */
+export function loginLockKey(tenantId: string, username: string): string {
+  const h = crypto.createHash('sha256').update(`${String(tenantId)}\u0000${String(username).trim().toLowerCase()}`).digest('hex').slice(0, 40);
+  return `lk:${h}`;
+}
 
 export interface LockoutStatus {
   isLocked: boolean;

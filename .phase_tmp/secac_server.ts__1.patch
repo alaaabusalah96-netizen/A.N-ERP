@@ -1,0 +1,137 @@
+--- a/server.ts
++++ b/server.ts
+@@ -3533,7 +3533,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ المستودع بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3552,7 +3552,7 @@
+       if (!result.success) return res.status(500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3565,7 +3565,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم إضافة موقع التخزين الفرعي بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3583,7 +3583,7 @@
+       if (!result.success) return res.status(500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3598,7 +3598,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ بطاقة الصنف بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3612,7 +3612,7 @@
+       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3633,7 +3633,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.json({ success: true, data: result.data, message: 'تم تحديث إعدادات المخزون' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3648,7 +3648,7 @@
+       const result = await svc.listPurchaseOrders(tenantId, { status: req.query.status as string, vendorId: req.query.vendorId as string });
+       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+       return res.json({ success: true, data: result.data });
+-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
++    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+   });
+   app.post('/api/purchasing/orders', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+     try {
+@@ -3670,7 +3670,7 @@
+       });
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data });
+-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
++    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+   });
+   app.get('/api/purchasing/orders/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+     try {
+@@ -3681,7 +3681,7 @@
+       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+       if (!result.data) return res.status(404).json({ success: false, error: { detail: 'غير موجود' } });
+       return res.json({ success: true, data: result.data });
+-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
++    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+   });
+   app.post('/api/purchasing/orders/:id/open', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+     try {
+@@ -3692,7 +3692,7 @@
+       const result = await svc.openPurchaseOrder(tenantId, req.params.id, userId);
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.json({ success: true, data: result.data });
+-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
++    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+   });
+   app.post('/api/purchasing/orders/:id/close', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+     try {
+@@ -3703,7 +3703,7 @@
+       const result = await svc.closePurchaseOrder(tenantId, req.params.id, userId);
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.json({ success: true, data: result.data });
+-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
++    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+   });
+   app.post('/api/purchasing/orders/:id/cancel', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+     try {
+@@ -3714,7 +3714,7 @@
+       const result = await svc.cancelPurchaseOrder(tenantId, req.params.id, userId);
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.json({ success: true, data: result.data });
+-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
++    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+   });
+   app.get('/api/purchasing/receipts', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
+     try {
+@@ -3724,7 +3724,7 @@
+       const result = await svc.listGoodsReceipts(tenantId, { poId: req.query.poId as string, status: req.query.status as string });
+       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+       return res.json({ success: true, data: result.data });
+-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
++    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+   });
+   app.post('/api/purchasing/receipts', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
+     try {
+@@ -3750,7 +3750,7 @@
+       });
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data });
+-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
++    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+   });
+   app.get('/api/purchasing/receipts/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
+     try {

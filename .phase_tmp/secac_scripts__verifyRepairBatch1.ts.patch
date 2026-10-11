@@ -1,0 +1,61 @@
+--- a/scripts/verifyRepairBatch1.ts
++++ b/scripts/verifyRepairBatch1.ts
+@@ -31,7 +31,7 @@
+   const ne = new NumberingEngine(st);
+   const inv = new InventoryService(st, pe, ne);
+   const T = `rb1-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+-  for (const [code, type] of [['520101', 'EXPENSE'], ['110301', 'ASSET'], ['410101', 'REVENUE'], ['210101', 'LIABILITY'], ['510101', 'EXPENSE']] as const) {
++  for (const [code, type] of [['5209', 'EXPENSE'], ['1105', 'ASSET'], ['4203', 'REVENUE'], ['2101', 'LIABILITY'], ['5101', 'EXPENSE']] as const) {
+     await st.saveAccount(T, { code, tenantId: T, nameAr: code, type, isActive: true, debitBalance: 0, creditBalance: 0, balance: 0 } as any, `acc-${code}-${T}`);
+   }
+   const wh = (await st.saveWarehouse(T, { id: `W-${T}`.slice(0, 60), tenantId: T, companyId: T, code: 'W1', nameAr: 'رئيسي', isActive: true, valuationMethod: 'WEIGHTED_AVERAGE', createdAt: now() } as any, `wh-${T}`)).data!;
+@@ -91,7 +91,7 @@
+     check('(count) approve ok, count POSTED with a journal id', a1.success && a1.data?.status === 'POSTED' && !!a1.data?.journalEntryId, a1.error?.detail || '');
+     check('(count) stock adjusted: A=80, B=55', (await bal(A)) === 80 && (await bal(B)) === 55, `A=${await bal(A)} B=${await bal(B)}`);
+     const je1 = a1.data?.journalEntryId ? (await st.getJournalEntry(T, a1.data.journalEntryId)).data : null;
+-    check('(count) journal POSTED: Dr 520101 = 100, Cr 110301 = 100', !!je1 && je1.status === 'POSTED' && near(je1.lines.find((l: any) => l.accountCode === '520101')?.debit, 100) && near(je1.lines.find((l: any) => l.accountCode === '110301')?.credit, 100));
++    check('(count) journal POSTED: Dr 5209 = 100, Cr 1105 = 100', !!je1 && je1.status === 'POSTED' && near(je1.lines.find((l: any) => l.accountCode === '5209')?.debit, 100) && near(je1.lines.find((l: any) => l.accountCode === '1105')?.credit, 100));
+ 
+     // (2) atomic failure: stock moved after the count, so one line can no longer be adjusted -> NOTHING changes
+     const c2 = await mkCount('c2', [[A, 0], [B, 60]]);
+@@ -104,11 +104,11 @@
+     check('(count) rejected approval posted NO journal and the count is NOT POSTED', (await jeCount('JE-ADJ')).length === jeBefore && cnt2?.status !== 'POSTED', `status=${cnt2?.status}`);
+ 
+     // (3) journal pre-check: an inactive account stops everything BEFORE any stock change
+-    await st.saveAccount(T, { code: '520101', tenantId: T, nameAr: 'x', type: 'EXPENSE', isActive: false, status: 'INACTIVE', debitBalance: 0, creditBalance: 0, balance: 0 } as any, `acc-off-${T}`);
++    await st.saveAccount(T, { code: '5209', tenantId: T, nameAr: 'x', type: 'EXPENSE', isActive: false, status: 'INACTIVE', debitBalance: 0, creditBalance: 0, balance: 0 } as any, `acc-off-${T}`);
+     const c3 = await mkCount('c3', [[A, 5]]);
+     const a3 = await approve(c3.data!.id, 'a3');
+     check('(count) inactive journal account => 422 and no stock change', !a3.success && a3.error?.status === 422 && (await bal(A)) === 10, `status=${a3.error?.status} A=${await bal(A)}`);
+-    await st.saveAccount(T, { code: '520101', tenantId: T, nameAr: 'x', type: 'EXPENSE', isActive: true, status: 'ACTIVE', debitBalance: 0, creditBalance: 0, balance: 0 } as any, `acc-on-${T}`);
++    await st.saveAccount(T, { code: '5209', tenantId: T, nameAr: 'x', type: 'EXPENSE', isActive: true, status: 'ACTIVE', debitBalance: 0, creditBalance: 0, balance: 0 } as any, `acc-on-${T}`);
+ 
+     // (4) the journal fails AFTER the stock step: count stays un-POSTED; a retry (even with a NEW key) never adjusts twice and completes the journal
+     flags.failPost = true;
+@@ -141,7 +141,7 @@
+     const rt = await inv.retryStockDocumentJournal(T, r1.data!.id, 'retry-1');
+     check('(return) retry route posts the return journal', rt.success && rt.data?.journalStatus === 'POSTED', rt.error?.detail || JSON.stringify(rt.data));
+     const je = (await jeCount(`JE-${r1.data!.documentNumber}`));
+-    check('(return) exactly one entry: Dr 210101 = 100, Cr 110301 = 100', je.length === 1 && near(je[0].lines.find((l: any) => l.accountCode === '210101')?.debit, 100) && near(je[0].lines.find((l: any) => l.accountCode === '110301')?.credit, 100));
++    check('(return) exactly one entry: Dr 2101 = 100, Cr 1105 = 100', je.length === 1 && near(je[0].lines.find((l: any) => l.accountCode === '2101')?.debit, 100) && near(je[0].lines.find((l: any) => l.accountCode === '1105')?.credit, 100));
+     const rt2 = await inv.retryStockDocumentJournal(T, r1.data!.id, 'retry-2');
+     check('(return) a second retry is harmless (still one entry)', rt2.success && (await jeCount(`JE-${r1.data!.documentNumber}`)).length === 1);
+ 
+@@ -152,7 +152,7 @@
+     check('(return) journal DRAFT fails => PENDING_RETRY with no journal id', r2.success && r2.data?.journalStatus === 'PENDING_RETRY' && !r2.data?.journalEntryId, `status=${r2.data?.journalStatus}`);
+     const rt3 = await inv.retryStockDocumentJournal(T, r2.data!.id, 'retry-3');
+     const je2 = await jeCount(`JE-${r2.data!.documentNumber}`);
+-    check('(return) retry after a draft failure posts: Dr 110301, Cr 510101', rt3.success && rt3.data?.journalStatus === 'POSTED' && je2.length === 1 && !!je2[0].lines.find((l: any) => l.accountCode === '510101' && l.credit > 0), rt3.error?.detail || '');
++    check('(return) retry after a draft failure posts: Dr 1105, Cr 5101', rt3.success && rt3.data?.journalStatus === 'POSTED' && je2.length === 1 && !!je2[0].lines.find((l: any) => l.accountCode === '5101' && l.credit > 0), rt3.error?.detail || '');
+   });
+ 
+   // ---------- DEF-P1-003: custody voucher / custody return / expense reversal ----------
+@@ -231,7 +231,7 @@
+     const inv = new InventoryService(st, pe, ne);
+     const svc = new PurchasingService(st, new ApprovalEngine(st), ne, inv);
+     const T = `rb1gr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+-    for (const [code, type] of [['1105', 'ASSET'], ['2106', 'LIABILITY'], ['5101', 'EXPENSE'], ['1109', 'ASSET']] as const) {
++    for (const [code, type] of [['1105', 'ASSET'], ['2101', 'LIABILITY'], ['5101', 'EXPENSE'], ['1109', 'ASSET']] as const) {
+       await st.saveAccount(T, { code, tenantId: T, nameAr: code, type, isActive: true, debitBalance: 0, creditBalance: 0, balance: 0 } as any, `a-${code}-${T}`);
+     }
+     await inv.saveStockAccountingConfig(T, { autoPostEnabled: true }, 'u', `cfg-${T}`);
