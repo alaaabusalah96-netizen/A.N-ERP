@@ -3533,7 +3533,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ المستودع بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3552,7 +3552,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3565,7 +3565,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data, message: 'تم إضافة موقع التخزين الفرعي بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3583,7 +3583,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3598,7 +3598,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ بطاقة الصنف بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3612,7 +3612,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3633,7 +3633,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data, message: 'تم تحديث إعدادات المخزون' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3648,7 +3648,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.listPurchaseOrders(tenantId, { status: req.query.status as string, vendorId: req.query.vendorId as string });
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/orders', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -3670,7 +3670,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       });
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.get('/api/purchasing/orders/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
     try {
@@ -3681,7 +3681,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       if (!result.data) return res.status(404).json({ success: false, error: { detail: 'غير موجود' } });
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/orders/:id/open', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -3692,7 +3692,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.openPurchaseOrder(tenantId, req.params.id, userId);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/orders/:id/close', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -3703,7 +3703,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.closePurchaseOrder(tenantId, req.params.id, userId);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/orders/:id/cancel', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -3714,7 +3714,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.cancelPurchaseOrder(tenantId, req.params.id, userId);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.get('/api/purchasing/receipts', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
@@ -3724,7 +3724,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.listGoodsReceipts(tenantId, { poId: req.query.poId as string, status: req.query.status as string });
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/receipts', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
     try {
@@ -3750,7 +3750,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       });
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.get('/api/purchasing/receipts/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
@@ -3761,7 +3761,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       if (!result.data) return res.status(404).json({ success: false, error: { detail: 'غير موجود' } });
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/receipts/:id/approve', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
     try {
@@ -3775,7 +3775,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.approveReceipt(tenantId, req.params.id, userId, role, key);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/receipts/:id/reject', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
     try {
@@ -3790,7 +3790,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.rejectReceipt(tenantId, req.params.id, userId, role, reason, key);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/receipts/:id/retry-post', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
     try {
@@ -3802,7 +3802,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.retryPostReceipt(tenantId, req.params.id, key);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
 
 
@@ -3815,7 +3815,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.listPurchaseRequests(tenantId, { status: req.query.status as string, requestedBy: req.query.requestedBy as string });
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.get('/api/purchasing/requests/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
     try {
@@ -3826,7 +3826,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       if (!result.data) return res.status(404).json({ success: false, error: { detail: 'طلب الشراء غير موجود' } });
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/requests', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -3856,7 +3856,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       });
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/requests/:id/submit', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -3867,7 +3867,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.submitPurchaseRequest(tenantId, req.params.id, userId);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/requests/:id/approve', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -3878,7 +3878,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.approvePurchaseRequest(tenantId, req.params.id, userId);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/requests/:id/reject', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -3890,7 +3890,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.rejectPurchaseRequest(tenantId, req.params.id, userId, reason);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/requests/:id/convert-to-po', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -3910,7 +3910,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       });
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
 
   app.get('/api/purchasing/rfqs', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
@@ -3921,7 +3921,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.listRfqs(tenantId, { status: req.query.status as string, prId: req.query.prId as string });
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.get('/api/purchasing/rfqs/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
     try {
@@ -3932,7 +3932,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       if (!result.data) return res.status(404).json({ success: false, error: { detail: 'طلب عرض السعر غير موجود' } });
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/rfqs', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -3957,7 +3957,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       });
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/rfqs/:id/send', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -3968,7 +3968,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.sendRfq(tenantId, req.params.id, userId);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
 
   app.get('/api/purchasing/quotes', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
@@ -3983,7 +3983,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       });
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.get('/api/purchasing/quotes/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
     try {
@@ -3994,7 +3994,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       if (!result.data) return res.status(404).json({ success: false, error: { detail: 'عرض المورد غير موجود' } });
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/quotes', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -4024,7 +4024,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       });
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/quotes/:id/select', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -4035,7 +4035,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.selectSupplierQuote(tenantId, req.params.id, userId);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/quotes/:id/convert-to-po', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -4048,7 +4048,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.convertQuoteToPO(tenantId, { quoteId: req.params.id, actorId: userId, idempotencyKey: key });
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
 
 
@@ -4060,7 +4060,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.listSupplierInvoices(tenantId, { status: req.query.status as string, poId: req.query.poId as string, vendorId: req.query.vendorId as string });
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.get('/api/purchasing/invoices/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
     try {
@@ -4070,7 +4070,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       if (!result.data) return res.status(404).json({ success: false, error: { detail: 'فاتورة المورد غير موجودة' } });
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/invoices', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -4093,7 +4093,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       });
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/invoices/:id/match', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
     try {
@@ -4102,7 +4102,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.runThreeWayMatch(tenantId, req.params.id);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/invoices/:id/approve', requireAuth, requirePermission('SUPPLIER_INVOICE_APPROVE'), async (req: Request, res: Response) => {
     try {
@@ -4113,7 +4113,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.approveSupplierInvoice(tenantId, req.params.id, userId, key);
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.post('/api/purchasing/invoices/:id/reject', requireAuth, requirePermission('SUPPLIER_INVOICE_APPROVE'), async (req: Request, res: Response) => {
     try {
@@ -4123,7 +4123,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       const result = await svc.rejectSupplierInvoice(tenantId, req.params.id, userId, (req.body || {}).reason || 'مرفوضة');
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
 
   // Phase 14 (ACC-AUTO-001)
@@ -4136,7 +4136,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
   app.put('/api/inventory/accounting-config', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
@@ -4158,7 +4158,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data, message: 'تم تحديث إعدادات محاسبة المخزون' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
   app.post('/api/inventory/documents/:id/post-journal', requireAuth, requirePermission('ENTRY_POST'), async (req: Request, res: Response) => {
@@ -4172,7 +4172,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4188,7 +4188,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4208,7 +4208,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       const data = allowed === null ? result.data : (result.data || []).filter((r: any) => allowed.has(r.warehouseId));
       return res.json({ success: true, data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4233,7 +4233,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       const data = allowed === null ? result.data : (result.data || []).filter((r: any) => allowed.has(r.warehouseId));
       return res.json({ success: true, data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4263,7 +4263,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data, message: 'تم تسجيل التوريد المخزني واحتساب التكلفة بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4293,7 +4293,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data, message: 'تم صرف الأصناف وتحديث الأرصدة بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4315,7 +4315,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       const data = allowed === null ? result.data : (result.data || []).filter((t: any) => allowed.has(t.sourceWarehouseId) || allowed.has(t.targetWarehouseId));
       return res.json({ success: true, data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4344,7 +4344,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data, message: 'تم إنشاء مستند التحويل وإرسال البضاعة بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4367,7 +4367,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       }
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4387,7 +4387,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!existing.success || !existing.data) return res.status(404).json({ error: 'مستند التحويل غير موجود' });
       return res.json({ success: true, data: existing.data, message: 'التحويل أُرسل عند إنشائه، والخصم من مستودع المصدر تم وقتها.' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4418,7 +4418,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data, message: 'تم تأكيد استلام الشحنة وإيداعها بالمستودع بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4441,7 +4441,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       const data = allowed === null ? result.data : (result.data || []).filter((c: any) => allowed.has(c.warehouseId));
       return res.json({ success: true, data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4470,7 +4470,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ محضر الجرد واحتساب الفروقات بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4493,7 +4493,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       }
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4517,7 +4517,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data, message: 'تم اعتماد محضر الجرد وترحيل قيود التسوية المتوازنة بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4543,7 +4543,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       const data = allowed === null ? result.data : (result.data || []).filter((d: any) => allowed.has(d.warehouseId));
       return res.json({ success: true, data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4564,7 +4564,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       }
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4594,7 +4594,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data, message: 'تم ترحيل إذن المرتجع المخزني وعكس الأثر المالي بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4628,7 +4628,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
         return res.json({ success: true, data });
       }
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4642,7 +4642,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4662,7 +4662,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ تسعيرة الصنف بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4678,7 +4678,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4695,7 +4695,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       res.setHeader('Content-Type', 'image/svg+xml');
       return res.send(svg);
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4835,7 +4835,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4914,7 +4914,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status((result.error as any)?.status || 500).json(result.error);
       return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ المرفق بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4929,7 +4929,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4943,7 +4943,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.data) return res.status(404).json({ error: 'سند الصرف غير موجود' });
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4968,7 +4968,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data, message: 'تم إلغاء سند الصرف وعكس القيد وإعادة الرصيد للعهدة بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -4993,7 +4993,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
       return res.json({ success: true, data: result.data, message: 'تم إلغاء المصروف وترحيل القيد العكسي بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -5068,7 +5068,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
 
       return res.json({ success: true, html });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 

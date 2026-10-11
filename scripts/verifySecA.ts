@@ -58,3 +58,21 @@ async function main() {
   check('E2 JS runtime errors and connection errors are hidden', !hid2.includes('Cannot read') && !publicErrorMessage(new Error('connect ECONNREFUSED 10.0.0.5:5432'), { expose: false, log }).includes('10.0.0.5'));
   const before = logs.length;
   check('E3 an Arabic business message written by our code passes through unchanged and is not logged', publicErrorMessage(new Error('السند معكوس مسبقاً.'), { expose: false, log }) === 'السند معكوس مسبقاً.' && logs.length === before);
+  check('E4 an Arabic message that carries SQL/stack markers, multi-line text or huge text is still hidden', [new Error('فشل: violates unique constraint "uq_x"'), new Error('خطأ\nat Object.<anonymous> (/app/server.ts:10:5)'), new Error('ا'.repeat(401))].every(e => publicErrorMessage(e, { expose: false, log }).startsWith('حدث خطأ داخلي')));
+  check('E5 err.expose=true is returned as is; the debug switch (expose option) returns the raw message', publicErrorMessage(Object.assign(new Error('Bad input'), { expose: true }), { expose: false, log }) === 'Bad input' && publicErrorMessage(new Error('raw detail'), { expose: true }) === 'raw detail');
+  const r1 = publicErrorMessage(new Error('x1'), { expose: false, log }), r2 = publicErrorMessage(new Error('x1'), { expose: false, log });
+  check('E6 reference ids are unique per occurrence; non-Error values never throw', r1 !== r2 && ['str', null, undefined, 42, {}].every(v => typeof publicErrorMessage(v as any, { expose: false, log }) === 'string') && isClientSafeMessage('رسالة عادية') && !isClientSafeMessage('plain english'));
+
+  // ---- server.ts wiring (static)
+  const src = fs.readFileSync('server.ts', 'utf8'); const lines = src.split('\n');
+  const rawLeaks = lines.filter(l => /\b(err|e|error)\.message\b/.test(l) && !l.includes('console.'));
+  check('S1 no response in server.ts returns a raw error.message any more', rawLeaks.length === 0, rawLeaks.slice(0, 2).join(' || ').slice(0, 160));
+  check('S2 at least 120 error responses go through publicErrorMessage', (src.match(/publicErrorMessage\(/g) || []).length >= 120);
+  check('S3 login lockout uses the tenant-scoped key everywhere (no bare username) and a success clears it', !/checkLockout\(username\)|recordFailedAttempt\(username\)/.test(src) && (src.match(/lockKey/g) || []).length >= 6 && src.includes('clearFailedLoginAttempts(lockKey)'));
+  check('S4 CSP profile and trust proxy come from the tested resolvers; trust proxy is set before helmet and the rate limiter', src.includes('resolveCspProfile(process.env)') && !/process\.env\.CSP_PROFILE\s*===/.test(src) && src.indexOf("app.set('trust proxy'") > 0 && src.indexOf("app.set('trust proxy'") < src.indexOf('app.use(helmet(') && src.indexOf("app.set('trust proxy'") < src.indexOf("app.use('/api', apiRateLimiter)"));
+  check('S5 the fuzz endpoint validates iterations (bounded) and no longer trusts Number(req.body.iterations)', src.includes('parseFuzzIterations(req.body?.iterations)') && !src.includes('Number(req.body.iterations)'));
+
+  console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+  process.exit(fail ? 1 : 0);
+}
+main().catch(e => { console.error('FATAL', e); process.exit(2); });

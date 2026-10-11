@@ -1,2 +1,0 @@
-scripts/verifySecA.ts|secac_new1
-scripts/verifySecAPg.ts|secac_new2
