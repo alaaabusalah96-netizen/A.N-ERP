@@ -1,0 +1,22 @@
+--- a/src/core/auth/AnomalyDetector.ts
++++ b/src/core/auth/AnomalyDetector.ts
+@@ -8,9 +8,19 @@
+ 
+ import type { StoragePort, GeoLocation, LoginAttemptRecord, ActiveSessionRecord } from '../storage/StoragePort';
+ import { InMemoryAdapter } from '../storage/adapters/InMemoryAdapter';
++import crypto from 'crypto';
+ 
+ export type { GeoLocation, LoginAttemptRecord, ActiveSessionRecord };
+ 
++/**
++ * SEC-A: failed-login counters are keyed by (tenant, username), never by the bare username. The table is shared by all
++ * tenants, so a bare key let anyone lock the same username in ANOTHER company. Fits user_id VARCHAR(64) ('lk:' + 40 hex).
++ */
++export function loginLockKey(tenantId: string, username: string): string {
++  const h = crypto.createHash('sha256').update(`${String(tenantId)}\u0000${String(username).trim().toLowerCase()}`).digest('hex').slice(0, 40);
++  return `lk:${h}`;
++}
++
+ export interface LockoutStatus {
+   isLocked: boolean;
+   failedAttempts: number;

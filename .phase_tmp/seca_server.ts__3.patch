@@ -1,0 +1,191 @@
+--- a/server.ts
++++ b/server.ts
+@@ -2996,7 +2996,7 @@
+ 
+       return res.json({ success: true, data: result.data, message: 'تم تسجيل الصرف وخصم المبلغ من رصيد العهدة بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3011,7 +3011,7 @@
+       if (!result.success) return res.status(500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3044,7 +3044,7 @@
+         message: 'تم ترحيل قيد تسوية العهدة وتجديد الرصيد عبر محرك الترحيل بنجاح',
+       });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3059,7 +3059,7 @@
+       if (!result.success) return res.status(500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3072,7 +3072,7 @@
+       const clearance = await svc.checkEmployeeClearance(tenantId, req.params.employeeId);
+       return res.json({ success: true, data: clearance });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3101,7 +3101,7 @@
+ 
+       return res.json({ success: true, data: result.data, message: 'تم إقفال وتصفية العهدة النقدية نهائياً' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3137,7 +3137,7 @@
+ 
+       return res.json({ success: true, data: result.data, message: 'تم تحويل مسؤولية العهدة النقدية بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3170,7 +3170,7 @@
+       if (!result.success) return res.status(500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3194,7 +3194,7 @@
+       if (!result.success) return res.status(400).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3224,7 +3224,7 @@
+       }
+       return res.json({ success: true, data: items });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3250,7 +3250,7 @@
+ 
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3283,7 +3283,7 @@
+         message: 'تم رفع طلب المصروفات وبدء مسار الاعتماد بنجاح',
+       });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3318,7 +3318,7 @@
+           : 'تم اعتماد المستوى الأول بنجاح وتصعيد الطلب للمدير المالي (L2)',
+       });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3352,7 +3352,7 @@
+         message: 'تم الاعتماد النهائي وترحيل القيد المحاسبي المتوازن لطلب المصروفات بنجاح',
+       });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3385,7 +3385,7 @@
+         message: 'تم رفض طلب المصروفات وتحديث الحالة بنجاح',
+       });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3418,7 +3418,7 @@
+       if (!storage) return;
+       const out = await new RuleExplanationService(storage).explainJournal((req as any).authContext.tenantId, String(req.params.entryId));
+       return res.status(out.found ? 200 : 404).json({ success: out.found, data: out });
+-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
++    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+   });
+   app.get('/api/standards/explain/decision/:id', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
+     try {
+@@ -3426,7 +3426,7 @@
+       if (!storage) return;
+       const out = await new RuleExplanationService(storage).explainDecision((req as any).authContext.tenantId, String(req.params.id));
+       return res.status(out.found ? 200 : 404).json({ success: out.found, data: out });
+-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
++    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+   });
+   app.get('/api/standards/decisions', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
+     try {
+@@ -3437,7 +3437,7 @@
+       const result = await new StandardsDecisionService(storage).findDecisions((req as any).authContext.tenantId, { eventType: q.eventType, eventId: q.eventId, journalEntryId: q.journalEntryId, status: q.status, limit });
+       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+       return res.json({ success: true, data: result.data });
+-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
++    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+   });
+ 
+   // Phase 7 Acceptance Battery Endpoint (Internal / Auditor)
+@@ -3458,7 +3458,7 @@
+       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+   app.put('/api/inventory/warehouse-access/:userId', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
+@@ -3494,7 +3494,7 @@
+       } catch { /* non-fatal */ }
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -3517,7 +3517,7 @@
+         return res.json({ success: true, data });
+       }
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 

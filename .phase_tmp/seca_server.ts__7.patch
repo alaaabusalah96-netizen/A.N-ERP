@@ -1,0 +1,173 @@
+--- a/server.ts
++++ b/server.ts
+@@ -4136,7 +4136,7 @@
+       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+   app.put('/api/inventory/accounting-config', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
+@@ -4158,7 +4158,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.json({ success: true, data: result.data, message: 'تم تحديث إعدادات محاسبة المخزون' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+   app.post('/api/inventory/documents/:id/post-journal', requireAuth, requirePermission('ENTRY_POST'), async (req: Request, res: Response) => {
+@@ -4172,7 +4172,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4188,7 +4188,7 @@
+       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4208,7 +4208,7 @@
+       const data = allowed === null ? result.data : (result.data || []).filter((r: any) => allowed.has(r.warehouseId));
+       return res.json({ success: true, data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4233,7 +4233,7 @@
+       const data = allowed === null ? result.data : (result.data || []).filter((r: any) => allowed.has(r.warehouseId));
+       return res.json({ success: true, data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4263,7 +4263,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم تسجيل التوريد المخزني واحتساب التكلفة بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4293,7 +4293,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم صرف الأصناف وتحديث الأرصدة بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4315,7 +4315,7 @@
+       const data = allowed === null ? result.data : (result.data || []).filter((t: any) => allowed.has(t.sourceWarehouseId) || allowed.has(t.targetWarehouseId));
+       return res.json({ success: true, data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4344,7 +4344,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم إنشاء مستند التحويل وإرسال البضاعة بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4367,7 +4367,7 @@
+       }
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4387,7 +4387,7 @@
+       if (!existing.success || !existing.data) return res.status(404).json({ error: 'مستند التحويل غير موجود' });
+       return res.json({ success: true, data: existing.data, message: 'التحويل أُرسل عند إنشائه، والخصم من مستودع المصدر تم وقتها.' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4418,7 +4418,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.json({ success: true, data: result.data, message: 'تم تأكيد استلام الشحنة وإيداعها بالمستودع بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4441,7 +4441,7 @@
+       const data = allowed === null ? result.data : (result.data || []).filter((c: any) => allowed.has(c.warehouseId));
+       return res.json({ success: true, data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4470,7 +4470,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ محضر الجرد واحتساب الفروقات بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4493,7 +4493,7 @@
+       }
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4517,7 +4517,7 @@
+       if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+       return res.json({ success: true, data: result.data, message: 'تم اعتماد محضر الجرد وترحيل قيود التسوية المتوازنة بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4543,7 +4543,7 @@
+       const data = allowed === null ? result.data : (result.data || []).filter((d: any) => allowed.has(d.warehouseId));
+       return res.json({ success: true, data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -4564,7 +4564,7 @@
+       }
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 

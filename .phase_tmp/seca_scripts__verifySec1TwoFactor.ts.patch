@@ -1,0 +1,11 @@
+--- a/scripts/verifySec1TwoFactor.ts
++++ b/scripts/verifySec1TwoFactor.ts
+@@ -96,7 +96,7 @@
+     check('(static) no fabricated "Riyadh" / "SA" location anywhere in server.ts', !/Riyadh/.test(src) && !/country:\s*'SA'/.test(src));
+     check('(static) 2FA is demanded only from enrolled users (mustEnforce2fa = twoFactorEnabled)', /const mustEnforce2fa = !!user\.twoFactorEnabled;/.test(login));
+     check('(static) an unknown location is never stored as a last-login position', /if \(location\) await anomalyDetector\.recordSuccessfulLogin/.test(login));
+-    check('(static) wrong 2FA codes feed the same lockout as wrong passwords', /twoFactorService\.verifyLoginSecondFactor[\s\S]{0,900}anomalyDetector\.recordFailedAttempt\(username\)/.test(login));
++    check('(static) wrong 2FA codes feed the same (tenant-scoped) lockout as wrong passwords', /twoFactorService\.verifyLoginSecondFactor[\s\S]{0,900}anomalyDetector\.recordFailedAttempt\(lockKey\)/.test(login));
+     const c = src.indexOf("app.post('/api/auth/2fa/setup'"), d = src.indexOf('// 1B — Company Settings');
+     const setup = src.slice(c, d);
+     check('(static) the 2FA setup routes never read a username from the request and use the session user', !/req\.body\.username|\{\s*username\s*\}\s*=\s*req\.body/.test(setup) && /authContext/.test(setup) && /userId: auth\.userId/.test(setup));

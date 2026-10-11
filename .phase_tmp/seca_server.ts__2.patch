@@ -1,0 +1,200 @@
+--- a/server.ts
++++ b/server.ts
+@@ -2625,7 +2625,7 @@
+       const dimensions = await svc.listDimensions(tenantId, type);
+       return res.json({ success: true, data: dimensions });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2637,7 +2637,7 @@
+       const dim = await svc.saveDimension(tenantId, req.body);
+       return res.json({ success: true, data: dim });
+     } catch (err: any) {
+-      return res.status(422).json({ success: false, error: err.message });
++      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2650,7 +2650,7 @@
+       const report = await svc.getDimensionAnalyticalReport(tenantId, type);
+       return res.json({ success: true, data: report });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2663,7 +2663,7 @@
+       const units = await svc.listUnits(tenantId);
+       return res.json({ success: true, data: units });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2675,7 +2675,7 @@
+       const items = await svc.listItems(tenantId);
+       return res.json({ success: true, data: items });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2687,7 +2687,7 @@
+       const saved = await svc.saveItem(tenantId, req.body);
+       return res.json({ success: true, data: saved, message: 'تم حفظ الصنف المحاسبي بنجاح' });
+     } catch (err: any) {
+-      return res.status(422).json({ success: false, error: err.message });
++      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2716,7 +2716,7 @@
+       const report = await svc.getTrialBalance(tenantId, req.query.asOfDate as string);
+       return res.json({ success: true, data: report });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2729,7 +2729,7 @@
+       const report = await svc.getIncomeStatement(tenantId, periodId);
+       return res.json({ success: true, data: report });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2742,7 +2742,7 @@
+       const report = await svc.getBalanceSheet(tenantId, periodId);
+       return res.json({ success: true, data: report });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2755,7 +2755,7 @@
+       const report = await svc.getCashFlowStatement(tenantId, periodId);
+       return res.json({ success: true, data: report });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2769,7 +2769,7 @@
+       const validation = svc.validateImportData(tenantId, req.body.rows || [], accounts);
+       return res.json(validation);
+     } catch (err: any) {
+-      return res.status(500).json({ isValid: false, error: err.message });
++      return res.status(500).json({ isValid: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2799,7 +2799,7 @@
+       const budgets = await svc.listBudgets(tenantId, year);
+       return res.json({ success: true, data: budgets });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2811,7 +2811,7 @@
+       const saved = await svc.saveBudget(tenantId, req.body);
+       return res.json({ success: true, data: saved, message: 'تم حفظ الموازنة التقديرية بنجاح' });
+     } catch (err: any) {
+-      return res.status(422).json({ success: false, error: err.message });
++      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2823,7 +2823,7 @@
+       const entries = await svc.listRecurringEntries(tenantId);
+       return res.json({ success: true, data: entries });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2838,7 +2838,7 @@
+       const entry = await svc.generateRecurringEntry(tenantId, req.params.id, userId, key);
+       return res.json({ success: true, data: entry, message: 'تم توليد وترحيل القيد الدوري بنجاح' });
+     } catch (err: any) {
+-      return res.status(422).json({ success: false, error: err.message });
++      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2861,7 +2861,7 @@
+       const log = await svc.runContinuousBalanceCheck(tenantId, simulate);
+       return res.json({ success: true, data: log });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2873,7 +2873,7 @@
+       const logs = await svc.getBalanceCheckHistory(tenantId);
+       return res.json({ success: true, data: logs });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2881,13 +2881,15 @@
+   app.post('/api/accounting/fuzz-test', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
+     try {
+       const tenantId = (req as any).authContext.tenantId;
+-      const iterations = req.body.iterations ? Number(req.body.iterations) : 1000;
++      const fz = parseFuzzIterations(req.body?.iterations);
++      if (!fz.ok) return res.status(400).json({ success: false, error: `iterations يجب أن يكون عددًا صحيحًا بين 1 و${fz.max}` });
++      const iterations = fz.value;
+       const svc = getAccountingService(req, res);
+       if (!svc) return;
+       const results = await svc.runFuzzTestingBattery(tenantId, iterations);
+       return res.json({ success: true, data: results });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2921,7 +2923,7 @@
+       if (!result.success) return res.status(500).json(result.error);
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2936,7 +2938,7 @@
+       if (!result.data) return res.status(404).json({ error: 'العهدة غير موجودة' });
+       return res.json({ success: true, data: result.data });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 
+@@ -2965,7 +2967,7 @@
+ 
+       return res.json({ success: true, data: result.data, message: 'تم فتح وتخصيص العهدة النقدية بنجاح' });
+     } catch (err: any) {
+-      return res.status(500).json({ success: false, error: err.message });
++      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+     }
+   });
+ 

@@ -1,0 +1,11 @@
+--- a/package.json
++++ b/package.json
+@@ -20,6 +20,8 @@
+     "verify:f1:pg": "tsx scripts/verifyF1StandardsPg.ts",
+     "verify:f2": "tsx scripts/verifyF2Decisions.ts",
+     "verify:f2:pg": "tsx scripts/verifyF2DecisionsPg.ts",
++    "verify:seca": "tsx scripts/verifySecA.ts",
++    "verify:seca:pg": "tsx scripts/verifySecAPg.ts",
+     "test:e2e": "tsx scripts/runPhase4_6E2E.ts"
+   },
+   "dependencies": {

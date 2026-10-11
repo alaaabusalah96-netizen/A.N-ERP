@@ -12,6 +12,8 @@ dotenv.config();
 
 import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
+import { resolveCspProfile, resolveTrustProxy, parseFuzzIterations } from './src/core/security/runtimeSecurity';
+import { publicErrorMessage } from './src/core/security/publicError';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import fs from 'fs';
@@ -34,7 +36,7 @@ import { ApprovalEngine } from './src/core/engines/ApprovalEngine';
 import { NumberingEngine } from './src/core/engines/NumberingEngine';
 import { JournalEntry, RFC7807Problem, User, ActiveSessionRecord, StoragePort, CompanyProfile, TenantCompany, CustomFieldDefinition } from './src/core/storage/StoragePort';
 import { TokenService } from './src/core/auth/TokenService';
-import { AnomalyDetector, GeoLocation } from './src/core/auth/AnomalyDetector';
+import { AnomalyDetector, GeoLocation, loginLockKey } from './src/core/auth/AnomalyDetector';
 import { EncryptionService } from './src/core/crypto/EncryptionService';
 import { SoDPolicyEngine } from './src/core/sod/SoDPolicyEngine';
 import { SoDMatrixService } from './src/core/sod/SoDMatrixService';
@@ -264,8 +266,17 @@ async function startServer() {
 
   const app = express();
 
-  // Wave 0: CSP Hardening & Profile Enforcement
-  const cspProfile = process.env.CSP_PROFILE === 'production' ? 'production' : 'development';
+  // SEC-A: behind Cloud Run / a reverse proxy the client IP comes from X-Forwarded-For. Without this every client shares the
+  // proxy's IP and rate limits/lockouts hit everyone at once. Never "trust all": explicit TRUST_PROXY, or 1 hop on Cloud Run.
+  const trustProxy = resolveTrustProxy(process.env);
+  if (trustProxy.value !== undefined) app.set('trust proxy', trustProxy.value);
+  console.log(`[SEC] trust proxy = ${String(trustProxy.value)} (${trustProxy.source})`);
+
+  // Wave 0 / SEC-A: CSP profile is strict by default whenever NODE_ENV=production; CSP_PROFILE can still override explicitly.
+  const cspResolved = resolveCspProfile(process.env);
+  const cspProfile = cspResolved.profile;
+  if (cspResolved.warning) console.warn(`[SEC] ${cspResolved.warning}`);
+  console.log(`[SEC] CSP profile = ${cspProfile} (${cspResolved.source})`);
   const isCspProduction = cspProfile === 'production';
 
   app.use(helmet({
@@ -755,7 +766,7 @@ async function startServer() {
       (req as any).tenant = tenant;
       next();
     } catch (err: any) {
-      return res.status(401).json({ success: false, message: err.message || 'فشل التحقق من الجلسة' });
+      return res.status(401).json({ success: false, message: publicErrorMessage(err) || 'فشل التحقق من الجلسة' });
     }
   }
 
@@ -854,9 +865,10 @@ async function startServer() {
 
     const anomalyDetector = new AnomalyDetector(targetStorage);
     const tokenService = new TokenService(targetStorage);
+    const lockKey = loginLockKey(targetTenant.id, username); // SEC-A: per-tenant counter (was: bare username shared by all tenants)
 
     // 1D: Check Progressive Account Lockout via StoragePort
-    const lockout = await anomalyDetector.checkLockout(username);
+    const lockout = await anomalyDetector.checkLockout(lockKey);
     if (lockout.isLocked) {
       const problem: RFC7807Problem = {
         type: 'https://api.an-erp.local/errors/account-locked',
@@ -868,7 +880,7 @@ async function startServer() {
     }
 
     if (!user || !user.passwordHash || user.status !== 'ACTIVE') {
-      const failedState = await anomalyDetector.recordFailedAttempt(username);
+      const failedState = await anomalyDetector.recordFailedAttempt(lockKey);
       await recordAudit(
         username,
         username,
@@ -895,7 +907,7 @@ async function startServer() {
     // Real Argon2id verification — strictly zero plaintext fallback!
     const isValidPass = await argon2.verify(user.passwordHash, password);
     if (!isValidPass) {
-      const failedState = await anomalyDetector.recordFailedAttempt(username);
+      const failedState = await anomalyDetector.recordFailedAttempt(lockKey);
       await recordAudit(
         username,
         username,
@@ -976,7 +988,7 @@ async function startServer() {
       const twoFactorValid = second.valid;
       if (!twoFactorValid) {
         // SEC-1: wrong codes feed the SAME progressive lockout as wrong passwords (no brute-force path through the 2FA branch)
-        await anomalyDetector.recordFailedAttempt(username);
+        await anomalyDetector.recordFailedAttempt(lockKey);
       }
 
       if (!twoFactorValid) {
@@ -1047,6 +1059,7 @@ async function startServer() {
 
     await targetStorage.saveActiveSession(sessionRecord);
     await anomalyDetector.registerActiveSession(sessionRecord);
+    await targetStorage.clearFailedLoginAttempts(lockKey);   // SEC-A: a successful login resets this tenant's counter (was cleared by user id but written by username, so it never reset)
     if (location) await anomalyDetector.recordSuccessfulLogin(user.id, location, req.ip || '127.0.0.1', userTenantId);   // SEC-1: an unknown location is never stored as a position
 
     // 1A: Set HttpOnly, Secure, SameSite Cookies — Zero tokens in localStorage!
@@ -2187,7 +2200,7 @@ async function startServer() {
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2415,7 +2428,7 @@ async function startServer() {
       const accounts = await svc.listAccounts(tenantId);
       return res.json({ success: true, data: accounts });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message || 'فشل جلب دليل الحسابات' });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) || 'فشل جلب دليل الحسابات' });
     }
   });
 
@@ -2429,7 +2442,7 @@ async function startServer() {
       const account = await svc.saveAccount(tenantId, req.body, key);
       return res.json({ success: true, data: account, message: 'تم حفظ وتحديث الحساب بنجاح' });
     } catch (err: any) {
-      return res.status(422).json({ success: false, error: err.message || 'فشل حفظ الحساب' });
+      return res.status(422).json({ success: false, error: publicErrorMessage(err) || 'فشل حفظ الحساب' });
     }
   });
 
@@ -2443,7 +2456,7 @@ async function startServer() {
       const result = await svc.toggleAccountStatus(tenantId, code, isActive);
       return res.json({ success: true, updated: result });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2456,7 +2469,7 @@ async function startServer() {
       const periods = await svc.listFiscalPeriods(tenantId);
       return res.json({ success: true, data: periods });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2472,7 +2485,7 @@ async function startServer() {
       const result = await svc.executePeriodClosingChecklist(tenantId, periodId, userId, key);
       return res.json(result);
     } catch (err: any) {
-      return res.status(err.status || 500).json({ success: false, error: err.detail || err.message });
+      return res.status(err.status || 500).json({ success: false, error: (err.status && err.status < 500 && err.detail) ? err.detail : publicErrorMessage(err) });
     }
   });
 
@@ -2488,7 +2501,7 @@ async function startServer() {
       const result = await svc.reopenPeriod(tenantId, periodId, reason, userId, key);
       return res.json({ success: true, reopened: result, message: 'تم إعادة فتح الفترة المحاسبية وتوثيق ذلك في سلسلة التدقيق.' });
     } catch (err: any) {
-      return res.status(400).json({ success: false, error: err.message });
+      return res.status(400).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2522,7 +2535,7 @@ async function startServer() {
       }
       return res.json({ success: true, data: entries });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2612,7 +2625,7 @@ async function startServer() {
       const dimensions = await svc.listDimensions(tenantId, type);
       return res.json({ success: true, data: dimensions });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2624,7 +2637,7 @@ async function startServer() {
       const dim = await svc.saveDimension(tenantId, req.body);
       return res.json({ success: true, data: dim });
     } catch (err: any) {
-      return res.status(422).json({ success: false, error: err.message });
+      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2637,7 +2650,7 @@ async function startServer() {
       const report = await svc.getDimensionAnalyticalReport(tenantId, type);
       return res.json({ success: true, data: report });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2650,7 +2663,7 @@ async function startServer() {
       const units = await svc.listUnits(tenantId);
       return res.json({ success: true, data: units });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2662,7 +2675,7 @@ async function startServer() {
       const items = await svc.listItems(tenantId);
       return res.json({ success: true, data: items });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2674,7 +2687,7 @@ async function startServer() {
       const saved = await svc.saveItem(tenantId, req.body);
       return res.json({ success: true, data: saved, message: 'تم حفظ الصنف المحاسبي بنجاح' });
     } catch (err: any) {
-      return res.status(422).json({ success: false, error: err.message });
+      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2703,7 +2716,7 @@ async function startServer() {
       const report = await svc.getTrialBalance(tenantId, req.query.asOfDate as string);
       return res.json({ success: true, data: report });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2716,7 +2729,7 @@ async function startServer() {
       const report = await svc.getIncomeStatement(tenantId, periodId);
       return res.json({ success: true, data: report });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2729,7 +2742,7 @@ async function startServer() {
       const report = await svc.getBalanceSheet(tenantId, periodId);
       return res.json({ success: true, data: report });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2742,7 +2755,7 @@ async function startServer() {
       const report = await svc.getCashFlowStatement(tenantId, periodId);
       return res.json({ success: true, data: report });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2756,7 +2769,7 @@ async function startServer() {
       const validation = svc.validateImportData(tenantId, req.body.rows || [], accounts);
       return res.json(validation);
     } catch (err: any) {
-      return res.status(500).json({ isValid: false, error: err.message });
+      return res.status(500).json({ isValid: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2786,7 +2799,7 @@ async function startServer() {
       const budgets = await svc.listBudgets(tenantId, year);
       return res.json({ success: true, data: budgets });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2798,7 +2811,7 @@ async function startServer() {
       const saved = await svc.saveBudget(tenantId, req.body);
       return res.json({ success: true, data: saved, message: 'تم حفظ الموازنة التقديرية بنجاح' });
     } catch (err: any) {
-      return res.status(422).json({ success: false, error: err.message });
+      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2810,7 +2823,7 @@ async function startServer() {
       const entries = await svc.listRecurringEntries(tenantId);
       return res.json({ success: true, data: entries });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2825,7 +2838,7 @@ async function startServer() {
       const entry = await svc.generateRecurringEntry(tenantId, req.params.id, userId, key);
       return res.json({ success: true, data: entry, message: 'تم توليد وترحيل القيد الدوري بنجاح' });
     } catch (err: any) {
-      return res.status(422).json({ success: false, error: err.message });
+      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2848,7 +2861,7 @@ async function startServer() {
       const log = await svc.runContinuousBalanceCheck(tenantId, simulate);
       return res.json({ success: true, data: log });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2860,7 +2873,7 @@ async function startServer() {
       const logs = await svc.getBalanceCheckHistory(tenantId);
       return res.json({ success: true, data: logs });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2868,13 +2881,15 @@ async function startServer() {
   app.post('/api/accounting/fuzz-test', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
-      const iterations = req.body.iterations ? Number(req.body.iterations) : 1000;
+      const fz = parseFuzzIterations(req.body?.iterations);
+      if (!fz.ok) return res.status(400).json({ success: false, error: `iterations يجب أن يكون عددًا صحيحًا بين 1 و${fz.max}` });
+      const iterations = fz.value;
       const svc = getAccountingService(req, res);
       if (!svc) return;
       const results = await svc.runFuzzTestingBattery(tenantId, iterations);
       return res.json({ success: true, data: results });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2908,7 +2923,7 @@ async function startServer() {
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2923,7 +2938,7 @@ async function startServer() {
       if (!result.data) return res.status(404).json({ error: 'العهدة غير موجودة' });
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2952,7 +2967,7 @@ async function startServer() {
 
       return res.json({ success: true, data: result.data, message: 'تم فتح وتخصيص العهدة النقدية بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2981,7 +2996,7 @@ async function startServer() {
 
       return res.json({ success: true, data: result.data, message: 'تم تسجيل الصرف وخصم المبلغ من رصيد العهدة بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -2996,7 +3011,7 @@ async function startServer() {
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3029,7 +3044,7 @@ async function startServer() {
         message: 'تم ترحيل قيد تسوية العهدة وتجديد الرصيد عبر محرك الترحيل بنجاح',
       });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3044,7 +3059,7 @@ async function startServer() {
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3057,7 +3072,7 @@ async function startServer() {
       const clearance = await svc.checkEmployeeClearance(tenantId, req.params.employeeId);
       return res.json({ success: true, data: clearance });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3086,7 +3101,7 @@ async function startServer() {
 
       return res.json({ success: true, data: result.data, message: 'تم إقفال وتصفية العهدة النقدية نهائياً' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3122,7 +3137,7 @@ async function startServer() {
 
       return res.json({ success: true, data: result.data, message: 'تم تحويل مسؤولية العهدة النقدية بنجاح' });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3155,7 +3170,7 @@ async function startServer() {
       if (!result.success) return res.status(500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3179,7 +3194,7 @@ async function startServer() {
       if (!result.success) return res.status(400).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3209,7 +3224,7 @@ async function startServer() {
       }
       return res.json({ success: true, data: items });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3235,7 +3250,7 @@ async function startServer() {
 
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3268,7 +3283,7 @@ async function startServer() {
         message: 'تم رفع طلب المصروفات وبدء مسار الاعتماد بنجاح',
       });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3303,7 +3318,7 @@ async function startServer() {
           : 'تم اعتماد المستوى الأول بنجاح وتصعيد الطلب للمدير المالي (L2)',
       });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3337,7 +3352,7 @@ async function startServer() {
         message: 'تم الاعتماد النهائي وترحيل القيد المحاسبي المتوازن لطلب المصروفات بنجاح',
       });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3370,7 +3385,7 @@ async function startServer() {
         message: 'تم رفض طلب المصروفات وتحديث الحالة بنجاح',
       });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3403,7 +3418,7 @@ async function startServer() {
       if (!storage) return;
       const out = await new RuleExplanationService(storage).explainJournal((req as any).authContext.tenantId, String(req.params.entryId));
       return res.status(out.found ? 200 : 404).json({ success: out.found, data: out });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.get('/api/standards/explain/decision/:id', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
     try {
@@ -3411,7 +3426,7 @@ async function startServer() {
       if (!storage) return;
       const out = await new RuleExplanationService(storage).explainDecision((req as any).authContext.tenantId, String(req.params.id));
       return res.status(out.found ? 200 : 404).json({ success: out.found, data: out });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
   app.get('/api/standards/decisions', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
     try {
@@ -3422,7 +3437,7 @@ async function startServer() {
       const result = await new StandardsDecisionService(storage).findDecisions((req as any).authContext.tenantId, { eventType: q.eventType, eventId: q.eventId, journalEntryId: q.journalEntryId, status: q.status, limit });
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: err.message }); }
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
 
   // Phase 7 Acceptance Battery Endpoint (Internal / Auditor)
@@ -3443,7 +3458,7 @@ async function startServer() {
       if (!result.success) return res.status(result.error?.status || 500).json(result.error);
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
   app.put('/api/inventory/warehouse-access/:userId', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
@@ -3479,7 +3494,7 @@ async function startServer() {
       } catch { /* non-fatal */ }
       return res.json({ success: true, data: result.data });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
@@ -3502,7 +3517,7 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
         return res.json({ success: true, data });
       }
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
     }
   });
 
