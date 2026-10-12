@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-12",
-  "lastChange": "FIX-C: green npm test (type-safe fuzz parser, stale assertion, custody test arity, DB-unreachable gates SKIP)",
+  "lastChange": "DOC-SYNC: mark DEF-P2P-AUTOPOST-OFF FIXED + FIX-P1-P2P-AUTOPOST (code already on tree); refresh audit docs",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -71,6 +71,12 @@
       "status": "DONE",
       "scope": "npm test green: fuzz parser type-safe, stale RepairBatch1 assertion, custody test arity, DB-unreachable gates are SKIP not FAIL",
       "evidence": "scripts/verifyFixC.ts"
+    },
+    {
+      "id": "FIX-P1-P2P-AUTOPOST",
+      "status": "DONE",
+      "scope": "DEF-P2P-AUTOPOST-OFF — invoice journals inventory when auto-post off",
+      "evidence": "scripts/verifyFixP1P2pAutopost.ts"
     }
   ],
   "defects": [
@@ -85,10 +91,10 @@
     {
       "id": "DEF-P2P-AUTOPOST-OFF",
       "severity": "P1",
-      "status": "OPEN",
+      "status": "FIXED",
       "title": "Supplier invoice approval is wrong under the default stock-accounting config (autoPostEnabled=false)",
-      "evidence": "Reproduced on v73 (InMemory): receive 10 x 8 then approve the invoice => AP -80, GR/IR +80, inventory asset 0 (correct only when autoPostEnabled=true: inventory +80, AP -80, GR/IR 0). approveSupplierInvoice debits GR/IR regardless of autoPostEnabled.",
-      "fix": "When autoPostEnabled=false debit the inventory accounts instead of GR/IR (or refuse approval), plus a two-mode regression test."
+      "evidence": "scripts/verifyFixP1P2pAutopost.ts; approveSupplierInvoice Dr Inventory when autoPostEnabled=false, Dr GR/IR when true (code on tree)",
+      "fix": "Invoice approval reads autoPostEnabled; false => debit item/default inventory accounts instead of GR/IR."
     },
     {
       "id": "PROD-ROLE-BYPASSRLS",

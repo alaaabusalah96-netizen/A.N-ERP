@@ -1,7 +1,7 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-12 — FIX-C: green npm test (type-safe fuzz parser, stale assertion, custody test arity, DB-unreachable gates SKIP)
-**Verdict**: **NO GO** (rendered 2026-10-12)
+**Last update**: 2026-10-12 — DOC-SYNC: mark DEF-P2P-AUTOPOST-OFF FIXED + FIX-P1-P2P-AUTOPOST (code already on tree); refresh audit docs
+**Verdict**: **CONDITIONAL GO** (rendered 2026-10-12)
 
 ## Gates
 _Gates were not run in this render. Run `npm test` to execute them and refresh this file._
@@ -18,12 +18,13 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **PH8-REMAINDER** — OPEN — Purchase returns, auto purchase request from reorder point, supplier-invoices tab in the purchasing UI _(evidence: not built)_
 - **FIX-P1-CUSTODY** — DONE — DEF-CUSTODY-REVERSAL-DOUBLE-REFUND — single balance restore on reverse _(evidence: scripts/verifyFixP1Custody.ts)_
 - **FIX-C** — DONE — npm test green: fuzz parser type-safe, stale RepairBatch1 assertion, custody test arity, DB-unreachable gates are SKIP not FAIL _(evidence: scripts/verifyFixC.ts)_
+- **FIX-P1-P2P-AUTOPOST** — DONE — DEF-P2P-AUTOPOST-OFF — invoice journals inventory when auto-post off _(evidence: scripts/verifyFixP1P2pAutopost.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
 |---|---|---|---|---|
 | DEF-CUSTODY-REVERSAL-DOUBLE-REFUND | P1 | **FIXED** | Reversing a custody expense voucher restores the custody balance twice | scripts/verifyFixP1Custody.ts; single restore in reverseCustodyExpenseVoucher only |
-| DEF-P2P-AUTOPOST-OFF | P1 | **OPEN** | Supplier invoice approval is wrong under the default stock-accounting config (autoPostEnabled=false) | Reproduced on v73 (InMemory): receive 10 x 8 then approve the invoice => AP -80, GR/IR +80, inventory asset 0 (correct only when autoPostEnabled=true: inventory +80, AP -80, GR/IR 0). approveSupplierInvoice debits GR/IR regardless of autoPostEnabled. — Fix: When autoPostEnabled=false debit the inventory accounts instead of GR/IR (or refuse approval), plus a two-mode regression test. |
+| DEF-P2P-AUTOPOST-OFF | P1 | **FIXED** | Supplier invoice approval is wrong under the default stock-accounting config (autoPostEnabled=false) | scripts/verifyFixP1P2pAutopost.ts; approveSupplierInvoice Dr Inventory when autoPostEnabled=false, Dr GR/IR when true (code on tree) |
 | PROD-ROLE-BYPASSRLS | P2 | **CONFIG** | The application database role may bypass RLS | INFO: DB role bypasses RLS = true in evidence/standards-intelligence/battery-output-f2-pg.txt. Guide: docs/ops/PROD-PG-ROLE.md; probe: scripts/verifySec4ProdRole.ts. |
 | DEF-P1-001 | P1 | **FIXED** | Stock count approval atomicity | scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review) |
 | DEF-P1-002 | P1 | **FIXED** | Stock return atomicity (PENDING_RETRY instead of silent success) | scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review) |
