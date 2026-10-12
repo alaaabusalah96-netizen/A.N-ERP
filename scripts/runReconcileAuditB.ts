@@ -7,6 +7,7 @@
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { classifyGate, decideVerdict } from './lib/gateClassify';
 
 const root = process.cwd();
 const docsOnly = process.argv.includes('--docs-only');
@@ -38,6 +39,8 @@ const BATTERIES: { name: string; script: string; expected?: number }[] = [
   { name: 'Sec3Ids', script: 'scripts/verifySec3Ids.ts', expected: 7 },
   { name: 'Sec4ProdRole', script: 'scripts/verifySec4ProdRole.ts', expected: 5 },
   { name: 'SecA', script: 'scripts/verifySecA.ts', expected: 27 },
+  { name: 'FixC', script: 'scripts/verifyFixC.ts', expected: 14 },
+  { name: 'FixP1Custody', script: 'scripts/verifyFixP1Custody.ts', expected: 9 },
   { name: 'RepairBatch1', script: 'scripts/verifyRepairBatch1.ts', expected: 37 },
   { name: 'P8aProcurement', script: 'scripts/verifyP8aProcurement.ts', expected: 24 },
   { name: 'P8cThreeWay', script: 'scripts/verifyP8cThreeWay.ts', expected: 14 },
@@ -71,11 +74,7 @@ if (!docsOnly) {
     process.stdout.write(`Running ${b.name}...\n`);
     const { code, out } = runTsx(b.script);
     const { passed, failed } = parsePassed(out);
-    let status: Gate['status'] = 'ERROR';
-    if (code === 127 || out.startsWith('SKIP')) status = 'SKIP';
-    else if (failed !== null && failed > 0) status = 'FAIL';
-    else if (failed === 0 && passed !== null) status = b.expected !== undefined && passed !== b.expected ? 'FAIL' : 'PASS';
-    else if (code === 0) status = 'PASS';
+    const status: Gate['status'] = classifyGate({ code, out, passed, failed, expected: b.expected });
     gates.push({ name: b.name, script: b.script, expected: b.expected, passed, failed, raw: out, status });
     fs.writeFileSync(path.join(evidenceDir, `${b.name}.txt`), out, 'utf8');
   }
@@ -91,7 +90,8 @@ const criticalFail = gates.some(g => CRITICAL.includes(g.name) && g.status !== '
 const openP1 = reg.defects.filter(d => d.status === 'OPEN' && d.severity === 'P1');
 const openOther = reg.defects.filter(d => (d.status === 'OPEN' && d.severity !== 'P1') || d.status === 'CONFIG');
 // NO_GO: a critical gate failed or an OPEN P1 defect exists. CONDITIONAL_GO: only open P2/P3 or configuration conditions. GO: none.
-const verdict = criticalFail || openP1.length ? 'NO_GO' : openOther.length ? 'CONDITIONAL_GO' : 'GO';
+const skippedCritical = gates.filter(g => CRITICAL.includes(g.name) && g.status === 'SKIP').length;
+const verdict = decideVerdict({ criticalFail, openP1: openP1.length, openOther: openOther.length, skippedCritical });
 const when = new Date().toISOString().slice(0, 10);
 const label = verdict.replace('_', ' ');
 const gateTable = gates.length

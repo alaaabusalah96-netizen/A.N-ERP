@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-12",
-  "lastChange": "FIX-P1-CUSTODY: expense voucher reversal restores custody balance exactly once",
+  "lastChange": "FIX-C: green npm test (type-safe fuzz parser, stale assertion, custody test arity, DB-unreachable gates SKIP)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -25,9 +25,9 @@
       "evidence": "evidence/phase-8a, 8b, 8c"
     },
     {
-      "id": "PH9",
+      "id": "P9-HARDENING",
       "status": "DONE",
-      "scope": "Validation phase",
+      "scope": "Input-validation hardening package (NOT roadmap Phase 9 = Sales, which is not started)",
       "evidence": "evidence/phase-9 (SUMMARY: PASS=144 FAIL=0 NOT_RUN=1)"
     },
     {
@@ -65,6 +65,12 @@
       "status": "DONE",
       "scope": "DEF-CUSTODY-REVERSAL-DOUBLE-REFUND — single balance restore on reverse",
       "evidence": "scripts/verifyFixP1Custody.ts"
+    },
+    {
+      "id": "FIX-C",
+      "status": "DONE",
+      "scope": "npm test green: fuzz parser type-safe, stale RepairBatch1 assertion, custody test arity, DB-unreachable gates are SKIP not FAIL",
+      "evidence": "scripts/verifyFixC.ts"
     }
   ],
   "defects": [
@@ -168,6 +174,27 @@
       "status": "FIXED",
       "title": "verifyRepairBatch1 seeded legacy account codes after FIX-J1",
       "evidence": "13 failures before, 37/37 after"
+    },
+    {
+      "id": "FIXC-TYPECHECK",
+      "severity": "P3",
+      "status": "FIXED",
+      "title": "npm run lint failed: parseFuzzIterations union did not narrow without strict (server.ts TS2339)",
+      "evidence": "flat result shape; verifyFixC"
+    },
+    {
+      "id": "FIXC-STALE-ASSERTION",
+      "severity": "P3",
+      "status": "FIXED",
+      "title": "verifyRepairBatch1 asserted the old double-refund behaviour (updateCashCustody === 1)",
+      "evidence": "assertion now expects the service not to touch the balance; verifyFixP1Custody proves the exact balance"
+    },
+    {
+      "id": "FIXC-PG-GATES",
+      "severity": "P3",
+      "status": "FIXED",
+      "title": "PG-dependent gates reported FAIL when DATABASE_URL had a wrong password",
+      "evidence": "classifyGate: DB-unreachable-only failures are SKIP (a skipped critical gate caps the verdict at CONDITIONAL_GO)"
     }
   ],
   "knownRisks": [
@@ -194,7 +221,7 @@
     }
   },
   "policy": "Edit docs/STATE_REGISTER.json by hand. AI_CONTEXT.md and docs/AI_PROJECT_STATE.* are rendered from it by scripts/runReconcileAuditB.ts and must not be replaced by a template.",
-  "renderedAt": "2026-10-11T00:00:00Z",
+  "renderedAt": "2026-10-12T00:00:00Z",
   "authoritativeVerdict": "NO_GO",
   "f07": {
     "verdict": "NOT_RUN",

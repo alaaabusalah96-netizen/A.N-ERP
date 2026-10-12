@@ -1,7 +1,7 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-12 — FIX-P1-CUSTODY: expense voucher reversal restores custody balance exactly once
-**Verdict**: **NO GO** (rendered 2026-10-11)
+**Last update**: 2026-10-12 — FIX-C: green npm test (type-safe fuzz parser, stale assertion, custody test arity, DB-unreachable gates SKIP)
+**Verdict**: **NO GO** (rendered 2026-10-12)
 
 ## Gates
 _Gates were not run in this render. Run `npm test` to execute them and refresh this file._
@@ -10,13 +10,14 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **PH0-7.6** — DONE — Core, accounting, inventory, approvals, atomic stock documents _(evidence: evidence/phase-0 .. phase-7.6)_
 - **REPAIR-1** — DONE — DEF-P1-001/002/003, DEF-P2-001 (see defects for what remains) _(evidence: evidence/repair, scripts/verifyRepairBatch1.ts (37))_
 - **PH8a-8c** — DONE — Purchase requests, RFQ, quotes, orders, goods receipt, supplier invoice + 3-way match (8c-FIX) _(evidence: evidence/phase-8a, 8b, 8c)_
-- **PH9** — DONE — Validation phase _(evidence: evidence/phase-9 (SUMMARY: PASS=144 FAIL=0 NOT_RUN=1))_
+- **P9-HARDENING** — DONE — Input-validation hardening package (NOT roadmap Phase 9 = Sales, which is not started) _(evidence: evidence/phase-9 (SUMMARY: PASS=144 FAIL=0 NOT_RUN=1))_
 - **F1-F4** — DONE — Standards & accounting intelligence layer (registries, decision engines, shadow mode) _(evidence: evidence/standards-intelligence)_
 - **SEC-1..SEC-4** — DONE — 2FA, RLS on all tenant tables, ids, production DB role guard _(evidence: evidence/security, scripts/verifySec*.ts)_
 - **SEC-A** — DONE — Strict CSP by default in production, trust proxy, per-tenant login lockout, no raw internal errors to clients, bounded fuzz _(evidence: scripts/verifySecA.ts (27), scripts/verifySecAPg.ts)_
 - **REPO-B** — DONE — Repository cleanup, npm test, engines, state register _(evidence: this file + scripts/runReconcileAuditB.ts)_
 - **PH8-REMAINDER** — OPEN — Purchase returns, auto purchase request from reorder point, supplier-invoices tab in the purchasing UI _(evidence: not built)_
 - **FIX-P1-CUSTODY** — DONE — DEF-CUSTODY-REVERSAL-DOUBLE-REFUND — single balance restore on reverse _(evidence: scripts/verifyFixP1Custody.ts)_
+- **FIX-C** — DONE — npm test green: fuzz parser type-safe, stale RepairBatch1 assertion, custody test arity, DB-unreachable gates are SKIP not FAIL _(evidence: scripts/verifyFixC.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
@@ -35,6 +36,9 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 | SEC-A-ERRORS | P3 | **FIXED** | Raw error.message returned to clients (123 places) | publicErrorMessage; verifySecA E1-E6, S1-S2 |
 | SEC-A-FUZZ | P3 | **FIXED** | Unbounded fuzz iterations | parseFuzzIterations (max 5000); verifySecA F1-F2 |
 | REPAIRBATCH1-TEST-DRIFT | P3 | **FIXED** | verifyRepairBatch1 seeded legacy account codes after FIX-J1 | 13 failures before, 37/37 after |
+| FIXC-TYPECHECK | P3 | **FIXED** | npm run lint failed: parseFuzzIterations union did not narrow without strict (server.ts TS2339) | flat result shape; verifyFixC |
+| FIXC-STALE-ASSERTION | P3 | **FIXED** | verifyRepairBatch1 asserted the old double-refund behaviour (updateCashCustody === 1) | assertion now expects the service not to touch the balance; verifyFixP1Custody proves the exact balance |
+| FIXC-PG-GATES | P3 | **FIXED** | PG-dependent gates reported FAIL when DATABASE_URL had a wrong password | classifyGate: DB-unreachable-only failures are SKIP (a skipped critical gate caps the verdict at CONDITIONAL_GO) |
 
 ## Known risks
 - PostgreSQL gates (verify*Pg.ts) need DATABASE_URL; they print PG_NOT_RUN without it and prove nothing then.

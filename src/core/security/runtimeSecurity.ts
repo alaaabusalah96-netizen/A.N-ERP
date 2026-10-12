@@ -40,8 +40,9 @@ export function resolveTrustProxy(env: Env): { value: number | boolean | string 
 }
 
 export const FUZZ_MAX_ITERATIONS = 5000;
-export function parseFuzzIterations(raw: unknown): { ok: true; value: number } | { ok: false; max: number } {
+/** Flat shape on purpose: the project compiles without `strict`, where `!r.ok` does not narrow a union (TS2339 on r.max). */
+export function parseFuzzIterations(raw: unknown): { ok: boolean; value: number; max: number } {
   const n = raw === undefined || raw === null || raw === '' ? 1000 : Number(raw);
-  if (!Number.isInteger(n) || n < 1 || n > FUZZ_MAX_ITERATIONS) return { ok: false, max: FUZZ_MAX_ITERATIONS };
-  return { ok: true, value: n };
+  if (!Number.isInteger(n) || n < 1 || n > FUZZ_MAX_ITERATIONS) return { ok: false, value: 0, max: FUZZ_MAX_ITERATIONS };
+  return { ok: true, value: n, max: FUZZ_MAX_ITERATIONS };
 }

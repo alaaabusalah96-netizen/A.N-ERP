@@ -203,7 +203,7 @@ async function main() {
     }
     const { svc, calls } = mkSvc({ draft: false, post: false });
     const r = await svc.returnCustodyExpense('T', { voucherId: 'V1', performedBy: 'u', performedByName: 'U', idempotencyKey: 'kr-ok' });
-    check('(custody-return) reversal ok => balance restored once and voucher reversed', r.success && calls['updateCashCustody'] === 1 && calls['reverseCustodyExpenseVoucher'] === 1);
+    check('(custody-return) reversal ok => voucher reversed once; the service no longer touches the balance (the atomic adapter reversal restores it exactly once)', r.success && !calls['updateCashCustody'] && calls['reverseCustodyExpenseVoucher'] === 1);
   });
 
   await scenario('expense-reverse', async () => {

@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-12** — FIX-P1-CUSTODY: expense voucher reversal restores custody balance exactly once
+Last update: **2026-10-12** — FIX-C: green npm test (type-safe fuzz parser, stale assertion, custody test arity, DB-unreachable gates SKIP)
 
 ## Verdict
 | Field | Value |

@@ -27,7 +27,7 @@ async function main() {
   const st: any = new InMemoryAdapter();
   const pe = new PostingEngine(st);
   const ne = new NumberingEngine(st);
-  const svc = new CashCustodyService(st, pe, ne);
+  const svc = new CashCustodyService(st, pe);
   const T = `cfix-${Date.now().toString(36)}`;
   const now = new Date().toISOString();
   for (const [code, type] of [['1101','ASSET'],['110202','ASSET'],['5101','EXPENSE']] as const) {
