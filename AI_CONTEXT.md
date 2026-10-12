@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-12** — DOC-SYNC: mark DEF-P2P-AUTOPOST-OFF FIXED + FIX-P1-P2P-AUTOPOST (code already on tree); refresh audit docs
+Last update: **2026-10-12** — FIX-STOCK-RETURN-CUMULATIVE: prior+request returns cannot exceed original; type match; audit sync P2P if needed
 
 ## Verdict
 | Field | Value |

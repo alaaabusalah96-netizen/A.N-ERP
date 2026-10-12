@@ -29,6 +29,7 @@
     "verify:seca:pg": "tsx scripts/verifySecAPg.ts",
     "verify:fix-p1-custody": "tsx scripts/verifyFixP1Custody.ts",
     "verify:fix-p1-p2p-autopost": "tsx scripts/verifyFixP1P2pAutopost.ts",
+    "verify:fix-stock-return-cumulative": "tsx scripts/verifyFixStockReturnCumulative.ts",
     "test:e2e": "tsx scripts/runPhase4_6E2E.ts"
   },
   "dependencies": {

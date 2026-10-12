@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-12 — DOC-SYNC: mark DEF-P2P-AUTOPOST-OFF FIXED + FIX-P1-P2P-AUTOPOST (code already on tree); refresh audit docs
+**Last update**: 2026-10-12 — FIX-STOCK-RETURN-CUMULATIVE: prior+request returns cannot exceed original; type match; audit sync P2P if needed
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-12)
 
 ## Gates
@@ -19,10 +19,12 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **FIX-P1-CUSTODY** — DONE — DEF-CUSTODY-REVERSAL-DOUBLE-REFUND — single balance restore on reverse _(evidence: scripts/verifyFixP1Custody.ts)_
 - **FIX-C** — DONE — npm test green: fuzz parser type-safe, stale RepairBatch1 assertion, custody test arity, DB-unreachable gates are SKIP not FAIL _(evidence: scripts/verifyFixC.ts)_
 - **FIX-P1-P2P-AUTOPOST** — DONE — DEF-P2P-AUTOPOST-OFF — invoice journals inventory when auto-post off _(evidence: scripts/verifyFixP1P2pAutopost.ts)_
+- **FIX-STOCK-RETURN-CUMULATIVE** — DONE — Cumulative stock return qty vs original + return type check _(evidence: scripts/verifyFixStockReturnCumulative.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
 |---|---|---|---|---|
+| DEF-STOCK-RETURN-CUMULATIVE | P1 | **FIXED** | Stock returns did not accumulate prior returns or duplicate lines against the original qty | scripts/verifyFixStockReturnCumulative.ts; returnStock uses orig/prior/request qty maps |
 | DEF-CUSTODY-REVERSAL-DOUBLE-REFUND | P1 | **FIXED** | Reversing a custody expense voucher restores the custody balance twice | scripts/verifyFixP1Custody.ts; single restore in reverseCustodyExpenseVoucher only |
 | DEF-P2P-AUTOPOST-OFF | P1 | **FIXED** | Supplier invoice approval is wrong under the default stock-accounting config (autoPostEnabled=false) | scripts/verifyFixP1P2pAutopost.ts; approveSupplierInvoice Dr Inventory when autoPostEnabled=false, Dr GR/IR when true (code on tree) |
 | PROD-ROLE-BYPASSRLS | P2 | **CONFIG** | The application database role may bypass RLS | INFO: DB role bypasses RLS = true in evidence/standards-intelligence/battery-output-f2-pg.txt. Guide: docs/ops/PROD-PG-ROLE.md; probe: scripts/verifySec4ProdRole.ts. |

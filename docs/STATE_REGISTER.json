@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-12",
-  "lastChange": "DOC-SYNC: mark DEF-P2P-AUTOPOST-OFF FIXED + FIX-P1-P2P-AUTOPOST (code already on tree); refresh audit docs",
+  "lastChange": "FIX-STOCK-RETURN-CUMULATIVE: prior+request returns cannot exceed original; type match; audit sync P2P if needed",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -77,9 +77,23 @@
       "status": "DONE",
       "scope": "DEF-P2P-AUTOPOST-OFF — invoice journals inventory when auto-post off",
       "evidence": "scripts/verifyFixP1P2pAutopost.ts"
+    },
+    {
+      "id": "FIX-STOCK-RETURN-CUMULATIVE",
+      "status": "DONE",
+      "scope": "Cumulative stock return qty vs original + return type check",
+      "evidence": "scripts/verifyFixStockReturnCumulative.ts"
     }
   ],
   "defects": [
+    {
+      "id": "DEF-STOCK-RETURN-CUMULATIVE",
+      "severity": "P1",
+      "status": "FIXED",
+      "title": "Stock returns did not accumulate prior returns or duplicate lines against the original qty",
+      "evidence": "scripts/verifyFixStockReturnCumulative.ts; returnStock uses orig/prior/request qty maps",
+      "fix": "Sum original lines, prior POSTED returns by referenceId, and current request per itemId; reject when exceeding remaining; validate return type vs original."
+    },
     {
       "id": "DEF-CUSTODY-REVERSAL-DOUBLE-REFUND",
       "severity": "P1",

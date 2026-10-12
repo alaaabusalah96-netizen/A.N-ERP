@@ -1222,10 +1222,30 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
     }
     const origDoc = origRes.data;
 
-    // Validate quantities against original document
+    // Return type must match the original document kind
+    const expectOrigType = input.returnType === 'RETURN_RECEIPT' ? 'RECEIPT' : 'ISSUE';
+    if (origDoc.documentType !== expectOrigType) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/return-type-mismatch',
+          title: 'نوع المرتجع لا يطابق الأصل',
+          status: 400,
+          detail: `المرتجع ${input.returnType} يتطلب مستندًا أصليًا من نوع ${expectOrigType}، والمستند ${origDoc.documentNumber} من نوع ${origDoc.documentType}.`,
+        },
+      };
+    }
+
+    // Original qty per item (sum if the source document repeated the same item)
+    const origQtyByItem = new Map<string, number>();
+    for (const l of origDoc.lines) {
+      origQtyByItem.set(l.itemId, (origQtyByItem.get(l.itemId) || 0) + Number(l.quantity));
+    }
+
+    // Requested qty per item (sum duplicate lines in this return)
+    const reqQtyByItem = new Map<string, number>();
     for (const rLine of input.lines) {
-      const matchOrig = origDoc.lines.find(l => l.itemId === rLine.itemId);
-      if (!matchOrig) {
+      if (!origQtyByItem.has(rLine.itemId)) {
         return {
           success: false,
           error: {
@@ -1236,14 +1256,35 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
           },
         };
       }
-      if (rLine.quantity > matchOrig.quantity) {
+      reqQtyByItem.set(rLine.itemId, (reqQtyByItem.get(rLine.itemId) || 0) + Number(rLine.quantity));
+    }
+
+    // Prior posted returns against this original (referenceId)
+    const priorQtyByItem = new Map<string, number>();
+    const listed = await this.storage.listStockDocuments(tenantId, { limit: 5000 });
+    if (listed.success && listed.data) {
+      for (const d of listed.data) {
+        if (d.status !== 'POSTED') continue;
+        if (d.referenceId !== origDoc.id) continue;
+        if (d.documentType !== 'RETURN_RECEIPT' && d.documentType !== 'RETURN_ISSUE') continue;
+        for (const l of d.lines || []) {
+          priorQtyByItem.set(l.itemId, (priorQtyByItem.get(l.itemId) || 0) + Number(l.quantity));
+        }
+      }
+    }
+
+    for (const [itemId, reqQty] of reqQtyByItem) {
+      const origQty = origQtyByItem.get(itemId) || 0;
+      const priorQty = priorQtyByItem.get(itemId) || 0;
+      const remaining = Math.round((origQty - priorQty) * 1000) / 1000;
+      if (reqQty > remaining + 1e-9) {
         return {
           success: false,
           error: {
             type: 'https://api.an-erp.local/errors/quantity-exceeds-original',
-            title: 'الكمية تتجاوز الأصل',
+            title: 'الكمية تتجاوز المتاح للإرجاع',
             status: 400,
-            detail: `الكمية المرتجعة (${rLine.quantity}) تتجاوز كمية المستند الأصلي (${matchOrig.quantity}).`,
+            detail: `الصنف ${itemId}: المطلوب إرجاعه الآن (${reqQty}) + المرتجع سابقًا (${priorQty}) يتجاوز كمية الأصل (${origQty}). المتبقي القابل للإرجاع: ${Math.max(0, remaining)}.`,
           },
         };
       }
