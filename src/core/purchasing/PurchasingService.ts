@@ -948,7 +948,11 @@ export class PurchasingService {
     const po = await this.storage.getPurchaseOrder(tenantId, invoice.poId);
     if (!po.success || !po.data) return this.fail(404, 'po-not-found', 'أمر الشراء غير موجود', 'تعذر تحميل أمر الشراء لتحديد قيمة تسوية GR/IR.');
     const cfgRes = await this.storage.getStockAccountingConfig(tenantId);
-    const grir = (cfgRes.success && cfgRes.data ? cfgRes.data : defaultStockAccountingConfig(tenantId)).grirAccountCode;
+    const cfg = (cfgRes.success && cfgRes.data) ? cfgRes.data : defaultStockAccountingConfig(tenantId);
+    const grir = cfg.grirAccountCode;
+    const invDefault = (cfg.defaultInventoryAccountCode || '1105').trim();
+    // DEF-P2P-AUTOPOST-OFF: when autoPostEnabled=false, GR never posted Dr Inventory/Cr GRIR, so invoice must Dr Inventory not GR/IR.
+    const autoPost = !!cfg.autoPostEnabled;
     const apCode = await this.policyAccount(tenantId, 'ap_account_code', invoice.invoiceDate, '2101');
     const vatCode = await this.policyAccount(tenantId, 'vat_input_account_code', invoice.invoiceDate, '1108');
     const varCode = await this.policyAccount(tenantId, 'purchase_price_variance_account_code', invoice.invoiceDate, null);
@@ -959,7 +963,24 @@ export class PurchasingService {
     if (Math.abs(variance) >= 0.01 && !varCode) {
       return this.fail(422, 'variance-account-missing', 'حساب فروق الأسعار غير مُعدّ', `الفاتورة تختلف عن تكلفة أمر الشراء بمقدار ${variance}. حدّد حساب فروق أسعار المشتريات (السياسة purchase_price_variance_account_code) قبل الاعتماد.`);
     }
-    const need: Array<[string, string[], string]> = [[grir, ['LIABILITY'], 'GR/IR'], [apCode as string, ['LIABILITY'], 'الموردين']];
+    // Inventory debits by account when !autoPost (per item inventoryAccountCode, else default)
+    const invDebits = new Map<string, number>();
+    if (!autoPost) {
+      for (const l of lines) {
+        const pl = po.data!.lines.find((p) => p.id === l.poLineId);
+        const amt = r2(Number(l.invoicedQty) * Number(pl ? pl.unitCost : l.unitPrice));
+        if (amt <= 0) continue;
+        const itemRes = await this.storage.getStockItem(tenantId, l.itemId);
+        const inv = ((itemRes.success && itemRes.data?.inventoryAccountCode) || invDefault).trim();
+        invDebits.set(inv, r2((invDebits.get(inv) || 0) + amt));
+      }
+      if (invDebits.size === 0) invDebits.set(invDefault, clearing);
+    }
+    const need: Array<[string, string[], string]> = [[apCode as string, ['LIABILITY'], 'الموردين']];
+    if (autoPost) need.unshift([grir, ['LIABILITY'], 'GR/IR']);
+    else {
+      for (const code of invDebits.keys()) need.push([code, ['ASSET'], 'المخزون']);
+    }
     if (tax > 0) need.push([vatCode as string, ['ASSET'], 'ضريبة المشتريات']);
     if (Math.abs(variance) >= 0.01) need.push([varCode as string, ['EXPENSE', 'ASSET'], 'فروق الأسعار']);
     for (const [code, types, label] of need) {
@@ -972,7 +993,15 @@ export class PurchasingService {
     const existing = await this.storage.getJournalEntry(tenantId, jeId);
     let journalId = jeId;
     if (!existing.success || !existing.data) {
-      const jl: any[] = [{ id: `${jeId}-grir`, accountCode: grir, debit: clearing, credit: 0, description: 'تسوية بضاعة مستلمة لم تُفوتر' }];
+      const jl: any[] = [];
+      if (autoPost) {
+        jl.push({ id: `${jeId}-grir`, accountCode: grir, debit: clearing, credit: 0, description: 'تسوية بضاعة مستلمة لم تُفوتر' });
+      } else {
+        let i = 0;
+        for (const [code, amt] of invDebits) {
+          jl.push({ id: `${jeId}-inv-${i++}`, accountCode: code, debit: amt, credit: 0, description: 'إثبات مخزون عند اعتماد فاتورة المورد (بدون ترحيل تلقائي عند الاستلام)' });
+        }
+      }
       if (tax > 0) jl.push({ id: `${jeId}-vat`, accountCode: vatCode, debit: tax, credit: 0, description: 'ضريبة مشتريات' });
       if (variance >= 0.01) jl.push({ id: `${jeId}-var`, accountCode: varCode, debit: variance, credit: 0, description: 'فرق سعر مشتريات' });
       if (variance <= -0.01) jl.push({ id: `${jeId}-var`, accountCode: varCode, debit: 0, credit: -variance, description: 'فرق سعر مشتريات' });
