@@ -11,10 +11,10 @@
 [PASS] S9 listActiveSessions(tenantId) uses withTenantScope
 [PASS] S10 SEC-2 still lists an_purchase_orders
 [PASS] S10 SEC-2 still lists an_supplier_invoices
-[INFO] PG role {"u":"an_erp_app","rolsuper":false,"rolbypassrls":false}
+[INFO] PG role {"u":"postgres","rolsuper":false,"rolbypassrls":true}
 [PASS] P2 connection role documented
-[INFO] SEC2B_PG: ROLE_SUBJECT_TO_RLS
-[PASS] P2b production role subject to RLS
+[WARN] SEC2B_PG: ROLE_BYPASSES_RLS
+[PASS] P2b probe recorded (WARN only without enforce)
 [PASS] P3 SELECT an_stock_accounting_config under GUC ok
 
 Passed: 16 | Failed: 0

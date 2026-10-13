@@ -36,7 +36,7 @@ DATABASE_URL: set
 | FixStockReturnCumulative | PASS | 18 | 0 | 18 |
 | PgDateMapping | PASS | 14 | 0 | 14 |
 | PgMovementLogic | PASS | 4 | 0 | 4 |
-| P9Validation | FAIL | 132 | 12 | — |
+| P9Validation | PASS | 144 | 0 | — |
 
 F07: PASS (passed=8 failed=0)
 

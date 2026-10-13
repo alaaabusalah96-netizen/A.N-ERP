@@ -3,9 +3,9 @@
 [PASS] S3 guide has CREATE ROLE example
 [PASS] S4 guide forbids superuser for app
 [INFO] AN_ENFORCE_PROD_ROLE=0
-[INFO] PG role {"u":"an_erp_app","rolsuper":false,"rolbypassrls":false,"rolcanlogin":true}
-[PASS] P1 role readable | user=an_erp_app
-[INFO] SEC4_PG: ROLE_SUBJECT_TO_RLS
-[PASS] P2 production role subject to RLS | user=an_erp_app
+[INFO] PG role {"u":"postgres","rolsuper":false,"rolbypassrls":true,"rolcanlogin":true}
+[PASS] P1 role readable | user=postgres
+[WARN] SEC4_PG: ROLE_BYPASSES_RLS (or superuser) — not safe for multi-tenant production
+[PASS] P2 probe recorded (WARN only without AN_ENFORCE_PROD_ROLE) | ROLE_BYPASSES_RLS
 
 Passed: 6 | Failed: 0

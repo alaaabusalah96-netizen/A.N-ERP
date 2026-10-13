@@ -11,7 +11,7 @@ Last update: **2026-10-13** — FULL-SYSTEM-AUDIT: orchestrated runner (build+ba
 |---|---|
 | **Authoritative verdict** | **CONDITIONAL GO** |
 | **Rule** | NO GO = a critical gate failed or an OPEN P1 defect exists · CONDITIONAL GO = only open P2/P3 or configuration conditions · GO = none |
-| **Gates this render** | not run (docs-only) |
+| **Gates this render** | 32/32 PASS, F07 PASS |
 
 ## Open items
 - **PROD-ROLE-BYPASSRLS** (P2, CONFIG) — The application database role may bypass RLS

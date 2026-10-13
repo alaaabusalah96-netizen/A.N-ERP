@@ -1,4 +1,4 @@
-◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
 [PASS] (أ) parsePositiveQuantity rejects NaN
 [PASS] (أ) parsePositiveQuantity rejects Infinity
 [PASS] (أ) parsePositiveQuantity rejects -Infinity
@@ -93,41 +93,53 @@
 [PASS] (أ) validateJournalInput rejects debit Infinity
 [PASS] (أ) validateJournalInput rejects empty / non-array lines
 [PASS] (أ) validateJournalInput rejects a null line
-◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
-[phase-4] DECISION: DB role does NOT bypass RLS -> per-tenant membership backfill
-[PASS] (ب) receiveStock quantity=NaN | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) issueStock quantity=NaN | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock quantity="abc" | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) issueStock quantity="abc" | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock quantity=-999999999 | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) issueStock quantity=-999999999 | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock quantity=Infinity | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) issueStock quantity=Infinity | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock quantity=1e+30 | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) issueStock quantity=1e+30 | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock quantity=0 | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) issueStock quantity=0 | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock quantity="" | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) issueStock quantity="" | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock quantity=null | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) issueStock quantity=null | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock quantity="1e3" | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) issueStock quantity="1e3" | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock quantity=0.00001 | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) issueStock quantity=0.00001 | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock unitCost=-5 | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock unitCost="hello" | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock unitCost=NaN | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock unitCost=Infinity | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock unitCost=1e+30 | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock unitCost="1e3" | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock expiryDate=2026-02-31 | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock batchNumber 65 chars | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock serialNumber 129 chars | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock notes 2001 chars | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock notes with control char | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) receiveStock: second line invalid → nothing saved | success=false status=400 movements 0→0 documents 0→0
-[PASS] (ب) issueStock: second line invalid → nothing saved | success=false status=400 movements 0→0 documents 0→0
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+[phase-4] DECISION: DB role bypasses RLS -> global membership backfill
+[PASS] (ب) seed receipt succeeds
+[PASS] (ب) receiveStock quantity=NaN | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=NaN | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity="abc" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity="abc" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=-999999999 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=-999999999 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=Infinity | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=Infinity | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=1e+30 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=1e+30 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=0 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=0 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity="" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity="" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=null | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=null | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity="1e3" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity="1e3" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock quantity=0.00001 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock quantity=0.00001 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=-5 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost="hello" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=NaN | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=Infinity | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost=1e+30 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock unitCost="1e3" | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock expiryDate=2026-02-31 | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock batchNumber 65 chars | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock serialNumber 129 chars | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock notes 2001 chars | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock notes with control char | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) receiveStock: second line invalid → nothing saved | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) issueStock: second line invalid → nothing saved | success=false status=400 movements 1→1 documents 1→1
+[PASS] (ب) createTransfer quantity="abc" rejected 400, no transfer row | status=400 transfers 0→0
+[PASS] (ب) createStockCount countedQty=-3 rejected 400 | status=400
+[PASS] (ج) receive quantity 0.5 / unitCost 0 accepted
+[PASS] (ج) stored qty = 0.5 | qty=0.5
+[PASS] (ج) receive quantity "12.25" (numeric text) accepted
+[PASS] (ج) stored qty = 12.75 (text parsed to a number) | qty=12.75
+[PASS] (ج) receive quantity 1234.5678 accepted
+[PASS] (ج) stored qty = 1247.3178 | qty=1247.3178
+[PASS] (ج) issue quantity "0.5" accepted
+[PASS] (ج) stored qty after issue = 1246.8178 | qty=1246.8178
+[PASS] (ج) valid expiryDate / batchNumber / notes accepted
 [PASS] (هـ) saveStockItem valuationMethod "FOO" rejected 400 | status=400
 [PASS] (هـ) saveStockItem valuationMethod "FIFO" accepted
 [PASS] (هـ) saveStockItem standardCost -5 rejected 400 | status=400
@@ -135,17 +147,5 @@
 [PASS] (هـ) saveStockItem blank itemCode rejected 400 | status=400
 [NOT RUN] (د) HTTP validation (receive, journal-entries, transactions/post) | writes to tenant MAIN if a value is wrongly accepted (and for the valid entry); set P9_ALLOW_MAIN_WRITES=1 on a dev/throw-away database
 
-SUMMARY: PASS=132 FAIL=12 NOT_RUN=1
+SUMMARY: PASS=144 FAIL=0 NOT_RUN=1
 NOTE: NOT RUN items are not passes — run them in an environment that has what they need.
-[FAIL] (ب) seed receipt succeeds | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}
-[FAIL] (ب) createTransfer quantity="abc" rejected 400, no transfer row | status=404 transfers 0→0
-[FAIL] (ب) createStockCount countedQty=-3 rejected 400 | status=404
-[FAIL] (ج) receive quantity 0.5 / unitCost 0 accepted | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}
-[FAIL] (ج) stored qty = 0.5 | qty=0
-[FAIL] (ج) receive quantity "12.25" (numeric text) accepted | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}
-[FAIL] (ج) stored qty = 12.75 (text parsed to a number) | qty=0
-[FAIL] (ج) receive quantity 1234.5678 accepted | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}
-[FAIL] (ج) stored qty = 1247.3178 | qty=0
-[FAIL] (ج) issue quantity "0.5" accepted | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}
-[FAIL] (ج) stored qty after issue = 1246.8178 | qty=0
-[FAIL] (ج) valid expiryDate / batchNumber / notes accepted | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}

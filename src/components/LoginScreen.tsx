@@ -52,7 +52,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           twoFactorCode: params.twoFactor,
           backupCode: params.backup,
           forceTerminateOldest: params.forceTerminateOldest,
-          clientGeo: { city: 'Riyadh', country: 'SA', lat: 24.7136, lon: 46.6753 },
         }),
       });
 

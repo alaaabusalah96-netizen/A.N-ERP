@@ -1,5 +1,5 @@
-◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
-[phase-4] DECISION: DB role does NOT bypass RLS -> per-tenant membership backfill
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+[phase-4] DECISION: DB role bypasses RLS -> global membership backfill
 [PASS] PG0 initializeSchema succeeds
 [PASS] PG1 the key fits the real column (64 chars) and is stored without error
 [PASS] PG2 5 failures for admin@A lock A in the database; admin@B (same username) is NOT locked

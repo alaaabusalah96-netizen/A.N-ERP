@@ -8,11 +8,11 @@
 [PASS] S8 soft mode does not fail assert
 [PASS] S9 enforce mode fails unsafe role
 [PASS] S10 safe role subject to RLS
-[INFO] AN_ENFORCE_PROD_ROLE=1
-[INFO] PG role {"user":"an_erp_app","rolsuper":false,"rolbypassrls":false,"subjectToRls":true}
-[PASS] P1 role readable | user=an_erp_app
-[INFO] SEC_PROD_ROLE_PG: ROLE_SUBJECT_TO_RLS
-[PASS] P2 role policy | user=an_erp_app
+[INFO] AN_ENFORCE_PROD_ROLE=0
+[INFO] PG role {"user":"postgres","rolsuper":false,"rolbypassrls":true,"subjectToRls":false}
+[PASS] P1 role readable | user=postgres
+[WARN] SEC_PROD_ROLE_PG: ROLE_BYPASSES_RLS
+[PASS] P2 role policy | user=postgres
 [PASS] P3 SELECT under tenant GUC
 
 Passed: 13 | Failed: 0
