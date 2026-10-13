@@ -42,7 +42,7 @@ import {
   InventorySettings,
   defaultStockAccountingConfig,
 } from '../storage/StoragePort';
-import { assertReturnTypeMatchesOriginal, assertCumulativeWithinOriginal, assertStockCoversRequest, sumLinesByItem } from './stockReturnGuard';
+import { assertReturnTypeMatchesOriginal, assertCumulativeWithinOriginal, assertStockCoversRequest, sumLinesByItem, assertOriginalPosted } from './stockReturnGuard';
 import { PostingEngine } from '../engines/PostingEngine';
 import { StockAccountingService, AutoJournalOutcome } from './StockAccountingService';
 import { NumberingEngine } from '../engines/NumberingEngine';
@@ -1222,6 +1222,19 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
       };
     }
     const origDoc = origRes.data;
+
+    const postedCheck = assertOriginalPosted(origDoc.status);
+    if (!postedCheck.ok) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/invalid-original-status',
+          title: 'حالة المستند الأصلي غير صالحة للمرتجع',
+          status: 400,
+          detail: postedCheck.detail,
+        },
+      };
+    }
 
     const typeCheck = assertReturnTypeMatchesOriginal(input.returnType, origDoc.documentType);
     if (!typeCheck.ok) {

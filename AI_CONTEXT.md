@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-13** — FIX-STOCK-RETURN-GUARD: shared guard + referenceId query + fail-closed + aggregated stock + atomic FOR UPDATE on original (PG) / in-adapter check (mem)
+Last update: **2026-10-13** — FIX-STOCK-RETURN-GUARD-2: reject non-POSTED original; restore service coverage; concurrent double-return test
 
 ## Verdict
 | Field | Value |

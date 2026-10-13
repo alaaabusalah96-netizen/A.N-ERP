@@ -8684,6 +8684,11 @@ public async getWarehouseStock(
           await client.query('ROLLBACK');
           return { success: false, error: { type: 'https://api.an-erp.local/errors/document-not-found', title: 'المستند الأصلي غير موجود', status: 404, detail: 'تعذر قفل المستند الأصلي للمرتجع.' } };
         }
+        const origStatus = String(origLock.rows[0].status || '');
+        if (origStatus !== 'POSTED') {
+          await client.query('ROLLBACK');
+          return { success: false, error: { type: 'https://api.an-erp.local/errors/invalid-original-status', title: 'حالة المستند الأصلي غير صالحة للمرتجع', status: 400, detail: `لا يمكن إنشاء مرتجع لمستند حالته ${origStatus || 'غير معروفة'}؛ يجب أن يكون مرحّلاً (POSTED).` } };
+        }
         const origType = String(origLock.rows[0].document_type);
         const expect = doc.documentType === 'RETURN_RECEIPT' ? 'RECEIPT' : 'ISSUE';
         if (origType !== expect) {

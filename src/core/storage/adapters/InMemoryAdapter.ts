@@ -2763,6 +2763,9 @@ public async getWarehouseStock(tenantId: string, warehouseId: string, itemId: st
       if (!orig || orig.tenantId !== tenantId) {
         return fail(404, 'document-not-found', 'المستند الأصلي غير موجود', 'تعذر قفل/قراءة المستند الأصلي للمرتجع.');
       }
+      if (orig.status !== 'POSTED') {
+        return fail(400, 'invalid-original-status', 'حالة المستند الأصلي غير صالحة للمرتجع', `لا يمكن إنشاء مرتجع لمستند حالته ${orig.status || 'غير معروفة'}؛ يجب أن يكون مرحّلاً (POSTED).`);
+      }
       const expect = doc.documentType === 'RETURN_RECEIPT' ? 'RECEIPT' : 'ISSUE';
       if (orig.documentType !== expect) {
         return fail(400, 'return-type-mismatch', 'نوع المرتجع لا يطابق الأصل', `المتوقع ${expect} والفعلي ${orig.documentType}.`);

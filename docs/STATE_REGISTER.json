@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-13",
-  "lastChange": "FIX-STOCK-RETURN-GUARD: shared guard + referenceId query + fail-closed + aggregated stock + atomic FOR UPDATE on original (PG) / in-adapter check (mem)",
+  "lastChange": "FIX-STOCK-RETURN-GUARD-2: reject non-POSTED original; restore service coverage; concurrent double-return test",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -89,6 +89,12 @@
       "status": "DONE",
       "scope": "Atomic cumulative return guard (service + adapters)",
       "evidence": "scripts/verifyFixStockReturnCumulative.ts"
+    },
+    {
+      "id": "FIX-STOCK-RETURN-GUARD-2",
+      "status": "DONE",
+      "scope": "POSTED-only original + concurrent test + full coverage",
+      "evidence": "scripts/verifyFixStockReturnCumulative.ts"
     }
   ],
   "defects": [
@@ -97,7 +103,7 @@
       "severity": "P1",
       "status": "FIXED",
       "title": "Stock returns did not accumulate prior returns or duplicate lines against the original qty",
-      "evidence": "scripts/verifyFixStockReturnCumulative.ts; stockReturnGuard; PG FOR UPDATE inside postStockDocumentAtomic",
+      "evidence": "verifyFixStockReturnCumulative (posted + concurrent); assertOriginalPosted; PG/InMemory status",
       "fix": "Sum original lines, prior POSTED returns by referenceId, and current request per itemId; reject when exceeding remaining; validate return type vs original."
     },
     {

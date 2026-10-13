@@ -68,3 +68,14 @@ export function assertStockCoversRequest(
   }
   return { ok: true };
 }
+
+/** Original stock document must be POSTED (not draft/cancelled). */
+export function assertOriginalPosted(status: string): { ok: true } | { ok: false; detail: string } {
+  if (status !== 'POSTED') {
+    return {
+      ok: false,
+      detail: `لا يمكن إنشاء مرتجع لمستند حالته ${status || 'غير معروفة'}؛ يجب أن يكون المستند الأصلي مرحّلاً (POSTED).`,
+    };
+  }
+  return { ok: true };
+}

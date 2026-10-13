@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-13 — FIX-STOCK-RETURN-GUARD: shared guard + referenceId query + fail-closed + aggregated stock + atomic FOR UPDATE on original (PG) / in-adapter check (mem)
+**Last update**: 2026-10-13 — FIX-STOCK-RETURN-GUARD-2: reject non-POSTED original; restore service coverage; concurrent double-return test
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-13)
 
 ## Gates
@@ -21,11 +21,12 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **FIX-P1-P2P-AUTOPOST** — DONE — DEF-P2P-AUTOPOST-OFF — invoice journals inventory when auto-post off _(evidence: scripts/verifyFixP1P2pAutopost.ts)_
 - **FIX-STOCK-RETURN-CUMULATIVE** — DONE — Cumulative stock return qty vs original + return type check _(evidence: scripts/verifyFixStockReturnCumulative.ts)_
 - **FIX-STOCK-RETURN-GUARD** — DONE — Atomic cumulative return guard (service + adapters) _(evidence: scripts/verifyFixStockReturnCumulative.ts)_
+- **FIX-STOCK-RETURN-GUARD-2** — DONE — POSTED-only original + concurrent test + full coverage _(evidence: scripts/verifyFixStockReturnCumulative.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
 |---|---|---|---|---|
-| DEF-STOCK-RETURN-CUMULATIVE | P1 | **FIXED** | Stock returns did not accumulate prior returns or duplicate lines against the original qty | scripts/verifyFixStockReturnCumulative.ts; stockReturnGuard; PG FOR UPDATE inside postStockDocumentAtomic |
+| DEF-STOCK-RETURN-CUMULATIVE | P1 | **FIXED** | Stock returns did not accumulate prior returns or duplicate lines against the original qty | verifyFixStockReturnCumulative (posted + concurrent); assertOriginalPosted; PG/InMemory status |
 | DEF-CUSTODY-REVERSAL-DOUBLE-REFUND | P1 | **FIXED** | Reversing a custody expense voucher restores the custody balance twice | scripts/verifyFixP1Custody.ts; single restore in reverseCustodyExpenseVoucher only |
 | DEF-P2P-AUTOPOST-OFF | P1 | **FIXED** | Supplier invoice approval is wrong under the default stock-accounting config (autoPostEnabled=false) | scripts/verifyFixP1P2pAutopost.ts; approveSupplierInvoice Dr Inventory when autoPostEnabled=false, Dr GR/IR when true (code on tree) |
 | PROD-ROLE-BYPASSRLS | P2 | **CONFIG** | The application database role may bypass RLS | INFO: DB role bypasses RLS = true in evidence/standards-intelligence/battery-output-f2-pg.txt. Guide: docs/ops/PROD-PG-ROLE.md; probe: scripts/verifySec4ProdRole.ts. |
