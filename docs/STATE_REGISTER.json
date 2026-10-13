@@ -3,8 +3,8 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "lastUpdated": "2026-10-12",
-  "lastChange": "FIX-STOCK-RETURN-CUMULATIVE: prior+request returns cannot exceed original; type match; audit sync P2P if needed",
+  "lastUpdated": "2026-10-13",
+  "lastChange": "FIX-STOCK-RETURN-GUARD: shared guard + referenceId query + fail-closed + aggregated stock + atomic FOR UPDATE on original (PG) / in-adapter check (mem)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -83,6 +83,12 @@
       "status": "DONE",
       "scope": "Cumulative stock return qty vs original + return type check",
       "evidence": "scripts/verifyFixStockReturnCumulative.ts"
+    },
+    {
+      "id": "FIX-STOCK-RETURN-GUARD",
+      "status": "DONE",
+      "scope": "Atomic cumulative return guard (service + adapters)",
+      "evidence": "scripts/verifyFixStockReturnCumulative.ts"
     }
   ],
   "defects": [
@@ -91,7 +97,7 @@
       "severity": "P1",
       "status": "FIXED",
       "title": "Stock returns did not accumulate prior returns or duplicate lines against the original qty",
-      "evidence": "scripts/verifyFixStockReturnCumulative.ts; returnStock uses orig/prior/request qty maps",
+      "evidence": "scripts/verifyFixStockReturnCumulative.ts; stockReturnGuard; PG FOR UPDATE inside postStockDocumentAtomic",
       "fix": "Sum original lines, prior POSTED returns by referenceId, and current request per itemId; reject when exceeding remaining; validate return type vs original."
     },
     {

@@ -60,6 +60,7 @@ const BATTERIES: { name: string; script: string; expected?: number }[] = [
   { name: 'F3Acceptance', script: 'scripts/verifyF3Acceptance.ts', expected: 19 },
   { name: 'F4StockShadow', script: 'scripts/verifyF4StockShadow.ts', expected: 14 },
   { name: 'FixJ1Accounts', script: 'scripts/verifyFixJ1Accounts.ts', expected: 24 },
+  { name: 'FixStockReturnCumulative', script: 'scripts/verifyFixStockReturnCumulative.ts', expected: 12 },
   { name: 'PgDateMapping', script: 'scripts/verifyPgDateMapping.ts', expected: 14 },
   { name: 'PgMovementLogic', script: 'scripts/verifyPgMovementLogic.ts', expected: 4 },
   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },

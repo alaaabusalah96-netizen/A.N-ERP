@@ -42,6 +42,7 @@ import {
   InventorySettings,
   defaultStockAccountingConfig,
 } from '../storage/StoragePort';
+import { assertReturnTypeMatchesOriginal, assertCumulativeWithinOriginal, assertStockCoversRequest, sumLinesByItem } from './stockReturnGuard';
 import { PostingEngine } from '../engines/PostingEngine';
 import { StockAccountingService, AutoJournalOutcome } from './StockAccountingService';
 import { NumberingEngine } from '../engines/NumberingEngine';
@@ -1222,90 +1223,98 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
     }
     const origDoc = origRes.data;
 
-    // Return type must match the original document kind
-    const expectOrigType = input.returnType === 'RETURN_RECEIPT' ? 'RECEIPT' : 'ISSUE';
-    if (origDoc.documentType !== expectOrigType) {
+    const typeCheck = assertReturnTypeMatchesOriginal(input.returnType, origDoc.documentType);
+    if (!typeCheck.ok) {
       return {
         success: false,
         error: {
           type: 'https://api.an-erp.local/errors/return-type-mismatch',
           title: 'نوع المرتجع لا يطابق الأصل',
           status: 400,
-          detail: `المرتجع ${input.returnType} يتطلب مستندًا أصليًا من نوع ${expectOrigType}، والمستند ${origDoc.documentNumber} من نوع ${origDoc.documentType}.`,
+          detail: typeCheck.detail,
         },
       };
     }
 
-    // Original qty per item (sum if the source document repeated the same item)
-    const origQtyByItem = new Map<string, number>();
-    for (const l of origDoc.lines) {
-      origQtyByItem.set(l.itemId, (origQtyByItem.get(l.itemId) || 0) + Number(l.quantity));
-    }
-
-    // Requested qty per item (sum duplicate lines in this return)
-    const reqQtyByItem = new Map<string, number>();
-    for (const rLine of input.lines) {
-      if (!origQtyByItem.has(rLine.itemId)) {
+    const origQtyByItem = sumLinesByItem(origDoc.lines);
+    const reqQtyByItem = sumLinesByItem(input.lines);
+    for (const itemId of reqQtyByItem.keys()) {
+      if (!origQtyByItem.has(itemId)) {
         return {
           success: false,
           error: {
             type: 'https://api.an-erp.local/errors/item-not-in-original',
             title: 'الصنف غير وارد بالأصل',
             status: 400,
-            detail: `الصنف ${rLine.itemId} ليس جزءاً من المستند الأصلي ${origDoc.documentNumber}.`,
+            detail: `الصنف ${itemId} ليس جزءاً من المستند الأصلي ${origDoc.documentNumber}.`,
           },
         };
       }
-      reqQtyByItem.set(rLine.itemId, (reqQtyByItem.get(rLine.itemId) || 0) + Number(rLine.quantity));
     }
 
-    // Prior posted returns against this original (referenceId)
+    // Fail-closed: prior returns for THIS original only
+    const listed = await this.storage.listStockDocuments(tenantId, { referenceId: origDoc.id });
+    if (!listed.success) {
+      return {
+        success: false,
+        error: listed.error || {
+          type: 'https://api.an-erp.local/errors/prior-returns-unavailable',
+          title: 'تعذر التحقق من المرتجعات السابقة',
+          status: 500,
+          detail: 'لا يمكن إتمام المرتجع دون التحقق من المرتجعات السابقة لنفس المستند الأصلي.',
+        },
+      };
+    }
     const priorQtyByItem = new Map<string, number>();
-    const listed = await this.storage.listStockDocuments(tenantId, { limit: 5000 });
-    if (listed.success && listed.data) {
-      for (const d of listed.data) {
-        if (d.status !== 'POSTED') continue;
-        if (d.referenceId !== origDoc.id) continue;
-        if (d.documentType !== 'RETURN_RECEIPT' && d.documentType !== 'RETURN_ISSUE') continue;
-        for (const l of d.lines || []) {
-          priorQtyByItem.set(l.itemId, (priorQtyByItem.get(l.itemId) || 0) + Number(l.quantity));
-        }
+    for (const d of listed.data || []) {
+      if (d.status !== 'POSTED') continue;
+      if (d.documentType !== 'RETURN_RECEIPT' && d.documentType !== 'RETURN_ISSUE') continue;
+      for (const [id, q] of sumLinesByItem(d.lines)) {
+        priorQtyByItem.set(id, (priorQtyByItem.get(id) || 0) + q);
       }
     }
-
-    for (const [itemId, reqQty] of reqQtyByItem) {
-      const origQty = origQtyByItem.get(itemId) || 0;
-      const priorQty = priorQtyByItem.get(itemId) || 0;
-      const remaining = Math.round((origQty - priorQty) * 1000) / 1000;
-      if (reqQty > remaining + 1e-9) {
-        return {
-          success: false,
-          error: {
-            type: 'https://api.an-erp.local/errors/quantity-exceeds-original',
-            title: 'الكمية تتجاوز المتاح للإرجاع',
-            status: 400,
-            detail: `الصنف ${itemId}: المطلوب إرجاعه الآن (${reqQty}) + المرتجع سابقًا (${priorQty}) يتجاوز كمية الأصل (${origQty}). المتبقي القابل للإرجاع: ${Math.max(0, remaining)}.`,
-          },
-        };
-      }
+    const within = assertCumulativeWithinOriginal(origQtyByItem, priorQtyByItem, reqQtyByItem);
+    if (!within.ok) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/quantity-exceeds-original',
+          title: 'الكمية تتجاوز المتاح للإرجاع',
+          status: 400,
+          detail: within.detail,
+        },
+      };
     }
 
-    // If RETURN_RECEIPT (returning received goods back to supplier), check stock availability
+    // RETURN_RECEIPT: stock availability on aggregated request qty
     if (input.returnType === 'RETURN_RECEIPT') {
-      for (const rLine of input.lines) {
-        const stockRes = await this.storage.getWarehouseStock(tenantId, origDoc.warehouseId, rLine.itemId);
-        const availableQty = stockRes.success && stockRes.data ? stockRes.data.availableQty : 0;
-        if (availableQty < rLine.quantity) {
+      const availByItem = new Map<string, number>();
+      for (const itemId of reqQtyByItem.keys()) {
+        const stockRes = await this.storage.getWarehouseStock(tenantId, origDoc.warehouseId, itemId);
+        if (!stockRes.success) {
           return {
             success: false,
-            error: {
-              type: 'https://api.an-erp.local/errors/insufficient-stock',
-              title: 'الرصيد غير كافٍ للإرجاع',
-              status: 400,
-              detail: `الرصيد المتاح حالياً بالمستودع (${availableQty}) لا يكفي لإرجاع كمية (${rLine.quantity}).`,
+            error: stockRes.error || {
+              type: 'https://api.an-erp.local/errors/stock-check-failed',
+              title: 'تعذر التحقق من رصيد المخزن',
+              status: 500,
+              detail: `تعذر قراءة رصيد الصنف ${itemId}.`,
             },
           };
         }
+        availByItem.set(itemId, stockRes.data ? Number(stockRes.data.availableQty) : 0);
+      }
+      const stockOk = assertStockCoversRequest(availByItem, reqQtyByItem);
+      if (!stockOk.ok) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/insufficient-stock',
+            title: 'الرصيد غير كافٍ للإرجاع',
+            status: 400,
+            detail: stockOk.detail,
+          },
+        };
       }
     }
 

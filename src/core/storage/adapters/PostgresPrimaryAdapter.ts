@@ -8674,6 +8674,50 @@ public async getWarehouseStock(
       await this.lockStockRowsInTx(client, tenantId, doc.companyId || tenantId, movements.map(m => ({ warehouseId: m.warehouseId, itemId: m.itemId })));
       await this.lockItemRowsInTx(client, tenantId, movements.filter(m => m.movementType === 'RECEIPT').map(m => m.itemId));
 
+      // Atomic cumulative return guard inside the same transaction (FOR UPDATE on original + sum prior returns)
+      if ((doc.documentType === 'RETURN_RECEIPT' || doc.documentType === 'RETURN_ISSUE') && doc.referenceId) {
+        const origLock = await client.query(
+          `SELECT id, document_type, status FROM an_stock_documents WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+          [tenantId, doc.referenceId],
+        );
+        if (origLock.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return { success: false, error: { type: 'https://api.an-erp.local/errors/document-not-found', title: 'المستند الأصلي غير موجود', status: 404, detail: 'تعذر قفل المستند الأصلي للمرتجع.' } };
+        }
+        const origType = String(origLock.rows[0].document_type);
+        const expect = doc.documentType === 'RETURN_RECEIPT' ? 'RECEIPT' : 'ISSUE';
+        if (origType !== expect) {
+          await client.query('ROLLBACK');
+          return { success: false, error: { type: 'https://api.an-erp.local/errors/return-type-mismatch', title: 'نوع المرتجع لا يطابق الأصل', status: 400, detail: `المتوقع ${expect} والفعلي ${origType}.` } };
+        }
+        const origLines = await client.query(
+          `SELECT item_id, COALESCE(SUM(quantity),0)::float AS qty FROM an_stock_document_lines WHERE tenant_id = $1 AND document_id = $2 GROUP BY item_id`,
+          [tenantId, doc.referenceId],
+        );
+        const origBy = new Map<string, number>(origLines.rows.map((r: any) => [String(r.item_id), Number(r.qty)]));
+        const priorLines = await client.query(
+          `SELECT l.item_id, COALESCE(SUM(l.quantity),0)::float AS qty
+           FROM an_stock_documents d
+           JOIN an_stock_document_lines l ON l.document_id = d.id AND l.tenant_id = d.tenant_id
+           WHERE d.tenant_id = $1 AND d.reference_id = $2 AND d.status = 'POSTED'
+             AND d.document_type IN ('RETURN_RECEIPT', 'RETURN_ISSUE')
+           GROUP BY l.item_id`,
+          [tenantId, doc.referenceId],
+        );
+        const priorBy = new Map<string, number>(priorLines.rows.map((r: any) => [String(r.item_id), Number(r.qty)]));
+        const reqBy = new Map<string, number>();
+        for (const l of doc.lines || []) reqBy.set(l.itemId, (reqBy.get(l.itemId) || 0) + Number(l.quantity));
+        for (const [itemId, reqQty] of reqBy) {
+          const origQty = origBy.get(itemId) || 0;
+          const priorQty = priorBy.get(itemId) || 0;
+          const remaining = Math.round((origQty - priorQty) * 1000) / 1000;
+          if (!origBy.has(itemId) || reqQty > remaining + 1e-9) {
+            await client.query('ROLLBACK');
+            return { success: false, error: { type: 'https://api.an-erp.local/errors/quantity-exceeds-original', title: 'الكمية تتجاوز المتاح للإرجاع', status: 400, detail: `الصنف ${itemId}: المطلوب (${reqQty}) + السابق (${priorQty}) / الأصل (${origQty}).` } };
+          }
+        }
+      }
+
       const savedMovements: StockMovement[] = [];
       const lines = doc.lines.map(l => ({ ...l }));
       for (let i = 0; i < movements.length; i++) {
@@ -8907,7 +8951,7 @@ public async getWarehouseStock(
 
   public async listStockDocuments(
     tenantId: string,
-    filter?: { warehouseId?: string; documentType?: StockDocumentType; limit?: number }
+    filter?: { warehouseId?: string; documentType?: StockDocumentType; referenceId?: string; limit?: number }
   ): Promise<StorageResult<StockDocument[]>> {
     if (!this.pool) return this.missingConnError();
     try {
@@ -8920,6 +8964,10 @@ public async getWarehouseStock(
       if (filter?.documentType) {
         params.push(filter.documentType);
         queryStr += ` AND document_type = $${params.length}`;
+      }
+      if (filter?.referenceId) {
+        params.push(filter.referenceId);
+        queryStr += ` AND reference_id = $${params.length}`;
       }
       queryStr += ` ORDER BY created_at DESC`;
       if (filter?.limit) {

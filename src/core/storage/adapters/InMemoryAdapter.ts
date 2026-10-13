@@ -2757,6 +2757,37 @@ public async getWarehouseStock(tenantId: string, warehouseId: string, itemId: st
       }
     }
 
+    // Atomic cumulative return guard (same rules as InventoryService; closes concurrent double-return window on InMemory)
+    if ((doc.documentType === 'RETURN_RECEIPT' || doc.documentType === 'RETURN_ISSUE') && doc.referenceId) {
+      const orig = this.stockDocuments.get(`${tenantId}:${doc.referenceId}`);
+      if (!orig || orig.tenantId !== tenantId) {
+        return fail(404, 'document-not-found', 'المستند الأصلي غير موجود', 'تعذر قفل/قراءة المستند الأصلي للمرتجع.');
+      }
+      const expect = doc.documentType === 'RETURN_RECEIPT' ? 'RECEIPT' : 'ISSUE';
+      if (orig.documentType !== expect) {
+        return fail(400, 'return-type-mismatch', 'نوع المرتجع لا يطابق الأصل', `المتوقع ${expect} والفعلي ${orig.documentType}.`);
+      }
+      const origBy = new Map<string, number>();
+      for (const l of orig.lines || []) origBy.set(l.itemId, (origBy.get(l.itemId) || 0) + Number(l.quantity));
+      const priorBy = new Map<string, number>();
+      for (const d of this.stockDocuments.values()) {
+        if (d.tenantId !== tenantId || d.status !== 'POSTED' || d.referenceId !== orig.id) continue;
+        if (d.documentType !== 'RETURN_RECEIPT' && d.documentType !== 'RETURN_ISSUE') continue;
+        for (const l of d.lines || []) priorBy.set(l.itemId, (priorBy.get(l.itemId) || 0) + Number(l.quantity));
+      }
+      const reqBy = new Map<string, number>();
+      for (const l of doc.lines || []) reqBy.set(l.itemId, (reqBy.get(l.itemId) || 0) + Number(l.quantity));
+      for (const [itemId, reqQty] of reqBy) {
+        const origQty = origBy.get(itemId) || 0;
+        const priorQty = priorBy.get(itemId) || 0;
+        const remaining = Math.round((origQty - priorQty) * 1000) / 1000;
+        if (!origBy.has(itemId) || reqQty > remaining + 1e-9) {
+          return fail(400, 'quantity-exceeds-original', 'الكمية تتجاوز المتاح للإرجاع',
+            `الصنف ${itemId}: المطلوب (${reqQty}) + السابق (${priorQty}) / الأصل (${origQty}).`);
+        }
+      }
+    }
+
     const snap = {
       stock: new Map(this.warehouseStock),
       movements: new Map(this.stockMovements),
@@ -2855,11 +2886,12 @@ public async getWarehouseStock(tenantId: string, warehouseId: string, itemId: st
 
   public async listStockDocuments(
     tenantId: string,
-    filter?: { warehouseId?: string; documentType?: StockDocumentType; limit?: number }
+    filter?: { warehouseId?: string; documentType?: StockDocumentType; referenceId?: string; limit?: number }
   ): Promise<StorageResult<StockDocument[]>> {
     let list = Array.from(this.stockDocuments.values()).filter(d => d.tenantId === tenantId);
     if (filter?.warehouseId) list = list.filter(d => d.warehouseId === filter.warehouseId);
     if (filter?.documentType) list = list.filter(d => d.documentType === filter.documentType);
+    if (filter?.referenceId) list = list.filter(d => d.referenceId === filter.referenceId);
     list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     if (filter?.limit) list = list.slice(0, filter.limit);
     return { success: true, data: list.map(d => ({ ...d })) };

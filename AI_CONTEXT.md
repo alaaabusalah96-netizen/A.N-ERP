@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-12** — FIX-STOCK-RETURN-CUMULATIVE: prior+request returns cannot exceed original; type match; audit sync P2P if needed
+Last update: **2026-10-13** — FIX-STOCK-RETURN-GUARD: shared guard + referenceId query + fail-closed + aggregated stock + atomic FOR UPDATE on original (PG) / in-adapter check (mem)
 
 ## Verdict
 | Field | Value |

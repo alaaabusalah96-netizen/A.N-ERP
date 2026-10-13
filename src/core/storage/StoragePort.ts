@@ -1316,7 +1316,7 @@ export interface StoragePort {
   saveStockDocument(tenantId: string, doc: StockDocument, idempotencyKey: string): Promise<StorageResult<StockDocument>>;
   postStockDocumentAtomic(tenantId: string, input: PostStockDocumentAtomicInput, idempotencyKey: string): Promise<StorageResult<StockDocument>>;
   getStockDocument(tenantId: string, docId: string): Promise<StorageResult<StockDocument | null>>;
-  listStockDocuments(tenantId: string, filter?: { warehouseId?: string; documentType?: StockDocumentType; limit?: number }): Promise<StorageResult<StockDocument[]>>;
+  listStockDocuments(tenantId: string, filter?: { warehouseId?: string; documentType?: StockDocumentType; referenceId?: string; limit?: number }): Promise<StorageResult<StockDocument[]>>;
 
   saveCustodyExpenseVoucher(tenantId: string, voucher: CustodyExpenseVoucher, idempotencyKey: string): Promise<StorageResult<CustodyExpenseVoucher>>;
   getCustodyExpenseVoucher(tenantId: string, voucherId: string): Promise<StorageResult<CustodyExpenseVoucher | null>>;
