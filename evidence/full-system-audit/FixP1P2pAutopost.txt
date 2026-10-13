@@ -1,0 +1,10 @@
+[PASS] S1 uses autoPostEnabled
+[PASS] S2 builds invDebits when !autoPost
+[PASS] S3 autoPost branch posts GR/IR debit line
+[PASS] S4 !autoPost does not force GR/IR in need[]
+[PASS] U0 post ok
+[PASS] U0 INV Dr 80, grir none
+[PASS] U1 post ok
+[PASS] U1 GRIR Dr 80, inv none
+
+Passed: 8 | Failed: 0

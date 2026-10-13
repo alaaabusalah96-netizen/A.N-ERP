@@ -42,3 +42,16 @@ Expected strict result: `SEC4_PG: ROLE_SUBJECT_TO_RLS` and `Failed: 0`.
 ## Notes
 - Policies use `current_setting('app.current_tenant_id', true)` via `withTenantScope`.
 - A superuser or `BYPASSRLS` role will see all tenants' rows even when GUC is set.
+
+## Boot enforcement
+
+When `AN_ENFORCE_PROD_ROLE=1` and `DATABASE_URL` is set, the server **refuses to start** if the connection role is `SUPERUSER` or `BYPASSRLS`.
+
+```bash
+# production / CI
+export AN_ENFORCE_PROD_ROLE=1
+export DATABASE_URL=postgresql://an_erp_app:...@.../an_erp
+node server.cjs   # or npm start
+```
+
+Dev Studio with the default `postgres` superuser should leave `AN_ENFORCE_PROD_ROLE` unset (probe stays WARN-only).

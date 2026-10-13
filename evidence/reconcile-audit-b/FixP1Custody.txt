@@ -1,0 +1,11 @@
+[PASS] S1 service does not credit balance before reverse
+[PASS] S2 service calls reverseCustodyExpenseVoucher
+[PASS] S3 InMemory reverse credits balance once
+[PASS] S4 Postgres reverse credits balance once
+[PASS] R1 reverse ok
+[PASS] R2 status REVERSED
+[PASS] R3 balance 400+300=700 once
+[PASS] R4 not 1000 (double)
+[PASS] R5 no second credit
+
+Passed: 9 | Failed: 0

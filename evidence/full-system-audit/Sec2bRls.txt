@@ -1,0 +1,20 @@
+[PASS] S1 RLS array exists
+[PASS] S2 RLS array includes an_stock_accounting_config
+[PASS] S2 RLS array includes an_last_successful_logins
+[PASS] S2 RLS array includes an_active_sessions
+[PASS] S3 FORCE still in loop
+[PASS] S4 policy uses app.current_tenant_id
+[PASS] S5 getStockAccountingConfig uses withTenantScope
+[PASS] S6 getStockAccountingConfig uses this.query
+[PASS] S7 saveStockAccountingConfig uses withTenantScope
+[PASS] S8 recordSuccessfulLogin scopes when tenantId present
+[PASS] S9 listActiveSessions(tenantId) uses withTenantScope
+[PASS] S10 SEC-2 still lists an_purchase_orders
+[PASS] S10 SEC-2 still lists an_supplier_invoices
+[INFO] PG role {"u":"an_erp_app","rolsuper":false,"rolbypassrls":false}
+[PASS] P2 connection role documented
+[INFO] SEC2B_PG: ROLE_SUBJECT_TO_RLS
+[PASS] P2b production role subject to RLS
+[PASS] P3 SELECT an_stock_accounting_config under GUC ok
+
+Passed: 16 | Failed: 0

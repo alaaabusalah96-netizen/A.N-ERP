@@ -1,0 +1,9 @@
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+[phase-4] DECISION: DB role does NOT bypass RLS -> per-tenant membership backfill
+[PASS] PG0 initializeSchema succeeds
+[PASS] PG1 the key fits the real column (64 chars) and is stored without error
+[PASS] PG2 5 failures for admin@A lock A in the database; admin@B (same username) is NOT locked
+[PASS] PG3 clearing the counter removes the lock
+[PASS] PG4 the other tenant keeps its own independent counter (1 failure, not locked)
+
+Passed: 5 | Failed: 0

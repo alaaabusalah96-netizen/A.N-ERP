@@ -16,7 +16,7 @@ export function sumLinesByItem(lines: Array<{ itemId: string; quantity: number }
 export function assertReturnTypeMatchesOriginal(
   returnType: 'RETURN_RECEIPT' | 'RETURN_ISSUE',
   originalDocumentType: string,
-): { ok: true } | { ok: false; detail: string } {
+): { ok: true; detail?: string } | { ok: false; detail: string } {
   const expect = returnType === 'RETURN_RECEIPT' ? 'RECEIPT' : 'ISSUE';
   if (originalDocumentType !== expect) {
     return {
@@ -32,7 +32,7 @@ export function assertCumulativeWithinOriginal(
   origByItem: QtyMap,
   priorByItem: QtyMap,
   reqByItem: QtyMap,
-): { ok: true } | { ok: false; itemId: string; detail: string } {
+): { ok: true; itemId?: string; detail?: string } | { ok: false; itemId: string; detail: string } {
   for (const [itemId, reqQty] of reqByItem) {
     if (!origByItem.has(itemId)) {
       return { ok: false, itemId, detail: `الصنف ${itemId} ليس جزءاً من المستند الأصلي.` };
@@ -55,7 +55,7 @@ export function assertCumulativeWithinOriginal(
 export function assertStockCoversRequest(
   availableByItem: QtyMap,
   reqByItem: QtyMap,
-): { ok: true } | { ok: false; itemId: string; detail: string } {
+): { ok: true; itemId?: string; detail?: string } | { ok: false; itemId: string; detail: string } {
   for (const [itemId, reqQty] of reqByItem) {
     const avail = availableByItem.get(itemId) || 0;
     if (avail < reqQty) {
@@ -70,7 +70,7 @@ export function assertStockCoversRequest(
 }
 
 /** Original stock document must be POSTED (not draft/cancelled). */
-export function assertOriginalPosted(status: string): { ok: true } | { ok: false; detail: string } {
+export function assertOriginalPosted(status: string): { ok: true; detail?: string } | { ok: false; detail: string } {
   if (status !== 'POSTED') {
     return {
       ok: false,

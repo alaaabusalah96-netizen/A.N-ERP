@@ -31,13 +31,16 @@ function parsePassed(out: string): { passed: number | null; failed: number | nul
   return s ? { passed: Number(s[1]), failed: Number(s[2]) } : { passed: null, failed: null };
 }
 
+const isPg = Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim().length > 0);
+
 // Expected counts come from the last verified run. A count that changes is a FAIL (silent test loss is a regression).
 const BATTERIES: { name: string; script: string; expected?: number }[] = [
   { name: 'Sec1TwoFactor', script: 'scripts/verifySec1TwoFactor.ts', expected: 26 },
   { name: 'Sec2Rls', script: 'scripts/verifySec2Rls.ts', expected: 39 },
-  { name: 'Sec2bRls', script: 'scripts/verifySec2bRls.ts', expected: 14 },
+  { name: 'Sec2bRls', script: 'scripts/verifySec2bRls.ts', expected: isPg ? 16 : 14 },
   { name: 'Sec3Ids', script: 'scripts/verifySec3Ids.ts', expected: 7 },
-  { name: 'Sec4ProdRole', script: 'scripts/verifySec4ProdRole.ts', expected: 5 },
+  { name: 'Sec4ProdRole', script: 'scripts/verifySec4ProdRole.ts', expected: isPg ? 6 : 5 },
+  { name: 'SecProdRole', script: 'scripts/verifySecProdRole.ts', expected: isPg ? 13 : 11 },
   { name: 'SecA', script: 'scripts/verifySecA.ts', expected: 27 },
   { name: 'FixC', script: 'scripts/verifyFixC.ts', expected: 14 },
   { name: 'FixP1Custody', script: 'scripts/verifyFixP1Custody.ts', expected: 9 },

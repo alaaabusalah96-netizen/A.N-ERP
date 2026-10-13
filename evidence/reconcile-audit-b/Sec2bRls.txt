@@ -11,7 +11,10 @@
 [PASS] S9 listActiveSessions(tenantId) uses withTenantScope
 [PASS] S10 SEC-2 still lists an_purchase_orders
 [PASS] S10 SEC-2 still lists an_supplier_invoices
-[FAIL] P1 PG probe failed | password authentication failed for user "postgres"
-SEC2B_PG: ERROR
+[INFO] PG role {"u":"an_erp_app","rolsuper":false,"rolbypassrls":false}
+[PASS] P2 connection role documented
+[INFO] SEC2B_PG: ROLE_SUBJECT_TO_RLS
+[PASS] P2b production role subject to RLS
+[PASS] P3 SELECT an_stock_accounting_config under GUC ok
 
-Passed: 13 | Failed: 1
+Passed: 16 | Failed: 0

@@ -252,6 +252,33 @@ async function startServer() {
     process.exit(1);
   }
 
+  // SEC-PROD-ROLE: refuse start when enforce=1 and the connection role bypasses RLS
+  if (process.env.AN_ENFORCE_PROD_ROLE === '1' && process.env.DATABASE_URL) {
+    try {
+      const { cleanPgConnectionString } = await import('./src/core/security/pgAppRoleGuard');
+      const pgMod = await import('pg');
+      const client = new pgMod.Client({ connectionString: cleanPgConnectionString(process.env.DATABASE_URL) });
+      await client.connect();
+      const roleRes = await client.query(
+        `SELECT current_user AS u, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user`,
+      );
+      await client.end();
+      const row = roleRes.rows[0] || {};
+      if (row.rolsuper === true || row.rolbypassrls === true) {
+        console.error(
+          `[SEC-PROD-ROLE] Refusing to start: role "${row.u}" bypasses RLS ` +
+            `(rolsuper=${row.rolsuper}, rolbypassrls=${row.rolbypassrls}). ` +
+            `Use NOSUPERUSER NOBYPASSRLS — docs/ops/PROD-PG-ROLE.md`,
+        );
+        process.exit(1);
+      }
+      console.log(`[SEC-PROD-ROLE] App role subject to RLS (user=${row.u})`);
+    } catch (e) {
+      console.error('[SEC-PROD-ROLE] Refusing to start: could not verify application DB role under AN_ENFORCE_PROD_ROLE=1', e);
+      process.exit(1);
+    }
+  }
+
   const masterStorage: StoragePort = process.env.DATABASE_URL
     ? globalStorageRouter.getPrimaryAdapter()
     : globalStorageRouter.getDevInMemoryAdapter();

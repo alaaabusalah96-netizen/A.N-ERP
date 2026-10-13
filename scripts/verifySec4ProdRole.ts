@@ -33,8 +33,9 @@ async function main() {
     console.log('SEC4_PG: SKIPPED');
   } else {
     try {
+      const { cleanPgConnectionString } = await import('../src/core/security/pgAppRoleGuard');
       const pg = await import('pg');
-      const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+      const client = new pg.Client({ connectionString: cleanPgConnectionString(process.env.DATABASE_URL) });
       await client.connect();
       const r = await client.query(
         `SELECT current_user AS u, rolsuper, rolbypassrls, rolcanlogin

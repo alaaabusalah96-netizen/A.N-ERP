@@ -69,7 +69,7 @@ async function scenario(autoPost: boolean) {
     if (st.purchaseOrderLines) st.purchaseOrderLines.set(`${T}:${lineId}`, poLine);
     return { st, svc, T, item, poId, lineId, autoPost, injected: true };
   }
-  const poId = poRes.data.id;
+  const poId = (poRes.data as any)?.po?.id || (poRes.data as any)?.id;
   const lines = (await st.getPurchaseOrder(T, poId)).data?.lines || [];
   const lineId = lines[0]?.id;
   if (st.purchaseOrderLines && lineId) {

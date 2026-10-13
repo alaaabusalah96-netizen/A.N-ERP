@@ -1,0 +1,18 @@
+[PASS] S1 ops guide exists
+[PASS] S2 guide NOBYPASSRLS / CREATE ROLE
+[PASS] S3 guide documents boot refuse
+[PASS] S4 guard module exists
+[PASS] S5 server refuses start under AN_ENFORCE_PROD_ROLE
+[PASS] S6 server checks rolbypassrls or rolsuper
+[PASS] S7 interpret flags superuser unsafe
+[PASS] S8 soft mode does not fail assert
+[PASS] S9 enforce mode fails unsafe role
+[PASS] S10 safe role subject to RLS
+[INFO] AN_ENFORCE_PROD_ROLE=0
+[INFO] PG role {"user":"an_erp_app","rolsuper":false,"rolbypassrls":false,"subjectToRls":true}
+[PASS] P1 role readable | user=an_erp_app
+[INFO] SEC_PROD_ROLE_PG: ROLE_SUBJECT_TO_RLS
+[PASS] P2 role policy | user=an_erp_app
+[PASS] P3 SELECT under tenant GUC
+
+Passed: 13 | Failed: 0

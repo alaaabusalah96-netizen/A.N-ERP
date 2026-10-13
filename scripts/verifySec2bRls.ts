@@ -46,8 +46,9 @@ async function main() {
     console.log('SEC2B_PG: SKIPPED');
   } else {
     try {
+      const { cleanPgConnectionString } = await import('../src/core/security/pgAppRoleGuard');
       const pg = await import('pg');
-      const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+      const client = new pg.Client({ connectionString: cleanPgConnectionString(process.env.DATABASE_URL) });
       await client.connect();
       const r = await client.query(
         `SELECT current_user AS u, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user`
@@ -57,6 +58,14 @@ async function main() {
       check('P2 connection role documented', row.u != null);
       const bypass = row.rolbypassrls === true || row.rolsuper === true;
       console.log(bypass ? '[WARN] SEC2B_PG: ROLE_BYPASSES_RLS' : '[INFO] SEC2B_PG: ROLE_SUBJECT_TO_RLS');
+      const enforce = process.env.AN_ENFORCE_PROD_ROLE === '1';
+      if (bypass && enforce) {
+        check('P2b production role subject to RLS under AN_ENFORCE_PROD_ROLE=1', false, 'rolbypassrls or rolsuper');
+      } else if (!bypass) {
+        check('P2b production role subject to RLS', true, `user=${row.u}`);
+      } else {
+        check('P2b probe recorded (WARN only without enforce)', true, 'ROLE_BYPASSES_RLS');
+      }
       await client.query("SELECT set_config('app.current_tenant_id', 'sec2b-probe-a', true)");
       try {
         await client.query('SELECT 1 FROM an_stock_accounting_config LIMIT 1');

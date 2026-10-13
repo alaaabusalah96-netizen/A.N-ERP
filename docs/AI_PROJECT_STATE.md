@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-13 — FIX-STOCK-RETURN-GUARD-2: reject non-POSTED original; restore service coverage; concurrent double-return test
+**Last update**: 2026-10-13 — FULL-SYSTEM-AUDIT: orchestrated runner (build+battery+domain+optional PG/health) → evidence/full-system-audit/
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-13)
 
 ## Gates
@@ -22,6 +22,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **FIX-STOCK-RETURN-CUMULATIVE** — DONE — Cumulative stock return qty vs original + return type check _(evidence: scripts/verifyFixStockReturnCumulative.ts)_
 - **FIX-STOCK-RETURN-GUARD** — DONE — Atomic cumulative return guard (service + adapters) _(evidence: scripts/verifyFixStockReturnCumulative.ts)_
 - **FIX-STOCK-RETURN-GUARD-2** — DONE — POSTED-only original + concurrent test + full coverage _(evidence: scripts/verifyFixStockReturnCumulative.ts)_
+- **FULL-SYSTEM-AUDIT** — DONE — Comprehensive audit orchestrator + evidence report _(evidence: scripts/runFullSystemAudit.ts; evidence/full-system-audit/REPORT.md)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

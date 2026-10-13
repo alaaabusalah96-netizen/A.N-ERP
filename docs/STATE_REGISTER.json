@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-13",
-  "lastChange": "FIX-STOCK-RETURN-GUARD-2: reject non-POSTED original; restore service coverage; concurrent double-return test",
+  "lastChange": "FULL-SYSTEM-AUDIT: orchestrated runner (build+battery+domain+optional PG/health) → evidence/full-system-audit/",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -95,6 +95,12 @@
       "status": "DONE",
       "scope": "POSTED-only original + concurrent test + full coverage",
       "evidence": "scripts/verifyFixStockReturnCumulative.ts"
+    },
+    {
+      "id": "FULL-SYSTEM-AUDIT",
+      "status": "DONE",
+      "scope": "Comprehensive audit orchestrator + evidence report",
+      "evidence": "scripts/runFullSystemAudit.ts; evidence/full-system-audit/REPORT.md"
     }
   ],
   "defects": [

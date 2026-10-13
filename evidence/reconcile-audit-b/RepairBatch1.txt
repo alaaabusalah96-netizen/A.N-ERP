@@ -23,7 +23,7 @@
 [PASS] (custody) journal ok => voucher saved WITH its journalEntryId
 [PASS] (custody-return) reversal draft fails => error, voucher NOT reversed, custody balance NOT restored
 [PASS] (custody-return) reversal post fails => error, voucher NOT reversed, custody balance NOT restored
-[PASS] (custody-return) reversal ok => balance restored once and voucher reversed
+[PASS] (custody-return) reversal ok => voucher reversed once; the service no longer touches the balance (the atomic adapter reversal restores it exactly once)
 [PASS] (expense) reversal draft fails => error and the request is NOT marked cancelled
 [PASS] (expense) reversal post fails => error and the request is NOT marked cancelled
 [PASS] (expense) reversal ok => request marked cancelled

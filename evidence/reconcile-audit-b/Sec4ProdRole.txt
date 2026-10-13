@@ -3,7 +3,9 @@
 [PASS] S3 guide has CREATE ROLE example
 [PASS] S4 guide forbids superuser for app
 [INFO] AN_ENFORCE_PROD_ROLE=0
-[FAIL] P1 PG probe | password authentication failed for user "postgres"
-SEC4_PG: ERROR
+[INFO] PG role {"u":"an_erp_app","rolsuper":false,"rolbypassrls":false,"rolcanlogin":true}
+[PASS] P1 role readable | user=an_erp_app
+[INFO] SEC4_PG: ROLE_SUBJECT_TO_RLS
+[PASS] P2 production role subject to RLS | user=an_erp_app
 
-Passed: 4 | Failed: 1
+Passed: 6 | Failed: 0

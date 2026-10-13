@@ -1,0 +1,26 @@
+[PASS] (هـ) settings off receive ok
+[PASS] (هـ) journal NONE
+[PASS] (هـ) no JE
+[PASS] (أ) receive ok
+[PASS] (أ) POSTED
+[PASS] (أ) one JE
+[PASS] (أ) Dr1105=1000
+[PASS] (أ) Cr2106=1000
+[PASS] (ب) issue ok
+[PASS] (ب) Dr5101=400
+[PASS] (ب) Cr1105=400
+[PASS] (ج) dispatch ok
+[PASS] (ج) receive ok
+[PASS] (ج) net 1109 = 0
+[PASS] (د) multi-account ok
+[PASS] (د) balanced
+[PASS] (و) closed → 422
+[PASS] (و) no movement
+[PASS] (ز) bad account rejected
+[PASS] (ح) stock ok + PENDING_RETRY
+[PASS] (ح) retry POSTED
+[PASS] (ط) all balanced
+[PASS] (ي) default auto off
+[PASS] builder receipt
+
+Passed: 24 | Failed: 0

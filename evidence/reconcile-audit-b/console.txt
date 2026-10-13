@@ -85,10 +85,13 @@ Passed: 39 | Failed: 0
 [PASS] S9 listActiveSessions(tenantId) uses withTenantScope
 [PASS] S10 SEC-2 still lists an_purchase_orders
 [PASS] S10 SEC-2 still lists an_supplier_invoices
-[FAIL] P1 PG probe failed | password authentication failed for user "postgres"
-SEC2B_PG: ERROR
+[INFO] PG role {"u":"an_erp_app","rolsuper":false,"rolbypassrls":false}
+[PASS] P2 connection role documented
+[INFO] SEC2B_PG: ROLE_SUBJECT_TO_RLS
+[PASS] P2b production role subject to RLS
+[PASS] P3 SELECT an_stock_accounting_config under GUC ok
 
-Passed: 13 | Failed: 1
+Passed: 16 | Failed: 0
 
 === Sec3Ids ===
 [PASS] S1 unique index tenant_id+code on journal entries
@@ -107,10 +110,32 @@ Passed: 7 | Failed: 0
 [PASS] S3 guide has CREATE ROLE example
 [PASS] S4 guide forbids superuser for app
 [INFO] AN_ENFORCE_PROD_ROLE=0
-[FAIL] P1 PG probe | password authentication failed for user "postgres"
-SEC4_PG: ERROR
+[INFO] PG role {"u":"an_erp_app","rolsuper":false,"rolbypassrls":false,"rolcanlogin":true}
+[PASS] P1 role readable | user=an_erp_app
+[INFO] SEC4_PG: ROLE_SUBJECT_TO_RLS
+[PASS] P2 production role subject to RLS | user=an_erp_app
 
-Passed: 4 | Failed: 1
+Passed: 6 | Failed: 0
+
+=== SecProdRole ===
+[PASS] S1 ops guide exists
+[PASS] S2 guide NOBYPASSRLS / CREATE ROLE
+[PASS] S3 guide documents boot refuse
+[PASS] S4 guard module exists
+[PASS] S5 server refuses start under AN_ENFORCE_PROD_ROLE
+[PASS] S6 server checks rolbypassrls or rolsuper
+[PASS] S7 interpret flags superuser unsafe
+[PASS] S8 soft mode does not fail assert
+[PASS] S9 enforce mode fails unsafe role
+[PASS] S10 safe role subject to RLS
+[INFO] AN_ENFORCE_PROD_ROLE=0
+[INFO] PG role {"user":"an_erp_app","rolsuper":false,"rolbypassrls":false,"subjectToRls":true}
+[PASS] P1 role readable | user=an_erp_app
+[INFO] SEC_PROD_ROLE_PG: ROLE_SUBJECT_TO_RLS
+[PASS] P2 role policy | user=an_erp_app
+[PASS] P3 SELECT under tenant GUC
+
+Passed: 13 | Failed: 0
 
 === SecA ===
 [PASS] C1 default (no env) => development (Vite dev needs inline/eval)
@@ -143,6 +168,37 @@ Passed: 4 | Failed: 1
 
 Passed: 27 | Failed: 0
 
+=== FixC ===
+[PASS] 1 parseFuzzIterations has ONE flat shape: ok/value/max are always readable (valid and invalid)
+[PASS] 2 the type is not a discriminated union (it does not narrow without `strict`) and server.ts uses fz.max / fz.value
+[PASS] 3 a gate that fails ONLY on "password authentication failed" is SKIP (not run), not a code failure
+[PASS] 4 a real failure next to a DB failure stays FAIL (the DB message must not hide it)
+[PASS] 5 a plain failing check is FAIL
+[PASS] 6 all passed => PASS; a changed passed-count (silently lost tests) => FAIL
+[PASS] 7 PG_NOT_RUN / missing script => SKIP; no summary: exit 0 => PASS, exit != 0 => ERROR
+[PASS] 8 verdict: critical failure or open P1 => NO_GO; open P2/config or a SKIPPED critical gate => CONDITIONAL_GO; nothing => GO
+[PASS] 9 DB-unreachable detection: connection refused / unknown database count; a missing relation (a real schema bug) does not
+[PASS] 10 the runner uses the tested classifier and verdict (no inline status logic left)
+[PASS] 11 verifyRepairBatch1 no longer asserts the old double-refund (updateCashCustody === 1)
+[PASS] 12 verifyFixP1Custody builds CashCustodyService with its real 2 constructor arguments
+[PASS] 13 state register: the hardening package is no longer mislabelled "PH9"; FIX-C and its 3 fixed items are recorded
+[PASS] 14 `npm test` runs this gate (expected 14) and the custody gate (expected 9)
+
+Passed: 14 | Failed: 0
+
+=== FixP1Custody ===
+[PASS] S1 service does not credit balance before reverse
+[PASS] S2 service calls reverseCustodyExpenseVoucher
+[PASS] S3 InMemory reverse credits balance once
+[PASS] S4 Postgres reverse credits balance once
+[PASS] R1 reverse ok
+[PASS] R2 status REVERSED
+[PASS] R3 balance 400+300=700 once
+[PASS] R4 not 1000 (double)
+[PASS] R5 no second credit
+
+Passed: 9 | Failed: 0
+
 === RepairBatch1 ===
 [PASS] (count) create count 1
 [PASS] (count) approve ok, count POSTED with a journal id
@@ -169,7 +225,7 @@ Passed: 27 | Failed: 0
 [PASS] (custody) journal ok => voucher saved WITH its journalEntryId
 [PASS] (custody-return) reversal draft fails => error, voucher NOT reversed, custody balance NOT restored
 [PASS] (custody-return) reversal post fails => error, voucher NOT reversed, custody balance NOT restored
-[PASS] (custody-return) reversal ok => balance restored once and voucher reversed
+[PASS] (custody-return) reversal ok => voucher reversed once; the service no longer touches the balance (the atomic adapter reversal restores it exactly once)
 [PASS] (expense) reversal draft fails => error and the request is NOT marked cancelled
 [PASS] (expense) reversal post fails => error and the request is NOT marked cancelled
 [PASS] (expense) reversal ok => request marked cancelled
@@ -736,6 +792,28 @@ Passed: 14 | Failed: 0
 
 Passed: 24 | Failed: 0
 
+=== FixStockReturnCumulative ===
+[PASS] G1 type match
+[PASS] G2 type mismatch
+[PASS] G3 posted ok
+[PASS] G4 cancel rejected
+[PASS] G5 cumulative over
+[PASS] G6 stock over
+[PASS] G7 sum dup lines
+[PASS] S1 uses assertOriginalPosted
+[PASS] S2 referenceId prior list
+[PASS] S3 PG checks orig status POSTED
+[PASS] R1 first 8/10 ok
+[PASS] R2 cumulative 5 rejected
+[PASS] R3 remaining 2 ok
+[PASS] R4 dup lines 6+5>10 rejected
+[PASS] R5 type mismatch rejected
+[PASS] R6 cancelled original rejected
+[PASS] R7 concurrent double-return: not both succeed
+[PASS] R8 concurrent: at least one outcome recorded
+
+Passed: 18 | Failed: 0
+
 === PgDateMapping ===
 [PASS] D1 [UTC] pgDateToYmd(DATE 2026-10-09) = 2026-10-09
 [PASS] D2 [UTC] first day of year / month boundary stays correct (2026-01-01)
@@ -763,7 +841,7 @@ Passed: 14 | Failed: 0
 Passed: 4 | Failed: 0
 
 === P9Validation ===
-◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
 [PASS] (أ) parsePositiveQuantity rejects NaN
 [PASS] (أ) parsePositiveQuantity rejects Infinity
 [PASS] (أ) parsePositiveQuantity rejects -Infinity
@@ -858,53 +936,41 @@ Passed: 4 | Failed: 0
 [PASS] (أ) validateJournalInput rejects debit Infinity
 [PASS] (أ) validateJournalInput rejects empty / non-array lines
 [PASS] (أ) validateJournalInput rejects a null line
-◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
-[phase-4] DECISION: DB role bypasses RLS -> global membership backfill
-[PASS] (ب) seed receipt succeeds
-[PASS] (ب) receiveStock quantity=NaN | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) issueStock quantity=NaN | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock quantity="abc" | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) issueStock quantity="abc" | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock quantity=-999999999 | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) issueStock quantity=-999999999 | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock quantity=Infinity | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) issueStock quantity=Infinity | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock quantity=1e+30 | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) issueStock quantity=1e+30 | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock quantity=0 | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) issueStock quantity=0 | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock quantity="" | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) issueStock quantity="" | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock quantity=null | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) issueStock quantity=null | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock quantity="1e3" | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) issueStock quantity="1e3" | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock quantity=0.00001 | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) issueStock quantity=0.00001 | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock unitCost=-5 | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock unitCost="hello" | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock unitCost=NaN | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock unitCost=Infinity | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock unitCost=1e+30 | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock unitCost="1e3" | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock expiryDate=2026-02-31 | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock batchNumber 65 chars | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock serialNumber 129 chars | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock notes 2001 chars | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock notes with control char | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) receiveStock: second line invalid → nothing saved | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) issueStock: second line invalid → nothing saved | success=false status=400 movements 1→1 documents 1→1
-[PASS] (ب) createTransfer quantity="abc" rejected 400, no transfer row | status=400 transfers 0→0
-[PASS] (ب) createStockCount countedQty=-3 rejected 400 | status=400
-[PASS] (ج) receive quantity 0.5 / unitCost 0 accepted
-[PASS] (ج) stored qty = 0.5 | qty=0.5
-[PASS] (ج) receive quantity "12.25" (numeric text) accepted
-[PASS] (ج) stored qty = 12.75 (text parsed to a number) | qty=12.75
-[PASS] (ج) receive quantity 1234.5678 accepted
-[PASS] (ج) stored qty = 1247.3178 | qty=1247.3178
-[PASS] (ج) issue quantity "0.5" accepted
-[PASS] (ج) stored qty after issue = 1246.8178 | qty=1246.8178
-[PASS] (ج) valid expiryDate / batchNumber / notes accepted
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[phase-4] DECISION: DB role does NOT bypass RLS -> per-tenant membership backfill
+[PASS] (ب) receiveStock quantity=NaN | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) issueStock quantity=NaN | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock quantity="abc" | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) issueStock quantity="abc" | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock quantity=-999999999 | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) issueStock quantity=-999999999 | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock quantity=Infinity | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) issueStock quantity=Infinity | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock quantity=1e+30 | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) issueStock quantity=1e+30 | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock quantity=0 | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) issueStock quantity=0 | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock quantity="" | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) issueStock quantity="" | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock quantity=null | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) issueStock quantity=null | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock quantity="1e3" | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) issueStock quantity="1e3" | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock quantity=0.00001 | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) issueStock quantity=0.00001 | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock unitCost=-5 | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock unitCost="hello" | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock unitCost=NaN | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock unitCost=Infinity | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock unitCost=1e+30 | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock unitCost="1e3" | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock expiryDate=2026-02-31 | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock batchNumber 65 chars | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock serialNumber 129 chars | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock notes 2001 chars | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock notes with control char | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) receiveStock: second line invalid → nothing saved | success=false status=400 movements 0→0 documents 0→0
+[PASS] (ب) issueStock: second line invalid → nothing saved | success=false status=400 movements 0→0 documents 0→0
 [PASS] (هـ) saveStockItem valuationMethod "FOO" rejected 400 | status=400
 [PASS] (هـ) saveStockItem valuationMethod "FIFO" accepted
 [PASS] (هـ) saveStockItem standardCost -5 rejected 400 | status=400
@@ -912,5 +978,17 @@ Passed: 4 | Failed: 0
 [PASS] (هـ) saveStockItem blank itemCode rejected 400 | status=400
 [NOT RUN] (د) HTTP validation (receive, journal-entries, transactions/post) | writes to tenant MAIN if a value is wrongly accepted (and for the valid entry); set P9_ALLOW_MAIN_WRITES=1 on a dev/throw-away database
 
-SUMMARY: PASS=144 FAIL=0 NOT_RUN=1
+SUMMARY: PASS=132 FAIL=12 NOT_RUN=1
 NOTE: NOT RUN items are not passes — run them in an environment that has what they need.
+[FAIL] (ب) seed receipt succeeds | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}
+[FAIL] (ب) createTransfer quantity="abc" rejected 400, no transfer row | status=404 transfers 0→0
+[FAIL] (ب) createStockCount countedQty=-3 rejected 400 | status=404
+[FAIL] (ج) receive quantity 0.5 / unitCost 0 accepted | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}
+[FAIL] (ج) stored qty = 0.5 | qty=0
+[FAIL] (ج) receive quantity "12.25" (numeric text) accepted | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}
+[FAIL] (ج) stored qty = 12.75 (text parsed to a number) | qty=0
+[FAIL] (ج) receive quantity 1234.5678 accepted | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}
+[FAIL] (ج) stored qty = 1247.3178 | qty=0
+[FAIL] (ج) issue quantity "0.5" accepted | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}
+[FAIL] (ج) stored qty after issue = 1246.8178 | qty=0
+[FAIL] (ج) valid expiryDate / batchNumber / notes accepted | {"type":"https://api.an-erp.local/errors/warehouse-not-found","title":"المستودع غير موجود","status":404,"detail":"تعذر العثور على المستودع المحدد."}
