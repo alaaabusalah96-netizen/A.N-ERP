@@ -1,0 +1,16 @@
+[PASS] S1 UI filter bar title
+[PASS] S2 UI filter state fields
+[PASS] S3 loadMovementsFiltered builds query
+[PASS] S4 clearMovFilters
+[PASS] S5 server accepts fromDate/toDate
+[PASS] S6 StoragePort filter type has fromDate
+[PASS] S7 InMemory filters by date
+[PASS] S8 Postgres filters by timestamp range
+[PASS] R1 list has movements
+[PASS] R2 filter by ISSUE
+[PASS] R3 filter by itemId
+[PASS] R4 fromDate future empty
+[PASS] R5 toDate past empty
+[PASS] R6 package INV-MOVEMENTS-FILTER DONE
+
+Passed: 14 | Failed: 0

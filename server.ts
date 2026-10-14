@@ -4315,6 +4315,8 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
         warehouseId: req.query.warehouseId as string,
         itemId: req.query.itemId as string,
         movementType: req.query.movementType as string,
+        fromDate: req.query.fromDate as string,
+        toDate: req.query.toDate as string,
         limit: req.query.limit ? Number(req.query.limit) : undefined,
       };
       const storage = getRequestStorage(req, res);

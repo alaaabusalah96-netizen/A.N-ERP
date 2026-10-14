@@ -2452,11 +2452,22 @@ public async getWarehouseStock(tenantId: string, warehouseId: string, itemId: st
     return { success: true, data: savedMovement };
   }
 
-  public async listStockMovements(tenantId: string, filter?: { warehouseId?: string; itemId?: string; movementType?: string; limit?: number }): Promise<StorageResult<StockMovement[]>> {
+  public async listStockMovements(tenantId: string, filter?: { warehouseId?: string; itemId?: string; movementType?: string; fromDate?: string; toDate?: string; limit?: number }): Promise<StorageResult<StockMovement[]>> {
     let list = Array.from(this.stockMovements.values()).filter(m => m.tenantId === tenantId);
     if (filter?.warehouseId) list = list.filter(m => m.warehouseId === filter.warehouseId);
     if (filter?.itemId) list = list.filter(m => m.itemId === filter.itemId);
     if (filter?.movementType) list = list.filter(m => m.movementType === filter.movementType);
+    if (filter?.fromDate) {
+      const fromTs = new Date(filter.fromDate).getTime();
+      list = list.filter(m => new Date(m.timestamp).getTime() >= fromTs);
+    }
+    if (filter?.toDate) {
+      const toTs = new Date(filter.toDate).getTime();
+      // include whole end day if date-only
+      const end = filter.toDate.length <= 10 ? toTs + 86400000 - 1 : toTs;
+      list = list.filter(m => new Date(m.timestamp).getTime() <= end);
+    }
+    list = list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     if (filter?.limit) list = list.slice(0, filter.limit);
     return { success: true, data: list.map(m => ({ ...m })) };
   }

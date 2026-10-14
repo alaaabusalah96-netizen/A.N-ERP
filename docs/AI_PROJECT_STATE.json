@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-14",
-  "lastChange": "INV-ITEM-CARD: item card panel (info/stock/ledger/prices) + GET item by id + shortcuts to receive/issue/transfer/count",
+  "lastChange": "INV-MOVEMENTS-FILTER: warehouse/item/type/date filters on stock movements list (API+UI)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -149,6 +149,12 @@
       "status": "DONE",
       "scope": "Item 360 card UI: master data, per-warehouse stock, ledger, prices; open from stock grid; action shortcuts",
       "evidence": "scripts/verifyInvItemCard.ts; src/components/ItemCardPanel.tsx"
+    },
+    {
+      "id": "INV-MOVEMENTS-FILTER",
+      "status": "DONE",
+      "scope": "Filter stock movements by warehouse, item, type, fromDate, toDate (API + movements tab UI)",
+      "evidence": "scripts/verifyInvMovementsFilter.ts"
     }
   ],
   "defects": [

@@ -7607,7 +7607,7 @@ public async getWarehouseStock(
 
   public async listStockMovements(
     tenantId: string,
-    filter?: { warehouseId?: string; itemId?: string; movementType?: string; limit?: number }
+    filter?: { warehouseId?: string; itemId?: string; movementType?: string; fromDate?: string; toDate?: string; limit?: number }
   ): Promise<StorageResult<StockMovement[]>> {
     if (!this.pool) return this.missingConnError();
     try {
@@ -7624,6 +7624,14 @@ public async getWarehouseStock(
       if (filter?.movementType) {
         params.push(filter.movementType);
         queryStr += ` AND movement_type = $${params.length}`;
+      }
+      if (filter?.fromDate) {
+        params.push(filter.fromDate);
+        queryStr += ` AND timestamp >= $${params.length}`;
+      }
+      if (filter?.toDate) {
+        params.push(filter.toDate.length <= 10 ? filter.toDate + 'T23:59:59.999Z' : filter.toDate);
+        queryStr += ` AND timestamp <= $${params.length}`;
       }
       queryStr += ` ORDER BY timestamp DESC LIMIT $${params.length + 1}`;
       params.push(filter?.limit || 100);

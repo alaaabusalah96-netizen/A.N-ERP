@@ -129,6 +129,12 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
 
   // Filter states
   const [searchTerm, setSearchTerm] = useState('');
+  const [movFilterWh, setMovFilterWh] = useState('');
+  const [movFilterItem, setMovFilterItem] = useState('');
+  const [movFilterType, setMovFilterType] = useState('');
+  const [movFromDate, setMovFromDate] = useState('');
+  const [movToDate, setMovToDate] = useState('');
+  const [movFilterLoading, setMovFilterLoading] = useState(false);
   const [selectedWarehouseFilter, setSelectedWarehouseFilter] = useState<string>('ALL');
 
   // Modal states
@@ -196,6 +202,44 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
   useEffect(() => {
     loadData();
   }, []);
+
+  const loadMovementsFiltered = async () => {
+    setMovFilterLoading(true);
+    try {
+      const q = new URLSearchParams();
+      if (movFilterWh) q.set('warehouseId', movFilterWh);
+      if (movFilterItem) q.set('itemId', movFilterItem);
+      if (movFilterType) q.set('movementType', movFilterType);
+      if (movFromDate) q.set('fromDate', movFromDate);
+      if (movToDate) q.set('toDate', movToDate);
+      q.set('limit', '500');
+      const res = await fetch(`/api/inventory/movements?${q.toString()}`, { credentials: 'include' });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j.data) setMovements(j.data);
+      else onNotification(j.error?.detail || j.detail || 'تعذر تصفية الحركات');
+    } catch {
+      onNotification('تعذر تصفية الحركات');
+    } finally {
+      setMovFilterLoading(false);
+    }
+  };
+
+  const clearMovFilters = async () => {
+    setMovFilterWh('');
+    setMovFilterItem('');
+    setMovFilterType('');
+    setMovFromDate('');
+    setMovToDate('');
+    setMovFilterLoading(true);
+    try {
+      const res = await fetch('/api/inventory/movements?limit=500', { credentials: 'include' });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j.data) setMovements(j.data);
+    } finally {
+      setMovFilterLoading(false);
+    }
+  };
+
 
   const handleRunBattery = async () => {
     setIsRunningBattery(true);
@@ -782,6 +826,57 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
 
       {/* Tab Content: Movements */}
       {activeTab === 'movements' && (
+        <div className="space-y-3">
+        <div className="bg-white p-4 border border-slate-200 rounded-2xl shadow-2xs flex flex-col gap-3">
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+            <Filter className="w-3.5 h-3.5" />
+            تصفية سجل الحركات
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+            <select value={movFilterWh} onChange={(e) => setMovFilterWh(e.target.value)}
+              className="border border-slate-200 rounded-xl px-2 py-2 text-xs bg-slate-50">
+              <option value="">كل المستودعات</option>
+              {warehouses.map((w) => (
+                <option key={w.id} value={w.id}>{w.nameAr}</option>
+              ))}
+            </select>
+            <select value={movFilterItem} onChange={(e) => setMovFilterItem(e.target.value)}
+              className="border border-slate-200 rounded-xl px-2 py-2 text-xs bg-slate-50">
+              <option value="">كل الأصناف</option>
+              {items.map((it) => (
+                <option key={it.id} value={it.id}>{it.nameAr} ({it.itemCode})</option>
+              ))}
+            </select>
+            <select value={movFilterType} onChange={(e) => setMovFilterType(e.target.value)}
+              className="border border-slate-200 rounded-xl px-2 py-2 text-xs bg-slate-50">
+              <option value="">كل الأنواع</option>
+              <option value="RECEIPT">استلام RECEIPT</option>
+              <option value="ISSUE">صرف ISSUE</option>
+              <option value="TRANSFER_IN">تحويل وارد</option>
+              <option value="TRANSFER_OUT">تحويل صادر</option>
+              <option value="RETURN_RECEIPT">مرتجع استلام</option>
+              <option value="RETURN_ISSUE">مرتجع صرف</option>
+              <option value="COUNT_ADJUSTMENT_GAIN">تسوية زيادة</option>
+              <option value="COUNT_ADJUSTMENT_LOSS">تسوية عجز</option>
+            </select>
+            <input type="date" value={movFromDate} onChange={(e) => setMovFromDate(e.target.value)}
+              className="border border-slate-200 rounded-xl px-2 py-2 text-xs bg-slate-50" title="من تاريخ" />
+            <input type="date" value={movToDate} onChange={(e) => setMovToDate(e.target.value)}
+              className="border border-slate-200 rounded-xl px-2 py-2 text-xs bg-slate-50" title="إلى تاريخ" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={loadMovementsFiltered} disabled={movFilterLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold disabled:opacity-50">
+              <Search className="w-3.5 h-3.5" />
+              تطبيق التصفية
+            </button>
+            <button type="button" onClick={clearMovFilters} disabled={movFilterLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600">
+              مسح التصفية
+            </button>
+            <span className="text-[11px] text-slate-400 self-center">النتائج: {movements.length}</span>
+          </div>
+        </div>
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
           <div className="overflow-x-auto">
             <table className="w-full text-right text-xs">
@@ -840,6 +935,7 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
               </tbody>
             </table>
           </div>
+        </div>
         </div>
       )}
 

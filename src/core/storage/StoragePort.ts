@@ -1217,7 +1217,7 @@ export interface StoragePort {
   listWarehouseStock(tenantId: string, warehouseId?: string, itemId?: string): Promise<StorageResult<WarehouseStock[]>>;
   
   recordStockMovement(tenantId: string, movement: StockMovement, idempotencyKey: string): Promise<StorageResult<StockMovement>>;
-  listStockMovements(tenantId: string, filter?: { warehouseId?: string; itemId?: string; movementType?: string; limit?: number }): Promise<StorageResult<StockMovement[]>>;
+  listStockMovements(tenantId: string, filter?: { warehouseId?: string; itemId?: string; movementType?: string; fromDate?: string; toDate?: string; limit?: number }): Promise<StorageResult<StockMovement[]>>;
 
   // Phase 13 (COST-001): per-tenant inventory settings (defaults are returned when no row exists)
   getInventorySettings(tenantId: string): Promise<StorageResult<InventorySettings>>;

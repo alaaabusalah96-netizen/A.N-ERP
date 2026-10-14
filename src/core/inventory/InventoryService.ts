@@ -2229,7 +2229,7 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
 
   public async listStockMovements(
     tenantId: string,
-    filter?: { warehouseId?: string; itemId?: string; movementType?: string; limit?: number }
+    filter?: { warehouseId?: string; itemId?: string; movementType?: string; fromDate?: string; toDate?: string; limit?: number }
   ): Promise<ServiceResult<StockMovement[]>> {
     return this.storage.listStockMovements(tenantId, filter);
   }
