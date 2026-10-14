@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-14",
-  "lastChange": "PH8-REORDER: generate purchase requests from reorder point + REORDER_POINT_REACHED on issue",
+  "lastChange": "INV-ITEM-CARD: item card panel (info/stock/ledger/prices) + GET item by id + shortcuts to receive/issue/transfer/count",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -143,6 +143,12 @@
       "status": "DONE",
       "scope": "Scan stock vs reorderPoint; create PRs; UI generate button; publish REORDER_POINT_REACHED on issue",
       "evidence": "scripts/verifyPh8Reorder.ts; POST /api/purchasing/reorder/generate"
+    },
+    {
+      "id": "INV-ITEM-CARD",
+      "status": "DONE",
+      "scope": "Item 360 card UI: master data, per-warehouse stock, ledger, prices; open from stock grid; action shortcuts",
+      "evidence": "scripts/verifyInvItemCard.ts; src/components/ItemCardPanel.tsx"
     }
   ],
   "defects": [

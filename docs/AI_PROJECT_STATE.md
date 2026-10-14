@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-14 — PH8-REORDER: generate purchase requests from reorder point + REORDER_POINT_REACHED on issue
+**Last update**: 2026-10-14 — INV-ITEM-CARD: item card panel (info/stock/ledger/prices) + GET item by id + shortcuts to receive/issue/transfer/count
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-14)
 
 ## Gates
@@ -30,6 +30,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **PH8-INV-TAB** — DONE — Purchasing UI tab for supplier invoices (list from GET /api/purchasing/invoices) _(evidence: scripts/verifyPh8InvTab.ts; PurchasingWorkspaceView invoices tab)_
 - **PH8-RETURN** — DONE — Purchase return to vendor against approved goods receipt (stock RETURN_RECEIPT, PO receivedQty adjust, UI list tab) _(evidence: scripts/verifyPh8Return.ts; POST/GET /api/purchasing/returns)_
 - **PH8-REORDER** — DONE — Scan stock vs reorderPoint; create PRs; UI generate button; publish REORDER_POINT_REACHED on issue _(evidence: scripts/verifyPh8Reorder.ts; POST /api/purchasing/reorder/generate)_
+- **INV-ITEM-CARD** — DONE — Item 360 card UI: master data, per-warehouse stock, ledger, prices; open from stock grid; action shortcuts _(evidence: scripts/verifyInvItemCard.ts; src/components/ItemCardPanel.tsx)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

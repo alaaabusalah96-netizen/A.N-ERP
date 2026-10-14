@@ -1,0 +1,15 @@
+[PASS] S1 ItemCardPanel component exists
+[PASS] S2 Workspace imports ItemCardPanel
+[PASS] S3 cardItemId state
+[PASS] S4 GET /api/inventory/items/:id route
+[PASS] S5 panel tabs info/stock/ledger/prices
+[PASS] S6 panel fetches ledger API
+[PASS] S7 panel action صرف واستلام
+[PASS] S8 row opens card setCardItemId
+[PASS] S9 shortcuts open issue/receive modals
+[PASS] S10 Arabic title بطاقة صنف
+[PASS] R1 saveStockItem works
+[PASS] R2 getStockItem returns card fields
+[PASS] R3 package INV-ITEM-CARD DONE
+
+Passed: 13 | Failed: 0

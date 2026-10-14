@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-14** — PH8-REORDER: generate purchase requests from reorder point + REORDER_POINT_REACHED on issue
+Last update: **2026-10-14** — INV-ITEM-CARD: item card panel (info/stock/ledger/prices) + GET item by id + shortcuts to receive/issue/transfer/count
 
 ## Verdict
 | Field | Value |

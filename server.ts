@@ -4692,6 +4692,22 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
   });
 
   // 7.6E: Item Ledger / Stock Card (كارت الصنف)
+  
+  app.get('/api/inventory/items/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getInventoryService(req, res);
+      if (!svc) return;
+      if (req.params.id === 'search') return res.status(404).json({ error: 'not-found' });
+      const result = await svc.getStockItem(tenantId, req.params.id);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error || { error: 'failed' });
+      if (!result.data) return res.status(404).json({ success: false, error: { title: 'الصنف غير موجود', status: 404 } });
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+    }
+  });
+
   app.get('/api/inventory/items/:id/ledger', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;

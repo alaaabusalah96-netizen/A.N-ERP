@@ -20,6 +20,7 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import { UserProfile } from '../types/erp';
+import { ItemCardPanel } from './ItemCardPanel';
 
 interface WarehouseItem {
   id: string;
@@ -164,6 +165,7 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
   // Battery report state
   const [batteryReport, setBatteryReport] = useState<any>(null);
   const [isRunningBattery, setIsRunningBattery] = useState(false);
+  const [cardItemId, setCardItemId] = useState<string | null>(null);
 
   // Load data
   const loadData = async () => {
@@ -694,8 +696,15 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
                       return (
                         <tr key={stock.id} className="hover:bg-slate-50 transition-colors">
                           <td className="py-3 px-4">
-                            <div className="font-bold text-slate-900">{item?.nameAr || stock.itemId}</div>
-                            <div className="text-[11px] text-slate-400 font-mono">{item?.itemCode || '—'}</div>
+                            <button
+                              type="button"
+                              onClick={() => item?.id && setCardItemId(item.id)}
+                              className="text-right w-full hover:bg-blue-50 rounded-lg px-1 -mx-1 transition-colors"
+                              title="فتح بطاقة الصنف"
+                            >
+                              <div className="font-bold text-blue-700 hover:underline">{item?.nameAr || stock.itemId}</div>
+                              <div className="text-[11px] text-slate-400 font-mono">{item?.itemCode || '—'}</div>
+                            </button>
                           </td>
                           <td className="py-3 px-4 text-slate-700">
                             {warehouse?.nameAr || stock.warehouseId}
@@ -1402,6 +1411,35 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {cardItemId && (
+        <ItemCardPanel
+          itemId={cardItemId}
+          stocks={stocks as any}
+          warehouses={warehouses.map((w) => ({ id: w.id, nameAr: w.nameAr }))}
+          onClose={() => setCardItemId(null)}
+          onReceive={(id) => {
+            setRecItemId(id);
+            setCardItemId(null);
+            setIsReceiveModalOpen(true);
+          }}
+          onIssue={(id) => {
+            setIssItemId(id);
+            setCardItemId(null);
+            setIsIssueModalOpen(true);
+          }}
+          onTransfer={(id) => {
+            setTrfItemId(id);
+            setCardItemId(null);
+            setIsTransferModalOpen(true);
+          }}
+          onCount={(id) => {
+            setCntItemId(id);
+            setCardItemId(null);
+            setIsCountModalOpen(true);
+          }}
+        />
       )}
     </div>
   );
