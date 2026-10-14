@@ -46,6 +46,7 @@ import { assertReturnTypeMatchesOriginal, assertCumulativeWithinOriginal, assert
 import { PostingEngine } from '../engines/PostingEngine';
 import { StockAccountingService, AutoJournalOutcome } from './StockAccountingService';
 import { NumberingEngine } from '../engines/NumberingEngine';
+import { DomainEventBus } from '../events/DomainEventBus';
 import {
   parsePositiveQuantity,
   parseNonNegativeQuantity,
@@ -1173,6 +1174,22 @@ public async getInventorySettings(tenantId: string): Promise<ServiceResult<Inven
         entitiesAffected: alert.entities,
         summaryAr: alert.summaryAr,
         version: '1.0',
+      });
+      // PH8-REORDER: domain signal so purchasing can generate PRs (manual/API or subscriber)
+      const itemEnt = alert.entities.find((e) => e.startsWith('StockItem:')) || '';
+      const whEnt = alert.entities.find((e) => e.startsWith('Warehouse:')) || '';
+      await DomainEventBus.publish({
+        eventType: 'REORDER_POINT_REACHED',
+        tenantId,
+        actorId: performedBy,
+        actorName: performedByName || performedBy,
+        payload: {
+          alertId: alert.id,
+          itemId: itemEnt.replace('StockItem:', ''),
+          warehouseId: whEnt.replace('Warehouse:', ''),
+          summaryAr: alert.summaryAr,
+        },
+        idempotencyKey: `reorder-evt-${alert.id}`,
       });
     }
     if (finalIdempotencyKey) {

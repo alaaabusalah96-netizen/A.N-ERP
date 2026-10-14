@@ -44,6 +44,7 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
   const [receipts, setReceipts] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [returns, setReturns] = useState<any[]>([]);
+  const [reorderBusy, setReorderBusy] = useState(false);
   const [items, setItems] = useState<any[]>([]);
   const [vendors, setVendors] = useState<any[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
@@ -148,6 +149,34 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  const generateFromReorder = async () => {
+    setReorderBusy(true);
+    try {
+      const res = await fetch('/api/purchasing/reorder/generate', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `ui-reorder-${Date.now()}` },
+        body: JSON.stringify({}),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j.success === false) {
+        onNotification(j.detail || j.error?.detail || j.title || 'فشل توليد طلبات إعادة الطلب');
+        return;
+      }
+      const c = j.data?.created?.length || 0;
+      const s = j.data?.skipped?.length || 0;
+      const cand = j.data?.candidates?.length || 0;
+      onNotification(`إعادة الطلب: مرشّح ${cand} · أُنشئ ${c} · تُخطي ${s}`);
+      await loadAll();
+      setActiveTab('requests');
+    } catch (e: any) {
+      onNotification(e.message || 'فشل توليد طلبات إعادة الطلب');
+    } finally {
+      setReorderBusy(false);
+    }
+  };
+
 
   const postJson = async (url: string, body: any, key: string) => {
     const res = await fetch(url, {
@@ -384,14 +413,25 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
             طلب شراء ← عرض سعر ← أمر شراء ← استلام — المستخدم: {currentUser?.name || currentUser?.fullName || '—'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={loadAll}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          تحديث
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={generateFromReorder}
+            disabled={reorderBusy || loading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${reorderBusy ? 'animate-spin' : ''}`} />
+            توليد من إعادة الطلب
+          </button>
+          <button
+            type="button"
+            onClick={loadAll}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            تحديث
+          </button>
+        </div>
       </div>
 
       <div className="flex gap-1 overflow-x-auto pb-1 border-b border-slate-200">

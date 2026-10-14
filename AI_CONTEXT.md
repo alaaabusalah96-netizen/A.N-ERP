@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-14** — PH8-RETURN: purchase return against approved GR via inventory RETURN_RECEIPT + UI tab
+Last update: **2026-10-14** — PH8-REORDER: generate purchase requests from reorder point + REORDER_POINT_REACHED on issue
 
 ## Verdict
 | Field | Value |

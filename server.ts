@@ -4169,6 +4169,25 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
   });
 
 
+
+  // PH8-REORDER: generate purchase requests for items at/below reorder point
+  app.post('/api/purchasing/reorder/generate', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const svc = getPurchasingService(req, res); if (!svc) return;
+      const body = req.body || {};
+      const result = await svc.generatePurchaseRequestsFromReorder(tenantId, {
+        warehouseId: body.warehouseId,
+        requestedBy: userId,
+        idempotencyKey: (req.headers['idempotency-key'] as string) || body.idempotencyKey || `reorder-gen-${Date.now()}`,
+        dryRun: body.dryRun === true,
+      });
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+  });
+
   // PH8-RETURN: purchase returns against approved goods receipts
   app.get('/api/purchasing/returns', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
     try {

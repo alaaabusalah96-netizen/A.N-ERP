@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-14",
-  "lastChange": "PH8-RETURN: purchase return against approved GR via inventory RETURN_RECEIPT + UI tab",
+  "lastChange": "PH8-REORDER: generate purchase requests from reorder point + REORDER_POINT_REACHED on issue",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -56,9 +56,9 @@
     },
     {
       "id": "PH8-REMAINDER",
-      "status": "OPEN",
-      "scope": "Auto purchase request from reorder point only (invoices tab + purchase returns done)",
-      "evidence": "not built"
+      "status": "DONE",
+      "scope": "Completed via PH8-INV-TAB + PH8-RETURN + PH8-REORDER",
+      "evidence": "verifyPh8InvTab, verifyPh8Return, verifyPh8Reorder"
     },
     {
       "id": "FIX-P1-CUSTODY",
@@ -137,6 +137,12 @@
       "status": "DONE",
       "scope": "Purchase return to vendor against approved goods receipt (stock RETURN_RECEIPT, PO receivedQty adjust, UI list tab)",
       "evidence": "scripts/verifyPh8Return.ts; POST/GET /api/purchasing/returns"
+    },
+    {
+      "id": "PH8-REORDER",
+      "status": "DONE",
+      "scope": "Scan stock vs reorderPoint; create PRs; UI generate button; publish REORDER_POINT_REACHED on issue",
+      "evidence": "scripts/verifyPh8Reorder.ts; POST /api/purchasing/reorder/generate"
     }
   ],
   "defects": [

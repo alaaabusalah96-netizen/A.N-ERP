@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-14 — PH8-RETURN: purchase return against approved GR via inventory RETURN_RECEIPT + UI tab
+**Last update**: 2026-10-14 — PH8-REORDER: generate purchase requests from reorder point + REORDER_POINT_REACHED on issue
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-14)
 
 ## Gates
@@ -15,7 +15,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **SEC-1..SEC-4** — DONE — 2FA, RLS on all tenant tables, ids, production DB role guard _(evidence: evidence/security, scripts/verifySec*.ts)_
 - **SEC-A** — DONE — Strict CSP by default in production, trust proxy, per-tenant login lockout, no raw internal errors to clients, bounded fuzz _(evidence: scripts/verifySecA.ts (27), scripts/verifySecAPg.ts)_
 - **REPO-B** — DONE — Repository cleanup, npm test, engines, state register _(evidence: this file + scripts/runReconcileAuditB.ts)_
-- **PH8-REMAINDER** — OPEN — Auto purchase request from reorder point only (invoices tab + purchase returns done) _(evidence: not built)_
+- **PH8-REMAINDER** — DONE — Completed via PH8-INV-TAB + PH8-RETURN + PH8-REORDER _(evidence: verifyPh8InvTab, verifyPh8Return, verifyPh8Reorder)_
 - **FIX-P1-CUSTODY** — DONE — DEF-CUSTODY-REVERSAL-DOUBLE-REFUND — single balance restore on reverse _(evidence: scripts/verifyFixP1Custody.ts)_
 - **FIX-C** — DONE — npm test green: fuzz parser type-safe, stale RepairBatch1 assertion, custody test arity, DB-unreachable gates are SKIP not FAIL _(evidence: scripts/verifyFixC.ts)_
 - **FIX-P1-P2P-AUTOPOST** — DONE — DEF-P2P-AUTOPOST-OFF — invoice journals inventory when auto-post off _(evidence: scripts/verifyFixP1P2pAutopost.ts)_
@@ -29,6 +29,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **SEC-1c** — DONE — LoginScreen no longer sends fabricated clientGeo (e.g. Riyadh); server treats omitted geo as unknown for impossible-travel _(evidence: src/components/LoginScreen.tsx (no clientGeo in login body); server.ts SEC-1 comment on clientGeo)_
 - **PH8-INV-TAB** — DONE — Purchasing UI tab for supplier invoices (list from GET /api/purchasing/invoices) _(evidence: scripts/verifyPh8InvTab.ts; PurchasingWorkspaceView invoices tab)_
 - **PH8-RETURN** — DONE — Purchase return to vendor against approved goods receipt (stock RETURN_RECEIPT, PO receivedQty adjust, UI list tab) _(evidence: scripts/verifyPh8Return.ts; POST/GET /api/purchasing/returns)_
+- **PH8-REORDER** — DONE — Scan stock vs reorderPoint; create PRs; UI generate button; publish REORDER_POINT_REACHED on issue _(evidence: scripts/verifyPh8Reorder.ts; POST /api/purchasing/reorder/generate)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

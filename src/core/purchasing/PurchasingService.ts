@@ -768,6 +768,104 @@ export class PurchasingService {
   }
 
   public async getPurchaseRequest(tenantId: string, prId: string) { return this.storage.getPurchaseRequest(tenantId, prId); }
+
+  /**
+   * PH8-REORDER: scan warehouse stock vs item.reorderPoint and create DRAFT purchase requests
+   * for items at/below reorder (one PR line per item; skips if open PR already covers the item).
+   */
+  public async generatePurchaseRequestsFromReorder(
+    tenantId: string,
+    input: {
+      warehouseId?: string;
+      requestedBy: string;
+      idempotencyKey: string;
+      /** if true, only report candidates without creating PRs */
+      dryRun?: boolean;
+    },
+  ): Promise<SvcResult<{
+    created: Array<{ prId: string; prNumber?: string; itemId: string; quantity: number }>;
+    skipped: Array<{ itemId: string; reason: string }>;
+    candidates: Array<{ itemId: string; warehouseId: string; availableQty: number; reorderPoint: number; suggestedQty: number }>;
+  }>> {
+    if (!input.idempotencyKey?.trim()) {
+      return this.fail(400, 'missing-idempotency', 'مفتاح التكرار مطلوب', 'idempotencyKey مطلوب.');
+    }
+    const itemsRes = await this.storage.listStockItems(tenantId, {});
+    if (!itemsRes.success) return itemsRes as any;
+    const items = (itemsRes.data || []).filter((it: any) => it.isActive !== false && Number(it.reorderPoint) > 0);
+    const stockRes = await this.storage.listWarehouseStock(tenantId, input.warehouseId, undefined);
+    if (!stockRes.success) return stockRes as any;
+    const stocks = stockRes.data || [];
+    // available by item across filtered warehouses (sum if multi-wh)
+    const avail = new Map<string, { qty: number; warehouseId: string }>();
+    for (const s of stocks) {
+      const q = Number(s.availableQty ?? s.currentQty ?? 0);
+      const prev = avail.get(s.itemId);
+      if (!prev || q < prev.qty) {
+        // use lowest warehouse balance as trigger signal; attach that warehouse
+        avail.set(s.itemId, { qty: q, warehouseId: s.warehouseId });
+      }
+      if (!prev) continue;
+      // also track sum for messaging - keep lowest for trigger
+    }
+    const openPrs = await this.storage.listPurchaseRequests(tenantId, {});
+    const openItemIds = new Set<string>();
+    if (openPrs.success) {
+      for (const h of openPrs.data || []) {
+        if (['REJECTED', 'CANCELLED', 'CONVERTED', 'CLOSED'].includes(String(h.status))) continue;
+        const full = await this.storage.getPurchaseRequest(tenantId, h.id);
+        for (const ln of full.data?.lines || []) openItemIds.add(ln.itemId);
+      }
+    }
+    const candidates: Array<{ itemId: string; warehouseId: string; availableQty: number; reorderPoint: number; suggestedQty: number }> = [];
+    const skipped: Array<{ itemId: string; reason: string }> = [];
+    const created: Array<{ prId: string; prNumber?: string; itemId: string; quantity: number }> = [];
+
+    for (const item of items) {
+      const bal = avail.get(item.id);
+      const availableQty = bal ? bal.qty : 0;
+      const reorderPoint = Number(item.reorderPoint) || 0;
+      if (availableQty > reorderPoint) continue;
+      const maxLvl = Number(item.maxStockLevel) || 0;
+      let suggested = maxLvl > 0 ? maxLvl - availableQty : reorderPoint - availableQty;
+      if (suggested < 1) suggested = Math.max(1, reorderPoint);
+      suggested = Math.round(suggested * 1000) / 1000;
+      const warehouseId = bal?.warehouseId || input.warehouseId || '';
+      candidates.push({ itemId: item.id, warehouseId, availableQty, reorderPoint, suggestedQty: suggested });
+      if (openItemIds.has(item.id)) {
+        skipped.push({ itemId: item.id, reason: 'open-pr-exists' });
+        continue;
+      }
+      if (input.dryRun) continue;
+      const eventId = `reorder-${tenantId}-${item.id}-${warehouseId || 'any'}`;
+      const pr = await this.createPurchaseRequest(tenantId, {
+        lines: [{
+          itemId: item.id,
+          quantity: suggested,
+          uom: item.uom,
+          notes: `REORDER|itemId=${item.id}|wh=${warehouseId}|avail=${availableQty}|rop=${reorderPoint}`,
+        }],
+        requestedBy: input.requestedBy,
+        notes: `توليد تلقائي من نقطة إعادة الطلب (${item.itemCode || item.id})`,
+        sourceReorderEventId: eventId,
+        idempotencyKey: `${input.idempotencyKey}:${item.id}`,
+      });
+      if (!pr.success || !pr.data) {
+        skipped.push({ itemId: item.id, reason: pr.error?.detail || 'create-failed' });
+        continue;
+      }
+      openItemIds.add(item.id);
+      created.push({
+        prId: pr.data.pr.id,
+        prNumber: (pr.data.pr as any).prNumber || (pr.data.pr as any).requestNumber,
+        itemId: item.id,
+        quantity: suggested,
+      });
+    }
+    return { success: true, data: { created, skipped, candidates } };
+  }
+
+
   public async listPurchaseRequests(tenantId: string, filter?: { status?: string; requestedBy?: string }) { return this.storage.listPurchaseRequests(tenantId, filter); }
   public async getRfq(tenantId: string, rfqId: string) { return this.storage.getRfq(tenantId, rfqId); }
   public async listRfqs(tenantId: string, filter?: { status?: string; prId?: string }) { return this.storage.listRfqs(tenantId, filter); }
