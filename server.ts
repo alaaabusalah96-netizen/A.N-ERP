@@ -4168,6 +4168,38 @@ app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'
     } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
   });
 
+
+  // PH8-RETURN: purchase returns against approved goods receipts
+  app.get('/api/purchasing/returns', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const svc = getPurchasingService(req, res); if (!svc) return;
+      const result = await svc.listPurchaseReturns(tenantId, { receiptId: req.query.receiptId as string });
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+  });
+
+  app.post('/api/purchasing/returns', requireAuth, requirePermission('STOCK_RETURN'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'system';
+      const userName = (req as any).authContext.fullName || userId;
+      const svc = getPurchasingService(req, res); if (!svc) return;
+      const body = req.body || {};
+      const result = await svc.createPurchaseReturn(tenantId, {
+        receiptId: body.receiptId,
+        lines: body.lines || [],
+        createdBy: userId,
+        createdByName: userName,
+        reason: body.reason,
+        idempotencyKey: req.headers['idempotency-key'] as string || body.idempotencyKey,
+      });
+      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      return res.status(201).json({ success: true, data: result.data });
+    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
+  });
+
   // Phase 14 (ACC-AUTO-001)
   app.get('/api/inventory/accounting-config', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
     try {

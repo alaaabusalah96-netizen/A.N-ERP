@@ -1056,4 +1056,117 @@ export class PurchasingService {
     return this.storage.listSupplierInvoices(tenantId, filter);
   }
 
+  /**
+   * PH8-RETURN: return goods to vendor against an APPROVED goods receipt.
+   * Uses inventory RETURN_RECEIPT against the GR stock document (stock out + cumulative guards).
+   */
+  public async createPurchaseReturn(
+    tenantId: string,
+    input: {
+      receiptId: string;
+      lines: Array<{ itemId: string; quantity: number; notes?: string }>;
+      createdBy: string;
+      createdByName?: string;
+      reason?: string;
+      idempotencyKey: string;
+    },
+  ): Promise<SvcResult<{ stockDocument: any; receiptId: string; poId: string }>> {
+    if (!input.lines?.length) {
+      return this.fail(400, 'empty-return', 'مرتجع فارغ', 'يجب إضافة سطر واحد على الأقل.');
+    }
+    if (!input.idempotencyKey || !String(input.idempotencyKey).trim()) {
+      return this.fail(400, 'missing-idempotency', 'مفتاح التكرار مطلوب', 'idempotencyKey مطلوب.');
+    }
+    const gr = await this.storage.getGoodsReceipt(tenantId, input.receiptId);
+    if (!gr.success || !gr.data) {
+      return this.fail(404, 'receipt-not-found', 'إذن الاستلام غير موجود', 'تعذر العثور على إذن الاستلام.');
+    }
+    const receipt = gr.data.receipt;
+    const grLines = gr.data.lines || [];
+    if (receipt.status !== 'APPROVED') {
+      return this.fail(409, 'receipt-not-approved', 'الاستلام غير معتمد', 'لا يمكن عمل مرتجع إلا على إذن استلام معتمد.');
+    }
+    if (!receipt.stockDocumentId) {
+      return this.fail(409, 'receipt-no-stock-doc', 'لا مستند مخزون', 'إذن الاستلام بلا مستند مخزون مرحّل.');
+    }
+    // qty cannot exceed what this receipt received per item (guard; cumulative vs original stock doc is enforced inside returnStock)
+    const recvByItem = new Map<string, number>();
+    for (const l of grLines) {
+      recvByItem.set(l.itemId, (recvByItem.get(l.itemId) || 0) + Number(l.receivedQty));
+    }
+    for (const line of input.lines) {
+      const q = Number(line.quantity);
+      if (!(q > 0) || !Number.isFinite(q)) {
+        return this.fail(400, 'invalid-qty', 'كمية غير صالحة', `كمية غير صالحة للصنف ${line.itemId}.`);
+      }
+      const max = recvByItem.get(line.itemId);
+      if (max == null) {
+        return this.fail(400, 'item-not-on-receipt', 'صنف غير في الاستلام', `الصنف ${line.itemId} غير موجود في إذن الاستلام.`);
+      }
+      if (q > max + 1e-9) {
+        return this.fail(400, 'qty-exceeds-receipt', 'الكمية تتجاوز المستلم', `الكمية المطلوبة للصنف ${line.itemId} تتجاوز كمية الاستلام.`);
+      }
+    }
+    const reason = `PURCHASE_RETURN|receiptId=${receipt.id}|poId=${receipt.poId}|${input.reason || ''}`.slice(0, 2000);
+    const ret = await this.inventory.returnStock(tenantId, {
+      originalDocumentId: receipt.stockDocumentId,
+      returnType: 'RETURN_RECEIPT',
+      reason,
+      lines: input.lines.map((l) => ({ itemId: l.itemId, quantity: Number(l.quantity), notes: l.notes })),
+      performedBy: input.createdBy,
+      performedByName: input.createdByName || input.createdBy,
+      idempotencyKey: input.idempotencyKey,
+    });
+    if (!ret.success || !ret.data) {
+      return {
+        success: false,
+        error: ret.error || {
+          type: 'https://api.an-erp.local/errors/purchase-return-failed',
+          title: 'فشل مرتجع المشتريات',
+          status: 500,
+          detail: 'تعذر ترحيل مرتجع المخزون.',
+        },
+      };
+    }
+    // Reduce PO receivedQty (floor at 0) so subsequent receipts stay consistent
+    const poFull = await this.storage.getPurchaseOrder(tenantId, receipt.poId);
+    if (poFull.success && poFull.data) {
+      const po = poFull.data.po;
+      const lines = (poFull.data.lines || []).map((pl: any) => {
+        const retLine = input.lines.find((x) => x.itemId === pl.itemId);
+        if (!retLine) return pl;
+        const next = Math.max(0, Number(pl.receivedQty) - Number(retLine.quantity));
+        return { ...pl, receivedQty: next };
+      });
+      await this.storage.savePurchaseOrder(
+        tenantId,
+        { ...po, updatedAt: new Date().toISOString() } as any,
+        lines as any,
+        `${input.idempotencyKey}:po-recv-adjust`,
+      );
+    }
+    return {
+      success: true,
+      data: { stockDocument: ret.data, receiptId: receipt.id, poId: receipt.poId },
+    };
+  }
+
+  /** PH8-RETURN: list stock RETURN_RECEIPT docs tagged as purchase returns (reason prefix). */
+  public async listPurchaseReturns(tenantId: string, filter?: { receiptId?: string; limit?: number }) {
+    const list = await this.storage.listStockDocuments(tenantId, {
+      documentType: 'RETURN_RECEIPT' as any,
+      limit: filter?.limit || 200,
+    });
+    if (!list.success) return list;
+    const rows = (list.data || []).filter((d: any) => {
+      const blob = [d.notes, ...((d.lines || []).map((l: any) => l.notes || ''))].join('|');
+      if (!blob.includes('PURCHASE_RETURN')) return false;
+      if (filter?.receiptId && !blob.includes(`receiptId=${filter.receiptId}`)) return false;
+      return true;
+    });
+    return { success: true as const, data: rows };
+  }
+
+
 }
+

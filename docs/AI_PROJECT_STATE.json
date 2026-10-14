@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-14",
-  "lastChange": "PH8-INV-TAB: supplier invoices list tab in PurchasingWorkspaceView (API already from 8c)",
+  "lastChange": "PH8-RETURN: purchase return against approved GR via inventory RETURN_RECEIPT + UI tab",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -57,7 +57,7 @@
     {
       "id": "PH8-REMAINDER",
       "status": "OPEN",
-      "scope": "Purchase returns; auto purchase request from reorder point (supplier-invoices UI tab done in PH8-INV-TAB)",
+      "scope": "Auto purchase request from reorder point only (invoices tab + purchase returns done)",
       "evidence": "not built"
     },
     {
@@ -131,6 +131,12 @@
       "status": "DONE",
       "scope": "Purchasing UI tab for supplier invoices (list from GET /api/purchasing/invoices)",
       "evidence": "scripts/verifyPh8InvTab.ts; PurchasingWorkspaceView invoices tab"
+    },
+    {
+      "id": "PH8-RETURN",
+      "status": "DONE",
+      "scope": "Purchase return to vendor against approved goods receipt (stock RETURN_RECEIPT, PO receivedQty adjust, UI list tab)",
+      "evidence": "scripts/verifyPh8Return.ts; POST/GET /api/purchasing/returns"
     }
   ],
   "defects": [

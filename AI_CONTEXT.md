@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-14** — PH8-INV-TAB: supplier invoices list tab in PurchasingWorkspaceView (API already from 8c)
+Last update: **2026-10-14** — PH8-RETURN: purchase return against approved GR via inventory RETURN_RECEIPT + UI tab
 
 ## Verdict
 | Field | Value |
