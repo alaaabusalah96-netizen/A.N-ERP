@@ -3,8 +3,8 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "lastUpdated": "2026-10-13",
-  "lastChange": "FULL-SYSTEM-AUDIT: orchestrated runner (build+battery+domain+optional PG/health) → evidence/full-system-audit/",
+  "lastUpdated": "2026-10-14",
+  "lastChange": "DOC-SYNC-FULL: align STATE_REGISTER + AI_* with code — DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c (LoginScreen no fake clientGeo), stock-return guards already DONE; PROD-ROLE stays CONFIG",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -99,11 +99,43 @@
     {
       "id": "FULL-SYSTEM-AUDIT",
       "status": "DONE",
-      "scope": "Comprehensive audit orchestrator + evidence report",
-      "evidence": "scripts/runFullSystemAudit.ts; evidence/full-system-audit/REPORT.md"
+      "scope": "Orchestrated full audit runner (build + battery + domain + optional PG/health) → evidence/full-system-audit/",
+      "evidence": "scripts/runFullSystemAudit.ts; package.json test:full"
+    },
+    {
+      "id": "DB-1",
+      "status": "DONE",
+      "scope": "Live schema an_audit_trail + an_custom_fields + RLS list; migration 20261014_001 (21 tenant-led indexes)",
+      "evidence": "scripts/verifyDb1.ts (20); scripts/verifyDb1Pg.ts (8); evidence/repair/db1/"
+    },
+    {
+      "id": "OPS-1",
+      "status": "DONE",
+      "scope": "GET /api/health?ready=1 readiness; graceful SIGTERM/SIGINT; keep-alive timeouts; Dockerfile + .dockerignore",
+      "evidence": "scripts/verifyOps1.ts (28); evidence/repair/ops1/"
+    },
+    {
+      "id": "SEC-PROD-ROLE",
+      "status": "DONE",
+      "scope": "pgAppRoleGuard + server boot refuse when AN_ENFORCE_PROD_ROLE=1 and role is SUPERUSER/BYPASSRLS; verifySecProdRole in battery",
+      "evidence": "src/core/security/pgAppRoleGuard.ts; server.ts SEC-PROD-ROLE; scripts/verifySecProdRole.ts"
+    },
+    {
+      "id": "SEC-1c",
+      "status": "DONE",
+      "scope": "LoginScreen no longer sends fabricated clientGeo (e.g. Riyadh); server treats omitted geo as unknown for impossible-travel",
+      "evidence": "src/components/LoginScreen.tsx (no clientGeo in login body); server.ts SEC-1 comment on clientGeo"
     }
   ],
   "defects": [
+    {
+      "id": "SEC-1c",
+      "severity": "P1",
+      "status": "FIXED",
+      "title": "LoginScreen sent fabricated clientGeo (fixed city) on every login, defeating impossible-travel honesty",
+      "evidence": "LoginScreen login body has no clientGeo; server uses clientGeo only when provided",
+      "fix": "Omit clientGeo from client; optional real geolocation only with user permission (future)."
+    },
     {
       "id": "DEF-STOCK-RETURN-CUMULATIVE",
       "severity": "P1",
@@ -133,8 +165,8 @@
       "severity": "P2",
       "status": "CONFIG",
       "title": "The application database role may bypass RLS",
-      "evidence": "INFO: DB role bypasses RLS = true in evidence/standards-intelligence/battery-output-f2-pg.txt. Guide: docs/ops/PROD-PG-ROLE.md; probe: scripts/verifySec4ProdRole.ts.",
-      "fix": "Use a NOSUPERUSER NOBYPASSRLS application role and set AN_ENFORCE_PROD_ROLE=1 in production."
+      "evidence": "docs/ops/PROD-PG-ROLE.md; server boot refuse under AN_ENFORCE_PROD_ROLE=1; scripts/verifySecProdRole.ts / verifySec4ProdRole.ts. Package SEC-PROD-ROLE is DONE in code; deploy still needs NOSUPERUSER NOBYPASSRLS role + AN_ENFORCE_PROD_ROLE=1.",
+      "fix": "Point DATABASE_URL at an_erp_app (NOSUPERUSER NOBYPASSRLS) and set AN_ENFORCE_PROD_ROLE=1 in production."
     },
     {
       "id": "DEF-P1-001",
@@ -239,7 +271,10 @@
     "PostgreSQL gates (verify*Pg.ts) need DATABASE_URL; they print PG_NOT_RUN without it and prove nothing then.",
     "Behind a proxy, confirm the real client IP reaches the app (set TRUST_PROXY, or rely on K_SERVICE on Cloud Run).",
     "Internal battery endpoints (/api/internal/*) are limited to developer/auditor roles; keep them off public production roles.",
-    "Maintainability: server.ts is about 5,150 lines, PostgresPrimaryAdapter about 9,400 lines, roughly 1,800 uses of `any`."
+    "Maintainability: server.ts is about 5,150 lines, PostgresPrimaryAdapter about 9,400 lines, roughly 1,800 uses of `any`.",
+    "DOC-SYNC-FULL applied 2026-10-14: register aligned with DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c present in tree.",
+    "DB-1 put an_audit_trail and an_custom_fields on live schema + RLS list; re-check an_company_profiles for RLS coverage (SEC-2c remainder).",
+    "verifyDb1 / verifyOps1 are not yet entries in runReconcileAuditB BATTERIES array (run via evidence/repair or explicit npx tsx)."
   ],
   "ops": {
     "tests": "npm test (runs scripts/runReconcileAuditB.ts: every non-PG gate with expected counts; refreshes these docs)",
@@ -259,241 +294,16 @@
     }
   },
   "policy": "Edit docs/STATE_REGISTER.json by hand. AI_CONTEXT.md and docs/AI_PROJECT_STATE.* are rendered from it by scripts/runReconcileAuditB.ts and must not be replaced by a template.",
-  "renderedAt": "2026-10-13T00:00:00Z",
+  "renderedAt": "2026-10-14T00:00:00Z",
   "authoritativeVerdict": "CONDITIONAL_GO",
   "f07": {
-    "verdict": "PASS",
-    "passed": 8,
-    "failed": 0
+    "verdict": "NOT_RUN",
+    "passed": null,
+    "failed": null
   },
-  "gates": [
-    {
-      "name": "Sec1TwoFactor",
-      "status": "PASS",
-      "passed": 26,
-      "failed": 0,
-      "expected": 26
-    },
-    {
-      "name": "Sec2Rls",
-      "status": "PASS",
-      "passed": 39,
-      "failed": 0,
-      "expected": 39
-    },
-    {
-      "name": "Sec2bRls",
-      "status": "PASS",
-      "passed": 16,
-      "failed": 0,
-      "expected": 16
-    },
-    {
-      "name": "Sec3Ids",
-      "status": "PASS",
-      "passed": 7,
-      "failed": 0,
-      "expected": 7
-    },
-    {
-      "name": "Sec4ProdRole",
-      "status": "PASS",
-      "passed": 6,
-      "failed": 0,
-      "expected": 6
-    },
-    {
-      "name": "SecProdRole",
-      "status": "PASS",
-      "passed": 13,
-      "failed": 0,
-      "expected": 13
-    },
-    {
-      "name": "SecA",
-      "status": "PASS",
-      "passed": 27,
-      "failed": 0,
-      "expected": 27
-    },
-    {
-      "name": "FixC",
-      "status": "PASS",
-      "passed": 14,
-      "failed": 0,
-      "expected": 14
-    },
-    {
-      "name": "FixP1Custody",
-      "status": "PASS",
-      "passed": 9,
-      "failed": 0,
-      "expected": 9
-    },
-    {
-      "name": "RepairBatch1",
-      "status": "PASS",
-      "passed": 37,
-      "failed": 0,
-      "expected": 37
-    },
-    {
-      "name": "P8aProcurement",
-      "status": "PASS",
-      "passed": 24,
-      "failed": 0,
-      "expected": 24
-    },
-    {
-      "name": "P8cThreeWay",
-      "status": "PASS",
-      "passed": 14,
-      "failed": 0,
-      "expected": 14
-    },
-    {
-      "name": "P8cFix",
-      "status": "PASS",
-      "passed": 22,
-      "failed": 0,
-      "expected": 22
-    },
-    {
-      "name": "P15Purchasing",
-      "status": "PASS",
-      "passed": 25,
-      "failed": 0,
-      "expected": 25
-    },
-    {
-      "name": "P10StockAtomicMem",
-      "status": "PASS",
-      "passed": 12,
-      "failed": 0,
-      "expected": 12
-    },
-    {
-      "name": "P11TransfersMem",
-      "status": "PASS",
-      "passed": 12,
-      "failed": 0,
-      "expected": 12
-    },
-    {
-      "name": "P12ApprovalsMem",
-      "status": "PASS",
-      "passed": 35,
-      "failed": 0,
-      "expected": 35
-    },
-    {
-      "name": "P13Costing",
-      "status": "PASS",
-      "passed": 50,
-      "failed": 0,
-      "expected": 50
-    },
-    {
-      "name": "P14AutoJournals",
-      "status": "PASS",
-      "passed": 24,
-      "failed": 0,
-      "expected": 24
-    },
-    {
-      "name": "P16Recon",
-      "status": "PASS",
-      "passed": 14,
-      "failed": 0,
-      "expected": 14
-    },
-    {
-      "name": "P17Attachments",
-      "status": "PASS",
-      "passed": 29,
-      "failed": 0,
-      "expected": 29
-    },
-    {
-      "name": "P18WarehouseScope",
-      "status": "PASS",
-      "passed": 19,
-      "failed": 0,
-      "expected": 19
-    },
-    {
-      "name": "P2002Migrations",
-      "status": "PASS",
-      "passed": 8,
-      "failed": 0,
-      "expected": 8
-    },
-    {
-      "name": "F1Standards",
-      "status": "PASS",
-      "passed": 71,
-      "failed": 0,
-      "expected": 71
-    },
-    {
-      "name": "F2Decisions",
-      "status": "PASS",
-      "passed": 51,
-      "failed": 0,
-      "expected": 51
-    },
-    {
-      "name": "F3Acceptance",
-      "status": "PASS",
-      "passed": 19,
-      "failed": 0,
-      "expected": 19
-    },
-    {
-      "name": "F4StockShadow",
-      "status": "PASS",
-      "passed": 14,
-      "failed": 0,
-      "expected": 14
-    },
-    {
-      "name": "FixJ1Accounts",
-      "status": "PASS",
-      "passed": 24,
-      "failed": 0,
-      "expected": 24
-    },
-    {
-      "name": "FixStockReturnCumulative",
-      "status": "PASS",
-      "passed": 18,
-      "failed": 0,
-      "expected": 18
-    },
-    {
-      "name": "PgDateMapping",
-      "status": "PASS",
-      "passed": 14,
-      "failed": 0,
-      "expected": 14
-    },
-    {
-      "name": "PgMovementLogic",
-      "status": "PASS",
-      "passed": 4,
-      "failed": 0,
-      "expected": 4
-    },
-    {
-      "name": "P9Validation",
-      "status": "PASS",
-      "passed": 144,
-      "failed": 0,
-      "expected": null
-    }
-  ],
+  "gates": [],
   "testExecutionMetrics": {
-    "status": "GATES_EXECUTED",
+    "status": "NOT_RUN",
     "evidenceDir": "evidence/reconcile-audit-b"
   },
   "canonicalAuditFiles": [

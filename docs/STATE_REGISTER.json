@@ -3,8 +3,8 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "lastUpdated": "2026-10-13",
-  "lastChange": "FULL-SYSTEM-AUDIT: orchestrated runner (build+battery+domain+optional PG/health) → evidence/full-system-audit/",
+  "lastUpdated": "2026-10-14",
+  "lastChange": "DOC-SYNC-FULL: align STATE_REGISTER + AI_* with code — DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c (LoginScreen no fake clientGeo), stock-return guards already DONE; PROD-ROLE stays CONFIG",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -99,11 +99,43 @@
     {
       "id": "FULL-SYSTEM-AUDIT",
       "status": "DONE",
-      "scope": "Comprehensive audit orchestrator + evidence report",
-      "evidence": "scripts/runFullSystemAudit.ts; evidence/full-system-audit/REPORT.md"
+      "scope": "Orchestrated full audit runner (build + battery + domain + optional PG/health) → evidence/full-system-audit/",
+      "evidence": "scripts/runFullSystemAudit.ts; package.json test:full"
+    },
+    {
+      "id": "DB-1",
+      "status": "DONE",
+      "scope": "Live schema an_audit_trail + an_custom_fields + RLS list; migration 20261014_001 (21 tenant-led indexes)",
+      "evidence": "scripts/verifyDb1.ts (20); scripts/verifyDb1Pg.ts (8); evidence/repair/db1/"
+    },
+    {
+      "id": "OPS-1",
+      "status": "DONE",
+      "scope": "GET /api/health?ready=1 readiness; graceful SIGTERM/SIGINT; keep-alive timeouts; Dockerfile + .dockerignore",
+      "evidence": "scripts/verifyOps1.ts (28); evidence/repair/ops1/"
+    },
+    {
+      "id": "SEC-PROD-ROLE",
+      "status": "DONE",
+      "scope": "pgAppRoleGuard + server boot refuse when AN_ENFORCE_PROD_ROLE=1 and role is SUPERUSER/BYPASSRLS; verifySecProdRole in battery",
+      "evidence": "src/core/security/pgAppRoleGuard.ts; server.ts SEC-PROD-ROLE; scripts/verifySecProdRole.ts"
+    },
+    {
+      "id": "SEC-1c",
+      "status": "DONE",
+      "scope": "LoginScreen no longer sends fabricated clientGeo (e.g. Riyadh); server treats omitted geo as unknown for impossible-travel",
+      "evidence": "src/components/LoginScreen.tsx (no clientGeo in login body); server.ts SEC-1 comment on clientGeo"
     }
   ],
   "defects": [
+    {
+      "id": "SEC-1c",
+      "severity": "P1",
+      "status": "FIXED",
+      "title": "LoginScreen sent fabricated clientGeo (fixed city) on every login, defeating impossible-travel honesty",
+      "evidence": "LoginScreen login body has no clientGeo; server uses clientGeo only when provided",
+      "fix": "Omit clientGeo from client; optional real geolocation only with user permission (future)."
+    },
     {
       "id": "DEF-STOCK-RETURN-CUMULATIVE",
       "severity": "P1",
@@ -133,8 +165,8 @@
       "severity": "P2",
       "status": "CONFIG",
       "title": "The application database role may bypass RLS",
-      "evidence": "INFO: DB role bypasses RLS = true in evidence/standards-intelligence/battery-output-f2-pg.txt. Guide: docs/ops/PROD-PG-ROLE.md; probe: scripts/verifySec4ProdRole.ts.",
-      "fix": "Use a NOSUPERUSER NOBYPASSRLS application role and set AN_ENFORCE_PROD_ROLE=1 in production."
+      "evidence": "docs/ops/PROD-PG-ROLE.md; server boot refuse under AN_ENFORCE_PROD_ROLE=1; scripts/verifySecProdRole.ts / verifySec4ProdRole.ts. Package SEC-PROD-ROLE is DONE in code; deploy still needs NOSUPERUSER NOBYPASSRLS role + AN_ENFORCE_PROD_ROLE=1.",
+      "fix": "Point DATABASE_URL at an_erp_app (NOSUPERUSER NOBYPASSRLS) and set AN_ENFORCE_PROD_ROLE=1 in production."
     },
     {
       "id": "DEF-P1-001",
@@ -239,7 +271,10 @@
     "PostgreSQL gates (verify*Pg.ts) need DATABASE_URL; they print PG_NOT_RUN without it and prove nothing then.",
     "Behind a proxy, confirm the real client IP reaches the app (set TRUST_PROXY, or rely on K_SERVICE on Cloud Run).",
     "Internal battery endpoints (/api/internal/*) are limited to developer/auditor roles; keep them off public production roles.",
-    "Maintainability: server.ts is about 5,150 lines, PostgresPrimaryAdapter about 9,400 lines, roughly 1,800 uses of `any`."
+    "Maintainability: server.ts is about 5,150 lines, PostgresPrimaryAdapter about 9,400 lines, roughly 1,800 uses of `any`.",
+    "DOC-SYNC-FULL applied 2026-10-14: register aligned with DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c present in tree.",
+    "DB-1 put an_audit_trail and an_custom_fields on live schema + RLS list; re-check an_company_profiles for RLS coverage (SEC-2c remainder).",
+    "verifyDb1 / verifyOps1 are not yet entries in runReconcileAuditB BATTERIES array (run via evidence/repair or explicit npx tsx)."
   ],
   "ops": {
     "tests": "npm test (runs scripts/runReconcileAuditB.ts: every non-PG gate with expected counts; refreshes these docs)",

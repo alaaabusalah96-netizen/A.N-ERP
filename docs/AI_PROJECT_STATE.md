@@ -1,43 +1,10 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-13 — FULL-SYSTEM-AUDIT: orchestrated runner (build+battery+domain+optional PG/health) → evidence/full-system-audit/
-**Verdict**: **CONDITIONAL GO** (rendered 2026-10-13)
+**Last update**: 2026-10-14 — DOC-SYNC-FULL: align STATE_REGISTER + AI_* with code — DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c (LoginScreen no fake clientGeo), stock-return guards already DONE; PROD-ROLE stays CONFIG
+**Verdict**: **CONDITIONAL GO** (rendered 2026-10-14)
 
 ## Gates
-| Gate | Status | Passed | Failed | Expected |
-|---|---|---|---|---|
-| Sec1TwoFactor | PASS | 26 | 0 | 26 |
-| Sec2Rls | PASS | 39 | 0 | 39 |
-| Sec2bRls | PASS | 16 | 0 | 16 |
-| Sec3Ids | PASS | 7 | 0 | 7 |
-| Sec4ProdRole | PASS | 6 | 0 | 6 |
-| SecProdRole | PASS | 13 | 0 | 13 |
-| SecA | PASS | 27 | 0 | 27 |
-| FixC | PASS | 14 | 0 | 14 |
-| FixP1Custody | PASS | 9 | 0 | 9 |
-| RepairBatch1 | PASS | 37 | 0 | 37 |
-| P8aProcurement | PASS | 24 | 0 | 24 |
-| P8cThreeWay | PASS | 14 | 0 | 14 |
-| P8cFix | PASS | 22 | 0 | 22 |
-| P15Purchasing | PASS | 25 | 0 | 25 |
-| P10StockAtomicMem | PASS | 12 | 0 | 12 |
-| P11TransfersMem | PASS | 12 | 0 | 12 |
-| P12ApprovalsMem | PASS | 35 | 0 | 35 |
-| P13Costing | PASS | 50 | 0 | 50 |
-| P14AutoJournals | PASS | 24 | 0 | 24 |
-| P16Recon | PASS | 14 | 0 | 14 |
-| P17Attachments | PASS | 29 | 0 | 29 |
-| P18WarehouseScope | PASS | 19 | 0 | 19 |
-| P2002Migrations | PASS | 8 | 0 | 8 |
-| F1Standards | PASS | 71 | 0 | 71 |
-| F2Decisions | PASS | 51 | 0 | 51 |
-| F3Acceptance | PASS | 19 | 0 | 19 |
-| F4StockShadow | PASS | 14 | 0 | 14 |
-| FixJ1Accounts | PASS | 24 | 0 | 24 |
-| FixStockReturnCumulative | PASS | 18 | 0 | 18 |
-| PgDateMapping | PASS | 14 | 0 | 14 |
-| PgMovementLogic | PASS | 4 | 0 | 4 |
-| P9Validation | PASS | 144 | 0 | — |
+_Gates were not run in this render. Run `npm test` to execute them and refresh this file._
 
 ## Packages
 - **PH0-7.6** — DONE — Core, accounting, inventory, approvals, atomic stock documents _(evidence: evidence/phase-0 .. phase-7.6)_
@@ -55,15 +22,20 @@
 - **FIX-STOCK-RETURN-CUMULATIVE** — DONE — Cumulative stock return qty vs original + return type check _(evidence: scripts/verifyFixStockReturnCumulative.ts)_
 - **FIX-STOCK-RETURN-GUARD** — DONE — Atomic cumulative return guard (service + adapters) _(evidence: scripts/verifyFixStockReturnCumulative.ts)_
 - **FIX-STOCK-RETURN-GUARD-2** — DONE — POSTED-only original + concurrent test + full coverage _(evidence: scripts/verifyFixStockReturnCumulative.ts)_
-- **FULL-SYSTEM-AUDIT** — DONE — Comprehensive audit orchestrator + evidence report _(evidence: scripts/runFullSystemAudit.ts; evidence/full-system-audit/REPORT.md)_
+- **FULL-SYSTEM-AUDIT** — DONE — Orchestrated full audit runner (build + battery + domain + optional PG/health) → evidence/full-system-audit/ _(evidence: scripts/runFullSystemAudit.ts; package.json test:full)_
+- **DB-1** — DONE — Live schema an_audit_trail + an_custom_fields + RLS list; migration 20261014_001 (21 tenant-led indexes) _(evidence: scripts/verifyDb1.ts (20); scripts/verifyDb1Pg.ts (8); evidence/repair/db1/)_
+- **OPS-1** — DONE — GET /api/health?ready=1 readiness; graceful SIGTERM/SIGINT; keep-alive timeouts; Dockerfile + .dockerignore _(evidence: scripts/verifyOps1.ts (28); evidence/repair/ops1/)_
+- **SEC-PROD-ROLE** — DONE — pgAppRoleGuard + server boot refuse when AN_ENFORCE_PROD_ROLE=1 and role is SUPERUSER/BYPASSRLS; verifySecProdRole in battery _(evidence: src/core/security/pgAppRoleGuard.ts; server.ts SEC-PROD-ROLE; scripts/verifySecProdRole.ts)_
+- **SEC-1c** — DONE — LoginScreen no longer sends fabricated clientGeo (e.g. Riyadh); server treats omitted geo as unknown for impossible-travel _(evidence: src/components/LoginScreen.tsx (no clientGeo in login body); server.ts SEC-1 comment on clientGeo)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
 |---|---|---|---|---|
+| SEC-1c | P1 | **FIXED** | LoginScreen sent fabricated clientGeo (fixed city) on every login, defeating impossible-travel honesty | LoginScreen login body has no clientGeo; server uses clientGeo only when provided |
 | DEF-STOCK-RETURN-CUMULATIVE | P1 | **FIXED** | Stock returns did not accumulate prior returns or duplicate lines against the original qty | verifyFixStockReturnCumulative (posted + concurrent); assertOriginalPosted; PG/InMemory status |
 | DEF-CUSTODY-REVERSAL-DOUBLE-REFUND | P1 | **FIXED** | Reversing a custody expense voucher restores the custody balance twice | scripts/verifyFixP1Custody.ts; single restore in reverseCustodyExpenseVoucher only |
 | DEF-P2P-AUTOPOST-OFF | P1 | **FIXED** | Supplier invoice approval is wrong under the default stock-accounting config (autoPostEnabled=false) | scripts/verifyFixP1P2pAutopost.ts; approveSupplierInvoice Dr Inventory when autoPostEnabled=false, Dr GR/IR when true (code on tree) |
-| PROD-ROLE-BYPASSRLS | P2 | **CONFIG** | The application database role may bypass RLS | INFO: DB role bypasses RLS = true in evidence/standards-intelligence/battery-output-f2-pg.txt. Guide: docs/ops/PROD-PG-ROLE.md; probe: scripts/verifySec4ProdRole.ts. |
+| PROD-ROLE-BYPASSRLS | P2 | **CONFIG** | The application database role may bypass RLS | docs/ops/PROD-PG-ROLE.md; server boot refuse under AN_ENFORCE_PROD_ROLE=1; scripts/verifySecProdRole.ts / verifySec4ProdRole.ts. Package SEC-PROD-ROLE is DONE in code; deploy still needs NOSUPERUSER NOBYPASSRLS role + AN_ENFORCE_PROD_ROLE=1. |
 | DEF-P1-001 | P1 | **FIXED** | Stock count approval atomicity | scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review) |
 | DEF-P1-002 | P1 | **FIXED** | Stock return atomicity (PENDING_RETRY instead of silent success) | scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review) |
 | DEF-P1-003 | P1 | **FIXED** | Custody reversal posts the journal before changing balances | Ordering fixed; the separate double-refund defect above is still OPEN. |
@@ -84,6 +56,9 @@
 - Behind a proxy, confirm the real client IP reaches the app (set TRUST_PROXY, or rely on K_SERVICE on Cloud Run).
 - Internal battery endpoints (/api/internal/*) are limited to developer/auditor roles; keep them off public production roles.
 - Maintainability: server.ts is about 5,150 lines, PostgresPrimaryAdapter about 9,400 lines, roughly 1,800 uses of `any`.
+- DOC-SYNC-FULL applied 2026-10-14: register aligned with DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c present in tree.
+- DB-1 put an_audit_trail and an_custom_fields on live schema + RLS list; re-check an_company_profiles for RLS coverage (SEC-2c remainder).
+- verifyDb1 / verifyOps1 are not yet entries in runReconcileAuditB BATTERIES array (run via evidence/repair or explicit npx tsx).
 
 ## How to run
 - Tests: npm test (runs scripts/runReconcileAuditB.ts: every non-PG gate with expected counts; refreshes these docs)
