@@ -63,6 +63,16 @@ export class StorageRouter {
     return this.primaryAdapter;
   }
 
+  /** OPS-1: shutdown helper — stops the eviction timer and closes every dedicated adapter and the primary pool. Never throws. */
+  public async closeAll(): Promise<void> {
+    if (this.evictionTimer) {
+      clearInterval(this.evictionTimer);
+      this.evictionTimer = null;
+    }
+    try { await this.evictIdleAdapters(0); } catch (e: any) { console.warn('[StorageRouter] closeAll: dedicated adapters:', e?.message); }
+    try { await this.primaryAdapter.close(); } catch (e: any) { console.warn('[StorageRouter] closeAll: primary adapter:', e?.message); }
+  }
+
   public getDevInMemoryAdapter(): InMemoryAdapter {
     return this.devInMemoryAdapter;
   }

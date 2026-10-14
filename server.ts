@@ -28,6 +28,8 @@ import { Phase0TestRunner } from './src/core/tests/Phase0TestRunner';
 import { executePrimaryBattery } from './src/core/tests/runPrimaryBattery';
 import { runPhase1Battery } from './src/core/tests/runPhase1Battery';
 import { globalStorageRouter } from './src/core/storage/StorageRouter';
+import { checkReadiness, isReadinessRequest } from './src/core/ops/health';
+import { createShutdownHandler } from './src/core/ops/shutdown';
 import { PostingEngine } from './src/core/engines/PostingEngine';
 import { seedStandardsCatalogue } from './src/core/standards/seedCatalogue';
 import { RuleExplanationService } from './src/core/standards/RuleExplanationService';
@@ -535,16 +537,29 @@ async function startServer() {
   };
 
   // 1. Health check
-  app.get('/api/health', (req: Request, res: Response) => {
+  // OPS-1: plain GET = liveness (never touches the database). GET ?ready=1 = readiness (503 when the database does not answer).
+  // The public body no longer exposes the environment name or the storage engine.
+  app.get('/api/health', async (req: Request, res: Response) => {
     const dualDate = DualCalendar.format();
-    res.json({
+    const body: Record<string, unknown> = {
       status: 'ok',
       system: 'A.N ERP',
       version: `v${APP_VERSION}`,
-      environment: process.env.NODE_ENV || 'development',
-      storageEngine: process.env.DATABASE_URL ? 'PostgreSQL (Primary)' : 'InMemoryAdapter (Dev)',
       calendar: dualDate.combinedFormatted,
-    });
+    };
+    if (isReadinessRequest(req.query?.ready)) {
+      const r = await checkReadiness({
+        hasDatabase: !!process.env.DATABASE_URL,
+        ping: async () => (await (masterStorage as any).checkHealth()).connected === true,
+      });
+      body.ready = r.ready;
+      body.database = r.database;
+      if (!r.ready) {
+        body.status = 'degraded';
+        return res.status(503).json(body);
+      }
+    }
+    return res.json(body);
   });
 
   // 1.1 Dual Calendar endpoint for frontend
@@ -5169,9 +5184,24 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
     console.error(msg, seedErr);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`A.N ERP Server running on http://0.0.0.0:${PORT}`);
   });
+
+  // OPS-1: keep-alive above the typical load-balancer idle timeout (Node's 5s default drops connections the proxy still reuses)
+  httpServer.keepAliveTimeout = 65_000;
+  httpServer.headersTimeout = 66_000;
+
+  // OPS-1: graceful shutdown on SIGTERM (container stop) / SIGINT: finish in-flight requests, close the database pools, exit
+  const shutdown = createShutdownHandler({
+    server: httpServer,
+    closeStorage: () => globalStorageRouter.closeAll(),
+    timeoutMs: 8000,
+    log: (m) => console.log(`[shutdown] ${m}`),
+    exit: (code) => process.exit(code),
+  });
+  process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
+  process.once('SIGINT', () => { void shutdown('SIGINT'); });
 }
 
 startServer().catch((err) => {

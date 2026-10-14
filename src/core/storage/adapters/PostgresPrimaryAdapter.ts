@@ -441,6 +441,31 @@ export class PostgresPrimaryAdapter implements StoragePort {
         entry_hash VARCHAR(64) NOT NULL
       );
 
+      -- DB-1: operational audit trail and custom fields were defined only in getDdlScript() (test-only); the live schema never created them
+      CREATE TABLE IF NOT EXISTS an_audit_trail (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL,
+        actor_id VARCHAR(64) NOT NULL,
+        actor_name VARCHAR(255) NOT NULL,
+        action VARCHAR(64) NOT NULL,
+        entity_type VARCHAR(64) NOT NULL,
+        entity_id VARCHAR(64) NOT NULL,
+        details JSONB,
+        ip_address VARCHAR(64),
+        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS an_custom_fields (
+        id VARCHAR(64) PRIMARY KEY,
+        tenant_id VARCHAR(64) NOT NULL REFERENCES an_tenants(id),
+        module VARCHAR(64) NOT NULL,
+        field_key VARCHAR(64) NOT NULL,
+        field_label_ar VARCHAR(255) NOT NULL,
+        field_type VARCHAR(32) NOT NULL,
+        is_required BOOLEAN NOT NULL DEFAULT FALSE
+      );
+      ALTER TABLE an_custom_fields ADD COLUMN IF NOT EXISTS options JSONB;
+
       -- Phase 3A: Enterprise Organizational Hierarchy Table
       CREATE TABLE IF NOT EXISTS an_org_nodes (
         id VARCHAR(64) PRIMARY KEY,
@@ -1509,6 +1534,8 @@ export class PostgresPrimaryAdapter implements StoragePort {
           'an_master_items',
           'an_master_partners',
           'an_audit_chain',
+          'an_audit_trail',
+          'an_custom_fields',
           'an_org_nodes',
           'an_fiscal_periods',
           'an_dimensions',

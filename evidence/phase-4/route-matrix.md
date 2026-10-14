@@ -15,6 +15,7 @@
 | GET | /api/users | requireAuth | USER_MANAGE | High | OK | 1 |
 | POST | /api/users | requireAuth | USER_MANAGE | High | OK | 1 |
 | POST | /api/invitations | requireAuth | USER_MANAGE | High | OK | 1 |
+| POST | /api/invitations/accept | None | None | Unclassified | Unclassified |  |
 | GET | /api/sessions | requireAuth | USER_MANAGE | High | OK | 1 |
 | DELETE | /api/sessions/:sessionId | requireAuth | USER_MANAGE | High | OK | 1 |
 | GET | /api/custom-fields | requireAuth | None | Low | OK (مقصود) | 1 |
@@ -25,6 +26,11 @@
 | POST | /api/transactions/post | requireAuth | ENTRY_POST | High | OK | 1 |
 | POST | /api/transactions/approve | requireAuth | ENTRY_APPROVE | High | OK | 1 |
 | POST | /api/transactions/:id/approve | requireAuth | ENTRY_APPROVE | High | OK | 1 |
+| GET | /api/approvals/policies | requireAuth | None | Unclassified | Unclassified |  |
+| PUT | /api/approvals/policies/:documentType | requireAuth | APPROVAL_POLICY_MANAGE | Unclassified | Unclassified |  |
+| GET | /api/approvals/inbox | requireAuth | None | Unclassified | Unclassified |  |
+| POST | /api/approvals/:id/approve | requireAuth | None | Unclassified | Unclassified |  |
+| POST | /api/approvals/:id/reject | requireAuth | None | Unclassified | Unclassified |  |
 | POST | /api/transactions/:id/post | requireAuth | ENTRY_POST | High | OK | 1 |
 | GET | /api/wizard/tax-rules | None | None | Public | PUBLIC_BY_DESIGN | 4 |
 | GET | /api/wizard/activity-templates | None | None | Public | PUBLIC_BY_DESIGN | 4 |
@@ -36,6 +42,7 @@
 | GET | /api/reports/statement-as-of | requireAuth | FINANCIAL_REPORTS | Medium | OK | 1 |
 | POST | /api/master-data/items | requireAuth | ENTRY_CREATE | Medium | OK | 1 |
 | POST | /api/master-data/items/:id/approve | requireAuth | ENTRY_APPROVE | High | OK | 1 |
+| GET | /api/master-data/partners | requireAuth | None | Unclassified | Unclassified |  |
 | POST | /api/master-data/partners | requireAuth | ENTRY_CREATE | Medium | OK | 1 |
 | POST | /api/master-data/partners/:id/approve | requireAuth | ENTRY_APPROVE | High | OK | 1 |
 | GET | /api/audit-chain | requireAuth | AUDIT_LOG_VIEW | Medium | OK | 2 |
@@ -97,13 +104,58 @@
 | POST | /api/expenses/requests/:id/approve-l1 | requireAuth | EXPENSE_APPROVE | High | OK | 1 |
 | POST | /api/expenses/requests/:id/approve-l2 | requireAuth | EXPENSE_APPROVE | High | OK | 1 |
 | POST | /api/expenses/requests/:id/reject | requireAuth | EXPENSE_APPROVE | High | OK | 1 |
+| GET | /api/standards/explain/journal/:entryId | requireAuth | ENTRY_VIEW | Unclassified | Unclassified |  |
+| GET | /api/standards/explain/decision/:id | requireAuth | AUDIT_LOG_VIEW | Unclassified | Unclassified |  |
+| GET | /api/standards/decisions | requireAuth | AUDIT_LOG_VIEW | Unclassified | Unclassified |  |
 | GET | /api/internal/phase7-battery | requireDeveloperOrAuditor | None | High | OK | 1 |
+| GET | /api/inventory/warehouse-access/:userId | requireAuth | USER_MANAGE | Unclassified | Unclassified |  |
+| PUT | /api/inventory/warehouse-access/:userId | requireAuth | USER_MANAGE | Unclassified | Unclassified |  |
 | GET | /api/inventory/warehouses | requireAuth | STOCK_VIEW | Medium | OK | 2 |
 | POST | /api/inventory/warehouses | requireAuth | STOCK_RECEIVE | Medium | OK | 1 |
 | GET | /api/inventory/warehouses/:id/bins | requireAuth | STOCK_VIEW | Medium | OK | 2 |
 | POST | /api/inventory/warehouses/:id/bins | requireAuth | STOCK_RECEIVE | Medium | OK | 1 |
 | GET | /api/inventory/items | requireAuth | STOCK_VIEW | Medium | OK | 2 |
 | POST | /api/inventory/items | requireAuth | STOCK_RECEIVE | Medium | OK | 1 |
+| GET | /api/inventory/settings | requireAuth | STOCK_VIEW | Unclassified | Unclassified |  |
+| PUT | /api/inventory/settings | requireAuth | COMPANY_SETTINGS_MANAGE | Unclassified | Unclassified |  |
+| GET | /api/purchasing/orders | requireAuth | PURCHASE_VIEW | Unclassified | Unclassified |  |
+| POST | /api/purchasing/orders | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| GET | /api/purchasing/orders/:id | requireAuth | PURCHASE_VIEW | Unclassified | Unclassified |  |
+| POST | /api/purchasing/orders/:id/open | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/orders/:id/close | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/orders/:id/cancel | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| GET | /api/purchasing/receipts | requireAuth | STOCK_VIEW | Unclassified | Unclassified |  |
+| POST | /api/purchasing/receipts | requireAuth | STOCK_RECEIVE | Unclassified | Unclassified |  |
+| GET | /api/purchasing/receipts/:id | requireAuth | STOCK_VIEW | Unclassified | Unclassified |  |
+| POST | /api/purchasing/receipts/:id/approve | requireAuth | STOCK_RECEIVE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/receipts/:id/reject | requireAuth | STOCK_RECEIVE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/receipts/:id/retry-post | requireAuth | STOCK_RECEIVE | Unclassified | Unclassified |  |
+| GET | /api/purchasing/requests | requireAuth | PURCHASE_VIEW | Unclassified | Unclassified |  |
+| GET | /api/purchasing/requests/:id | requireAuth | PURCHASE_VIEW | Unclassified | Unclassified |  |
+| POST | /api/purchasing/requests | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/requests/:id/submit | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/requests/:id/approve | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/requests/:id/reject | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/requests/:id/convert-to-po | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| GET | /api/purchasing/rfqs | requireAuth | PURCHASE_VIEW | Unclassified | Unclassified |  |
+| GET | /api/purchasing/rfqs/:id | requireAuth | PURCHASE_VIEW | Unclassified | Unclassified |  |
+| POST | /api/purchasing/rfqs | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/rfqs/:id/send | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| GET | /api/purchasing/quotes | requireAuth | PURCHASE_VIEW | Unclassified | Unclassified |  |
+| GET | /api/purchasing/quotes/:id | requireAuth | PURCHASE_VIEW | Unclassified | Unclassified |  |
+| POST | /api/purchasing/quotes | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/quotes/:id/select | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/quotes/:id/convert-to-po | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| GET | /api/purchasing/invoices | requireAuth | PURCHASE_VIEW | Unclassified | Unclassified |  |
+| GET | /api/purchasing/invoices/:id | requireAuth | PURCHASE_VIEW | Unclassified | Unclassified |  |
+| POST | /api/purchasing/invoices | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/invoices/:id/match | requireAuth | PURCHASE_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/invoices/:id/approve | requireAuth | SUPPLIER_INVOICE_APPROVE | Unclassified | Unclassified |  |
+| POST | /api/purchasing/invoices/:id/reject | requireAuth | SUPPLIER_INVOICE_APPROVE | Unclassified | Unclassified |  |
+| GET | /api/inventory/accounting-config | requireAuth | STOCK_VIEW | Unclassified | Unclassified |  |
+| PUT | /api/inventory/accounting-config | requireAuth | COMPANY_SETTINGS_MANAGE | Unclassified | Unclassified |  |
+| POST | /api/inventory/documents/:id/post-journal | requireAuth | ENTRY_POST | Unclassified | Unclassified |  |
+| GET | /api/inventory/reconciliation | requireAuth | FINANCIAL_REPORTS | Unclassified | Unclassified |  |
 | GET | /api/inventory/stock | requireAuth | STOCK_VIEW | Medium | OK | 2 |
 | GET | /api/inventory/movements | requireAuth | STOCK_VIEW | Medium | OK | 2 |
 | POST | /api/inventory/receive,/api/inventory/movements/receive | requireAuth | STOCK_RECEIVE | Medium | OK | 1 |
@@ -135,12 +187,12 @@
 | GET | * | None | None | Public | OK (Public مقصود) | 1 |
 
 ## الإحصائيات والمطابقة
-- عدد تسجيلات المسارات في server.ts (نصّ أو مصفوفة مسارات): 131
-- منها مطابقة للـregex الصارم (مسار نصّي واحد): 129 (+ 2 تسجيل بمصفوفة مسارات)
-- عدد صفوف المصفوفة: 131
+- عدد تسجيلات المسارات في server.ts (نصّ أو مصفوفة مسارات): 183
+- منها مطابقة للـregex الصارم (مسار نصّي واحد): 181 (+ 2 تسجيل بمصفوفة مسارات)
+- عدد صفوف المصفوفة: 183
 - DEFER_P4 المتبقي: 0
 - CLOSED_P4: 7 | ALREADY_APPLIED_V38: 9 | PUBLIC_BY_DESIGN: 3
-- Unclassified (لا يوجد صف سابق في phase-2): 0
+- Unclassified (لا يوجد صف سابق في phase-2): 52 → POST /api/invitations/accept, GET /api/approvals/policies, PUT /api/approvals/policies/:documentType, GET /api/approvals/inbox, POST /api/approvals/:id/approve, POST /api/approvals/:id/reject, GET /api/master-data/partners, GET /api/standards/explain/journal/:entryId, GET /api/standards/explain/decision/:id, GET /api/standards/decisions, GET /api/inventory/warehouse-access/:userId, PUT /api/inventory/warehouse-access/:userId, GET /api/inventory/settings, PUT /api/inventory/settings, GET /api/purchasing/orders, POST /api/purchasing/orders, GET /api/purchasing/orders/:id, POST /api/purchasing/orders/:id/open, POST /api/purchasing/orders/:id/close, POST /api/purchasing/orders/:id/cancel, GET /api/purchasing/receipts, POST /api/purchasing/receipts, GET /api/purchasing/receipts/:id, POST /api/purchasing/receipts/:id/approve, POST /api/purchasing/receipts/:id/reject, POST /api/purchasing/receipts/:id/retry-post, GET /api/purchasing/requests, GET /api/purchasing/requests/:id, POST /api/purchasing/requests, POST /api/purchasing/requests/:id/submit, POST /api/purchasing/requests/:id/approve, POST /api/purchasing/requests/:id/reject, POST /api/purchasing/requests/:id/convert-to-po, GET /api/purchasing/rfqs, GET /api/purchasing/rfqs/:id, POST /api/purchasing/rfqs, POST /api/purchasing/rfqs/:id/send, GET /api/purchasing/quotes, GET /api/purchasing/quotes/:id, POST /api/purchasing/quotes, POST /api/purchasing/quotes/:id/select, POST /api/purchasing/quotes/:id/convert-to-po, GET /api/purchasing/invoices, GET /api/purchasing/invoices/:id, POST /api/purchasing/invoices, POST /api/purchasing/invoices/:id/match, POST /api/purchasing/invoices/:id/approve, POST /api/purchasing/invoices/:id/reject, GET /api/inventory/accounting-config, PUT /api/inventory/accounting-config, POST /api/inventory/documents/:id/post-journal, GET /api/inventory/reconciliation
 - مسارات High بلا Permission لكنها محمية بـguard دوري مخصص (14): POST /api/wizard/create-company, GET /api/tenants, POST /api/storage/propose-migration, GET /api/internal/phase2-battery, GET /api/internal/phase3-battery, GET /api/internal/build-status, GET /api/internal/health, GET /api/internal/primary-battery, GET /api/internal/phase1-battery, GET /api/internal/phase4_6-battery, POST /api/accounting/fuzz-test, GET /api/internal/phase5-battery, GET /api/internal/phase6-battery, GET /api/internal/phase7-battery
 - مسارات High بلا أي حماية: 0
 
