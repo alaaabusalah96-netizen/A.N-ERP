@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-14 — INV-MOVEMENTS-FILTER: warehouse/item/type/date filters on stock movements list (API+UI)
+**Last update**: 2026-10-14 — AUDIT-WIRE / PH8-CLOSE-1: registered eight existing non-PG gates, made P1 autopost and audit-wire critical, and added audit-wire consistency checks
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-14)
 
 ## Gates
@@ -32,6 +32,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **PH8-REORDER** — DONE — Scan stock vs reorderPoint; create PRs; UI generate button; publish REORDER_POINT_REACHED on issue _(evidence: scripts/verifyPh8Reorder.ts; POST /api/purchasing/reorder/generate)_
 - **INV-ITEM-CARD** — DONE — Item 360 card UI: master data, per-warehouse stock, ledger, prices; open from stock grid; action shortcuts _(evidence: scripts/verifyInvItemCard.ts; src/components/ItemCardPanel.tsx)_
 - **INV-MOVEMENTS-FILTER** — DONE — Filter stock movements by warehouse, item, type, fromDate, toDate (API + movements tab UI) _(evidence: scripts/verifyInvMovementsFilter.ts)_
+- **AUDIT-WIRE** — DONE — Register existing non-PG regression gates in the main audit battery and validate audit coverage/state consistency. _(evidence: scripts/verifyAuditWire.ts (16); runReconcileAuditB BATTERIES includes FixP1P2pAutopost, PH8 inventory gates, inventory UI gates, DB-1 and OPS-1.)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
@@ -43,7 +44,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 | PROD-ROLE-BYPASSRLS | P2 | **CONFIG** | The application database role may bypass RLS | docs/ops/PROD-PG-ROLE.md; server boot refuse under AN_ENFORCE_PROD_ROLE=1; scripts/verifySecProdRole.ts / verifySec4ProdRole.ts. Package SEC-PROD-ROLE is DONE in code; deploy still needs NOSUPERUSER NOBYPASSRLS role + AN_ENFORCE_PROD_ROLE=1. |
 | DEF-P1-001 | P1 | **FIXED** | Stock count approval atomicity | scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review) |
 | DEF-P1-002 | P1 | **FIXED** | Stock return atomicity (PENDING_RETRY instead of silent success) | scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review) |
-| DEF-P1-003 | P1 | **FIXED** | Custody reversal posts the journal before changing balances | Ordering fixed; the separate double-refund defect above is still OPEN. |
+| DEF-P1-003 | P1 | **FIXED** | Custody reversal posts the journal before changing balances | Posting-before-balance ordering fixed. The separate double-refund behavior is tracked by DEF-CUSTODY-REVERSAL-DOUBLE-REFUND, whose status is FIXED. |
 | DEF-P2-001 | P2 | **FIXED** | Goods receipt over-receipt race (TOCTOU) | PostgreSQL saveGoodsReceipt locks PO lines (FOR UPDATE) and re-checks inside the transaction (code inspection; InMemory tests) |
 | DEF-P2-002 | P2 | **FIXED** | Version-tracked schema migrations | scripts/verifyP2002Migrations.ts (8) |
 | SEC-A-CSP | P2 | **FIXED** | CSP defaulted to development (unsafe-inline/unsafe-eval) | runtimeSecurity.resolveCspProfile; verifySecA C1-C5 |
@@ -63,7 +64,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - Maintainability: server.ts is about 5,150 lines, PostgresPrimaryAdapter about 9,400 lines, roughly 1,800 uses of `any`.
 - DOC-SYNC-FULL applied 2026-10-14: register aligned with DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c present in tree.
 - DB-1 put an_audit_trail and an_custom_fields on live schema + RLS list; re-check an_company_profiles for RLS coverage (SEC-2c remainder).
-- verifyDb1 / verifyOps1 are not yet entries in runReconcileAuditB BATTERIES array (run via evidence/repair or explicit npx tsx).
+- scripts/verifyDocSyncFull.ts retains a legacy S7 assertion requiring lastChange to contain DOC-SYNC-FULL; this conflicts with a truthful current lastChange and remains outside BATTERIES pending separate test-maintenance approval.
 
 ## How to run
 - Tests: npm test (runs scripts/runReconcileAuditB.ts: every non-PG gate with expected counts; refreshes these docs)

@@ -341,6 +341,187 @@ Passed: 22 | Failed: 0
 
 Passed: 25 | Failed: 0
 
+=== FixP1P2pAutopost ===
+[PASS] S1 uses autoPostEnabled
+[PASS] S2 builds invDebits when !autoPost
+[PASS] S3 autoPost branch posts GR/IR debit line
+[PASS] S4 !autoPost does not force GR/IR in need[]
+[PASS] U0 post ok
+[PASS] U0 INV Dr 80, grir none
+[PASS] U1 post ok
+[PASS] U1 GRIR Dr 80, inv none
+
+Passed: 8 | Failed: 0
+
+=== Ph8InvTab ===
+[PASS] T1 TabId includes invoices
+[PASS] T2 invoices state
+[PASS] T3 loadAll fetches /api/purchasing/invoices
+[PASS] T4 setInvoices from response data
+[PASS] T5 tab label فواتير الموردين
+[PASS] T6 invoices panel renders on activeTab
+[PASS] T7 empty state message
+[PASS] T8 shows invoice number and status
+[PASS] T9 Receipt icon imported
+[PASS] T10 existing receipts tab still present
+[PASS] T11 requests/orders tabs unchanged
+[PASS] T12 MATCH_PENDING badge color
+[PASS] R1 package PH8-INV-TAB DONE
+[PASS] R2 PH8-REMAINDER recorded
+
+Passed: 14 | Failed: 0
+
+=== Ph8Return ===
+[PASS] S1 createPurchaseReturn in service
+[PASS] S2 listPurchaseReturns in service
+[PASS] S3 RETURN_RECEIPT used for vendor return
+[PASS] S4 GET /api/purchasing/returns route
+[PASS] S5 POST /api/purchasing/returns route
+[PASS] S6 UI tab returns
+[PASS] S7 UI fetches returns API
+[PASS] S8 UI panel activeTab returns
+[PASS] R1 missing receipt 404
+[PASS] R2 GR created
+[PASS] R3 GR APPROVED with stock doc
+[PASS] R4 over-qty rejected
+[PASS] R5 return 4 succeeds
+[PASS] R6 stock doc RETURN_RECEIPT
+[PASS] R7 list includes purchase return
+[PASS] R8 PO receivedQty reduced by 4
+[PASS] R9 second return exceeding remaining original stock rejected or partial-safe
+[PASS] R10 package PH8-RETURN DONE
+
+Passed: 18 | Failed: 0
+
+=== Ph8Reorder ===
+[PASS] S1 generatePurchaseRequestsFromReorder in service
+[PASS] S2 POST /api/purchasing/reorder/generate
+[PASS] S3 UI button توليد من إعادة الطلب
+[PASS] S4 Inventory publishes REORDER_POINT_REACHED
+[PASS] S5 PURCHASE_MANAGE on generate route
+[PASS] R1 seed stock 15
+[PASS] R2 dryRun candidates >=1
+[PASS] R3 dryRun creates nothing
+[PASS] R4 generate creates PR
+[PASS] R5 suggested qty toward maxStock (50-15=35)
+[PASS] R6 second run skips open PR
+[PASS] R7 issue below reorder publishes event
+[PASS] R8 package PH8-REORDER DONE
+[PASS] R9 PH8-REMAINDER CLOSED or DONE
+
+Passed: 14 | Failed: 0
+
+=== InvItemCard ===
+[PASS] S1 ItemCardPanel component exists
+[PASS] S2 Workspace imports ItemCardPanel
+[PASS] S3 cardItemId state
+[PASS] S4 GET /api/inventory/items/:id route
+[PASS] S5 panel tabs info/stock/ledger/prices
+[PASS] S6 panel fetches ledger API
+[PASS] S7 panel action صرف واستلام
+[PASS] S8 row opens card setCardItemId
+[PASS] S9 shortcuts open issue/receive modals
+[PASS] S10 Arabic title بطاقة صنف
+[PASS] R1 saveStockItem works
+[PASS] R2 getStockItem returns card fields
+[PASS] R3 package INV-ITEM-CARD DONE
+
+Passed: 13 | Failed: 0
+
+=== InvMovementsFilter ===
+[PASS] S1 UI filter bar title
+[PASS] S2 UI filter state fields
+[PASS] S3 loadMovementsFiltered builds query
+[PASS] S4 clearMovFilters
+[PASS] S5 server accepts fromDate/toDate
+[PASS] S6 StoragePort filter type has fromDate
+[PASS] S7 InMemory filters by date
+[PASS] S8 Postgres filters by timestamp range
+[PASS] R1 list has movements
+[PASS] R2 filter by ISSUE
+[PASS] R3 filter by itemId
+[PASS] R4 fromDate future empty
+[PASS] R5 toDate past empty
+[PASS] R6 package INV-MOVEMENTS-FILTER DONE
+
+Passed: 14 | Failed: 0
+
+=== Db1 ===
+[PASS] D1 registry versions unique and ascending
+[PASS] D2 migration 20261014_001 present
+[PASS] D3 exactly 21 statements
+[PASS] D4 every statement is CREATE INDEX IF NOT EXISTS ix_… ON an_…
+[PASS] D5 index names unique and <= 63 chars
+[PASS] D6 every index leads with tenant_id
+[PASS] D7 every index table is created in the LIVE schema
+[PASS] D8 every indexed column exists in its live table
+[PASS] D9 every index table is created BEFORE the migrations run
+[PASS] D10 an_audit_trail is created in the live schema
+[PASS] D11 an_custom_fields is created in the live schema
+[PASS] D12 an_audit_trail is in the RLS table list
+[PASS] D13 an_custom_fields is in the RLS table list
+[PASS] D14 no table used by live code exists only in the test-only DDL
+[PASS] D15 live an_audit_trail has the columns saveAuditRecord writes
+[PASS] D16 first apply runs every migration
+[PASS] D17 the index script ran as one batch containing 21 CREATE INDEX statements
+[PASS] D18 second apply is a no-op
+[PASS] D19 audit records are tenant-scoped
+[PASS] D20 audit limit is honoured
+
+Passed: 20 | Failed: 0
+
+=== Ops1 ===
+[PASS] R1 ?ready=1 and ?ready=true are readiness requests
+[PASS] R2 absent / other values are not readiness requests
+[PASS] R3 no database configured => ready, database skipped
+[PASS] R4 database answers => ready
+[PASS] R5 database says not connected => not ready
+[PASS] R6 ping throws => not ready (no exception escapes)
+[PASS] R7 ping that never answers => not ready after the timeout
+[PASS] S1 server is closed before storage
+[PASS] S2 clean shutdown exits with 0 exactly once
+[PASS] S3 repeated signals run the shutdown once
+[PASS] S4 a failing storage close still exits (0) and does not throw
+[PASS] S5 a server that never drains is force-exited with 1 after the timeout
+[PASS] W1 SIGTERM and SIGINT handlers are registered
+[PASS] W2 shutdown closes storage through StorageRouter.closeAll
+[PASS] W3 keep-alive timeouts are set above the load-balancer idle time
+[PASS] W4 public health body no longer exposes environment / storage engine
+[PASS] W5 health readiness answers 503 when not ready
+[PASS] W6 liveness does not call the database unless readiness is requested
+[PASS] W7 no new route was added (route matrix stays valid)
+[PASS] W8 StorageRouter.closeAll stops the timer and closes dedicated + primary adapters
+[PASS] C1 Dockerfile runs as a non-root user in production mode
+[PASS] C2 Dockerfile CMD matches package.json start
+[PASS] C3 Dockerfile builds with npm run build and ships only dist + production modules
+[PASS] C4 Dockerfile never copies .env or secrets
+[PASS] C5 Dockerfile HEALTHCHECK uses the readiness probe
+[PASS] C6 .dockerignore excludes .env, node_modules, .git and keeps .env.example
+[PASS] C7 .dockerignore does not exclude files the build needs
+[PASS] C8 node engine in package.json matches the image major (>=20, image 22)
+
+Passed: 28 | Failed: 0
+
+=== AuditWire ===
+[FAIL] BATTERY FixP1P2pAutopost registered with expected=8
+[FAIL] BATTERY Ph8InvTab registered with expected=14
+[FAIL] BATTERY Ph8Return registered with expected=18
+[FAIL] BATTERY Ph8Reorder registered with expected=14
+[FAIL] BATTERY InvItemCard registered with expected=13
+[FAIL] BATTERY InvMovementsFilter registered with expected=14
+[FAIL] BATTERY Db1 registered with expected=20
+[FAIL] BATTERY Ops1 registered with expected=28
+[FAIL] BATTERY AuditWire registered with expected=16
+[PASS] BATTERY script paths unique
+[PASS] P1 autopost and audit-wire are critical verdict gates
+[PASS] STATE_REGISTER lastChange names this audit bundle
+[PASS] DEF-P1-003 evidence does not contradict FIXED status
+[PASS] STATE_REGISTER has no stale claim DB-1/OPS-1 are unregistered
+[PASS] STATE_REGISTER records AUDIT-WIRE as DONE
+[PASS] STATE_REGISTER transparently tracks legacy DocSyncFull S7 assertion
+
+Passed: 7 | Failed: 9
+
 === P10StockAtomicMem ===
 [PASS] (a) receipt ok, one document, two movements
 [PASS] (a) balances: A 10 @5 = 50, B 4 @25 = 100
@@ -841,7 +1022,7 @@ Passed: 14 | Failed: 0
 Passed: 4 | Failed: 0
 
 === P9Validation ===
-◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
 [PASS] (أ) parsePositiveQuantity rejects NaN
 [PASS] (أ) parsePositiveQuantity rejects Infinity
 [PASS] (أ) parsePositiveQuantity rejects -Infinity

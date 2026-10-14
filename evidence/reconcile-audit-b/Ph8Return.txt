@@ -1,0 +1,20 @@
+[PASS] S1 createPurchaseReturn in service
+[PASS] S2 listPurchaseReturns in service
+[PASS] S3 RETURN_RECEIPT used for vendor return
+[PASS] S4 GET /api/purchasing/returns route
+[PASS] S5 POST /api/purchasing/returns route
+[PASS] S6 UI tab returns
+[PASS] S7 UI fetches returns API
+[PASS] S8 UI panel activeTab returns
+[PASS] R1 missing receipt 404
+[PASS] R2 GR created
+[PASS] R3 GR APPROVED with stock doc
+[PASS] R4 over-qty rejected
+[PASS] R5 return 4 succeeds
+[PASS] R6 stock doc RETURN_RECEIPT
+[PASS] R7 list includes purchase return
+[PASS] R8 PO receivedQty reduced by 4
+[PASS] R9 second return exceeding remaining original stock rejected or partial-safe
+[PASS] R10 package PH8-RETURN DONE
+
+Passed: 18 | Failed: 0
