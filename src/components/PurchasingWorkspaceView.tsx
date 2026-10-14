@@ -1,7 +1,7 @@
 /**
  * @file PurchasingWorkspaceView.tsx
- * @description واجهة موديول المشتريات — طلب شراء / RFQ / عروض / أوامر / استلام
- * Phase 8 continuation (UI + API wiring). No build terms in labels.
+ * @description واجهة موديول المشتريات — طلب شراء / RFQ / عروض / أوامر / استلام / فواتير الموردين
+ * Phase 8 continuation (UI + API wiring). PH8-INV-TAB: supplier invoices list tab. No build terms in labels.
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import {
@@ -15,10 +15,11 @@ import {
   Package,
   Truck,
   ClipboardList,
+  Receipt,
 } from 'lucide-react';
 import { UserProfile } from '../types/erp';
 
-type TabId = 'requests' | 'rfqs' | 'quotes' | 'orders' | 'receipts';
+type TabId = 'requests' | 'rfqs' | 'quotes' | 'orders' | 'receipts' | 'invoices';
 
 interface PurchasingWorkspaceViewProps {
   currentUser: UserProfile;
@@ -40,6 +41,7 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
   const [quotes, setQuotes] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [receipts, setReceipts] = useState<any[]>([]);
+  const [invoices, setInvoices] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
   const [vendors, setVendors] = useState<any[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
@@ -75,12 +77,13 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
     setLoading(true);
     try {
       const opts = { credentials: 'include' as RequestCredentials };
-      const [rPr, rRfq, rQ, rPo, rGr, rItems, rVendors, rWh] = await Promise.all([
+      const [rPr, rRfq, rQ, rPo, rGr, rInv, rItems, rVendors, rWh] = await Promise.all([
         fetch('/api/purchasing/requests', opts),
         fetch('/api/purchasing/rfqs', opts),
         fetch('/api/purchasing/quotes', opts),
         fetch('/api/purchasing/orders', opts),
         fetch('/api/purchasing/receipts', opts),
+        fetch('/api/purchasing/invoices', opts),
         fetch('/api/inventory/items', opts),
         fetch('/api/master-data/partners?type=VENDOR', opts).catch(() => null),
         fetch('/api/inventory/warehouses', opts),
@@ -104,6 +107,10 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
       if (rGr.ok) {
         const j = await rGr.json();
         setReceipts(j.data || []);
+      }
+      if (rInv.ok) {
+        const j = await rInv.json();
+        setInvoices(j.data || []);
       }
       if (rItems.ok) {
         const j = await rItems.json();
@@ -331,6 +338,7 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
     { id: 'quotes', label: 'عروض الموردين', icon: FileText },
     { id: 'orders', label: 'أوامر الشراء', icon: ShoppingCart },
     { id: 'receipts', label: 'إذونات الاستلام', icon: Package },
+    { id: 'invoices', label: 'فواتير الموردين', icon: Receipt },
   ];
 
   const statusBadge = (s: string) => {
@@ -343,6 +351,9 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
       SENT: 'bg-indigo-100 text-indigo-800',
       CLOSED: 'bg-slate-200 text-slate-600',
       RECEIVED: 'bg-teal-100 text-teal-800',
+      MATCH_PENDING: 'bg-amber-100 text-amber-800',
+      MATCHED: 'bg-blue-100 text-blue-800',
+      POSTED: 'bg-emerald-100 text-emerald-800',
       SELECTED: 'bg-emerald-100 text-emerald-800',
       OPEN: 'bg-blue-100 text-blue-800',
       PARTIALLY_RECEIVED: 'bg-amber-100 text-amber-800',
@@ -842,6 +853,44 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusBadge(r.status)}`}>{r.status}</span>
                   </td>
                   <td className="px-3 py-2 text-slate-500">{(r.createdAt || '').slice(0, 10)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeTab === 'invoices' && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <table className="w-full text-right text-xs">
+            <thead className="bg-slate-50 text-slate-500">
+              <tr>
+                <th className="px-3 py-2 font-semibold">رقم الفاتورة</th>
+                <th className="px-3 py-2 font-semibold">أمر الشراء</th>
+                <th className="px-3 py-2 font-semibold">المورد</th>
+                <th className="px-3 py-2 font-semibold">الحالة</th>
+                <th className="px-3 py-2 font-semibold">الإجمالي</th>
+                <th className="px-3 py-2 font-semibold">التاريخ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
+                    لا توجد فواتير موردين
+                  </td>
+                </tr>
+              )}
+              {invoices.map((inv) => (
+                <tr key={inv.id} className="border-t border-slate-100">
+                  <td className="px-3 py-2 font-semibold">{inv.invoiceNumber || inv.id}</td>
+                  <td className="px-3 py-2">{inv.poNumber || inv.poId || '—'}</td>
+                  <td className="px-3 py-2">{inv.vendorName || inv.vendorId || '—'}</td>
+                  <td className="px-3 py-2">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusBadge(inv.status)}`}>{inv.status}</span>
+                  </td>
+                  <td className="px-3 py-2 tabular-nums">{inv.totalAmount != null ? Number(inv.totalAmount).toLocaleString('ar') : (inv.grandTotal != null ? Number(inv.grandTotal).toLocaleString('ar') : '—')}</td>
+                  <td className="px-3 py-2 text-slate-500">{(inv.invoiceDate || inv.createdAt || '').toString().slice(0, 10)}</td>
                 </tr>
               ))}
             </tbody>

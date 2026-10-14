@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-14 — DOC-SYNC-FULL: align STATE_REGISTER + AI_* with code — DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c (LoginScreen no fake clientGeo), stock-return guards already DONE; PROD-ROLE stays CONFIG
+**Last update**: 2026-10-14 — PH8-INV-TAB: supplier invoices list tab in PurchasingWorkspaceView (API already from 8c)
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-14)
 
 ## Gates
@@ -15,7 +15,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **SEC-1..SEC-4** — DONE — 2FA, RLS on all tenant tables, ids, production DB role guard _(evidence: evidence/security, scripts/verifySec*.ts)_
 - **SEC-A** — DONE — Strict CSP by default in production, trust proxy, per-tenant login lockout, no raw internal errors to clients, bounded fuzz _(evidence: scripts/verifySecA.ts (27), scripts/verifySecAPg.ts)_
 - **REPO-B** — DONE — Repository cleanup, npm test, engines, state register _(evidence: this file + scripts/runReconcileAuditB.ts)_
-- **PH8-REMAINDER** — OPEN — Purchase returns, auto purchase request from reorder point, supplier-invoices tab in the purchasing UI _(evidence: not built)_
+- **PH8-REMAINDER** — OPEN — Purchase returns; auto purchase request from reorder point (supplier-invoices UI tab done in PH8-INV-TAB) _(evidence: not built)_
 - **FIX-P1-CUSTODY** — DONE — DEF-CUSTODY-REVERSAL-DOUBLE-REFUND — single balance restore on reverse _(evidence: scripts/verifyFixP1Custody.ts)_
 - **FIX-C** — DONE — npm test green: fuzz parser type-safe, stale RepairBatch1 assertion, custody test arity, DB-unreachable gates are SKIP not FAIL _(evidence: scripts/verifyFixC.ts)_
 - **FIX-P1-P2P-AUTOPOST** — DONE — DEF-P2P-AUTOPOST-OFF — invoice journals inventory when auto-post off _(evidence: scripts/verifyFixP1P2pAutopost.ts)_
@@ -27,6 +27,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **OPS-1** — DONE — GET /api/health?ready=1 readiness; graceful SIGTERM/SIGINT; keep-alive timeouts; Dockerfile + .dockerignore _(evidence: scripts/verifyOps1.ts (28); evidence/repair/ops1/)_
 - **SEC-PROD-ROLE** — DONE — pgAppRoleGuard + server boot refuse when AN_ENFORCE_PROD_ROLE=1 and role is SUPERUSER/BYPASSRLS; verifySecProdRole in battery _(evidence: src/core/security/pgAppRoleGuard.ts; server.ts SEC-PROD-ROLE; scripts/verifySecProdRole.ts)_
 - **SEC-1c** — DONE — LoginScreen no longer sends fabricated clientGeo (e.g. Riyadh); server treats omitted geo as unknown for impossible-travel _(evidence: src/components/LoginScreen.tsx (no clientGeo in login body); server.ts SEC-1 comment on clientGeo)_
+- **PH8-INV-TAB** — DONE — Purchasing UI tab for supplier invoices (list from GET /api/purchasing/invoices) _(evidence: scripts/verifyPh8InvTab.ts; PurchasingWorkspaceView invoices tab)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-14** — DOC-SYNC-FULL: align STATE_REGISTER + AI_* with code — DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c (LoginScreen no fake clientGeo), stock-return guards already DONE; PROD-ROLE stays CONFIG
+Last update: **2026-10-14** — PH8-INV-TAB: supplier invoices list tab in PurchasingWorkspaceView (API already from 8c)
 
 ## Verdict
 | Field | Value |

@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-14",
-  "lastChange": "DOC-SYNC-FULL: align STATE_REGISTER + AI_* with code — DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c (LoginScreen no fake clientGeo), stock-return guards already DONE; PROD-ROLE stays CONFIG",
+  "lastChange": "PH8-INV-TAB: supplier invoices list tab in PurchasingWorkspaceView (API already from 8c)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -57,7 +57,7 @@
     {
       "id": "PH8-REMAINDER",
       "status": "OPEN",
-      "scope": "Purchase returns, auto purchase request from reorder point, supplier-invoices tab in the purchasing UI",
+      "scope": "Purchase returns; auto purchase request from reorder point (supplier-invoices UI tab done in PH8-INV-TAB)",
       "evidence": "not built"
     },
     {
@@ -125,6 +125,12 @@
       "status": "DONE",
       "scope": "LoginScreen no longer sends fabricated clientGeo (e.g. Riyadh); server treats omitted geo as unknown for impossible-travel",
       "evidence": "src/components/LoginScreen.tsx (no clientGeo in login body); server.ts SEC-1 comment on clientGeo"
+    },
+    {
+      "id": "PH8-INV-TAB",
+      "status": "DONE",
+      "scope": "Purchasing UI tab for supplier invoices (list from GET /api/purchasing/invoices)",
+      "evidence": "scripts/verifyPh8InvTab.ts; PurchasingWorkspaceView invoices tab"
     }
   ],
   "defects": [
