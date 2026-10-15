@@ -77,9 +77,11 @@ const BATTERIES: { name: string; script: string; expected?: number }[] = [
   { name: 'Ops1', script: 'scripts/verifyOps1.ts', expected: 28 },
   { name: 'DocSyncFull', script: 'scripts/verifyDocSyncFull.ts', expected: 19 },
   { name: 'BatteryCoverage', script: 'scripts/verifyBatteryCoverage.ts', expected: 19 },
+  { name: 'AuditWire', script: 'scripts/verifyAuditWire.ts', expected: 27 },
   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
 ];
-const CRITICAL = ['Sec1TwoFactor', 'Sec2Rls', 'Sec2bRls', 'Sec3Ids', 'Sec4ProdRole', 'SecA', 'RepairBatch1', 'P8aProcurement', 'P8cThreeWay', 'F2Decisions'];
+// AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+const CRITICAL = ['Sec1TwoFactor', 'Sec2Rls', 'Sec2bRls', 'Sec3Ids', 'Sec4ProdRole', 'SecA', 'RepairBatch1', 'P8aProcurement', 'P8cThreeWay', 'F2Decisions', 'FixP1P2pAutopost', 'Ph8Return', 'FixJ1Accounts', 'FixStockReturnCumulative', 'BatteryCoverage', 'AuditWire'];
 
 const gates: Gate[] = [];
 let f07Verdict = 'NOT_RUN', f07Parse: { passed: number | null; failed: number | null } = { passed: null, failed: null };

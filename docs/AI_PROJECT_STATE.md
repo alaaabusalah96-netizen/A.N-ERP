@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-14 — PH8-CLOSE-1: unwired gates now in npm test; DocSyncFull S7 no longer pinned to a past package; battery-coverage guard added
+**Last update**: 2026-10-14 — AUDIT-UNIFY-1: orphan audit-wire test replaced and wired; financial gates are CRITICAL; stale register claims corrected
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-15)
 
 ## Gates
@@ -47,6 +47,7 @@
 | Ops1 | PASS | 28 | 0 | 28 |
 | DocSyncFull | PASS | 19 | 0 | 19 |
 | BatteryCoverage | PASS | 19 | 0 | 19 |
+| AuditWire | PASS | 27 | 0 | 27 |
 | P9Validation | PASS | 144 | 0 | — |
 
 ## Packages
@@ -76,6 +77,7 @@
 - **INV-ITEM-CARD** — DONE — Item 360 card UI: master data, per-warehouse stock, ledger, prices; open from stock grid; action shortcuts _(evidence: scripts/verifyInvItemCard.ts; src/components/ItemCardPanel.tsx)_
 - **INV-MOVEMENTS-FILTER** — DONE — Filter stock movements by warehouse, item, type, fromDate, toDate (API + movements tab UI) _(evidence: scripts/verifyInvMovementsFilter.ts)_
 - **PH8-CLOSE-1** — DONE — Wire the unwired gates into npm test (FixP1P2pAutopost, Ph8InvTab, Ph8Return, Ph8Reorder, InvItemCard, InvMovementsFilter, Db1, Ops1, DocSyncFull) with expected counts; replace the brittle DocSyncFull S7; add verifyBatteryCoverage + scripts/lib/batteryExemptions.json so a new verify script cannot stay outside the battery _(evidence: scripts/verifyBatteryCoverage.ts; scripts/runReconcileAuditB.ts BATTERIES; evidence/audit-wire/)_
+- **AUDIT-UNIFY-1** — DONE — Remove audit contradictions: replace the orphan verifyAuditWire.ts (over-escaped regexes, asserted a register state that never existed) with correct invariants and wire it; make the financial/integrity gates CRITICAL; fix the stale DEF-P1-003 evidence text and the stale SEC-2c risk _(evidence: scripts/verifyAuditWire.ts; scripts/runReconcileAuditB.ts (BATTERIES, CRITICAL); evidence/audit-wire/)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
@@ -87,7 +89,7 @@
 | PROD-ROLE-BYPASSRLS | P2 | **CONFIG** | The application database role may bypass RLS | docs/ops/PROD-PG-ROLE.md; server boot refuse under AN_ENFORCE_PROD_ROLE=1; scripts/verifySecProdRole.ts / verifySec4ProdRole.ts. Package SEC-PROD-ROLE is DONE in code; deploy still needs NOSUPERUSER NOBYPASSRLS role + AN_ENFORCE_PROD_ROLE=1. |
 | DEF-P1-001 | P1 | **FIXED** | Stock count approval atomicity | scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review) |
 | DEF-P1-002 | P1 | **FIXED** | Stock return atomicity (PENDING_RETRY instead of silent success) | scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review) |
-| DEF-P1-003 | P1 | **FIXED** | Custody reversal posts the journal before changing balances | Ordering fixed; the separate double-refund defect above is still OPEN. |
+| DEF-P1-003 | P1 | **FIXED** | Custody reversal posts the journal before changing balances | Ordering fixed (journal posts before balances change); the separate double-refund defect (DEF-CUSTODY-REVERSAL-DOUBLE-REFUND) is also FIXED in this register. |
 | DEF-P2-001 | P2 | **FIXED** | Goods receipt over-receipt race (TOCTOU) | PostgreSQL saveGoodsReceipt locks PO lines (FOR UPDATE) and re-checks inside the transaction (code inspection; InMemory tests) |
 | DEF-P2-002 | P2 | **FIXED** | Version-tracked schema migrations | scripts/verifyP2002Migrations.ts (8) |
 | SEC-A-CSP | P2 | **FIXED** | CSP defaulted to development (unsafe-inline/unsafe-eval) | runtimeSecurity.resolveCspProfile; verifySecA C1-C5 |
@@ -106,7 +108,7 @@
 - Internal battery endpoints (/api/internal/*) are limited to developer/auditor roles; keep them off public production roles.
 - Maintainability: server.ts is about 5,150 lines, PostgresPrimaryAdapter about 9,400 lines, roughly 1,800 uses of `any`.
 - DOC-SYNC-FULL applied 2026-10-14: register aligned with DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c present in tree.
-- DB-1 put an_audit_trail and an_custom_fields on live schema + RLS list; re-check an_company_profiles for RLS coverage (SEC-2c remainder).
+- SEC-2c closed: every tenant_id table is covered by the RLS array or an explicit ALTER TABLE ... ENABLE/FORCE ROW LEVEL SECURITY (an_company_profiles uses the explicit statements); scripts/verifyAuditWire.ts enforces it statically. Live isolation still needs a PostgreSQL run with a NOBYPASSRLS role.
 - A new scripts/verify*.ts must be wired into BATTERIES (runReconcileAuditB.ts) or listed in scripts/lib/batteryExemptions.json with a reason; scripts/verifyBatteryCoverage.ts enforces it. 28 older scripts are exempted at the PH8-CLOSE-1 baseline and still need triage.
 
 ## How to run

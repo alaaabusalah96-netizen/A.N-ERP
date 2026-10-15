@@ -46,6 +46,7 @@ DATABASE_URL: set
 | Ops1 | PASS | 28 | 0 | 28 |
 | DocSyncFull | PASS | 19 | 0 | 19 |
 | BatteryCoverage | PASS | 19 | 0 | 19 |
+| AuditWire | PASS | 27 | 0 | 27 |
 | P9Validation | PASS | 144 | 0 | — |
 
 F07: PASS (passed=8 failed=0)
