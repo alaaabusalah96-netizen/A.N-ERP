@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-15",
-  "lastChange": "INV-UI-TABS: dedicated items tab (always visible) opens item card without requiring stock balances",
+  "lastChange": "BASELINE-MAP-1: freeze gap map + 7-wave roadmap aligned to current tree (post INV-UI-TABS / AUDIT-UNIFY-1)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -173,6 +173,12 @@
       "status": "DONE",
       "scope": "Inventory UI: items master tab always visible; open ItemCardPanel from list even with zero stock; default tab=items",
       "evidence": "scripts/verifyInvUiTabs.ts; InventoryWorkspaceView items tab"
+    },
+    {
+      "id": "BASELINE-MAP-1",
+      "status": "DONE",
+      "scope": "Baseline gap map + seven-wave roadmap; no production logic change",
+      "evidence": "docs/GAP_MAP_BASELINE.md; docs/ROADMAP_WAVES.md; scripts/verifyBaselineMap.ts"
     }
   ],
   "defects": [
@@ -322,7 +328,8 @@
     "Maintainability: server.ts is about 5,150 lines, PostgresPrimaryAdapter about 9,400 lines, roughly 1,800 uses of `any`.",
     "DOC-SYNC-FULL applied 2026-10-14: register aligned with DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c present in tree.",
     "SEC-2c closed: every tenant_id table is covered by the RLS array or an explicit ALTER TABLE ... ENABLE/FORCE ROW LEVEL SECURITY (an_company_profiles uses the explicit statements); scripts/verifyAuditWire.ts enforces it statically. Live isolation still needs a PostgreSQL run with a NOBYPASSRLS role.",
-    "A new scripts/verify*.ts must be wired into BATTERIES (runReconcileAuditB.ts) or listed in scripts/lib/batteryExemptions.json with a reason; scripts/verifyBatteryCoverage.ts enforces it. 28 older scripts are exempted at the PH8-CLOSE-1 baseline and still need triage."
+    "A new scripts/verify*.ts must be wired into BATTERIES (runReconcileAuditB.ts) or listed in scripts/lib/batteryExemptions.json with a reason; scripts/verifyBatteryCoverage.ts enforces it. 28 older scripts are exempted at the PH8-CLOSE-1 baseline and still need triage.",
+    "BASELINE-MAP-1 (2026-10-15): see docs/GAP_MAP_BASELINE.md and docs/ROADMAP_WAVES.md for phased multi-company plan; CONFIG PROD-ROLE-BYPASSRLS remains."
   ],
   "ops": {
     "tests": "npm test (runs scripts/runReconcileAuditB.ts: every non-PG gate with expected counts; refreshes these docs)",

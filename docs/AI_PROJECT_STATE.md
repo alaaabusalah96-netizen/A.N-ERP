@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-15 — INV-UI-TABS: dedicated items tab (always visible) opens item card without requiring stock balances
+**Last update**: 2026-10-15 — BASELINE-MAP-1: freeze gap map + 7-wave roadmap aligned to current tree (post INV-UI-TABS / AUDIT-UNIFY-1)
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-15)
 
 ## Gates
@@ -35,6 +35,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **PH8-CLOSE-1** — DONE — Wire the unwired gates into npm test (FixP1P2pAutopost, Ph8InvTab, Ph8Return, Ph8Reorder, InvItemCard, InvMovementsFilter, Db1, Ops1, DocSyncFull) with expected counts; replace the brittle DocSyncFull S7; add verifyBatteryCoverage + scripts/lib/batteryExemptions.json so a new verify script cannot stay outside the battery _(evidence: scripts/verifyBatteryCoverage.ts; scripts/runReconcileAuditB.ts BATTERIES; evidence/audit-wire/)_
 - **AUDIT-UNIFY-1** — DONE — Remove audit contradictions: replace the orphan verifyAuditWire.ts (over-escaped regexes, asserted a register state that never existed) with correct invariants and wire it; make the financial/integrity gates CRITICAL; fix the stale DEF-P1-003 evidence text and the stale SEC-2c risk _(evidence: scripts/verifyAuditWire.ts; scripts/runReconcileAuditB.ts (BATTERIES, CRITICAL); evidence/audit-wire/)_
 - **INV-UI-TABS** — DONE — Inventory UI: items master tab always visible; open ItemCardPanel from list even with zero stock; default tab=items _(evidence: scripts/verifyInvUiTabs.ts; InventoryWorkspaceView items tab)_
+- **BASELINE-MAP-1** — DONE — Baseline gap map + seven-wave roadmap; no production logic change _(evidence: docs/GAP_MAP_BASELINE.md; docs/ROADMAP_WAVES.md; scripts/verifyBaselineMap.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
@@ -67,6 +68,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - DOC-SYNC-FULL applied 2026-10-14: register aligned with DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c present in tree.
 - SEC-2c closed: every tenant_id table is covered by the RLS array or an explicit ALTER TABLE ... ENABLE/FORCE ROW LEVEL SECURITY (an_company_profiles uses the explicit statements); scripts/verifyAuditWire.ts enforces it statically. Live isolation still needs a PostgreSQL run with a NOBYPASSRLS role.
 - A new scripts/verify*.ts must be wired into BATTERIES (runReconcileAuditB.ts) or listed in scripts/lib/batteryExemptions.json with a reason; scripts/verifyBatteryCoverage.ts enforces it. 28 older scripts are exempted at the PH8-CLOSE-1 baseline and still need triage.
+- BASELINE-MAP-1 (2026-10-15): see docs/GAP_MAP_BASELINE.md and docs/ROADMAP_WAVES.md for phased multi-company plan; CONFIG PROD-ROLE-BYPASSRLS remains.
 
 ## How to run
 - Tests: npm test (runs scripts/runReconcileAuditB.ts: every non-PG gate with expected counts; refreshes these docs)

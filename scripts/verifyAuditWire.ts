@@ -35,8 +35,8 @@ check('K no CRITICAL name is dangling (each one is a registered battery)', criti
 
 const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
 const lastPkg = (reg.packages || [])[(reg.packages || []).length - 1];
-check('R the register records AUDIT-UNIFY-1 as DONE and as the most recent package', lastPkg?.id === 'INV-UI-TABS' && lastPkg?.status === 'DONE', `last=${lastPkg?.id}`);
-check('R lastChange names that package', String(reg.lastChange || '').startsWith('INV-UI-TABS'));
+check('R the register records AUDIT-UNIFY-1 as DONE and as the most recent package', lastPkg?.id === 'BASELINE-MAP-1' && lastPkg?.status === 'DONE', `last=${lastPkg?.id}`);
+check('R lastChange names that package', String(reg.lastChange || '').startsWith('BASELINE-MAP-1'));
 const d = (reg.defects || []).find((x: any) => x.id === 'DEF-P1-003');
 check('R DEF-P1-003 evidence does not contradict its FIXED status', d?.status === 'FIXED' && !/still OPEN/i.test(String(d?.evidence || '')), String(d?.evidence || ''));
 const dr = (reg.defects || []).find((x: any) => x.id === 'DEF-CUSTODY-REVERSAL-DOUBLE-REFUND');

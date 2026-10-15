@@ -1,0 +1,14 @@
+[PASS] S1 GAP_MAP_BASELINE.md exists and names BASELINE-MAP-1
+[PASS] S2 ROADMAP_WAVES.md has 7 waves table
+[PASS] S3 package BASELINE-MAP-1 DONE
+[PASS] S4 lastChange mentions BASELINE-MAP-1
+[PASS] S5 gap map records Open P1 = 0
+[PASS] S6 gap map records CONFIG PROD-ROLE-BYPASSRLS
+[PASS] S7 tree: INV-UI-TABS items tab present
+[PASS] S8 tree: no CompanyGroup in StoragePort (gap still valid)
+[PASS] S9 tree: requirePermission present on server
+[PASS] S10 tree: AUDIT-UNIFY-1 still DONE
+[PASS] S11 roadmap defers AI self-heal
+[PASS] S12 no OPEN defects in register (CONFIG allowed)
+
+Passed: 12 | Failed: 0
