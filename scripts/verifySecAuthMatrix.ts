@@ -64,7 +64,7 @@ check('R POST /api/attachments requires ENTRY_CREATE', postAtt.includes("require
 check('D matrix doc names SEC-AUTH-MATRIX', /SEC-AUTH-MATRIX/.test(doc));
 check('D matrix lists intentional public routes', /wizard\/create-company/.test(doc) && /api\/internal/.test(doc));
 check('P package SEC-AUTH-MATRIX DONE', byId['SEC-AUTH-MATRIX']?.status === 'DONE');
-check('P lastChange mentions SEC-SESSION-PASSWORD', String(reg.lastChange || '').includes('SEC-SESSION-PASSWORD'));
+check('P lastChange mentions SEC-USER-ADMIN', String(reg.lastChange || '').includes('SEC-USER-ADMIN'));
 
 console.log(`\nPassed: ${pass} | Failed: ${fail}`);
 process.exit(fail ? 1 : 0);

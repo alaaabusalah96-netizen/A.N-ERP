@@ -29,7 +29,7 @@ check('S10 clears requiresPasswordChange on success', /requiresPasswordChange:\s
 check('S11 AuthContext field', /requiresPasswordChange\?:\s*boolean/.test(srv));
 check('S12 doc present', /SEC-SESSION-PASSWORD/.test(doc));
 check('P package DONE', byId['SEC-SESSION-PASSWORD']?.status === 'DONE');
-check('P lastChange', String(reg.lastChange || '').includes('SEC-SESSION-PASSWORD'));
+check('P lastChange', String(reg.lastChange || '').includes('SEC-USER-ADMIN'));
 check('R SEC-AUTH-MATRIX still DONE', byId['SEC-AUTH-MATRIX']?.status === 'DONE');
 
 console.log(`\nPassed: ${pass} | Failed: ${fail}`);

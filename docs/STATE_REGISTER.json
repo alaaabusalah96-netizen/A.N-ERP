@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-15",
-  "lastChange": "SEC-SESSION-PASSWORD: forced password change gate, change-password API, list/revoke sessions",
+  "lastChange": "SEC-USER-ADMIN: patch user status/role, admin reset-password, revoke user sessions",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -191,6 +191,12 @@
       "status": "DONE",
       "scope": "Wave-1: requiresPasswordChange gate in requireAuth; POST change-password; list/revoke sessions",
       "evidence": "docs/SEC_SESSION_PASSWORD.md; scripts/verifySecSessionPassword.ts"
+    },
+    {
+      "id": "SEC-USER-ADMIN",
+      "status": "DONE",
+      "scope": "Wave-1: admin patch user, reset-password with temp secret once, revoke sessions; list exposes status",
+      "evidence": "docs/SEC_USER_ADMIN.md; scripts/verifySecUserAdmin.ts"
     }
   ],
   "defects": [

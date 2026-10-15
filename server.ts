@@ -1597,6 +1597,8 @@ async function startServer() {
         role: u.role,
         roleTitleAr: u.roleTitleAr || u.role,
         branchName: u.branchName || 'الفرع الرئيسي',
+        status: u.status || 'ACTIVE',
+        requiresPasswordChange: !!u.requiresPasswordChange,
         is2faEnabled: !!u.twoFactorEnabled,
         email: u.email || decryptedPii.email || '—',
         phone: decryptedPii.phone || '—',
@@ -1661,6 +1663,180 @@ async function startServer() {
 
     // temporaryPassword is returned ONCE here; it is never stored (only its Argon2id hash), logged, audited or published.
     return res.json({ success: true, data: { ...userResponse, temporaryPassword }, message: 'تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام' });
+  });
+
+
+  // SEC-USER-ADMIN: update user status/role (cannot deactivate self)
+  app.patch('/api/users/:id', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const actorId = (req as any).authContext.userId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const targetId = String(req.params.id || '');
+      if (!targetId) {
+        return res.status(400).json({
+          type: 'https://api.an-erp.local/errors/validation',
+          title: 'معرّف غير صالح',
+          status: 400,
+          detail: 'معرّف المستخدم مطلوب.',
+        });
+      }
+      const existing = await storage.getUserById(targetId);
+      if (!existing.success || !existing.data || existing.data.tenantId !== tenantId) {
+        return res.status(404).json({
+          type: 'https://api.an-erp.local/errors/not-found',
+          title: 'المستخدم غير موجود',
+          status: 404,
+          detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
+        });
+      }
+      const body = req.body || {};
+      const updates: any = {};
+      if (body.status === 'ACTIVE' || body.status === 'INACTIVE') {
+        if (body.status === 'INACTIVE' && targetId === actorId) {
+          return res.status(400).json({
+            type: 'https://api.an-erp.local/errors/validation',
+            title: 'عملية غير مسموحة',
+            status: 400,
+            detail: 'لا يمكنك تعطيل حسابك الحالي بنفسك.',
+          });
+        }
+        updates.status = body.status;
+      }
+      if (typeof body.role === 'string' && body.role.trim()) {
+        const sodCheck = SoDPolicyEngine.validateRoleAssignment([], body.role);
+        if (!sodCheck.allowed && sodCheck.problem) {
+          return res.status(sodCheck.problem.status).json(sodCheck.problem);
+        }
+        updates.role = body.role.trim();
+        if (typeof body.roleTitleAr === 'string') updates.roleTitleAr = body.roleTitleAr;
+      }
+      if (typeof body.fullName === 'string' && body.fullName.trim()) {
+        updates.fullName = body.fullName.trim();
+      }
+      if (typeof body.branchName === 'string') {
+        updates.branchName = body.branchName;
+      }
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({
+          type: 'https://api.an-erp.local/errors/validation',
+          title: 'لا توجد تعديلات',
+          status: 400,
+          detail: 'أرسل status أو role أو fullName أو branchName.',
+        });
+      }
+      const upd = await storage.updateUser(targetId, updates);
+      if (!upd.success) {
+        return res.status(500).json(upd.error || { status: 500, title: 'تعذر التحديث' });
+      }
+      // If deactivated, revoke all sessions
+      if (updates.status === 'INACTIVE') {
+        const sessions = await storage.listActiveSessionsByUser(targetId);
+        if (sessions.success && sessions.data) {
+          for (const sess of sessions.data) {
+            const sid = (sess as any).sessionId || (sess as any).id;
+            if (sid) await storage.deleteActiveSession(sid);
+          }
+        }
+      }
+      await recordAudit(actorId, 'المستخدم الحالي', 'UPDATE_USER', 'USER', targetId, updates, req.ip || '127.0.0.1', tenantId, storage);
+      const u = upd.data!;
+      return res.json({
+        success: true,
+        data: {
+          id: u.id,
+          username: u.username,
+          fullName: u.fullName,
+          role: u.role,
+          status: u.status,
+          requiresPasswordChange: !!u.requiresPasswordChange,
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
+    }
+  });
+
+  // SEC-USER-ADMIN: admin resets password → temporary password once + requiresPasswordChange
+  app.post('/api/users/:id/reset-password', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const actorId = (req as any).authContext.userId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const targetId = String(req.params.id || '');
+      const existing = await storage.getUserById(targetId);
+      if (!existing.success || !existing.data || existing.data.tenantId !== tenantId) {
+        return res.status(404).json({
+          type: 'https://api.an-erp.local/errors/not-found',
+          title: 'المستخدم غير موجود',
+          status: 404,
+          detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
+        });
+      }
+      const temporaryPassword = crypto.randomBytes(9).toString('base64url');
+      const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
+      const upd = await storage.updateUser(targetId, {
+        passwordHash,
+        requiresPasswordChange: true,
+      } as any);
+      if (!upd.success) {
+        return res.status(500).json(upd.error || { status: 500, title: 'تعذر إعادة التعيين' });
+      }
+      // Revoke all sessions so old cookies die
+      const sessions = await storage.listActiveSessionsByUser(targetId);
+      if (sessions.success && sessions.data) {
+        for (const sess of sessions.data) {
+          const sid = (sess as any).sessionId || (sess as any).id;
+          if (sid) await storage.deleteActiveSession(sid);
+        }
+      }
+      await recordAudit(actorId, 'المستخدم الحالي', 'RESET_USER_PASSWORD', 'USER', targetId, { requiresPasswordChange: true }, req.ip || '127.0.0.1', tenantId, storage);
+      return res.json({
+        success: true,
+        data: { userId: targetId, temporaryPassword, requiresPasswordChange: true },
+        message: 'تم إعادة تعيين كلمة المرور. تُعرض الكلمة المؤقتة مرة واحدة فقط.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
+    }
+  });
+
+  // SEC-USER-ADMIN: revoke all sessions for a user
+  app.post('/api/users/:id/revoke-sessions', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const actorId = (req as any).authContext.userId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const targetId = String(req.params.id || '');
+      const existing = await storage.getUserById(targetId);
+      if (!existing.success || !existing.data || existing.data.tenantId !== tenantId) {
+        return res.status(404).json({
+          type: 'https://api.an-erp.local/errors/not-found',
+          title: 'المستخدم غير موجود',
+          status: 404,
+          detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
+        });
+      }
+      const sessions = await storage.listActiveSessionsByUser(targetId);
+      if (!sessions.success) {
+        return res.status(500).json(sessions.error || { status: 500, title: 'تعذر جلب الجلسات' });
+      }
+      let revoked = 0;
+      for (const sess of sessions.data || []) {
+        const sid = (sess as any).sessionId || (sess as any).id;
+        if (sid) {
+          await storage.deleteActiveSession(sid);
+          revoked++;
+        }
+      }
+      await recordAudit(actorId, 'المستخدم الحالي', 'REVOKE_USER_SESSIONS', 'USER', targetId, { revoked }, req.ip || '127.0.0.1', tenantId, storage);
+      return res.json({ success: true, revoked });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
+    }
   });
 
   // 1L — Invitation link generation (Phase 5 / AUTH-003: persistent, only the SHA-256 hash is stored)

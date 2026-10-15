@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-15** — SEC-SESSION-PASSWORD: forced password change gate, change-password API, list/revoke sessions
+Last update: **2026-10-15** — SEC-USER-ADMIN: patch user status/role, admin reset-password, revoke user sessions
 
 ## Verdict
 | Field | Value |

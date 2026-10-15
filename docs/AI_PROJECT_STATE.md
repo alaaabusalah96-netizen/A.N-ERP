@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-15 — SEC-SESSION-PASSWORD: forced password change gate, change-password API, list/revoke sessions
+**Last update**: 2026-10-15 — SEC-USER-ADMIN: patch user status/role, admin reset-password, revoke user sessions
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-15)
 
 ## Gates
@@ -38,6 +38,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **BASELINE-MAP-1** — DONE — Baseline gap map + seven-wave roadmap; no production logic change _(evidence: docs/GAP_MAP_BASELINE.md; docs/ROADMAP_WAVES.md; scripts/verifyBaselineMap.ts)_
 - **SEC-AUTH-MATRIX** — DONE — Wave-1: enforce requirePermission on previously auth-only API routes; document intentional public/internal exceptions _(evidence: docs/SEC_AUTH_MATRIX.md; scripts/verifySecAuthMatrix.ts)_
 - **SEC-SESSION-PASSWORD** — DONE — Wave-1: requiresPasswordChange gate in requireAuth; POST change-password; list/revoke sessions _(evidence: docs/SEC_SESSION_PASSWORD.md; scripts/verifySecSessionPassword.ts)_
+- **SEC-USER-ADMIN** — DONE — Wave-1: admin patch user, reset-password with temp secret once, revoke sessions; list exposes status _(evidence: docs/SEC_USER_ADMIN.md; scripts/verifySecUserAdmin.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
