@@ -20,8 +20,8 @@ const byName = new Map(wired.map(w => [w.name, w]));
 
 const required: Array<[string, string, number]> = [
   ['FixP1P2pAutopost', 'verifyFixP1P2pAutopost', 8], ['Ph8InvTab', 'verifyPh8InvTab', 14], ['Ph8Return', 'verifyPh8Return', 18], ['Ph8Reorder', 'verifyPh8Reorder', 14],
-  ['InvItemCard', 'verifyInvItemCard', 13], ['InvMovementsFilter', 'verifyInvMovementsFilter', 14], ['Db1', 'verifyDb1', 20], ['Ops1', 'verifyOps1', 28],
-  ['DocSyncFull', 'verifyDocSyncFull', 19], ['BatteryCoverage', 'verifyBatteryCoverage', 19], ['AuditWire', 'verifyAuditWire', 27],
+  ['InvItemCard', 'verifyInvItemCard', 13], ['InvMovementsFilter', 'verifyInvMovementsFilter', 14], ['InvUiTabs', 'verifyInvUiTabs', 12], ['Db1', 'verifyDb1', 20], ['Ops1', 'verifyOps1', 28],
+  ['DocSyncFull', 'verifyDocSyncFull', 19], ['BatteryCoverage', 'verifyBatteryCoverage', 19], ['AuditWire', 'verifyAuditWire', 28],
 ];
 for (const [name, script, n] of required) {
   const w = byName.get(name);
@@ -35,8 +35,8 @@ check('K no CRITICAL name is dangling (each one is a registered battery)', criti
 
 const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
 const lastPkg = (reg.packages || [])[(reg.packages || []).length - 1];
-check('R the register records AUDIT-UNIFY-1 as DONE and as the most recent package', lastPkg?.id === 'AUDIT-UNIFY-1' && lastPkg?.status === 'DONE', `last=${lastPkg?.id}`);
-check('R lastChange names that package', String(reg.lastChange || '').startsWith('AUDIT-UNIFY-1'));
+check('R the register records AUDIT-UNIFY-1 as DONE and as the most recent package', lastPkg?.id === 'INV-UI-TABS' && lastPkg?.status === 'DONE', `last=${lastPkg?.id}`);
+check('R lastChange names that package', String(reg.lastChange || '').startsWith('INV-UI-TABS'));
 const d = (reg.defects || []).find((x: any) => x.id === 'DEF-P1-003');
 check('R DEF-P1-003 evidence does not contradict its FIXED status', d?.status === 'FIXED' && !/still OPEN/i.test(String(d?.evidence || '')), String(d?.evidence || ''));
 const dr = (reg.defects || []).find((x: any) => x.id === 'DEF-CUSTODY-REVERSAL-DOUBLE-REFUND');

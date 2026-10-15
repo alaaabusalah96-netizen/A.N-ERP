@@ -72,12 +72,13 @@ const BATTERIES: { name: string; script: string; expected?: number }[] = [
   { name: 'Ph8Return', script: 'scripts/verifyPh8Return.ts', expected: 18 },
   { name: 'Ph8Reorder', script: 'scripts/verifyPh8Reorder.ts', expected: 14 },
   { name: 'InvItemCard', script: 'scripts/verifyInvItemCard.ts', expected: 13 },
+  { name: 'InvUiTabs', script: 'scripts/verifyInvUiTabs.ts', expected: 12 },
   { name: 'InvMovementsFilter', script: 'scripts/verifyInvMovementsFilter.ts', expected: isPg ? undefined : 14 },
   { name: 'Db1', script: 'scripts/verifyDb1.ts', expected: isPg ? undefined : 20 },
   { name: 'Ops1', script: 'scripts/verifyOps1.ts', expected: 28 },
   { name: 'DocSyncFull', script: 'scripts/verifyDocSyncFull.ts', expected: 19 },
   { name: 'BatteryCoverage', script: 'scripts/verifyBatteryCoverage.ts', expected: 19 },
-  { name: 'AuditWire', script: 'scripts/verifyAuditWire.ts', expected: 27 },
+  { name: 'AuditWire', script: 'scripts/verifyAuditWire.ts', expected: 28 },
   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
 ];
 // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)

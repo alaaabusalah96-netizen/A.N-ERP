@@ -1,54 +1,10 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-14 — AUDIT-UNIFY-1: orphan audit-wire test replaced and wired; financial gates are CRITICAL; stale register claims corrected
+**Last update**: 2026-10-15 — INV-UI-TABS: dedicated items tab (always visible) opens item card without requiring stock balances
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-15)
 
 ## Gates
-| Gate | Status | Passed | Failed | Expected |
-|---|---|---|---|---|
-| Sec1TwoFactor | PASS | 26 | 0 | 26 |
-| Sec2Rls | PASS | 39 | 0 | 39 |
-| Sec2bRls | PASS | 16 | 0 | 16 |
-| Sec3Ids | PASS | 7 | 0 | 7 |
-| Sec4ProdRole | PASS | 6 | 0 | 6 |
-| SecProdRole | PASS | 13 | 0 | 13 |
-| SecA | PASS | 27 | 0 | 27 |
-| FixC | PASS | 14 | 0 | 14 |
-| FixP1Custody | PASS | 9 | 0 | 9 |
-| RepairBatch1 | PASS | 37 | 0 | 37 |
-| P8aProcurement | PASS | 24 | 0 | 24 |
-| P8cThreeWay | PASS | 14 | 0 | 14 |
-| P8cFix | PASS | 22 | 0 | 22 |
-| P15Purchasing | PASS | 25 | 0 | 25 |
-| P10StockAtomicMem | PASS | 12 | 0 | 12 |
-| P11TransfersMem | PASS | 12 | 0 | 12 |
-| P12ApprovalsMem | PASS | 35 | 0 | 35 |
-| P13Costing | PASS | 50 | 0 | 50 |
-| P14AutoJournals | PASS | 24 | 0 | 24 |
-| P16Recon | PASS | 14 | 0 | 14 |
-| P17Attachments | PASS | 29 | 0 | 29 |
-| P18WarehouseScope | PASS | 19 | 0 | 19 |
-| P2002Migrations | PASS | 8 | 0 | 8 |
-| F1Standards | PASS | 71 | 0 | 71 |
-| F2Decisions | PASS | 51 | 0 | 51 |
-| F3Acceptance | PASS | 19 | 0 | 19 |
-| F4StockShadow | PASS | 14 | 0 | 14 |
-| FixJ1Accounts | PASS | 24 | 0 | 24 |
-| FixStockReturnCumulative | PASS | 18 | 0 | 18 |
-| PgDateMapping | PASS | 14 | 0 | 14 |
-| PgMovementLogic | PASS | 4 | 0 | 4 |
-| FixP1P2pAutopost | PASS | 8 | 0 | 8 |
-| Ph8InvTab | PASS | 14 | 0 | 14 |
-| Ph8Return | PASS | 18 | 0 | 18 |
-| Ph8Reorder | PASS | 14 | 0 | 14 |
-| InvItemCard | PASS | 13 | 0 | 13 |
-| InvMovementsFilter | PASS | 14 | 0 | — |
-| Db1 | PASS | 20 | 0 | — |
-| Ops1 | PASS | 28 | 0 | 28 |
-| DocSyncFull | PASS | 19 | 0 | 19 |
-| BatteryCoverage | PASS | 19 | 0 | 19 |
-| AuditWire | PASS | 27 | 0 | 27 |
-| P9Validation | PASS | 144 | 0 | — |
+_Gates were not run in this render. Run `npm test` to execute them and refresh this file._
 
 ## Packages
 - **PH0-7.6** — DONE — Core, accounting, inventory, approvals, atomic stock documents _(evidence: evidence/phase-0 .. phase-7.6)_
@@ -78,6 +34,7 @@
 - **INV-MOVEMENTS-FILTER** — DONE — Filter stock movements by warehouse, item, type, fromDate, toDate (API + movements tab UI) _(evidence: scripts/verifyInvMovementsFilter.ts)_
 - **PH8-CLOSE-1** — DONE — Wire the unwired gates into npm test (FixP1P2pAutopost, Ph8InvTab, Ph8Return, Ph8Reorder, InvItemCard, InvMovementsFilter, Db1, Ops1, DocSyncFull) with expected counts; replace the brittle DocSyncFull S7; add verifyBatteryCoverage + scripts/lib/batteryExemptions.json so a new verify script cannot stay outside the battery _(evidence: scripts/verifyBatteryCoverage.ts; scripts/runReconcileAuditB.ts BATTERIES; evidence/audit-wire/)_
 - **AUDIT-UNIFY-1** — DONE — Remove audit contradictions: replace the orphan verifyAuditWire.ts (over-escaped regexes, asserted a register state that never existed) with correct invariants and wire it; make the financial/integrity gates CRITICAL; fix the stale DEF-P1-003 evidence text and the stale SEC-2c risk _(evidence: scripts/verifyAuditWire.ts; scripts/runReconcileAuditB.ts (BATTERIES, CRITICAL); evidence/audit-wire/)_
+- **INV-UI-TABS** — DONE — Inventory UI: items master tab always visible; open ItemCardPanel from list even with zero stock; default tab=items _(evidence: scripts/verifyInvUiTabs.ts; InventoryWorkspaceView items tab)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

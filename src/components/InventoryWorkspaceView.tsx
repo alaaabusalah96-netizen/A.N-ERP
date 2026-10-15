@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Boxes,
+  Package,
   Warehouse as WarehouseIcon,
   PackageCheck,
   ArrowRightLeft,
@@ -116,7 +117,7 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
   currentUser,
   onNotification,
 }) => {
-  const [activeTab, setActiveTab] = useState<'stock' | 'warehouses' | 'movements' | 'transfers' | 'counts' | 'battery'>('stock');
+  const [activeTab, setActiveTab] = useState<'items' | 'stock' | 'warehouses' | 'movements' | 'transfers' | 'counts' | 'battery'>('items');
   const [isLoading, setIsLoading] = useState(false);
 
   // Data states
@@ -129,6 +130,7 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
 
   // Filter states
   const [searchTerm, setSearchTerm] = useState('');
+  const [itemsSearch, setItemsSearch] = useState('');
   const [movFilterWh, setMovFilterWh] = useState('');
   const [movFilterItem, setMovFilterItem] = useState('');
   const [movFilterType, setMovFilterType] = useState('');
@@ -605,6 +607,18 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
       {/* Tabs Navigation */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-1 overflow-x-auto">
         <button
+          onClick={() => setActiveTab('items')}
+          className={`px-4 py-2.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-2 ${
+            activeTab === 'items'
+              ? 'bg-blue-600 text-white shadow-2xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Package className="w-4 h-4" />
+          الأصناف ({items.length})
+        </button>
+
+        <button
           onClick={() => setActiveTab('stock')}
           className={`px-4 py-2.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-2 ${
             activeTab === 'stock'
@@ -676,6 +690,104 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
           التدقيق والرقابة الآلية
         </button>
       </div>
+
+
+      {/* Tab Content: Items master list (INV-UI-TABS) */}
+      {activeTab === 'items' && (
+        <div className="space-y-3">
+          <div className="bg-white p-4 border border-slate-200 rounded-2xl shadow-2xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative w-full sm:w-80">
+              <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={itemsSearch}
+                onChange={(e) => setItemsSearch(e.target.value)}
+                placeholder="بحث بالاسم أو الرمز أو التصنيف..."
+                className="w-full pr-9 pl-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50"
+              />
+            </div>
+            <p className="text-[11px] text-slate-500">
+              قائمة الأصناف المعرفة — اضغط «بطاقة» لفتح كارتة الصنف حتى لو الرصيد صفر.
+            </p>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-xs">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold">
+                    <th className="py-3 px-4">الرمز</th>
+                    <th className="py-3 px-4">الاسم</th>
+                    <th className="py-3 px-4">التصنيف</th>
+                    <th className="py-3 px-4 text-center">الوحدة</th>
+                    <th className="py-3 px-4 text-center">إعادة الطلب</th>
+                    <th className="py-3 px-4 text-center">التقييم</th>
+                    <th className="py-3 px-4 text-center">الحالة</th>
+                    <th className="py-3 px-4 text-center">إجراء</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {items.filter((it) => {
+                    const q = itemsSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return (
+                      (it.nameAr || '').toLowerCase().includes(q) ||
+                      (it.itemCode || '').toLowerCase().includes(q) ||
+                      (it.category || '').toLowerCase().includes(q)
+                    );
+                  }).length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="text-center py-10 text-slate-400">
+                        {items.length === 0
+                          ? 'لا توجد أصناف معرفة بعد. أنشئ صنفًا من مسار التوريد أو واجهة الأصناف عند توفرها — هذا التبويب يبقى ظاهرًا دائمًا.'
+                          : 'لا نتائج مطابقة لبحث الأصناف.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    items
+                      .filter((it) => {
+                        const q = itemsSearch.trim().toLowerCase();
+                        if (!q) return true;
+                        return (
+                          (it.nameAr || '').toLowerCase().includes(q) ||
+                          (it.itemCode || '').toLowerCase().includes(q) ||
+                          (it.category || '').toLowerCase().includes(q)
+                        );
+                      })
+                      .map((it) => (
+                        <tr key={it.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-4 font-mono text-slate-700">{it.itemCode}</td>
+                          <td className="py-3 px-4 font-bold text-slate-900">{it.nameAr}</td>
+                          <td className="py-3 px-4 text-slate-600">{it.category || '—'}</td>
+                          <td className="py-3 px-4 text-center">{it.uom || '—'}</td>
+                          <td className="py-3 px-4 text-center tabular-nums">{it.reorderPoint ?? '—'}</td>
+                          <td className="py-3 px-4 text-center text-[10px]">{it.valuationMethod || '—'}</td>
+                          <td className="py-3 px-4 text-center">
+                            <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold ${
+                              it.isActive !== false ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                            }`}>
+                              {it.isActive !== false ? 'نشط' : 'متوقف'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setCardItemId(it.id)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-[11px] font-bold border border-blue-100 hover:bg-blue-100"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              بطاقة
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tab Content: Stock Levels */}
       {activeTab === 'stock' && (

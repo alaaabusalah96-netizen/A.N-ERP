@@ -3,8 +3,8 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "lastUpdated": "2026-10-14",
-  "lastChange": "AUDIT-UNIFY-1: orphan audit-wire test replaced and wired; financial gates are CRITICAL; stale register claims corrected",
+  "lastUpdated": "2026-10-15",
+  "lastChange": "INV-UI-TABS: dedicated items tab (always visible) opens item card without requiring stock balances",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -167,6 +167,12 @@
       "status": "DONE",
       "scope": "Remove audit contradictions: replace the orphan verifyAuditWire.ts (over-escaped regexes, asserted a register state that never existed) with correct invariants and wire it; make the financial/integrity gates CRITICAL; fix the stale DEF-P1-003 evidence text and the stale SEC-2c risk",
       "evidence": "scripts/verifyAuditWire.ts; scripts/runReconcileAuditB.ts (BATTERIES, CRITICAL); evidence/audit-wire/"
+    },
+    {
+      "id": "INV-UI-TABS",
+      "status": "DONE",
+      "scope": "Inventory UI: items master tab always visible; open ItemCardPanel from list even with zero stock; default tab=items",
+      "evidence": "scripts/verifyInvUiTabs.ts; InventoryWorkspaceView items tab"
     }
   ],
   "defects": [
