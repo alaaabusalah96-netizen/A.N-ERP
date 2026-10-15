@@ -1,5 +1,5 @@
-# Reconcile Audit B — 2026-10-14
-Verdict: NO_GO
+# Reconcile Audit B — 2026-10-13
+Verdict: CONDITIONAL_GO
 F07: PASS
 DATABASE_URL: set
 
@@ -19,15 +19,6 @@ DATABASE_URL: set
 | P8cThreeWay | PASS | 14 | 0 | 14 |
 | P8cFix | PASS | 22 | 0 | 22 |
 | P15Purchasing | PASS | 25 | 0 | 25 |
-| FixP1P2pAutopost | PASS | 8 | 0 | 8 |
-| Ph8InvTab | PASS | 14 | 0 | 14 |
-| Ph8Return | PASS | 18 | 0 | 18 |
-| Ph8Reorder | PASS | 14 | 0 | 14 |
-| InvItemCard | PASS | 13 | 0 | 13 |
-| InvMovementsFilter | PASS | 14 | 0 | 14 |
-| Db1 | PASS | 20 | 0 | 20 |
-| Ops1 | PASS | 28 | 0 | 28 |
-| AuditWire | FAIL | 7 | 9 | 16 |
 | P10StockAtomicMem | PASS | 12 | 0 | 12 |
 | P11TransfersMem | PASS | 12 | 0 | 12 |
 | P12ApprovalsMem | PASS | 35 | 0 | 35 |

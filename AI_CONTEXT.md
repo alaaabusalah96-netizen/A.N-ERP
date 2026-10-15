@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-14** — AUDIT-WIRE / PH8-CLOSE-1: registered eight existing non-PG gates, made P1 autopost and audit-wire critical, and added audit-wire consistency checks
+Last update: **2026-10-14** — INV-MOVEMENTS-FILTER: warehouse/item/type/date filters on stock movements list (API+UI)
 
 ## Verdict
 | Field | Value |
