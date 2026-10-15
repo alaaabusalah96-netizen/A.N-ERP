@@ -1511,7 +1511,23 @@ async function startServer() {
   app.get('/api/company', requireAuth, (req: Request, res: Response) => {
     const tenant = getRequestTenant(req, res);
     if (!tenant) return;
-    return res.json({ success: true, data: tenant });
+    // ORG-COMPANY-1: legal profile only — never expose backendConfig / connection refs
+    return res.json({
+      success: true,
+      data: {
+        id: tenant.id,
+        code: tenant.code,
+        nameAr: tenant.nameAr,
+        nameEn: tenant.nameEn,
+        crNumber: tenant.crNumber,
+        taxNumber: tenant.taxNumber,
+        baseCurrency: tenant.baseCurrency || 'SAR',
+        country: tenant.country || 'SA',
+        status: tenant.status || 'ACTIVE',
+        auditRetentionPolicyYears: tenant.auditRetentionPolicyYears,
+        createdAt: tenant.createdAt,
+      },
+    });
   });
 
   app.put('/api/company', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
@@ -1520,6 +1536,24 @@ async function startServer() {
     if (!tenant) return;
     const storage = getRequestStorage(req, res);
     if (!storage) return;
+
+    // ORG-COMPANY-1: legal name is mandatory when provided empty-string; block blank nameAr
+    if (nameAr !== undefined && String(nameAr).trim() === '') {
+      return res.status(422).json({
+        type: 'https://api.an-erp.local/errors/validation',
+        title: 'اسم المنشأة مطلوب',
+        status: 422,
+        detail: 'الاسم الرسمي للمنشأة (nameAr) لا يمكن أن يكون فارغًا.',
+      });
+    }
+    if (crNumber !== undefined && crNumber !== null && String(crNumber).trim() !== '' && !/^\d{10}$/.test(String(crNumber).trim())) {
+      return res.status(422).json({
+        type: 'https://api.an-erp.local/errors/invalid-cr-number',
+        title: 'رقم السجل التجاري غير صالح',
+        status: 422,
+        detail: 'رقم السجل التجاري يجب أن يكون 10 أرقام عند إدخاله.',
+      });
+    }
 
     // Validate 15-digit tax number
     if (taxNumber && !/^\d{15}$/.test(taxNumber.trim())) {
@@ -2440,6 +2474,49 @@ async function startServer() {
       return res.status(result.error?.status || 500).json(result.error);
     }
     return res.json(result);
+  });
+
+
+  // ORG-COMPANY-1: platform suspend/activate a legal company (tenant)
+  app.patch('/api/tenants/:id/status', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const tenantId = String(req.params.id || '');
+      const status = String(req.body?.status || '').toUpperCase();
+      if (!tenantId || (status !== 'ACTIVE' && status !== 'SUSPENDED')) {
+        return res.status(400).json({
+          type: 'https://api.an-erp.local/errors/validation',
+          title: 'طلب غير صالح',
+          status: 400,
+          detail: 'المعرّف مطلوب والحالة يجب أن تكون ACTIVE أو SUSPENDED.',
+        });
+      }
+      const storage = masterStorage;
+      const existing = await storage.getTenant(tenantId);
+      if (!existing.success || !existing.data) {
+        return res.status(404).json({
+          type: 'https://api.an-erp.local/errors/not-found',
+          title: 'المنشأة غير موجودة',
+          status: 404,
+          detail: `لا توجد منشأة بالمعرّف ${tenantId}.`,
+        });
+      }
+      const updated = { ...existing.data, status: status as 'ACTIVE' | 'SUSPENDED' };
+      const saved = await storage.saveTenant(updated, `tenant-status-${tenantId}-${status}`);
+      if (!saved.success) {
+        return res.status(500).json(saved.error || { status: 500, title: 'تعذر الحفظ' });
+      }
+      return res.json({
+        success: true,
+        data: {
+          id: updated.id,
+          code: updated.code,
+          nameAr: updated.nameAr,
+          status: updated.status,
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
+    }
   });
 
   // 2B: Propose BackendConfig Migration

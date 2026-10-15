@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-15",
-  "lastChange": "SEC-USER-ADMIN: patch user status/role, admin reset-password, revoke user sessions",
+  "lastChange": "ORG-COMPANY-1: legal company profile API (no backendConfig leak), CR validation, platform suspend/activate",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -197,6 +197,12 @@
       "status": "DONE",
       "scope": "Wave-1: admin patch user, reset-password with temp secret once, revoke sessions; list exposes status",
       "evidence": "docs/SEC_USER_ADMIN.md; scripts/verifySecUserAdmin.ts"
+    },
+    {
+      "id": "ORG-COMPANY-1",
+      "status": "DONE",
+      "scope": "Wave-2: TenantCompany as legal entity; safe GET /api/company; CR/name validation; PATCH tenant status",
+      "evidence": "docs/ORG_COMPANY_MODEL.md; scripts/verifyOrgCompany1.ts"
     }
   ],
   "defects": [
