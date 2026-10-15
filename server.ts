@@ -585,6 +585,7 @@ async function startServer() {
     sessionId: string;
     role?: string;
     scopes?: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[];
+    requiresPasswordChange?: boolean;
   }
 
   // =========================================================================
@@ -796,6 +797,7 @@ async function startServer() {
         });
       }
 
+      const mustChangePassword = !!userCheck.data.requiresPasswordChange;
       (req as any).authContext = {
         tenantId: ver.payload.tenantId,
         userId: ver.payload.sub,
@@ -803,9 +805,32 @@ async function startServer() {
         role: mem.data.role,
         scopes: mem.data.scopes,
         orgNodeId: (userCheck.data as any).assignedNodeId || (userCheck.data as any).orgNodeId,
+        requiresPasswordChange: mustChangePassword,
       } as AuthContext;
       (req as any).storage = tenantStorage;
       (req as any).tenant = tenant;
+
+      // SEC-SESSION-PASSWORD: users flagged requiresPasswordChange may only use password/session self-service routes
+      if (mustChangePassword) {
+        const pathOnly = String(req.originalUrl || req.url || '').split('?')[0];
+        const allowed = (
+          pathOnly === '/api/auth/me' ||
+          pathOnly === '/api/auth/change-password' ||
+          pathOnly === '/api/auth/logout' ||
+          pathOnly === '/api/auth/sessions' ||
+          pathOnly === '/api/auth/sessions/revoke-others' ||
+          pathOnly === '/api/auth/refresh'
+        );
+        if (!allowed) {
+          return res.status(403).json({
+            type: 'https://api.an-erp.local/errors/password-change-required',
+            title: 'يجب تغيير كلمة المرور',
+            status: 403,
+            detail: 'حسابك يتطلب تغيير كلمة المرور قبل استخدام باقي وظائف النظام.',
+            code: 'PASSWORD_CHANGE_REQUIRED',
+          });
+        }
+      }
       next();
     } catch (err: any) {
       return res.status(401).json({ success: false, message: publicErrorMessage(err) || 'فشل التحقق من الجلسة' });
@@ -1154,7 +1179,9 @@ async function startServer() {
         roleTitleAr: user.roleTitleAr,
         branchName: user.branchName,
         is2faEnabled: !!user.twoFactorEnabled,
+        requiresPasswordChange: !!user.requiresPasswordChange,
       },
+      requiresPasswordChange: !!user.requiresPasswordChange,
       tenant: targetTenant,
       calendar: DualCalendar.format(),
     };
@@ -1306,7 +1333,9 @@ async function startServer() {
         is2faEnabled: !!userRecord?.twoFactorEnabled,
         emergencyBackupCodesCount: userRecord?.backupCodes?.length || userRecord?.hashedBackupCodes?.length || 0,
         backupCodesRemaining: userRecord?.backupCodes?.length || userRecord?.hashedBackupCodes?.length || 0,
+        requiresPasswordChange: !!userRecord?.requiresPasswordChange,
       },
+      requiresPasswordChange: !!userRecord?.requiresPasswordChange,
       session: {
         sessionId: auth.sessionId,
         deviceType: session?.deviceType || 'Desktop Browser',
@@ -1321,6 +1350,137 @@ async function startServer() {
 
   // Section B.2: 2FA Setup with Real TOTP & QR Code (otplib + qrcode) via StoragePort
   // SEC-1: enrollment works ONLY on the caller's own account (the user id comes from the session; a username in the body is ignored)
+  
+  // SEC-SESSION-PASSWORD: change password (clears requiresPasswordChange)
+  app.post('/api/auth/change-password', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const auth = (req as any).authContext;
+      const currentPassword = String(req.body?.currentPassword || '');
+      const newPassword = String(req.body?.newPassword || '');
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({
+          type: 'https://api.an-erp.local/errors/validation',
+          title: 'بيانات غير مكتملة',
+          status: 400,
+          detail: 'كلمة المرور الحالية والجديدة مطلوبتان.',
+        });
+      }
+      if (newPassword.length < 12) {
+        return res.status(400).json({
+          type: 'https://api.an-erp.local/errors/validation',
+          title: 'كلمة مرور ضعيفة',
+          status: 400,
+          detail: 'يجب ألا تقل كلمة المرور الجديدة عن 12 حرفًا.',
+        });
+      }
+      if (newPassword === currentPassword) {
+        return res.status(400).json({
+          type: 'https://api.an-erp.local/errors/validation',
+          title: 'كلمة المرور غير مقبولة',
+          status: 400,
+          detail: 'يجب أن تختلف كلمة المرور الجديدة عن الحالية.',
+        });
+      }
+      const userRes = await storage.getUserById(auth.userId);
+      if (!userRes.success || !userRes.data || !userRes.data.passwordHash) {
+        return res.status(404).json({
+          type: 'https://api.an-erp.local/errors/not-found',
+          title: 'المستخدم غير موجود',
+          status: 404,
+          detail: 'تعذر تحميل حساب المستخدم.',
+        });
+      }
+      const user = userRes.data;
+      let ok = false;
+      try {
+        ok = await argon2.verify(user.passwordHash, currentPassword);
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        return res.status(401).json({
+          type: 'https://api.an-erp.local/errors/invalid-credentials',
+          title: 'كلمة المرور الحالية غير صحيحة',
+          status: 401,
+          detail: 'تحقق من كلمة المرور الحالية ثم أعد المحاولة.',
+        });
+      }
+      const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
+      const upd = await storage.updateUser(user.id, {
+        passwordHash,
+        requiresPasswordChange: false,
+      } as any);
+      if (!upd.success) {
+        return res.status(500).json({
+          type: 'https://api.an-erp.local/errors/internal',
+          title: 'تعذر تحديث كلمة المرور',
+          status: 500,
+          detail: upd.error?.detail || 'فشل حفظ كلمة المرور الجديدة.',
+        });
+      }
+      return res.json({ success: true, requiresPasswordChange: false });
+    } catch (err: any) {
+      return res.status(500).json({
+        type: 'https://api.an-erp.local/errors/internal',
+        title: 'خطأ داخلي',
+        status: 500,
+        detail: publicErrorMessage(err) || 'فشل تغيير كلمة المرور.',
+      });
+    }
+  });
+
+  // SEC-SESSION-PASSWORD: list own active sessions
+  app.get('/api/auth/sessions', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const auth = (req as any).authContext;
+      const list = await storage.listActiveSessionsByUser(auth.userId);
+      if (!list.success) {
+        return res.status(500).json(list.error || { status: 500, title: 'تعذر جلب الجلسات' });
+      }
+      const sessions = (list.data || []).map((sess: any) => ({
+        sessionId: sess.sessionId || sess.id,
+        deviceType: sess.deviceType,
+        ipAddress: sess.ipAddress,
+        location: sess.location,
+        createdAt: sess.createdAt,
+        lastSeenAt: sess.lastSeenAt,
+        isCurrent: (sess.sessionId || sess.id) === auth.sessionId,
+      }));
+      return res.json({ success: true, data: sessions });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
+    }
+  });
+
+  // SEC-SESSION-PASSWORD: revoke all other sessions for this user
+  app.post('/api/auth/sessions/revoke-others', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const auth = (req as any).authContext;
+      const list = await storage.listActiveSessionsByUser(auth.userId);
+      if (!list.success) {
+        return res.status(500).json(list.error || { status: 500, title: 'تعذر جلب الجلسات' });
+      }
+      let revoked = 0;
+      for (const sess of list.data || []) {
+        const sid = (sess as any).sessionId || (sess as any).id;
+        if (sid && sid !== auth.sessionId) {
+          await storage.deleteActiveSession(sid);
+          revoked++;
+        }
+      }
+      return res.json({ success: true, revoked });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
+    }
+  });
+
+
   app.post('/api/auth/2fa/setup', requireAuth, async (req: Request, res: Response) => {
     const auth = (req as any).authContext;
     const storage = getRequestStorage(req, res);

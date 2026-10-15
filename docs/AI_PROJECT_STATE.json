@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-15",
-  "lastChange": "SEC-AUTH-MATRIX: requirePermission on auth-only sensitive routes; matrix doc; follow-up session/password & user-admin",
+  "lastChange": "SEC-SESSION-PASSWORD: forced password change gate, change-password API, list/revoke sessions",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -185,6 +185,12 @@
       "status": "DONE",
       "scope": "Wave-1: enforce requirePermission on previously auth-only API routes; document intentional public/internal exceptions",
       "evidence": "docs/SEC_AUTH_MATRIX.md; scripts/verifySecAuthMatrix.ts"
+    },
+    {
+      "id": "SEC-SESSION-PASSWORD",
+      "status": "DONE",
+      "scope": "Wave-1: requiresPasswordChange gate in requireAuth; POST change-password; list/revoke sessions",
+      "evidence": "docs/SEC_SESSION_PASSWORD.md; scripts/verifySecSessionPassword.ts"
     }
   ],
   "defects": [

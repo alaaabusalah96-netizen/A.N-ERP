@@ -22,7 +22,7 @@ const srv = fs.readFileSync('server.ts', 'utf8');
 check('S1 GAP_MAP_BASELINE.md exists and names BASELINE-MAP-1', /BASELINE-MAP-1/.test(gap) && fs.existsSync('docs/GAP_MAP_BASELINE.md'));
 check('S2 ROADMAP_WAVES.md has 7 waves table', /AN-BASELINE-MAP-1/.test(road) && /AN-GATE-PROD-1/.test(road));
 check('S3 package BASELINE-MAP-1 DONE', byId['BASELINE-MAP-1']?.status === 'DONE');
-check('S4 lastChange mentions SEC-AUTH-MATRIX أو ما يعادله', String(reg.lastChange || '').includes('SEC-AUTH-MATRIX'));
+check('S4 lastChange mentions SEC-SESSION-PASSWORD', String(reg.lastChange || '').includes('SEC-SESSION-PASSWORD'));
 check('S5 gap map records Open P1 = 0', /Open P1\|\s*\*\*0\*\*/.test(gap) || /Open P1\s*\|\s*\*\*0\*\*/.test(gap) || /Open P1.*\*\*0\*\*/.test(gap));
 check('S6 gap map records CONFIG PROD-ROLE-BYPASSRLS', /PROD-ROLE-BYPASSRLS/.test(gap));
 check('S7 tree: INV-UI-TABS items tab present', /activeTab === 'items'/.test(ui));
