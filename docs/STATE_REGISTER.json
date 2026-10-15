@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-14",
-  "lastChange": "INV-MOVEMENTS-FILTER: warehouse/item/type/date filters on stock movements list (API+UI)",
+  "lastChange": "PH8-CLOSE-1: unwired gates now in npm test; DocSyncFull S7 no longer pinned to a past package; battery-coverage guard added",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -155,6 +155,12 @@
       "status": "DONE",
       "scope": "Filter stock movements by warehouse, item, type, fromDate, toDate (API + movements tab UI)",
       "evidence": "scripts/verifyInvMovementsFilter.ts"
+    },
+    {
+      "id": "PH8-CLOSE-1",
+      "status": "DONE",
+      "scope": "Wire the unwired gates into npm test (FixP1P2pAutopost, Ph8InvTab, Ph8Return, Ph8Reorder, InvItemCard, InvMovementsFilter, Db1, Ops1, DocSyncFull) with expected counts; replace the brittle DocSyncFull S7; add verifyBatteryCoverage + scripts/lib/batteryExemptions.json so a new verify script cannot stay outside the battery",
+      "evidence": "scripts/verifyBatteryCoverage.ts; scripts/runReconcileAuditB.ts BATTERIES; evidence/audit-wire/"
     }
   ],
   "defects": [
@@ -304,7 +310,7 @@
     "Maintainability: server.ts is about 5,150 lines, PostgresPrimaryAdapter about 9,400 lines, roughly 1,800 uses of `any`.",
     "DOC-SYNC-FULL applied 2026-10-14: register aligned with DB-1, OPS-1, SEC-PROD-ROLE, SEC-1c present in tree.",
     "DB-1 put an_audit_trail and an_custom_fields on live schema + RLS list; re-check an_company_profiles for RLS coverage (SEC-2c remainder).",
-    "verifyDb1 / verifyOps1 are not yet entries in runReconcileAuditB BATTERIES array (run via evidence/repair or explicit npx tsx)."
+    "A new scripts/verify*.ts must be wired into BATTERIES (runReconcileAuditB.ts) or listed in scripts/lib/batteryExemptions.json with a reason; scripts/verifyBatteryCoverage.ts enforces it. 28 older scripts are exempted at the PH8-CLOSE-1 baseline and still need triage."
   ],
   "ops": {
     "tests": "npm test (runs scripts/runReconcileAuditB.ts: every non-PG gate with expected counts; refreshes these docs)",

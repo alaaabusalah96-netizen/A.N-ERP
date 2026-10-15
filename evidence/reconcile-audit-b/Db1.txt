@@ -1,0 +1,22 @@
+[PASS] D1 registry versions unique and ascending
+[PASS] D2 migration 20261014_001 present
+[PASS] D3 exactly 21 statements
+[PASS] D4 every statement is CREATE INDEX IF NOT EXISTS ix_… ON an_…
+[PASS] D5 index names unique and <= 63 chars
+[PASS] D6 every index leads with tenant_id
+[PASS] D7 every index table is created in the LIVE schema
+[PASS] D8 every indexed column exists in its live table
+[PASS] D9 every index table is created BEFORE the migrations run
+[PASS] D10 an_audit_trail is created in the live schema
+[PASS] D11 an_custom_fields is created in the live schema
+[PASS] D12 an_audit_trail is in the RLS table list
+[PASS] D13 an_custom_fields is in the RLS table list
+[PASS] D14 no table used by live code exists only in the test-only DDL
+[PASS] D15 live an_audit_trail has the columns saveAuditRecord writes
+[PASS] D16 first apply runs every migration
+[PASS] D17 the index script ran as one batch containing 21 CREATE INDEX statements
+[PASS] D18 second apply is a no-op
+[PASS] D19 audit records are tenant-scoped
+[PASS] D20 audit limit is honoured
+
+Passed: 20 | Failed: 0

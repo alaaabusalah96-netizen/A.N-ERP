@@ -21,7 +21,9 @@ check('S3 SEC-PROD-ROLE DONE', byId['SEC-PROD-ROLE']?.status === 'DONE');
 check('S4 SEC-1c package DONE', byId['SEC-1c']?.status === 'DONE');
 check('S5 SEC-1c defect FIXED', defects['SEC-1c']?.status === 'FIXED');
 check('S6 PROD-ROLE-BYPASSRLS still CONFIG', defects['PROD-ROLE-BYPASSRLS']?.status === 'CONFIG');
-check('S7 lastChange is DOC-SYNC-FULL', /DOC-SYNC-FULL/.test(String(reg.lastChange || '')));
+// PH8-CLOSE-1: was `lastChange == DOC-SYNC-FULL` (broke with the next package). The register must name its most recent package instead.
+const lastPackage = (reg.packages || [])[(reg.packages || []).length - 1];
+check('S7 lastChange names the most recent package in the register', !!lastPackage && String(reg.lastChange || '').startsWith(String(lastPackage.id)), `lastPackage=${lastPackage?.id} lastChange=${String(reg.lastChange || '').slice(0, 40)}`);
 
 check('C1 migration 20261014_001 in registry', /20261014_001/.test(fs.readFileSync('src/core/migrations/registry.ts', 'utf8')));
 check('C2 verifyDb1 exists', fs.existsSync('scripts/verifyDb1.ts'));

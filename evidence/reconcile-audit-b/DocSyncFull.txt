@@ -1,0 +1,21 @@
+[PASS] S1 DB-1 DONE
+[PASS] S2 OPS-1 DONE
+[PASS] S3 SEC-PROD-ROLE DONE
+[PASS] S4 SEC-1c package DONE
+[PASS] S5 SEC-1c defect FIXED
+[PASS] S6 PROD-ROLE-BYPASSRLS still CONFIG
+[PASS] S7 lastChange names the most recent package in the register
+[PASS] C1 migration 20261014_001 in registry
+[PASS] C2 verifyDb1 exists
+[PASS] C3 verifyOps1 exists
+[PASS] C4 ops shutdown exists
+[PASS] C5 ops health exists
+[PASS] C6 Dockerfile exists
+[PASS] C7 pgAppRoleGuard exists
+[PASS] C8 server enforces AN_ENFORCE_PROD_ROLE
+[PASS] C9 LoginScreen has no clientGeo payload
+[PASS] C10 LoginScreen has no fabricated Riyadh geo
+[PASS] C11 stockReturnGuard exists
+[PASS] C12 runFullSystemAudit exists
+
+Passed: 19 | Failed: 0

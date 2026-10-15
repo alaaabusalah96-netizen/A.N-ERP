@@ -4,14 +4,14 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-14** — INV-MOVEMENTS-FILTER: warehouse/item/type/date filters on stock movements list (API+UI)
+Last update: **2026-10-14** — PH8-CLOSE-1: unwired gates now in npm test; DocSyncFull S7 no longer pinned to a past package; battery-coverage guard added
 
 ## Verdict
 | Field | Value |
 |---|---|
 | **Authoritative verdict** | **CONDITIONAL GO** |
 | **Rule** | NO GO = a critical gate failed or an OPEN P1 defect exists · CONDITIONAL GO = only open P2/P3 or configuration conditions · GO = none |
-| **Gates this render** | not run (docs-only) |
+| **Gates this render** | 42/42 PASS, F07 PASS |
 
 ## Open items
 - **PROD-ROLE-BYPASSRLS** (P2, CONFIG) — The application database role may bypass RLS

@@ -1,4 +1,4 @@
-◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
 [PASS] (أ) parsePositiveQuantity rejects NaN
 [PASS] (أ) parsePositiveQuantity rejects Infinity
 [PASS] (أ) parsePositiveQuantity rejects -Infinity
@@ -93,7 +93,7 @@
 [PASS] (أ) validateJournalInput rejects debit Infinity
 [PASS] (أ) validateJournalInput rejects empty / non-array lines
 [PASS] (أ) validateJournalInput rejects a null line
-◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
 [phase-4] DECISION: DB role bypasses RLS -> global membership backfill
 [PASS] (ب) seed receipt succeeds
 [PASS] (ب) receiveStock quantity=NaN | success=false status=400 movements 1→1 documents 1→1

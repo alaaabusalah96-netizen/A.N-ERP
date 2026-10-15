@@ -66,6 +66,17 @@ const BATTERIES: { name: string; script: string; expected?: number }[] = [
   { name: 'FixStockReturnCumulative', script: 'scripts/verifyFixStockReturnCumulative.ts', expected: 18 },
   { name: 'PgDateMapping', script: 'scripts/verifyPgDateMapping.ts', expected: 14 },
   { name: 'PgMovementLogic', script: 'scripts/verifyPgMovementLogic.ts', expected: 4 },
+  // PH8-CLOSE-1: gates that existed but were outside `npm test` (counts verified in memory; a PG run may add PG branches, so those two keep the count only without a database)
+  { name: 'FixP1P2pAutopost', script: 'scripts/verifyFixP1P2pAutopost.ts', expected: 8 },
+  { name: 'Ph8InvTab', script: 'scripts/verifyPh8InvTab.ts', expected: 14 },
+  { name: 'Ph8Return', script: 'scripts/verifyPh8Return.ts', expected: 18 },
+  { name: 'Ph8Reorder', script: 'scripts/verifyPh8Reorder.ts', expected: 14 },
+  { name: 'InvItemCard', script: 'scripts/verifyInvItemCard.ts', expected: 13 },
+  { name: 'InvMovementsFilter', script: 'scripts/verifyInvMovementsFilter.ts', expected: isPg ? undefined : 14 },
+  { name: 'Db1', script: 'scripts/verifyDb1.ts', expected: isPg ? undefined : 20 },
+  { name: 'Ops1', script: 'scripts/verifyOps1.ts', expected: 28 },
+  { name: 'DocSyncFull', script: 'scripts/verifyDocSyncFull.ts', expected: 19 },
+  { name: 'BatteryCoverage', script: 'scripts/verifyBatteryCoverage.ts', expected: 19 },
   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
 ];
 const CRITICAL = ['Sec1TwoFactor', 'Sec2Rls', 'Sec2bRls', 'Sec3Ids', 'Sec4ProdRole', 'SecA', 'RepairBatch1', 'P8aProcurement', 'P8cThreeWay', 'F2Decisions'];

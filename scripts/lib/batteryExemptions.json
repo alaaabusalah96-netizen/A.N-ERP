@@ -1,0 +1,33 @@
+{
+  "_comment": "Every scripts/verify*.ts (except *Pg.ts gates) must be wired into BATTERIES in scripts/runReconcileAuditB.ts OR listed here with a reason. verifyBatteryCoverage.ts enforces it so new tests cannot silently stay outside npm test.",
+  "exemptions": {
+    "verifyBatchAIdempotency": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyBatchBIdempotency": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyBatchCGroup1Idempotency": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyBatchCGroup2Effects": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyBatchCGroup2Idempotency": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyBatchCGroup3Idempotency": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyD2Effects": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyDbState": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyF07StorageRouter": "run separately by the runner as the F07 gate (not a counted battery)",
+    "verifyFullSystemAudit": "orchestrator companion of runFullSystemAudit.ts; not a gate",
+    "verifyIntegrity": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyLoginNoIdempotency": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyP3Membership": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyP4Authorization": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyP7Seed": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyP8aSession": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyP9FailClosed": "pre-existing; does not run to a summary in a no-database sandbox (needs investigation before wiring)",
+    "verifyPhase2Authorization": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyPhase3AuthBypass": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyPhase3IdentityScope": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyPhase76Continuity": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyPostJournalEntryIdempotency": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyPrompt1": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyPrompt2": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyWave0Security": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyWizardAndServer": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verifyWorkflow": "pre-existing at the PH8-CLOSE-1 baseline: legacy or needs a database; wire it or justify before relying on it",
+    "verify_runtime": "pre-existing runtime probe (needs a running server); not a battery"
+  }
+}

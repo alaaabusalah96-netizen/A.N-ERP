@@ -1,4 +1,4 @@
-# Reconcile Audit B — 2026-10-13
+# Reconcile Audit B — 2026-10-15
 Verdict: CONDITIONAL_GO
 F07: PASS
 DATABASE_URL: set
@@ -36,6 +36,16 @@ DATABASE_URL: set
 | FixStockReturnCumulative | PASS | 18 | 0 | 18 |
 | PgDateMapping | PASS | 14 | 0 | 14 |
 | PgMovementLogic | PASS | 4 | 0 | 4 |
+| FixP1P2pAutopost | PASS | 8 | 0 | 8 |
+| Ph8InvTab | PASS | 14 | 0 | 14 |
+| Ph8Return | PASS | 18 | 0 | 18 |
+| Ph8Reorder | PASS | 14 | 0 | 14 |
+| InvItemCard | PASS | 13 | 0 | 13 |
+| InvMovementsFilter | PASS | 14 | 0 | — |
+| Db1 | PASS | 20 | 0 | — |
+| Ops1 | PASS | 28 | 0 | 28 |
+| DocSyncFull | PASS | 19 | 0 | 19 |
+| BatteryCoverage | PASS | 19 | 0 | 19 |
 | P9Validation | PASS | 144 | 0 | — |
 
 F07: PASS (passed=8 failed=0)
