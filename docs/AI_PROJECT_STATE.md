@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-15 — BASELINE-MAP-1: freeze gap map + 7-wave roadmap aligned to current tree (post INV-UI-TABS / AUDIT-UNIFY-1)
+**Last update**: 2026-10-15 — SEC-AUTH-MATRIX: requirePermission on auth-only sensitive routes; matrix doc; follow-up session/password & user-admin
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-15)
 
 ## Gates
@@ -36,6 +36,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **AUDIT-UNIFY-1** — DONE — Remove audit contradictions: replace the orphan verifyAuditWire.ts (over-escaped regexes, asserted a register state that never existed) with correct invariants and wire it; make the financial/integrity gates CRITICAL; fix the stale DEF-P1-003 evidence text and the stale SEC-2c risk _(evidence: scripts/verifyAuditWire.ts; scripts/runReconcileAuditB.ts (BATTERIES, CRITICAL); evidence/audit-wire/)_
 - **INV-UI-TABS** — DONE — Inventory UI: items master tab always visible; open ItemCardPanel from list even with zero stock; default tab=items _(evidence: scripts/verifyInvUiTabs.ts; InventoryWorkspaceView items tab)_
 - **BASELINE-MAP-1** — DONE — Baseline gap map + seven-wave roadmap; no production logic change _(evidence: docs/GAP_MAP_BASELINE.md; docs/ROADMAP_WAVES.md; scripts/verifyBaselineMap.ts)_
+- **SEC-AUTH-MATRIX** — DONE — Wave-1: enforce requirePermission on previously auth-only API routes; document intentional public/internal exceptions _(evidence: docs/SEC_AUTH_MATRIX.md; scripts/verifySecAuthMatrix.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

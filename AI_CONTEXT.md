@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-15** — BASELINE-MAP-1: freeze gap map + 7-wave roadmap aligned to current tree (post INV-UI-TABS / AUDIT-UNIFY-1)
+Last update: **2026-10-15** — SEC-AUTH-MATRIX: requirePermission on auth-only sensitive routes; matrix doc; follow-up session/password & user-admin
 
 ## Verdict
 | Field | Value |

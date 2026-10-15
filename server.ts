@@ -1705,7 +1705,7 @@ async function startServer() {
   });
 
   // 1G — No-Code Custom Fields Management (StoragePort)
-  app.get('/api/custom-fields', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/custom-fields', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const storage = getRequestStorage(req, res);
     if (!storage) return;
@@ -1935,7 +1935,7 @@ async function startServer() {
     detail: 'عمليات الموافقات تتطلب Idempotency-Key.',
   });
 
-  app.get('/api/approvals/policies', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/approvals/policies', requireAuth, requirePermission('APPROVAL_POLICY_MANAGE'), async (req: Request, res: Response) => {
     const storage = getRequestStorage(req, res);
     if (!storage) return;
     const r = await storage.listApprovalPolicies((req as any).authContext.tenantId);
@@ -1996,7 +1996,7 @@ async function startServer() {
     return res.json({ success: true, data: saved.data });
   });
 
-  app.get('/api/approvals/inbox', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/approvals/inbox', requireAuth, requirePermission('ENTRY_APPROVE'), async (req: Request, res: Response) => {
     const storage = getRequestStorage(req, res);
     if (!storage) return;
     const engine = new ApprovalEngine(storage);
@@ -2005,7 +2005,7 @@ async function startServer() {
     return res.json({ success: true, data: r.data });
   });
 
-  app.post('/api/approvals/:id/approve', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/approvals/:id/approve', requireAuth, requirePermission('ENTRY_APPROVE'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const role = (req as any).authContext.role || '';
@@ -2020,7 +2020,7 @@ async function startServer() {
     return res.json({ success: true, data: r.data });
   });
 
-  app.post('/api/approvals/:id/reject', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/approvals/:id/reject', requireAuth, requirePermission('ENTRY_APPROVE'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const userId = (req as any).authContext.userId;
     const role = (req as any).authContext.role || '';
@@ -2232,7 +2232,7 @@ async function startServer() {
 
   // 2F: Dual-Control Master Partners (Customer/Vendor)
 
-  app.get('/api/master-data/partners', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/master-data/partners', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
@@ -2309,7 +2309,7 @@ async function startServer() {
   });
 
   // 2H: Tenant Active Module Manifests
-  app.get('/api/tenant-modules', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/tenant-modules', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
     const tenantId = (req as any).authContext.tenantId;
     const storage = getRequestStorage(req, res);
     if (!storage) return;
@@ -2697,7 +2697,7 @@ async function startServer() {
   });
 
   // 4D: الأصناف والوحدات (Items & Units)
-  app.get('/api/accounting/units', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/accounting/units', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const svc = getAccountingService(req, res);
@@ -2885,7 +2885,7 @@ async function startServer() {
   });
 
   // 4I: هجرة من أنظمة أخرى (Legacy Migration)
-  app.get('/api/accounting/migration/templates', requireAuth, (req: Request, res: Response) => {
+  app.get('/api/accounting/migration/templates', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), (req: Request, res: Response) => {
     const system = ((req.query.system as string) || 'ORACLE').toUpperCase() as any;
     const svc = getAccountingService(req, res);
     if (!svc) return;
@@ -3203,7 +3203,7 @@ async function startServer() {
   });
 
   // 6A: عرض فئات المصروفات
-  app.get('/api/expenses/categories', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/expenses/categories', requireAuth, requirePermission('EXPENSE_SUBMIT'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);
@@ -3241,7 +3241,7 @@ async function startServer() {
   });
 
   // 6A: استعلام طلبات الصرف مع الفلترة
-  app.get('/api/expenses/requests', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/expenses/requests', requireAuth, requirePermission('EXPENSE_SUBMIT'), async (req: Request, res: Response) => {
     try {
       const { role, canViewAll, isSubmitter } = expenseAccess(req);
       if (!canViewAll && !isSubmitter) {
@@ -3271,7 +3271,7 @@ async function startServer() {
   });
 
   // 6A: تفاصيل طلب صرف واحد مع البنود والمرفقات
-  app.get('/api/expenses/requests/:id', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/expenses/requests/:id', requireAuth, requirePermission('EXPENSE_SUBMIT'), async (req: Request, res: Response) => {
     try {
       const { role, canViewAll, isSubmitter } = expenseAccess(req);
       if (!canViewAll && !isSubmitter) {
@@ -4918,7 +4918,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
   };
 
   // 7.6G: Document Attachments (مرفقات المستندات 4–7)
-  app.get('/api/attachments', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/attachments', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
     try {
       const docType = String(req.query.documentType || '');
       const docId = String(req.query.documentId || '');
@@ -4950,7 +4950,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
     }
   });
 
-  app.post('/api/attachments', requireAuth, async (req: Request, res: Response) => {
+  app.post('/api/attachments', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId || 'usr-uploader';
@@ -5109,7 +5109,7 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
   });
 
   // 7.6C: Unified Print Service Endpoint (HTML + Print View)
-  app.get('/api/print/:docType/:docId', requireAuth, async (req: Request, res: Response) => {
+  app.get('/api/print/:docType/:docId', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const storage = getRequestStorage(req, res);

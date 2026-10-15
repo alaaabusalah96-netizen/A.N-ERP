@@ -1,0 +1,21 @@
+[FAIL] R /api/approvals/policies requires APPROVAL_POLICY_MANAGE | '/api/approvals/policies', requireAuth, async (req: Request, res: Response) => {     const
+[FAIL] R /api/approvals/inbox requires ENTRY_APPROVE | '/api/approvals/inbox', requireAuth, async (req: Request, res: Response) => {     const st
+[FAIL] R /api/approvals/:id/approve requires ENTRY_APPROVE | '/api/approvals/:id/approve', requireAuth, async (req: Request, res: Response) => {     co
+[FAIL] R /api/approvals/:id/reject requires ENTRY_APPROVE | '/api/approvals/:id/reject', requireAuth, async (req: Request, res: Response) => {     con
+[FAIL] R /api/accounting/units requires ENTRY_VIEW | '/api/accounting/units', requireAuth, async (req: Request, res: Response) => {     try {  
+[FAIL] R /api/accounting/migration/templates requires COMPANY_SETTINGS_MANAGE | '/api/accounting/migration/templates', requireAuth, (req: Request, res: Response) => {    
+[FAIL] R /api/expenses/categories requires EXPENSE_SUBMIT | '/api/expenses/categories', requireAuth, async (req: Request, res: Response) => {     try 
+[FAIL] R /api/expenses/requests requires EXPENSE_SUBMIT | '/api/expenses/requests', requireAuth, async (req: Request, res: Response) => {     try { 
+[FAIL] R /api/expenses/requests/:id requires EXPENSE_SUBMIT | '/api/expenses/requests/:id', requireAuth, async (req: Request, res: Response) => {     tr
+[FAIL] R /api/attachments requires ENTRY_VIEW | '/api/attachments', requireAuth, async (req: Request, res: Response) => {     try {       
+[FAIL] R /api/master-data/partners requires PURCHASE_VIEW | '/api/master-data/partners', requireAuth, async (req: Request, res: Response) => {     try
+[FAIL] R /api/tenant-modules requires COMPANY_SETTINGS_MANAGE | '/api/tenant-modules', requireAuth, async (req: Request, res: Response) => {     const ten
+[FAIL] R /api/custom-fields requires COMPANY_SETTINGS_MANAGE | '/api/custom-fields', requireAuth, async (req: Request, res: Response) => {     const tena
+[FAIL] R /api/print/:docType/:docId requires ENTRY_VIEW | '/api/print/:docType/:docId', requireAuth, async (req: Request, res: Response) => {     tr
+[FAIL] R POST /api/attachments requires ENTRY_CREATE | ) });     }   });    app.post('/api/attachments', requireAuth, async (req: Reque
+[PASS] D matrix doc names SEC-AUTH-MATRIX
+[PASS] D matrix lists intentional public routes
+[FAIL] P package SEC-AUTH-MATRIX DONE
+[FAIL] P lastChange mentions SEC-AUTH-MATRIX
+
+Passed: 2 | Failed: 17
