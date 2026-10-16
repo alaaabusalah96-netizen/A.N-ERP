@@ -1,0 +1,17 @@
+[PASS] S1 PASSWORD_CHANGE_SELF in PermissionGroup
+[PASS] S2 forced path allows change-password without self perm
+[PASS] S3 self-change requires PASSWORD_CHANGE_SELF
+[PASS] S4 create accepts admin temporaryPassword
+[PASS] S5 reset accepts admin temporaryPassword
+[PASS] S6 ForcePasswordChangeScreen exists
+[PASS] S7 App gates on requiresPasswordChange
+[PASS] S8 App me bootstrap respects flag
+[PASS] S9 users form optional temporaryPassword
+[PASS] S10 min 12 on admin temp
+[PASS] S11 doc present
+[PASS] P package DONE
+[PASS] P lastChange
+[PASS] R ORG-COMPANY-1 DONE
+[PASS] R SEC-SESSION-PASSWORD DONE
+
+Passed: 15 | Failed: 0

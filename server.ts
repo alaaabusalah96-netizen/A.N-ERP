@@ -1357,6 +1357,20 @@ async function startServer() {
       const storage = getRequestStorage(req, res);
       if (!storage) return;
       const auth = (req as any).authContext;
+      // SEC-PASSWORD-UX-1: forced change when flagged; otherwise require PASSWORD_CHANGE_SELF
+      const forced = !!auth.requiresPasswordChange;
+      if (!forced) {
+        const role = auth.role || '';
+        if (!hasPermission(role, 'PASSWORD_CHANGE_SELF')) {
+          return res.status(403).json({
+            type: 'https://api.an-erp.local/errors/forbidden',
+            title: 'غير مصرح',
+            status: 403,
+            detail: 'تغيير كلمة المرور الذاتي يتطلب صلاحية PASSWORD_CHANGE_SELF يمنحها مدير النظام.',
+            code: 'PASSWORD_CHANGE_SELF_REQUIRED',
+          });
+        }
+      }
       const currentPassword = String(req.body?.currentPassword || '');
       const newPassword = String(req.body?.newPassword || '');
       if (!currentPassword || !newPassword) {
@@ -1646,7 +1660,7 @@ async function startServer() {
     const tenantId = (req as any).authContext.tenantId;
     const storage = getRequestStorage(req, res);
     if (!storage) return;
-    const { username, fullName, role, branchName, email, phone, nationalId } = req.body;
+    const { username, fullName, role, branchName, email, phone, nationalId, temporaryPassword: adminTempPassword } = req.body;
 
     // SoD Server-Side Conflict Check (Section 1C)
     const sodCheck = SoDPolicyEngine.validateRoleAssignment([], role);
@@ -1655,9 +1669,22 @@ async function startServer() {
     }
 
     const encryptedPii = EncryptionService.encryptPII({ email, phone, nationalId });
-    // Phase 5 (AUTH-003): collision-safe id + a unique one-time temporary password per user
+    // SEC-PASSWORD-UX-1: admin may set temporaryPassword (min 12); otherwise system generates one-time secret
     const newId = `USR-${crypto.randomUUID().slice(0, 8)}`;
-    const temporaryPassword = crypto.randomBytes(9).toString('base64url');
+    let temporaryPassword: string;
+    if (typeof adminTempPassword === 'string' && adminTempPassword.trim().length > 0) {
+      temporaryPassword = adminTempPassword.trim();
+      if (temporaryPassword.length < 12) {
+        return res.status(400).json({
+          type: 'https://api.an-erp.local/errors/validation',
+          title: 'كلمة المرور المؤقتة ضعيفة',
+          status: 400,
+          detail: 'كلمة المرور المؤقتة التي يحددها المسؤول يجب ألا تقل عن 12 حرفًا.',
+        });
+      }
+    } else {
+      temporaryPassword = crypto.randomBytes(9).toString('base64url');
+    }
     const hash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
     const totp = generateSecret();
     const encryptedTotp = EncryptionService.encryptPII(totp);
@@ -1809,7 +1836,22 @@ async function startServer() {
           detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
         });
       }
-      const temporaryPassword = crypto.randomBytes(9).toString('base64url');
+      // SEC-PASSWORD-UX-1: optional admin-provided temporary password
+      let temporaryPassword: string;
+      const adminTemp = req.body?.temporaryPassword;
+      if (typeof adminTemp === 'string' && adminTemp.trim().length > 0) {
+        temporaryPassword = adminTemp.trim();
+        if (temporaryPassword.length < 12) {
+          return res.status(400).json({
+            type: 'https://api.an-erp.local/errors/validation',
+            title: 'كلمة المرور المؤقتة ضعيفة',
+            status: 400,
+            detail: 'كلمة المرور المؤقتة التي يحددها المسؤول يجب ألا تقل عن 12 حرفًا.',
+          });
+        }
+      } else {
+        temporaryPassword = crypto.randomBytes(9).toString('base64url');
+      }
       const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
       const upd = await storage.updateUser(targetId, {
         passwordHash,

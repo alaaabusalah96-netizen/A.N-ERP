@@ -5,6 +5,7 @@ import { OperationalWorkspace } from './components/OperationalWorkspace';
 import { TransactionModal } from './components/TransactionModal';
 import { PrintVoucherModal } from './components/PrintVoucherModal';
 import { LoginScreen } from './components/LoginScreen';
+import { ForcePasswordChangeScreen } from './components/ForcePasswordChangeScreen';
 import { UserProfileView } from './components/UserProfileView';
 import { CompanySettingsView } from './components/CompanySettingsView';
 import { UsersAndSodView } from './components/UsersAndSodView';
@@ -54,9 +55,14 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if ((data.authenticated || data.success) && data.user) {
-          setCurrentUser(data.user);
+          const mustChange =
+            !!data.requiresPasswordChange ||
+            !!data.user?.requiresPasswordChange;
+          setCurrentUser({ ...data.user, requiresPasswordChange: mustChange });
           setIsLoggedIn(true);
-          fetchTransactions();
+          if (!mustChange) {
+            fetchTransactions();
+          }
         }
       }
     } catch {
@@ -129,12 +135,30 @@ export default function App() {
 
   const handleLoginSuccess = (loginData: any) => {
     const user = loginData?.user ?? null;
-    setCurrentUser(user);
+    const mustChange =
+      !!loginData?.requiresPasswordChange ||
+      !!user?.requiresPasswordChange;
+    const nextUser = user
+      ? { ...user, requiresPasswordChange: mustChange }
+      : user;
+    setCurrentUser(nextUser);
     setIsLoggedIn(true);
     if (loginData?.calendar) {
       setCalendar(loginData.calendar);
     }
-    showNotification(`مرحباً بك ${user?.fullName ?? ''}، تم تسجيل الدخول بنجاح.`);
+    if (mustChange) {
+      showNotification('يجب تغيير كلمة المرور قبل استخدام النظام.');
+    } else {
+      showNotification(`مرحباً بك ${user?.fullName ?? ''}، تم تسجيل الدخول بنجاح.`);
+      fetchTransactions();
+    }
+  };
+
+  const handlePasswordForceChanged = () => {
+    setCurrentUser((prev: any) =>
+      prev ? { ...prev, requiresPasswordChange: false } : prev
+    );
+    showNotification('تم تغيير كلمة المرور بنجاح. يمكنك استخدام النظام الآن.');
     fetchTransactions();
   };
 
@@ -223,6 +247,16 @@ export default function App() {
 
   if (!isLoggedIn) {
     return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  if (currentUser?.requiresPasswordChange) {
+    return (
+      <ForcePasswordChangeScreen
+        userName={currentUser?.fullName || currentUser?.username}
+        onChanged={handlePasswordForceChanged}
+        onLogout={handleLogout}
+      />
+    );
   }
 
   const pendingApprovalsCount = transactions.filter((t) => t.status === 'بانتظار الاعتماد').length;

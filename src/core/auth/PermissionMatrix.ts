@@ -43,6 +43,9 @@ export type PermissionGroup =
   | 'AUDIT_LOG_VIEW'
   | 'SYSTEM_HEALTH_VIEW'
 
+  // Identity / password self-service (explicit grant only — not default on operational roles)
+  | 'PASSWORD_CHANGE_SELF'
+
   // System Administration & Governance
   | 'USER_MANAGE'
   | 'COMPANY_SETTINGS_MANAGE'

@@ -89,7 +89,10 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
       const res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newUserData),
+        body: JSON.stringify({
+          ...newUserData,
+          temporaryPassword: newUserData.temporaryPassword?.trim() || undefined,
+        }),
       });
       const data = await res.json();
 
@@ -427,6 +430,18 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
                   value={newUserData.nationalId}
                   onChange={(e) => setNewUserData({ ...newUserData, nationalId: e.target.value })}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 bg-white font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">كلمة مرور مؤقتة (اختياري — إن تُركت فارغة يولّدها النظام، حد أدنى 12)</label>
+                <input
+                  type="text"
+                  value={newUserData.temporaryPassword}
+                  onChange={(e) => setNewUserData({ ...newUserData, temporaryPassword: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 bg-white font-mono"
+                  placeholder="اتركه فارغًا للتوليد التلقائي"
+                  minLength={12}
                 />
               </div>
 

@@ -20,7 +20,7 @@ check('S1 PATCH /api/users/:id + USER_MANAGE', /app\.patch\('\/api\/users\/:id',
 check('S2 reset-password route', /app\.post\('\/api\/users\/:id\/reset-password',\s*requireAuth,\s*requirePermission\('USER_MANAGE'\)/.test(srv));
 check('S3 revoke-sessions route', /app\.post\('\/api\/users\/:id\/revoke-sessions',\s*requireAuth,\s*requirePermission\('USER_MANAGE'\)/.test(srv));
 check('S4 cannot deactivate self', /لا يمكنك تعطيل حسابك الحالي/.test(srv));
-check('S5 reset sets requiresPasswordChange true', /reset-password[\s\S]{0,1200}requiresPasswordChange:\s*true/.test(srv));
+check('S5 reset sets requiresPasswordChange true', /reset-password[\s\S]{0,2000}requiresPasswordChange:\s*true/.test(srv));
 check('S6 reset returns temporaryPassword once', /temporaryPassword[\s\S]{0,200}requiresPasswordChange:\s*true/.test(srv));
 check('S7 list users exposes status', /status:\s*u\.status/.test(srv));
 check('S8 list users exposes requiresPasswordChange', /requiresPasswordChange:\s*!!u\.requiresPasswordChange/.test(srv));
@@ -28,7 +28,7 @@ check('S9 create user still requiresPasswordChange', /requiresPasswordChange:\s*
 check('S10 tenant isolation on patch', /existing\.data\.tenantId !== tenantId/.test(srv));
 check('S11 doc SEC-USER-ADMIN', /SEC-USER-ADMIN/.test(doc));
 check('P package DONE', byId['SEC-USER-ADMIN']?.status === 'DONE');
-check('P lastChange', String(reg.lastChange || '').includes('ORG-COMPANY-1'));
+check('P lastChange', String(reg.lastChange || '').includes('SEC-PASSWORD-UX-1'));
 check('R SEC-SESSION-PASSWORD DONE', byId['SEC-SESSION-PASSWORD']?.status === 'DONE');
 check('R SEC-AUTH-MATRIX DONE', byId['SEC-AUTH-MATRIX']?.status === 'DONE');
 

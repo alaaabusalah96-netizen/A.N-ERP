@@ -29,7 +29,7 @@ check('S9 CompanyProfile alias', /export type CompanyProfile = TenantCompany/.te
 check('S10 doc ORG-COMPANY-1', /ORG-COMPANY-1/.test(doc) && /TenantCompany/.test(doc));
 check('S11 no CompanyGroup yet (wave 4)', !/CompanyGroup/.test(sp));
 check('P package DONE', byId['ORG-COMPANY-1']?.status === 'DONE');
-check('P lastChange', String(reg.lastChange || '').includes('ORG-COMPANY-1'));
+check('P lastChange', String(reg.lastChange || '').includes('SEC-PASSWORD-UX-1'));
 check('R SEC-USER-ADMIN DONE', byId['SEC-USER-ADMIN']?.status === 'DONE');
 
 console.log(`\nPassed: ${pass} | Failed: ${fail}`);
