@@ -5,7 +5,7 @@ import { OperationalTransaction } from '../types/erp';
 interface TransactionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (tx: OperationalTransaction) => void;
+  onSave: (tx: OperationalTransaction, lines: LineEntry[]) => void;
   defaultType?: string;
   userName: string;
 }
@@ -110,7 +110,8 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       initiator: userName,
     };
 
-    onSave(newTx);
+    // UI-OPS-1: pass journal lines so server can draft/post (was missing → 404/validation fail)
+    onSave(newTx, lines);
     onClose();
   };
 

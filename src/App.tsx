@@ -177,20 +177,69 @@ export default function App() {
     setActiveSection('overview');
   };
 
-  const handleSaveTransaction = async (newTx: OperationalTransaction) => {
+  const handleSaveTransaction = async (
+    newTx: OperationalTransaction,
+    lines: Array<{
+      id: string;
+      accountCode: string;
+      accountName?: string;
+      costCenter?: string;
+      debit: number;
+      credit: number;
+      note?: string;
+    }> = [],
+  ) => {
     try {
-      const res = await fetch('/api/transactions', {
+      // UI-OPS-1: real endpoint is POST /api/transactions/post (not POST /api/transactions)
+      const idempotencyKey = `tx-${newTx.id}-${Date.now()}`;
+      const entry = {
+        id: newTx.id,
+        code: newTx.code,
+        date: newTx.date,
+        type: newTx.type || 'JOURNAL',
+        description: newTx.description,
+        party: newTx.party,
+        totalAmount: newTx.amount,
+        status: 'PENDING_APPROVAL',
+        createdBy: currentUser?.id || currentUser?.username || 'USR',
+        lines: (lines || []).map((l) => ({
+          id: l.id,
+          accountCode: l.accountCode,
+          costCenter: l.costCenter,
+          debit: Number(l.debit) || 0,
+          credit: Number(l.credit) || 0,
+          description: l.note || newTx.description || '',
+        })),
+      };
+      const res = await fetch('/api/transactions/post', {
         method: 'POST',
-        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        headers: getAuthHeaders({
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        }),
         credentials: 'include',
-        body: JSON.stringify(newTx),
+        body: JSON.stringify({ entry, idempotencyKey }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setTransactions([data.data, ...transactions]);
-        showNotification(`تم حفظ المستند (${data.data.code}) بنجاح وإرساله للاعتماد المالي.`);
+        const saved = data.data || entry;
+        const mapped: OperationalTransaction = {
+          id: saved.id || newTx.id,
+          code: saved.code || newTx.code,
+          date: saved.date || newTx.date,
+          type: saved.type || newTx.type,
+          description: saved.description || newTx.description,
+          amount: typeof saved.totalAmount === 'number' ? saved.totalAmount : newTx.amount,
+          currency: newTx.currency || 'ر.س',
+          party: newTx.party,
+          status: mapJournalStatusToArabic(saved.status || 'POSTED'),
+          initiator: newTx.initiator,
+        };
+        setTransactions((prev) => [mapped, ...prev]);
+        showNotification(`تم حفظ وترحيل المستند (${mapped.code}) بنجاح.`);
+        fetchTransactions();
       } else {
-        showNotification(data.detail || 'تعذر حفظ المستند');
+        showNotification(data.detail || data.title || 'تعذر حفظ المستند');
       }
     } catch {
       showNotification('فشل الاتصال بالخادم أثناء حفظ المستند');

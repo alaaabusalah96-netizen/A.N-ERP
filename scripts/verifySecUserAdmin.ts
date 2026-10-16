@@ -28,7 +28,7 @@ check('S9 create user still requiresPasswordChange', /requiresPasswordChange:\s*
 check('S10 tenant isolation on patch', /existing\.data\.tenantId !== tenantId/.test(srv));
 check('S11 doc SEC-USER-ADMIN', /SEC-USER-ADMIN/.test(doc));
 check('P package DONE', byId['SEC-USER-ADMIN']?.status === 'DONE');
-check('P lastChange', String(reg.lastChange || '').includes('UI-USERS-1'));
+check('P lastChange', String(reg.lastChange || '').includes('UI-OPS-1'));
 check('R SEC-SESSION-PASSWORD DONE', byId['SEC-SESSION-PASSWORD']?.status === 'DONE');
 check('R SEC-AUTH-MATRIX DONE', byId['SEC-AUTH-MATRIX']?.status === 'DONE');
 

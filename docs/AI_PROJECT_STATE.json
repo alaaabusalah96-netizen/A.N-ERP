@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-16",
-  "lastChange": "UI-USERS-1: UsersAndSodView actions disable/reset-password/revoke-sessions wired to admin APIs",
+  "lastChange": "UI-OPS-1: approvals inbox UI + fix quick transaction POST /api/transactions/post",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -221,6 +221,12 @@
       "status": "DONE",
       "scope": "Wire user admin actions in UsersAndSodView to existing PATCH/reset/revoke APIs",
       "evidence": "docs/UI_USERS_1.md; scripts/verifyUiUsers1.ts"
+    },
+    {
+      "id": "UI-OPS-1",
+      "status": "DONE",
+      "scope": "Wire approvals inbox; fix TransactionModal/App save to transactions/post with lines",
+      "evidence": "docs/UI_OPS_1.md; scripts/verifyUiOps1.ts"
     }
   ],
   "defects": [

@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-16 — UI-USERS-1: UsersAndSodView actions disable/reset-password/revoke-sessions wired to admin APIs
+**Last update**: 2026-10-16 — UI-OPS-1: approvals inbox UI + fix quick transaction POST /api/transactions/post
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-16)
 
 ## Gates
@@ -43,6 +43,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **SEC-PASSWORD-UX-1** — DONE — Forced password UI gate; optional admin temporaryPassword; PASSWORD_CHANGE_SELF for non-forced self-change _(evidence: docs/SEC_PASSWORD_UX.md; scripts/verifySecPasswordUx.ts; src/components/ForcePasswordChangeScreen.tsx)_
 - **SEC-PERM-OVERRIDE-1** — DONE — Additive user.permissions; internal admin role narrowed; PATCH grant with no self-escalation _(evidence: docs/SEC_PERM_OVERRIDE.md; scripts/verifySecPermOverride.ts)_
 - **UI-USERS-1** — DONE — Wire user admin actions in UsersAndSodView to existing PATCH/reset/revoke APIs _(evidence: docs/UI_USERS_1.md; scripts/verifyUiUsers1.ts)_
+- **UI-OPS-1** — DONE — Wire approvals inbox; fix TransactionModal/App save to transactions/post with lines _(evidence: docs/UI_OPS_1.md; scripts/verifyUiOps1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

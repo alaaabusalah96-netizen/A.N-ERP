@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-16** — UI-USERS-1: UsersAndSodView actions disable/reset-password/revoke-sessions wired to admin APIs
+Last update: **2026-10-16** — UI-OPS-1: approvals inbox UI + fix quick transaction POST /api/transactions/post
 
 ## Verdict
 | Field | Value |

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Plus,
   FileCheck,
@@ -37,6 +37,95 @@ export const OperationalWorkspace: React.FC<OperationalWorkspaceProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'معتمد' | 'بانتظار الاعتماد' | 'مسودة'>('all');
 
+  // UI-OPS-1: unified approvals inbox
+  type InboxItem = {
+    id: string;
+    documentType?: string;
+    documentId?: string;
+    documentCode?: string;
+    status?: string;
+    initiatorId?: string;
+    currentStep?: number;
+    createdAt?: string;
+  };
+  const [inbox, setInbox] = useState<InboxItem[]>([]);
+  const [inboxLoading, setInboxLoading] = useState(false);
+  const [inboxError, setInboxError] = useState<string | null>(null);
+  const [inboxBusyId, setInboxBusyId] = useState<string | null>(null);
+
+  const fetchApprovalInbox = async () => {
+    setInboxLoading(true);
+    setInboxError(null);
+    try {
+      const res = await fetch('/api/approvals/inbox', { credentials: 'include' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setInboxError(data.detail || data.title || 'تعذر تحميل صندوق الاعتمادات');
+        setInbox([]);
+      } else {
+        setInbox(Array.isArray(data.data) ? data.data : []);
+      }
+    } catch {
+      setInboxError('فشل الاتصال أثناء تحميل صندوق الاعتمادات');
+      setInbox([]);
+    } finally {
+      setInboxLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === 'approvals') {
+      fetchApprovalInbox();
+    }
+  }, [activeSection]);
+
+  const handleInboxApprove = async (id: string) => {
+    setInboxBusyId(id);
+    try {
+      const idem = `appr-ui-${id}-${Date.now()}`;
+      const res = await fetch(`/api/approvals/${encodeURIComponent(id)}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idem },
+        credentials: 'include',
+        body: JSON.stringify({ idempotencyKey: idem }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setInboxError(data.detail || data.title || 'فشل الاعتماد');
+      } else {
+        await fetchApprovalInbox();
+      }
+    } catch {
+      setInboxError('تعذر اعتماد الطلب');
+    } finally {
+      setInboxBusyId(null);
+    }
+  };
+
+  const handleInboxReject = async (id: string) => {
+    const reason = window.prompt('سبب الرفض (اختياري):', '') ?? '';
+    setInboxBusyId(id);
+    try {
+      const idem = `rej-ui-${id}-${Date.now()}`;
+      const res = await fetch(`/api/approvals/${encodeURIComponent(id)}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idem },
+        credentials: 'include',
+        body: JSON.stringify({ idempotencyKey: idem, reason }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setInboxError(data.detail || data.title || 'فشل الرفض');
+      } else {
+        await fetchApprovalInbox();
+      }
+    } catch {
+      setInboxError('تعذر رفض الطلب');
+    } finally {
+      setInboxBusyId(null);
+    }
+  };
+
   // Filter transactions
   const filtered = transactions.filter((tx) => {
     if (statusFilter !== 'all' && tx.status !== statusFilter) return false;
@@ -62,6 +151,88 @@ export const OperationalWorkspace: React.FC<OperationalWorkspaceProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Banner */}
+
+      {/* UI-OPS-1: Unified Approvals Inbox */}
+      {activeSection === 'approvals' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <FileCheck className="w-5 h-5 text-indigo-700" />
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">صندوق الاعتمادات الموحد</h2>
+                <p className="text-[11px] text-slate-500">طلبات بانتظار إجراءك عبر /api/approvals/inbox</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => fetchApprovalInbox()}
+              className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50"
+            >
+              تحديث
+            </button>
+          </div>
+          {inboxError && (
+            <div className="px-5 py-2 text-xs text-rose-700 bg-rose-50 border-b border-rose-100">{inboxError}</div>
+          )}
+          {inboxLoading ? (
+            <div className="p-8 text-center text-xs text-slate-500">جارٍ تحميل الصندوق...</div>
+          ) : inbox.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-400">لا توجد طلبات اعتماد معلّقة لك حاليًا</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-xs">
+                <thead className="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th className="py-2 px-4 font-semibold">المستند</th>
+                    <th className="py-2 px-4 font-semibold">النوع</th>
+                    <th className="py-2 px-4 font-semibold">الحالة</th>
+                    <th className="py-2 px-4 font-semibold">الخطوة</th>
+                    <th className="py-2 px-4 font-semibold text-center">إجراء</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {inbox.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-50/60">
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-800">{item.documentCode || item.documentId || item.id}</div>
+                        <div className="font-mono text-[10px] text-slate-400">{item.id}</div>
+                      </td>
+                      <td className="py-3 px-4 text-slate-600">{item.documentType || '—'}</td>
+                      <td className="py-3 px-4">
+                        <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[10px]">
+                          {item.status || 'PENDING'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-slate-600">{item.currentStep ?? '—'}</td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            disabled={inboxBusyId === item.id}
+                            onClick={() => handleInboxApprove(item.id)}
+                            className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold disabled:opacity-50"
+                          >
+                            اعتماد
+                          </button>
+                          <button
+                            type="button"
+                            disabled={inboxBusyId === item.id}
+                            onClick={() => handleInboxReject(item.id)}
+                            className="px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold disabled:opacity-50"
+                          >
+                            رفض
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">

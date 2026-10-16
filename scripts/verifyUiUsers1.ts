@@ -30,7 +30,7 @@ check('S10 temporaryPassword in form state', /temporaryPassword:\s*''/.test(ui) 
 check('S11 credentials include on list', /fetch\('\/api\/users',\s*\{\s*credentials:\s*'include'/.test(ui));
 check('S12 doc UI-USERS-1', /UI-USERS-1/.test(doc));
 check('P package DONE', byId['UI-USERS-1']?.status === 'DONE');
-check('P lastChange', String(reg.lastChange || '').includes('UI-USERS-1'));
+check('P lastChange', String(reg.lastChange || '').includes('UI-OPS-1'));
 check('R SEC-PERM-OVERRIDE-1 DONE', byId['SEC-PERM-OVERRIDE-1']?.status === 'DONE');
 
 console.log(`\nPassed: ${pass} | Failed: ${fail}`);
