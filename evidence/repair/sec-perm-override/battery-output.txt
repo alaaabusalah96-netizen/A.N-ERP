@@ -1,0 +1,18 @@
+[PASS] S1 hasPermission accepts overrides
+[PASS] S2 requirePermission uses authHasPermission
+[PASS] S3 authContext loads user.permissions
+[PASS] S4 admin role lacks STOCK_ISSUE
+[PASS] S5 admin role has USER_MANAGE
+[PASS] S6 system_admin lacks ENTRY_POST
+[PASS] S7 super_admin still has STOCK_ISSUE
+[PASS] S8 override grants STOCK_VIEW to admin-shaped role
+[PASS] S9 without override admin lacks STOCK_VIEW
+[PASS] S10 cannot self-edit permissions message
+[PASS] S11 grant validation isPermissionGroup
+[PASS] S12 ALL_PERMISSION_GROUPS non-empty
+[PASS] S13 doc present
+[PASS] P package DONE
+[PASS] P lastChange
+[PASS] R SEC-PASSWORD-UX-1 DONE
+
+Passed: 16 | Failed: 0

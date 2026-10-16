@@ -69,23 +69,45 @@ export type PermissionGroup =
  */
 export const ROLE_PERMISSION_MATRIX: Record<string, ReadonlySet<PermissionGroup>> = {
   super_admin: new Set<PermissionGroup>([
-    'ENTRY_VIEW', 'ENTRY_CREATE', 'ENTRY_EDIT_DRAFT', 'ENTRY_POST', 'ENTRY_APPROVE',
-    'PERIOD_CLOSE', 'FINANCIAL_REPORTS', 'CUSTODY_VIEW', 'CUSTODY_OPEN', 'CUSTODY_EXPENSE_RECORD',
-    'CUSTODY_SETTLE', 'EXPENSE_SUBMIT', 'EXPENSE_APPROVE', 'STOCK_VIEW', 'STOCK_RECEIVE',
-    'STOCK_ISSUE', 'STOCK_TRANSFER', 'STOCK_COUNT_APPROVE', 'STOCK_RETURN', 'AUDIT_LOG_VIEW',
-    'SYSTEM_HEALTH_VIEW', 'USER_MANAGE', 'COMPANY_SETTINGS_MANAGE', 'BREAK_GLASS_AUTHORIZE',
+    'PASSWORD_CHANGE_SELF',
+    'ENTRY_VIEW',
+    'ENTRY_CREATE',
+    'ENTRY_EDIT_DRAFT',
+    'ENTRY_POST',
+    'ENTRY_APPROVE',
+    'PERIOD_CLOSE',
+    'FINANCIAL_REPORTS',
+    'CUSTODY_VIEW',
+    'CUSTODY_OPEN',
+    'CUSTODY_EXPENSE_RECORD',
+    'CUSTODY_SETTLE',
+    'EXPENSE_SUBMIT',
+    'EXPENSE_APPROVE',
+    'STOCK_VIEW',
+    'STOCK_RECEIVE',
+    'STOCK_ISSUE',
+    'STOCK_TRANSFER',
+    'STOCK_COUNT_APPROVE',
+    'STOCK_RETURN',
+    'AUDIT_LOG_VIEW',
+    'SYSTEM_HEALTH_VIEW',
+    'USER_MANAGE',
+    'COMPANY_SETTINGS_MANAGE',
+    'BREAK_GLASS_AUTHORIZE',
     'PLATFORM_ADMIN',
-    'PURCHASE_VIEW', 'PURCHASE_MANAGE', 'APPROVAL_POLICY_MANAGE',
+    'PURCHASE_VIEW',
+    'PURCHASE_MANAGE',
+    'APPROVAL_POLICY_MANAGE',
     'SUPPLIER_INVOICE_APPROVE',
   ]),
   admin: new Set<PermissionGroup>([
-    'ENTRY_VIEW', 'ENTRY_CREATE', 'ENTRY_EDIT_DRAFT', 'ENTRY_POST', 'ENTRY_APPROVE',
-    'PERIOD_CLOSE', 'FINANCIAL_REPORTS', 'CUSTODY_VIEW', 'CUSTODY_OPEN', 'CUSTODY_EXPENSE_RECORD',
-    'CUSTODY_SETTLE', 'EXPENSE_SUBMIT', 'EXPENSE_APPROVE', 'STOCK_VIEW', 'STOCK_RECEIVE',
-    'STOCK_ISSUE', 'STOCK_TRANSFER', 'STOCK_COUNT_APPROVE', 'STOCK_RETURN', 'AUDIT_LOG_VIEW',
-    'SYSTEM_HEALTH_VIEW', 'USER_MANAGE', 'COMPANY_SETTINGS_MANAGE', 'BREAK_GLASS_AUTHORIZE',
-    'PURCHASE_VIEW', 'PURCHASE_MANAGE', 'APPROVAL_POLICY_MANAGE',
-    'SUPPLIER_INVOICE_APPROVE',
+    'USER_MANAGE',
+    'COMPANY_SETTINGS_MANAGE',
+    'AUDIT_LOG_VIEW',
+    'SYSTEM_HEALTH_VIEW',
+    'APPROVAL_POLICY_MANAGE',
+    'PASSWORD_CHANGE_SELF',
+    'BREAK_GLASS_AUTHORIZE',
   ]),
   platform_admin: new Set<PermissionGroup>([
     'SYSTEM_HEALTH_VIEW', 'USER_MANAGE', 'COMPANY_SETTINGS_MANAGE', 'PLATFORM_ADMIN', 'AUDIT_LOG_VIEW',
@@ -119,14 +141,13 @@ export const ROLE_PERMISSION_MATRIX: Record<string, ReadonlySet<PermissionGroup>
     'EXPENSE_SUBMIT',
   ]),
   system_admin: new Set<PermissionGroup>([
-    'ENTRY_VIEW', 'ENTRY_CREATE', 'ENTRY_EDIT_DRAFT', 'ENTRY_POST', 'ENTRY_APPROVE',
-    'PERIOD_CLOSE', 'FINANCIAL_REPORTS', 'CUSTODY_VIEW', 'CUSTODY_OPEN', 'CUSTODY_EXPENSE_RECORD',
-    'CUSTODY_SETTLE', 'EXPENSE_SUBMIT', 'EXPENSE_APPROVE', 'STOCK_VIEW', 'STOCK_RECEIVE',
-    'STOCK_ISSUE', 'STOCK_TRANSFER', 'STOCK_COUNT_APPROVE', 'STOCK_RETURN', 'AUDIT_LOG_VIEW',
-    'SYSTEM_HEALTH_VIEW', 'USER_MANAGE', 'COMPANY_SETTINGS_MANAGE', 'BREAK_GLASS_AUTHORIZE',
-    'PLATFORM_ADMIN',
-    'PURCHASE_VIEW', 'PURCHASE_MANAGE', 'APPROVAL_POLICY_MANAGE',
-    'SUPPLIER_INVOICE_APPROVE',
+    'USER_MANAGE',
+    'COMPANY_SETTINGS_MANAGE',
+    'AUDIT_LOG_VIEW',
+    'SYSTEM_HEALTH_VIEW',
+    'APPROVAL_POLICY_MANAGE',
+    'PASSWORD_CHANGE_SELF',
+    'BREAK_GLASS_AUTHORIZE',
   ]),
   branch_manager: new Set<PermissionGroup>([
     'ENTRY_VIEW', 'FINANCIAL_REPORTS',
@@ -159,24 +180,58 @@ export function normalizeRole(role?: string): string {
   return role.trim().toLowerCase();
 }
 
+/** All known permission group keys (for validating user.permissions grants). */
+export const ALL_PERMISSION_GROUPS: readonly PermissionGroup[] = [
+  'ENTRY_VIEW', 'ENTRY_CREATE', 'ENTRY_EDIT_DRAFT', 'ENTRY_POST', 'ENTRY_APPROVE',
+  'PERIOD_CLOSE', 'FINANCIAL_REPORTS',
+  'CUSTODY_VIEW', 'CUSTODY_OPEN', 'CUSTODY_EXPENSE_RECORD', 'CUSTODY_SETTLE',
+  'EXPENSE_SUBMIT', 'EXPENSE_APPROVE',
+  'STOCK_VIEW', 'STOCK_RECEIVE', 'STOCK_ISSUE', 'STOCK_TRANSFER', 'STOCK_COUNT_APPROVE', 'STOCK_RETURN',
+  'PURCHASE_VIEW', 'PURCHASE_MANAGE', 'SUPPLIER_INVOICE_APPROVE',
+  'AUDIT_LOG_VIEW', 'SYSTEM_HEALTH_VIEW',
+  'PASSWORD_CHANGE_SELF',
+  'USER_MANAGE', 'COMPANY_SETTINGS_MANAGE', 'BREAK_GLASS_AUTHORIZE',
+  'APPROVAL_POLICY_MANAGE', 'PLATFORM_ADMIN',
+];
+
+const PERMISSION_GROUP_SET = new Set<string>(ALL_PERMISSION_GROUPS);
+
+export function isPermissionGroup(value: string): value is PermissionGroup {
+  return PERMISSION_GROUP_SET.has(value);
+}
+
 /**
- * Checks whether a given role is granted a specific permission group
+ * SEC-PERM-OVERRIDE-1: role matrix OR individual user.permissions overrides.
+ * Overrides only *add* capabilities; they never remove role grants.
  */
-export function hasPermission(role: string | undefined, permission: PermissionGroup): boolean {
-  if (!role) return false;
-  const normalized = normalizeRole(role);
-  const permissions = ROLE_PERMISSION_MATRIX[normalized];
-  if (!permissions) return false;
-  return permissions.has(permission);
+export function hasPermission(
+  role: string | undefined,
+  permission: PermissionGroup,
+  overrides?: readonly string[] | null,
+): boolean {
+  if (!role && !(overrides && overrides.length)) return false;
+  if (role) {
+    const normalized = normalizeRole(role);
+    const permissions = ROLE_PERMISSION_MATRIX[normalized];
+    if (permissions && permissions.has(permission)) return true;
+  }
+  if (overrides && overrides.length > 0) {
+    return overrides.includes(permission);
+  }
+  return false;
+}
+
+/**
+ * Effective permission check from authContext (role + optional permissions[]).
+ */
+export function authHasPermission(authContext: any, permission: PermissionGroup): boolean {
+  if (!authContext) return false;
+  return hasPermission(authContext.role, permission, authContext.permissions);
 }
 
 /**
  * Single centralized Express Middleware: requirePermission
- * Usage: router.post('/path', requirePermission('ENTRY_POST'), handler)
- * Behavior:
- * - Unauthenticated (no authContext or userId) => 401 Unauthorized
- * - Authenticated but role lacks required permission => 403 Forbidden with clear Arabic message
- * - Permitted => calls next()
+ * SEC-PERM-OVERRIDE-1: evaluates role matrix + authContext.permissions overrides.
  */
 export function requirePermission(permission: PermissionGroup) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -190,8 +245,8 @@ export function requirePermission(permission: PermissionGroup) {
       });
     }
 
-    const userRole = authContext.role;
-    if (!hasPermission(userRole, permission)) {
+    if (!authHasPermission(authContext, permission)) {
+      const userRole = authContext.role;
       return res.status(403).json({
         type: 'https://api.an-erp.local/errors/forbidden',
         title: 'صلاحيات غير كافية',

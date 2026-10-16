@@ -32,7 +32,7 @@ check('S9 users form optional temporaryPassword', /temporaryPassword/.test(users
 check('S10 min 12 on admin temp', /لا تقل عن 12/.test(srv));
 check('S11 doc present', /SEC-PASSWORD-UX-1/.test(doc));
 check('P package DONE', byId['SEC-PASSWORD-UX-1']?.status === 'DONE');
-check('P lastChange', String(reg.lastChange || '').includes('SEC-PASSWORD-UX-1'));
+check('P lastChange', String(reg.lastChange || '').includes('SEC-PERM-OVERRIDE-1'));
 check('R ORG-COMPANY-1 DONE', byId['ORG-COMPANY-1']?.status === 'DONE');
 check('R SEC-SESSION-PASSWORD DONE', byId['SEC-SESSION-PASSWORD']?.status === 'DONE');
 

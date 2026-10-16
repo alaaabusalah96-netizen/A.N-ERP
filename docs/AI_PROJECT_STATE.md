@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-15 — SEC-PASSWORD-UX-1: forced change screen, admin temp password, PASSWORD_CHANGE_SELF for voluntary change
+**Last update**: 2026-10-16 — SEC-PERM-OVERRIDE-1: user.permissions in requirePermission; narrow admin/system_admin; controlled grant via PATCH
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-16)
 
 ## Gates
@@ -41,6 +41,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **SEC-USER-ADMIN** — DONE — Wave-1: admin patch user, reset-password with temp secret once, revoke sessions; list exposes status _(evidence: docs/SEC_USER_ADMIN.md; scripts/verifySecUserAdmin.ts)_
 - **ORG-COMPANY-1** — DONE — Wave-2: TenantCompany as legal entity; safe GET /api/company; CR/name validation; PATCH tenant status _(evidence: docs/ORG_COMPANY_MODEL.md; scripts/verifyOrgCompany1.ts)_
 - **SEC-PASSWORD-UX-1** — DONE — Forced password UI gate; optional admin temporaryPassword; PASSWORD_CHANGE_SELF for non-forced self-change _(evidence: docs/SEC_PASSWORD_UX.md; scripts/verifySecPasswordUx.ts; src/components/ForcePasswordChangeScreen.tsx)_
+- **SEC-PERM-OVERRIDE-1** — DONE — Additive user.permissions; internal admin role narrowed; PATCH grant with no self-escalation _(evidence: docs/SEC_PERM_OVERRIDE.md; scripts/verifySecPermOverride.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

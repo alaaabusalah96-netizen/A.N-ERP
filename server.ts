@@ -63,7 +63,7 @@ import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/co
 import { AccountingService } from './src/core/accounting/AccountingService';
 import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
 import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
-import { requirePermission, hasPermission, PermissionGroup } from './src/core/auth/PermissionMatrix';
+import { requirePermission, hasPermission, PermissionGroup, isPermissionGroup, ALL_PERMISSION_GROUPS, normalizeRole } from './src/core/auth/PermissionMatrix';
 import { requestContextALS } from './src/core/context/RequestContext';
 import { parseIsoDate, parseNonNegativeMoney, validationError, validateJournalInput, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
 
@@ -586,6 +586,8 @@ async function startServer() {
     role?: string;
     scopes?: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[];
     requiresPasswordChange?: boolean;
+    /** SEC-PERM-OVERRIDE-1: individual permission grants (additive to role matrix) */
+    permissions?: string[];
   }
 
   // =========================================================================
@@ -798,6 +800,9 @@ async function startServer() {
       }
 
       const mustChangePassword = !!userCheck.data.requiresPasswordChange;
+      const individualPerms = Array.isArray(userCheck.data.permissions)
+        ? userCheck.data.permissions.filter((p: any) => typeof p === 'string')
+        : [];
       (req as any).authContext = {
         tenantId: ver.payload.tenantId,
         userId: ver.payload.sub,
@@ -806,6 +811,7 @@ async function startServer() {
         scopes: mem.data.scopes,
         orgNodeId: (userCheck.data as any).assignedNodeId || (userCheck.data as any).orgNodeId,
         requiresPasswordChange: mustChangePassword,
+        permissions: individualPerms,
       } as AuthContext;
       (req as any).storage = tenantStorage;
       (req as any).tenant = tenant;
@@ -1360,8 +1366,7 @@ async function startServer() {
       // SEC-PASSWORD-UX-1: forced change when flagged; otherwise require PASSWORD_CHANGE_SELF
       const forced = !!auth.requiresPasswordChange;
       if (!forced) {
-        const role = auth.role || '';
-        if (!hasPermission(role, 'PASSWORD_CHANGE_SELF')) {
+        if (!hasPermission(auth.role, 'PASSWORD_CHANGE_SELF', auth.permissions)) {
           return res.status(403).json({
             type: 'https://api.an-erp.local/errors/forbidden',
             title: 'غير مصرح',
@@ -1647,6 +1652,7 @@ async function startServer() {
         branchName: u.branchName || 'الفرع الرئيسي',
         status: u.status || 'ACTIVE',
         requiresPasswordChange: !!u.requiresPasswordChange,
+        permissions: Array.isArray(u.permissions) ? u.permissions : [],
         is2faEnabled: !!u.twoFactorEnabled,
         email: u.email || decryptedPii.email || '—',
         phone: decryptedPii.phone || '—',
@@ -1779,12 +1785,70 @@ async function startServer() {
       if (typeof body.branchName === 'string') {
         updates.branchName = body.branchName;
       }
+      // SEC-PERM-OVERRIDE-1: grant individual permissions (cannot self-edit; cannot exceed actor effective set)
+      if (body.permissions !== undefined) {
+        if (targetId === actorId) {
+          return res.status(400).json({
+            type: 'https://api.an-erp.local/errors/validation',
+            title: 'عملية غير مسموحة',
+            status: 400,
+            detail: 'لا يمكنك تعديل صلاحياتك الفردية بنفسك.',
+          });
+        }
+        if (!Array.isArray(body.permissions)) {
+          return res.status(400).json({
+            type: 'https://api.an-erp.local/errors/validation',
+            title: 'صيغة غير صالحة',
+            status: 400,
+            detail: 'permissions يجب أن تكون مصفوفة نصوص.',
+          });
+        }
+        const cleaned: string[] = [];
+        for (const raw of body.permissions) {
+          if (typeof raw !== 'string' || !raw.trim()) continue;
+          const p = raw.trim();
+          if (!isPermissionGroup(p)) {
+            return res.status(400).json({
+              type: 'https://api.an-erp.local/errors/validation',
+              title: 'صلاحية غير معروفة',
+              status: 400,
+              detail: `الصلاحية (${p}) ليست ضمن مجموعات النظام المعتمدة.`,
+            });
+          }
+          cleaned.push(p);
+        }
+        const actorRes = await storage.getUserById(actorId);
+        const actorPerms = actorRes.success && Array.isArray(actorRes.data?.permissions)
+          ? actorRes.data!.permissions!
+          : [];
+        const actorRole = (req as any).authContext.role || '';
+        const actorIsSuper = normalizeRole(actorRole) === 'super_admin';
+        for (const p of cleaned) {
+          if (p === 'PLATFORM_ADMIN' && !hasPermission(actorRole, 'PLATFORM_ADMIN', actorPerms)) {
+            return res.status(403).json({
+              type: 'https://api.an-erp.local/errors/forbidden',
+              title: 'غير مصرح بمنح صلاحية المنصة',
+              status: 403,
+              detail: 'منح PLATFORM_ADMIN يتطلب أن يملك المانح نفس الصلاحية.',
+            });
+          }
+          if (!actorIsSuper && !hasPermission(actorRole, p as PermissionGroup, actorPerms)) {
+            return res.status(403).json({
+              type: 'https://api.an-erp.local/errors/forbidden',
+              title: 'تجاوز حدود الصلاحيات',
+              status: 403,
+              detail: `لا يمكنك منح صلاحية (${p}) لأنك لا تملكها ضمن دورك أو منحورات الفردية.`,
+            });
+          }
+        }
+        updates.permissions = cleaned;
+      }
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({
           type: 'https://api.an-erp.local/errors/validation',
           title: 'لا توجد تعديلات',
           status: 400,
-          detail: 'أرسل status أو role أو fullName أو branchName.',
+          detail: 'أرسل status أو role أو fullName أو branchName أو permissions.',
         });
       }
       const upd = await storage.updateUser(targetId, updates);
