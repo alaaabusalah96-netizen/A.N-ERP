@@ -30,7 +30,7 @@ check('S8 server transactions/post exists', /app\.post\('\/api\/transactions\/po
 check('S9 approvals section panel', /activeSection === 'approvals'/.test(ow) && /صندوق الاعتمادات الموحد/.test(ow));
 check('S10 doc', /UI-OPS-1/.test(doc));
 check('P package DONE', byId['UI-OPS-1']?.status === 'DONE');
-check('P lastChange', String(reg.lastChange || '').includes('UI-OPS-1'));
+check('P lastChange', String(reg.lastChange || '').includes('UI-P2P-1'));
 check('R UI-USERS-1 DONE', byId['UI-USERS-1']?.status === 'DONE');
 check('R SEC-PERM-OVERRIDE-1 DONE', byId['SEC-PERM-OVERRIDE-1']?.status === 'DONE');
 

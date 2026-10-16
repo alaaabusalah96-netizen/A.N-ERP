@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-16 — UI-OPS-1: approvals inbox UI + fix quick transaction POST /api/transactions/post
+**Last update**: 2026-10-16 — UI-P2P-1: supplier invoice match/approve/reject actions in purchasing invoices tab
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-16)
 
 ## Gates
@@ -44,6 +44,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **SEC-PERM-OVERRIDE-1** — DONE — Additive user.permissions; internal admin role narrowed; PATCH grant with no self-escalation _(evidence: docs/SEC_PERM_OVERRIDE.md; scripts/verifySecPermOverride.ts)_
 - **UI-USERS-1** — DONE — Wire user admin actions in UsersAndSodView to existing PATCH/reset/revoke APIs _(evidence: docs/UI_USERS_1.md; scripts/verifyUiUsers1.ts)_
 - **UI-OPS-1** — DONE — Wire approvals inbox; fix TransactionModal/App save to transactions/post with lines _(evidence: docs/UI_OPS_1.md; scripts/verifyUiOps1.ts)_
+- **UI-P2P-1** — DONE — Wire 3-way match and approve/reject buttons on purchasing invoices tab _(evidence: docs/UI_P2P_1.md; scripts/verifyUiP2p1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

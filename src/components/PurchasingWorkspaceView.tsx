@@ -43,6 +43,7 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
   const [orders, setOrders] = useState<any[]>([]);
   const [receipts, setReceipts] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
+  const [invoiceBusyId, setInvoiceBusyId] = useState<string | null>(null);
   const [returns, setReturns] = useState<any[]>([]);
   const [reorderBusy, setReorderBusy] = useState(false);
   const [items, setItems] = useState<any[]>([]);
@@ -149,6 +150,56 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  const handleInvoiceMatch = async (invId: string) => {
+    setInvoiceBusyId(invId);
+    try {
+      const j = await postJson(`/api/purchasing/invoices/${encodeURIComponent(invId)}/match`, {}, idemKey('inv-match'));
+      const summary =
+        (typeof j?.data?.summary === 'string' && j.data.summary) ||
+        (typeof j?.data?.message === 'string' && j.data.message) ||
+        (j?.data?.matched === true ? 'مطابقة ثلاثية ناجحة' : null) ||
+        'تمت مطابقة فاتورة المورد (ثلاثية)';
+      onNotification(summary);
+      await loadAll();
+    } catch (e: any) {
+      onNotification(e?.message || 'فشلت مطابقة الفاتورة');
+    } finally {
+      setInvoiceBusyId(null);
+    }
+  };
+
+  const handleInvoiceApprove = async (invId: string) => {
+    if (!window.confirm('اعتماد فاتورة المورد؟')) return;
+    setInvoiceBusyId(invId);
+    try {
+      await postJson(`/api/purchasing/invoices/${encodeURIComponent(invId)}/approve`, {}, idemKey('inv-appr'));
+      onNotification('تم اعتماد فاتورة المورد');
+      await loadAll();
+    } catch (e: any) {
+      onNotification(e?.message || 'فشل اعتماد الفاتورة');
+    } finally {
+      setInvoiceBusyId(null);
+    }
+  };
+
+  const handleInvoiceReject = async (invId: string) => {
+    const reason = window.prompt('سبب رفض الفاتورة (اختياري):', '') ?? '';
+    setInvoiceBusyId(invId);
+    try {
+      await postJson(
+        `/api/purchasing/invoices/${encodeURIComponent(invId)}/reject`,
+        { reason },
+        idemKey('inv-rej'),
+      );
+      onNotification('تم رفض فاتورة المورد');
+      await loadAll();
+    } catch (e: any) {
+      onNotification(e?.message || 'فشل رفض الفاتورة');
+    } finally {
+      setInvoiceBusyId(null);
+    }
+  };
 
   const generateFromReorder = async () => {
     setReorderBusy(true);
@@ -919,12 +970,13 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
                 <th className="px-3 py-2 font-semibold">الحالة</th>
                 <th className="px-3 py-2 font-semibold">الإجمالي</th>
                 <th className="px-3 py-2 font-semibold">التاريخ</th>
+                <th className="px-3 py-2 font-semibold text-center">إجراءات</th>
               </tr>
             </thead>
             <tbody>
               {invoices.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
+                  <td colSpan={7} className="px-3 py-8 text-center text-slate-400">
                     لا توجد فواتير موردين
                   </td>
                 </tr>
@@ -939,6 +991,37 @@ export const PurchasingWorkspaceView: React.FC<PurchasingWorkspaceViewProps> = (
                   </td>
                   <td className="px-3 py-2 tabular-nums">{inv.totalAmount != null ? Number(inv.totalAmount).toLocaleString('ar') : (inv.grandTotal != null ? Number(inv.grandTotal).toLocaleString('ar') : '—')}</td>
                   <td className="px-3 py-2 text-slate-500">{(inv.invoiceDate || inv.createdAt || '').toString().slice(0, 10)}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-center gap-1">
+                      <button
+                        type="button"
+                        title="مطابقة ثلاثية"
+                        disabled={invoiceBusyId === inv.id}
+                        onClick={() => handleInvoiceMatch(inv.id)}
+                        className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] font-bold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                      >
+                        مطابقة
+                      </button>
+                      <button
+                        type="button"
+                        title="اعتماد الفاتورة"
+                        disabled={invoiceBusyId === inv.id}
+                        onClick={() => handleInvoiceApprove(inv.id)}
+                        className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold disabled:opacity-50"
+                      >
+                        اعتماد
+                      </button>
+                      <button
+                        type="button"
+                        title="رفض الفاتورة"
+                        disabled={invoiceBusyId === inv.id}
+                        onClick={() => handleInvoiceReject(inv.id)}
+                        className="px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold disabled:opacity-50"
+                      >
+                        رفض
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

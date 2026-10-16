@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-16",
-  "lastChange": "UI-OPS-1: approvals inbox UI + fix quick transaction POST /api/transactions/post",
+  "lastChange": "UI-P2P-1: supplier invoice match/approve/reject actions in purchasing invoices tab",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -227,6 +227,12 @@
       "status": "DONE",
       "scope": "Wire approvals inbox; fix TransactionModal/App save to transactions/post with lines",
       "evidence": "docs/UI_OPS_1.md; scripts/verifyUiOps1.ts"
+    },
+    {
+      "id": "UI-P2P-1",
+      "status": "DONE",
+      "scope": "Wire 3-way match and approve/reject buttons on purchasing invoices tab",
+      "evidence": "docs/UI_P2P_1.md; scripts/verifyUiP2p1.ts"
     }
   ],
   "defects": [
