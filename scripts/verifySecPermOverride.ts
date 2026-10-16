@@ -36,7 +36,7 @@ check('S11 grant validation isPermissionGroup', /isPermissionGroup/.test(srv));
 check('S12 ALL_PERMISSION_GROUPS non-empty', ALL_PERMISSION_GROUPS.length >= 20);
 check('S13 doc present', /SEC-PERM-OVERRIDE-1/.test(doc));
 check('P package DONE', byId['SEC-PERM-OVERRIDE-1']?.status === 'DONE');
-check('P lastChange', String(reg.lastChange || '').includes('SEC-PERM-OVERRIDE-1'));
+check('P lastChange', String(reg.lastChange || '').includes('UI-USERS-1'));
 check('R SEC-PASSWORD-UX-1 DONE', byId['SEC-PASSWORD-UX-1']?.status === 'DONE');
 
 console.log(`\nPassed: ${pass} | Failed: ${fail}`);

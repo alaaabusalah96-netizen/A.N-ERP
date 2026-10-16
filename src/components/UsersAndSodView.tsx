@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserPlus, ShieldAlert, Link as LinkIcon, Check, AlertCircle, Copy } from 'lucide-react';
+import { Users, UserPlus, ShieldAlert, Link as LinkIcon, Check, AlertCircle, Copy, UserX, UserCheck, KeyRound, LogOut } from 'lucide-react';
 
 interface ErpUser {
   id: string;
@@ -8,6 +8,9 @@ interface ErpUser {
   role: string;
   roleTitleAr: string;
   branchName: string;
+  status?: 'ACTIVE' | 'INACTIVE' | string;
+  requiresPasswordChange?: boolean;
+  permissions?: string[];
   is2faEnabled: boolean;
   email: string;
   phone: string;
@@ -39,8 +42,10 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
     email: '',
     phone: '',
     nationalId: '',
+    temporaryPassword: '',
   });
   const [sodConflictError, setSodConflictError] = useState<string | null>(null);
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchUsers();
@@ -49,7 +54,7 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/users');
+      const res = await fetch('/api/users', { credentials: 'include' });
       const data = await res.json();
       if (data.success) {
         setUsers(data.data);
@@ -58,6 +63,91 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
       onNotification('تعذر تحميل قائمة المستخدمين');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+
+  const handleToggleStatus = async (u: ErpUser) => {
+    const next = (u.status || 'ACTIVE') === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    const label = next === 'INACTIVE' ? 'تعطيل' : 'تفعيل';
+    if (!window.confirm(`تأكيد ${label} المستخدم ${u.fullName}؟`)) return;
+    setActionBusyId(u.id);
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(u.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        onNotification(data.detail || data.title || data.message || `فشل ${label}`);
+      } else {
+        onNotification(`تم ${label} المستخدم بنجاح.`);
+        await fetchUsers();
+      }
+    } catch {
+      onNotification(`تعذر ${label} المستخدم`);
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleResetPassword = async (u: ErpUser) => {
+    const custom = window.prompt(
+      `إعادة تعيين كلمة مرور لـ ${u.fullName}.\nاتركه فارغًا لتوليد تلقائي، أو أدخل كلمة مؤقتة (≥12 حرفًا):`,
+      '',
+    );
+    if (custom === null) return;
+    setActionBusyId(u.id);
+    try {
+      const body: Record<string, string> = {};
+      if (custom.trim()) body.temporaryPassword = custom.trim();
+      const res = await fetch(`/api/users/${encodeURIComponent(u.id)}/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        onNotification(data.detail || data.title || data.message || 'فشل إعادة التعيين');
+      } else {
+        const temp = data?.data?.temporaryPassword;
+        onNotification(
+          temp
+            ? `تم إعادة التعيين. الكلمة المؤقتة (مرة واحدة): ${temp}`
+            : 'تم إعادة تعيين كلمة المرور.',
+        );
+        await fetchUsers();
+      }
+    } catch {
+      onNotification('تعذر إعادة تعيين كلمة المرور');
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleRevokeSessions = async (u: ErpUser) => {
+    if (!window.confirm(`إنهاء كل جلسات ${u.fullName}؟`)) return;
+    setActionBusyId(u.id);
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(u.id)}/revoke-sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        onNotification(data.detail || data.title || data.message || 'فشل إنهاء الجلسات');
+      } else {
+        onNotification(`تم إنهاء ${data.revoked ?? 0} جلسة.`);
+      }
+    } catch {
+      onNotification('تعذر إنهاء الجلسات');
+    } finally {
+      setActionBusyId(null);
     }
   };
 
@@ -89,6 +179,7 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
       const res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           ...newUserData,
           temporaryPassword: newUserData.temporaryPassword?.trim() || undefined,
@@ -195,10 +286,12 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
               <tr>
                 <th className="py-3 px-4">الموظف</th>
                 <th className="py-3 px-4">الدور الوظيفي</th>
+                <th className="py-3 px-4">الحالة</th>
                 <th className="py-3 px-4">الفرع</th>
                 <th className="py-3 px-4">البريد والهاتف (مشفر)</th>
                 <th className="py-3 px-4">الهوية الوطنية</th>
                 <th className="py-3 px-4">التحقق الثنائي</th>
+                <th className="py-3 px-4 text-center">إجراءات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -211,6 +304,20 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
                   <td className="py-3.5 px-4">
                     <span className="inline-block px-2.5 py-1 bg-blue-50 text-blue-700 font-semibold rounded-lg text-[11px]">
                       {u.roleTitleAr}
+                    </span>
+                    {u.requiresPasswordChange ? (
+                      <div className="text-[10px] text-amber-700 mt-1 font-semibold">يلزم تغيير كلمة المرور</div>
+                    ) : null}
+                  </td>
+                  <td className="py-3.5 px-4">
+                    <span
+                      className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        (u.status || 'ACTIVE') === 'ACTIVE'
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          : 'bg-rose-50 text-rose-700 border border-rose-200'
+                      }`}
+                    >
+                      {(u.status || 'ACTIVE') === 'ACTIVE' ? 'نشط' : 'معطّل'}
                     </span>
                   </td>
                   <td className="py-3.5 px-4 text-slate-600">{u.branchName}</td>
@@ -231,6 +338,41 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
                     >
                       {u.is2faEnabled ? 'مفعّل' : 'غير مفعل'}
                     </span>
+                  </td>
+                  <td className="py-3.5 px-4">
+                    <div className="flex flex-wrap items-center justify-center gap-1">
+                      <button
+                        type="button"
+                        title={(u.status || 'ACTIVE') === 'ACTIVE' ? 'تعطيل' : 'تفعيل'}
+                        disabled={actionBusyId === u.id}
+                        onClick={() => handleToggleStatus(u)}
+                        className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 disabled:opacity-50"
+                      >
+                        {(u.status || 'ACTIVE') === 'ACTIVE' ? (
+                          <UserX className="w-3.5 h-3.5 text-rose-600" />
+                        ) : (
+                          <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        title="إعادة تعيين كلمة المرور"
+                        disabled={actionBusyId === u.id}
+                        onClick={() => handleResetPassword(u)}
+                        className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 disabled:opacity-50"
+                      >
+                        <KeyRound className="w-3.5 h-3.5 text-amber-600" />
+                      </button>
+                      <button
+                        type="button"
+                        title="إنهاء كل الجلسات"
+                        disabled={actionBusyId === u.id}
+                        onClick={() => handleRevokeSessions(u)}
+                        className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 disabled:opacity-50"
+                      >
+                        <LogOut className="w-3.5 h-3.5 text-slate-600" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

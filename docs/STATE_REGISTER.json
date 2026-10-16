@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-16",
-  "lastChange": "SEC-PERM-OVERRIDE-1: user.permissions in requirePermission; narrow admin/system_admin; controlled grant via PATCH",
+  "lastChange": "UI-USERS-1: UsersAndSodView actions disable/reset-password/revoke-sessions wired to admin APIs",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -215,6 +215,12 @@
       "status": "DONE",
       "scope": "Additive user.permissions; internal admin role narrowed; PATCH grant with no self-escalation",
       "evidence": "docs/SEC_PERM_OVERRIDE.md; scripts/verifySecPermOverride.ts"
+    },
+    {
+      "id": "UI-USERS-1",
+      "status": "DONE",
+      "scope": "Wire user admin actions in UsersAndSodView to existing PATCH/reset/revoke APIs",
+      "evidence": "docs/UI_USERS_1.md; scripts/verifyUiUsers1.ts"
     }
   ],
   "defects": [
