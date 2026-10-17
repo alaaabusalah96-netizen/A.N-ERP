@@ -1976,6 +1976,13 @@ async function startServer() {
           }
         }
       }
+      // ORG-MEMBERSHIP-1: sync membership with account status
+      if (updates.status === 'INACTIVE') {
+        await storage.setMembershipStatus(tenantId, targetId, 'SUSPENDED');
+      } else if (updates.status === 'ACTIVE') {
+        await storage.setMembershipStatus(tenantId, targetId, 'ACTIVE');
+      }
+
       await recordAudit(actorId, 'المستخدم الحالي', 'UPDATE_USER', 'USER', targetId, updates, req.ip || '127.0.0.1', tenantId, storage);
       const u = upd.data!;
       return res.json({
@@ -1989,6 +1996,103 @@ async function startServer() {
           requiresPasswordChange: !!u.requiresPasswordChange,
         },
       });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
+    }
+  });
+
+  // ORG-MEMBERSHIP-1: membership read / write for current tenant
+  app.get('/api/users/:id/membership', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const targetId = String(req.params.id || '');
+      const existing = await storage.getUserById(targetId);
+      if (!existing.success || !existing.data || existing.data.tenantId !== tenantId) {
+        return res.status(404).json({
+          type: 'https://api.an-erp.local/errors/not-found',
+          title: 'المستخدم غير موجود',
+          status: 404,
+          detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
+        });
+      }
+      const mem = await storage.getMembershipContext(tenantId, targetId);
+      if (!mem.success) {
+        return res.status(mem.error?.status || 500).json(mem.error || { success: false });
+      }
+      return res.json({ success: true, data: mem.data });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
+    }
+  });
+
+  app.patch('/api/users/:id/membership', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const actorId = (req as any).authContext.userId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const targetId = String(req.params.id || '');
+      const status = String((req.body || {}).status || '').toUpperCase();
+      if (!['ACTIVE', 'SUSPENDED', 'REVOKED'].includes(status)) {
+        return res.status(400).json({
+          type: 'https://api.an-erp.local/errors/validation',
+          title: 'حالة عضوية غير صالحة',
+          status: 400,
+          detail: 'الحالة يجب أن تكون ACTIVE أو SUSPENDED أو REVOKED.',
+        });
+      }
+      if (targetId === actorId && status !== 'ACTIVE') {
+        return res.status(400).json({
+          type: 'https://api.an-erp.local/errors/validation',
+          title: 'عملية غير مسموحة',
+          status: 400,
+          detail: 'لا يمكنك تعليق أو إلغاء عضويتك الحالية بنفسك.',
+        });
+      }
+      const existing = await storage.getUserById(targetId);
+      if (!existing.success || !existing.data || existing.data.tenantId !== tenantId) {
+        return res.status(404).json({
+          type: 'https://api.an-erp.local/errors/not-found',
+          title: 'المستخدم غير موجود',
+          status: 404,
+          detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
+        });
+      }
+      const result = await storage.setMembershipStatus(
+        tenantId,
+        targetId,
+        status as 'ACTIVE' | 'SUSPENDED' | 'REVOKED',
+      );
+      if (!result.success) {
+        return res.status(result.error?.status || 500).json(result.error || { success: false });
+      }
+      if (status === 'ACTIVE') {
+        await storage.updateUser(targetId, { status: 'ACTIVE' } as any);
+      } else if (status === 'SUSPENDED') {
+        await storage.updateUser(targetId, { status: 'INACTIVE' } as any);
+        const sessions = await storage.listActiveSessionsByUser(targetId);
+        if (sessions.success && sessions.data) {
+          for (const sess of sessions.data) {
+            const sid = (sess as any).sessionId || (sess as any).id;
+            if (sid) await storage.deleteActiveSession(sid);
+          }
+        }
+      }
+      await recordAudit(
+        actorId,
+        'المستخدم الحالي',
+        'UPDATE_MEMBERSHIP',
+        'MEMBERSHIP',
+        targetId,
+        { status },
+        req.ip || '127.0.0.1',
+        tenantId,
+        storage,
+      );
+      const mem = await storage.getMembershipContext(tenantId, targetId);
+      return res.json({ success: true, data: mem.success ? mem.data : { status } });
     } catch (err: any) {
       return res.status(500).json({ success: false, message: publicErrorMessage(err) });
     }

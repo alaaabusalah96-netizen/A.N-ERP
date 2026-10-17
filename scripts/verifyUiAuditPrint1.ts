@@ -29,7 +29,7 @@ check('S8 local print retained', /window\.print/.test(pm));
 check('S9 server routes exist', /audit-chain\/verify/.test(srv) && /\/api\/print\/:docType/.test(srv));
 check('S10 doc', /UI-AUDIT-PRINT-1/.test(doc));
 check('P package DONE', byId['UI-AUDIT-PRINT-1']?.status === 'DONE');
-check('P lastChange', String(reg.lastChange || '').includes('DEMO-LOGIN-ROLES-1'));
+check('P lastChange', String(reg.lastChange || '').includes('ORG-MEMBERSHIP-1'));
 check('R UI-2FA-SETUP-1 DONE', byId['UI-2FA-SETUP-1']?.status === 'DONE');
 check('R UI-P2P-1 DONE', byId['UI-P2P-1']?.status === 'DONE');
 

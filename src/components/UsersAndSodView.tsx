@@ -93,6 +93,35 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
     }
   };
 
+  const handleMembershipStatus = async (u: ErpUser, status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED') => {
+    const labels: Record<string, string> = {
+      ACTIVE: 'تفعيل العضوية',
+      SUSPENDED: 'تعليق العضوية',
+      REVOKED: 'إلغاء العضوية',
+    };
+    if (!window.confirm(`تأكيد ${labels[status]} للمستخدم ${u.fullName}؟`)) return;
+    setActionBusyId(u.id);
+    try {
+      const res = await fetch(`/api/users/${encodeURIComponent(u.id)}/membership`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ status }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        onNotification(data.detail || data.title || data.message || 'تعذر تحديث العضوية');
+        return;
+      }
+      onNotification(`تم ${labels[status]} بنجاح`);
+      await fetchUsers();
+    } catch {
+      onNotification('فشل الاتصال أثناء تحديث العضوية');
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
   const handleResetPassword = async (u: ErpUser) => {
     const custom = window.prompt(
       `إعادة تعيين كلمة مرور لـ ${u.fullName}.\nاتركه فارغًا لتوليد تلقائي، أو أدخل كلمة مؤقتة (≥12 حرفًا):`,
@@ -353,6 +382,19 @@ export const UsersAndSodView: React.FC<UsersAndSodViewProps> = ({ onNotification
                         ) : (
                           <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
                         )}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={actionBusyId === u.id}
+                        onClick={() =>
+                          handleMembershipStatus(
+                            u,
+                            (u.status || 'ACTIVE') === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE',
+                          )
+                        }
+                        className="px-2 py-1 text-[10px] font-semibold rounded-lg border border-amber-200 text-amber-800 bg-amber-50 hover:bg-amber-100 disabled:opacity-50"
+                      >
+                        {(u.status || 'ACTIVE') === 'ACTIVE' ? 'تعليق عضوية' : 'تفعيل عضوية'}
                       </button>
                       <button
                         type="button"
