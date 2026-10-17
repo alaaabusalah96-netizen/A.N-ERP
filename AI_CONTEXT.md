@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-16** — UI-P2P-1: supplier invoice match/approve/reject actions in purchasing invoices tab
+Last update: **2026-10-16** — UI-2FA-SETUP-1: profile 2FA setup wizard + self sessions via /api/auth/sessions
 
 ## Verdict
 | Field | Value |

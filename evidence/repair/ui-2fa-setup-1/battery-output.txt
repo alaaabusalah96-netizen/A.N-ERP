@@ -1,0 +1,15 @@
+[PASS] S1 start setup calls /api/auth/2fa/setup
+[PASS] S2 verify-setup
+[PASS] S3 QR display
+[PASS] S4 not always showing enabled
+[PASS] S5 self sessions path
+[PASS] S6 revoke-others
+[PASS] S7 server setup route
+[PASS] S8 server verify-setup
+[PASS] S9 doc
+[PASS] P package DONE
+[PASS] P lastChange
+[PASS] R UI-P2P-1 DONE
+[PASS] R UI-OPS-1 DONE
+
+Passed: 13 | Failed: 0

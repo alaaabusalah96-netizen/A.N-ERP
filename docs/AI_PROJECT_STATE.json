@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-16",
-  "lastChange": "UI-P2P-1: supplier invoice match/approve/reject actions in purchasing invoices tab",
+  "lastChange": "UI-2FA-SETUP-1: profile 2FA setup wizard + self sessions via /api/auth/sessions",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -233,6 +233,12 @@
       "status": "DONE",
       "scope": "Wire 3-way match and approve/reject buttons on purchasing invoices tab",
       "evidence": "docs/UI_P2P_1.md; scripts/verifyUiP2p1.ts"
+    },
+    {
+      "id": "UI-2FA-SETUP-1",
+      "status": "DONE",
+      "scope": "Wire 2FA setup/verify-setup in UserProfileView; fix self session list path",
+      "evidence": "docs/UI_2FA_SETUP_1.md; scripts/verifyUi2faSetup1.ts"
     }
   ],
   "defects": [
@@ -403,7 +409,7 @@
     }
   },
   "policy": "Edit docs/STATE_REGISTER.json by hand. AI_CONTEXT.md and docs/AI_PROJECT_STATE.* are rendered from it by scripts/runReconcileAuditB.ts and must not be replaced by a template.",
-  "renderedAt": "2026-10-16T00:00:00Z",
+  "renderedAt": "2026-10-17T00:00:00Z",
   "authoritativeVerdict": "CONDITIONAL_GO",
   "f07": {
     "verdict": "NOT_RUN",

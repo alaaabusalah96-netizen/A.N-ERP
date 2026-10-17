@@ -27,7 +27,7 @@ check('S7 server approve route', /invoices\/:id\/approve/.test(srv));
 check('S8 server reject route', /invoices\/:id\/reject/.test(srv));
 check('S9 doc', /UI-P2P-1/.test(doc));
 check('P package DONE', byId['UI-P2P-1']?.status === 'DONE');
-check('P lastChange', String(reg.lastChange || '').includes('UI-P2P-1'));
+check('P lastChange', String(reg.lastChange || '').includes('UI-2FA-SETUP-1'));
 check('R UI-OPS-1 DONE', byId['UI-OPS-1']?.status === 'DONE');
 check('R UI-USERS-1 DONE', byId['UI-USERS-1']?.status === 'DONE');
 
