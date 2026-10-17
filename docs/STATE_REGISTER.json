@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-17",
-  "lastChange": "UI-AUDIT-PRINT-1: audit chain verify button + official print via /api/print",
+  "lastChange": "DEMO-LOGIN-ROLES-1: expand MAIN seed users + login quick-role presets (INITIAL_USER_PASSWORD)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -245,6 +245,12 @@
       "status": "DONE",
       "scope": "Wire audit-chain verify in AuditTrailView; official print from PrintVoucherModal",
       "evidence": "docs/UI_AUDIT_PRINT_1.md; scripts/verifyUiAuditPrint1.ts"
+    },
+    {
+      "id": "DEMO-LOGIN-ROLES-1",
+      "status": "DONE",
+      "scope": "Seed 8 operational roles for MAIN; replace 3 login buttons with full preset grid",
+      "evidence": "docs/DEMO_LOGIN_ROLES_1.md; scripts/verifyDemoLoginRoles1.ts"
     }
   ],
   "defects": [

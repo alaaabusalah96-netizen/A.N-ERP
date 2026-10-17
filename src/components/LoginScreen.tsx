@@ -121,6 +121,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     setShowConcurrentPrompt(false);
   };
 
+  /** DEMO-LOGIN-ROLES-1: quick-login usernames (password = INITIAL_USER_PASSWORD from env) */
+  const DEMO_ROLE_PRESETS: Array<{ username: string; titleAr: string; nameAr: string }> = [
+    { username: 'accountant', titleAr: 'محاسب عام', nameAr: 'أحمد المنصور' },
+    { username: 'approver', titleAr: 'معتمد مالي', nameAr: 'سليمان الراشد' },
+    { username: 'warehouse', titleAr: 'أمين مستودع', nameAr: 'سعد القحطاني' },
+    { username: 'whmanager', titleAr: 'مدير مستودعات', nameAr: 'نورة العتيبي' },
+    { username: 'auditor', titleAr: 'مراجع داخلي', nameAr: 'خالد الدوسري' },
+    { username: 'branch', titleAr: 'مدير فرع', nameAr: 'فاطمة الحربي' },
+    { username: 'sales', titleAr: 'مسؤول مبيعات', nameAr: 'عبدالله الشمري' },
+    { username: 'sysadmin', titleAr: 'مدير نظام', nameAr: 'ريم السهلي' },
+  ];
+
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col justify-center py-12 sm:px-6 lg:px-8 selection:bg-blue-600 selection:text-white" dir="rtl">
       {/* Brand Header */}
@@ -355,45 +367,25 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 <label className="block text-[11px] font-semibold text-slate-500 mb-2">
                   اختر الحساب التشغيلي للدخول السريع:
                 </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleRolePreset('accountant')}
-                    className={`p-2 rounded-lg border text-right transition-all text-xs ${
-                      username === 'accountant'
-                        ? 'border-blue-600 bg-blue-50/50 text-blue-900 font-bold'
-                        : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
-                    }`}
-                  >
-                    <div className="font-semibold text-[11px]">محاسب عام</div>
-                    <div className="text-[10px] text-slate-500">أحمد المنصور</div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleRolePreset('approver')}
-                    className={`p-2 rounded-lg border text-right transition-all text-xs ${
-                      username === 'approver'
-                        ? 'border-blue-600 bg-blue-50/50 text-blue-900 font-bold'
-                        : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
-                    }`}
-                  >
-                    <div className="font-semibold text-[11px]">معتمد مالي</div>
-                    <div className="text-[10px] text-slate-500">سليمان الراشد</div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleRolePreset('warehouse')}
-                    className={`p-2 rounded-lg border text-right transition-all text-xs ${
-                      username === 'warehouse'
-                        ? 'border-blue-600 bg-blue-50/50 text-blue-900 font-bold'
-                        : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
-                    }`}
-                  >
-                    <div className="font-semibold text-[11px]">أمين مستودع</div>
-                    <div className="text-[10px] text-slate-500">سعد القحطاني</div>
-                  </button>
+                <p className="text-[10px] text-slate-400 mb-2">
+                  كلمة المرور من سر البيئة INITIAL_USER_PASSWORD — المستأجر MAIN
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {DEMO_ROLE_PRESETS.map((p) => (
+                    <button
+                      key={p.username}
+                      type="button"
+                      onClick={() => handleRolePreset(p.username)}
+                      className={`p-2 rounded-lg border text-right transition-all text-xs ${
+                        username === p.username
+                          ? 'border-blue-600 bg-blue-50/50 text-blue-900 font-bold'
+                          : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                      }`}
+                    >
+                      <div className="font-semibold text-[11px]">{p.titleAr}</div>
+                      <div className="text-[10px] text-slate-500">{p.nameAr}</div>
+                    </button>
+                  ))}
                 </div>
               </div>
 

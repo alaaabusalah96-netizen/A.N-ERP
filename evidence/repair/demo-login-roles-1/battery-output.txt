@@ -1,0 +1,19 @@
+[PASS] S seed has accountant
+[PASS] S seed has approver
+[PASS] S seed has warehouse
+[PASS] S seed has whmanager
+[PASS] S seed has auditor
+[PASS] S seed has branch
+[PASS] S seed has sales
+[PASS] S seed has sysadmin
+[PASS] S INITIAL_USER_PASSWORD still used
+[PASS] S DEMO_ROLE_PRESETS in LoginScreen
+[PASS] S presets include sysadmin
+[PASS] S grid maps presets
+[PASS] S no fixed password in LoginScreen
+[PASS] S doc
+[PASS] P package DONE
+[PASS] P lastChange
+[PASS] R UI-AUDIT-PRINT-1 DONE
+
+Passed: 17 | Failed: 0

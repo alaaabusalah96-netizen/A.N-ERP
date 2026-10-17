@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-17** — UI-AUDIT-PRINT-1: audit chain verify button + official print via /api/print
+Last update: **2026-10-17** — DEMO-LOGIN-ROLES-1: expand MAIN seed users + login quick-role presets (INITIAL_USER_PASSWORD)
 
 ## Verdict
 | Field | Value |

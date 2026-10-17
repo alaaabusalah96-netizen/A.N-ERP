@@ -91,6 +91,7 @@ const BATTERIES: { name: string; script: string; expected?: number }[] = [
   { name: 'UiP2p1', script: 'scripts/verifyUiP2p1.ts', expected: 13 },
   { name: 'Ui2faSetup1', script: 'scripts/verifyUi2faSetup1.ts', expected: 13 },
   { name: 'UiAuditPrint1', script: 'scripts/verifyUiAuditPrint1.ts', expected: 14 },
+  { name: 'DemoLoginRoles1', script: 'scripts/verifyDemoLoginRoles1.ts', expected: 16 },
   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
 ];
 // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
