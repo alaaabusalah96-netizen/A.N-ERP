@@ -3,8 +3,8 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "lastUpdated": "2026-10-16",
-  "lastChange": "UI-2FA-SETUP-1: profile 2FA setup wizard + self sessions via /api/auth/sessions",
+  "lastUpdated": "2026-10-17",
+  "lastChange": "UI-AUDIT-PRINT-1: audit chain verify button + official print via /api/print",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -239,6 +239,12 @@
       "status": "DONE",
       "scope": "Wire 2FA setup/verify-setup in UserProfileView; fix self session list path",
       "evidence": "docs/UI_2FA_SETUP_1.md; scripts/verifyUi2faSetup1.ts"
+    },
+    {
+      "id": "UI-AUDIT-PRINT-1",
+      "status": "DONE",
+      "scope": "Wire audit-chain verify in AuditTrailView; official print from PrintVoucherModal",
+      "evidence": "docs/UI_AUDIT_PRINT_1.md; scripts/verifyUiAuditPrint1.ts"
     }
   ],
   "defects": [

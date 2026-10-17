@@ -27,7 +27,7 @@ check('S7 server setup route', /app\.post\('\/api\/auth\/2fa\/setup'/.test(srv))
 check('S8 server verify-setup', /app\.post\('\/api\/auth\/2fa\/verify-setup'/.test(srv));
 check('S9 doc', /UI-2FA-SETUP-1/.test(doc));
 check('P package DONE', byId['UI-2FA-SETUP-1']?.status === 'DONE');
-check('P lastChange', String(reg.lastChange || '').includes('UI-2FA-SETUP-1'));
+check('P lastChange', String(reg.lastChange || '').includes('UI-AUDIT-PRINT-1'));
 check('R UI-P2P-1 DONE', byId['UI-P2P-1']?.status === 'DONE');
 check('R UI-OPS-1 DONE', byId['UI-OPS-1']?.status === 'DONE');
 

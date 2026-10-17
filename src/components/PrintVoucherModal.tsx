@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { X, Printer, CheckCircle } from 'lucide-react';
 import { OperationalTransaction } from '../types/erp';
 
@@ -15,8 +15,56 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({
 }) => {
   if (!isOpen || !transaction) return null;
 
+  const [officialBusy, setOfficialBusy] = useState(false);
+  const [officialError, setOfficialError] = useState<string | null>(null);
+
   const handlePrint = () => {
     window.print();
+  };
+
+  /** UI-AUDIT-PRINT-1: official template via UnifiedPrintService */
+  const handleOfficialPrint = async () => {
+    if (!transaction?.id) return;
+    setOfficialBusy(true);
+    setOfficialError(null);
+    try {
+      const docType = 'journal-entry';
+      const res = await fetch(
+        `/api/print/${encodeURIComponent(docType)}/${encodeURIComponent(transaction.id)}?format=raw`,
+        {
+          credentials: 'include',
+          headers: { Accept: 'text/html' },
+        },
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setOfficialError(
+          err.detail || err.error || err.title || `تعذر جلب المستند الرسمي (${res.status})`,
+        );
+        return;
+      }
+      const html = await res.text();
+      const w = window.open('', '_blank', 'noopener,noreferrer,width=900,height=700');
+      if (!w) {
+        setOfficialError('المتصفح منع النافذة المنبثقة — اسمح بالنوافذ ثم أعد المحاولة');
+        return;
+      }
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      setTimeout(() => {
+        try {
+          w.focus();
+          w.print();
+        } catch {
+          /* user can print manually */
+        }
+      }, 300);
+    } catch {
+      setOfficialError('فشل الاتصال بخدمة الطباعة الموحدة');
+    } finally {
+      setOfficialBusy(false);
+    }
   };
 
   return (
@@ -24,13 +72,27 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({
       <div className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-slate-200 overflow-hidden">
         {/* Modal Controls */}
         <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between no-print">
-          <span className="text-xs font-bold text-slate-700">معاينة المستند الرسمي للطباعة</span>
+          <div>
+            <span className="text-xs font-bold text-slate-700">معاينة المستند الرسمي للطباعة</span>
+            {officialError && (
+              <div className="text-[10px] text-rose-700 mt-0.5 max-w-xs">{officialError}</div>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              onClick={handleOfficialPrint}
+              disabled={officialBusy}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold rounded-lg transition-colors shadow-2xs disabled:opacity-50"
+            >
+              <Printer className="w-4 h-4" /> {officialBusy ? 'جاري التحميل…' : 'طباعة رسمية (خادم)'}
+            </button>
+            <button
+              type="button"
               onClick={handlePrint}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold rounded-lg transition-colors shadow-2xs"
             >
-              <Printer className="w-4 h-4" /> طباعة المستند
+              <Printer className="w-4 h-4" /> طباعة معاينة محلية
             </button>
             <button
               onClick={onClose}

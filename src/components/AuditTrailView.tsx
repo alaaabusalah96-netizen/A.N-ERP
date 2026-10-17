@@ -20,6 +20,13 @@ interface AuditTrailViewProps {
 export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ onNotification }) => {
   const [logs, setLogs] = useState<AuditTrailItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [chainBusy, setChainBusy] = useState(false);
+  const [chainResult, setChainResult] = useState<{
+    isValid?: boolean;
+    verifiedRecordsCount?: number;
+    brokenAtSequence?: number;
+    messageAr?: string;
+  } | null>(null);
 
   useEffect(() => {
     fetchLogs();
@@ -28,7 +35,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ onNotification }
   const fetchLogs = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/audit-trail');
+      const res = await fetch('/api/audit-trail', { credentials: 'include' });
       const data = await res.json();
       if (data.success) {
         setLogs(data.data);
@@ -37,6 +44,42 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ onNotification }
       onNotification('تعذر تحميل سجل التدقيق');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+
+  const verifyAuditChain = async () => {
+    setChainBusy(true);
+    setChainResult(null);
+    try {
+      const res = await fetch('/api/audit-chain/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        onNotification(data.detail || data.title || data.error || 'فشل فحص سلسلة التدقيق');
+        setChainResult({ isValid: false, messageAr: data.detail || 'فشل الفحص' });
+        return;
+      }
+      const payload = data.data || data;
+      setChainResult({
+        isValid: !!payload.isValid,
+        verifiedRecordsCount: payload.verifiedRecordsCount,
+        brokenAtSequence: payload.brokenAtSequence,
+        messageAr: payload.messageAr,
+      });
+      onNotification(
+        payload.isValid
+          ? `سلسلة التدقيق سليمة (${payload.verifiedRecordsCount ?? '—'} سجل)`
+          : payload.messageAr || 'كُسر في سلسلة التدقيق',
+      );
+    } catch {
+      onNotification('تعذر الاتصال أثناء فحص السلسلة');
+    } finally {
+      setChainBusy(false);
     }
   };
 
@@ -67,14 +110,42 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ onNotification }
           </p>
         </div>
 
-        <button
-          onClick={fetchLogs}
-          className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors border border-slate-200"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          تحديث السجل
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={verifyAuditChain}
+            disabled={chainBusy}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition-colors disabled:opacity-50"
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            {chainBusy ? 'جاري الفحص…' : 'فحص سلامة السلسلة'}
+          </button>
+          <button
+            type="button"
+            onClick={fetchLogs}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors border border-slate-200"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            تحديث السجل
+          </button>
+        </div>
       </div>
+
+      {chainResult && (
+        <div
+          className={`p-3.5 rounded-xl border text-xs font-semibold ${
+            chainResult.isValid
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-rose-50 border-rose-200 text-rose-900'
+          }`}
+        >
+          {chainResult.isValid ? '✓ ' : '✗ '}
+          {chainResult.messageAr ||
+            (chainResult.isValid
+              ? `السلسلة سليمة — ${chainResult.verifiedRecordsCount ?? '—'} سجل مُتحقق`
+              : `خلل في السلسلة${chainResult.brokenAtSequence != null ? ` عند التسلسل ${chainResult.brokenAtSequence}` : ''}`)}
+        </div>
+      )}
 
       {/* Logs Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">

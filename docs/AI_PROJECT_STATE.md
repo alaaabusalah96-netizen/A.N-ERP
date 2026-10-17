@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-16 — UI-2FA-SETUP-1: profile 2FA setup wizard + self sessions via /api/auth/sessions
+**Last update**: 2026-10-17 — UI-AUDIT-PRINT-1: audit chain verify button + official print via /api/print
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-17)
 
 ## Gates
@@ -46,6 +46,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **UI-OPS-1** — DONE — Wire approvals inbox; fix TransactionModal/App save to transactions/post with lines _(evidence: docs/UI_OPS_1.md; scripts/verifyUiOps1.ts)_
 - **UI-P2P-1** — DONE — Wire 3-way match and approve/reject buttons on purchasing invoices tab _(evidence: docs/UI_P2P_1.md; scripts/verifyUiP2p1.ts)_
 - **UI-2FA-SETUP-1** — DONE — Wire 2FA setup/verify-setup in UserProfileView; fix self session list path _(evidence: docs/UI_2FA_SETUP_1.md; scripts/verifyUi2faSetup1.ts)_
+- **UI-AUDIT-PRINT-1** — DONE — Wire audit-chain verify in AuditTrailView; official print from PrintVoucherModal _(evidence: docs/UI_AUDIT_PRINT_1.md; scripts/verifyUiAuditPrint1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
