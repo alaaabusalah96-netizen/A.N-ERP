@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-17** — INV-ITEM-CREATE: dedicated item creation UI wired to existing tenant-scoped POST /api/inventory/items
+Last update: **2026-10-18** — INV-INTRANSIT-1b: widen S12 verify window for transfers status filter (no behavior change)
 
 ## Verdict
 | Field | Value |

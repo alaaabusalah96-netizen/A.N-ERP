@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-18",
-  "lastChange": "INV-INTRANSIT-1: transfer status filter + credentials on transfer session calls",
+  "lastChange": "INV-INTRANSIT-1b: widen S12 verify window for transfers status filter (no behavior change)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -269,6 +269,12 @@
       "status": "DONE",
       "scope": "UI filter/summary for IN_TRANSIT warehouse transfers; credentials on transfer fetches",
       "evidence": "docs/INV_INTRANSIT_1.md; scripts/verifyInvIntransit.ts"
+    },
+    {
+      "id": "INV-INTRANSIT-1b",
+      "status": "DONE",
+      "scope": "Fix verifyInvIntransit S12 regex window (200→500) to match server.ts layout",
+      "evidence": "scripts/verifyInvIntransit.ts"
     }
   ],
   "defects": [

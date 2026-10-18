@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-17 — INV-ITEM-CREATE: dedicated item creation UI wired to existing tenant-scoped POST /api/inventory/items
+**Last update**: 2026-10-18 — INV-INTRANSIT-1b: widen S12 verify window for transfers status filter (no behavior change)
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-18)
 
 ## Gates
@@ -50,6 +50,8 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **DEMO-LOGIN-ROLES-1** — DONE — Seed 8 operational roles for MAIN; replace 3 login buttons with full preset grid _(evidence: docs/DEMO_LOGIN_ROLES_1.md; scripts/verifyDemoLoginRoles1.ts)_
 - **ORG-MEMBERSHIP-1** — DONE — Wave 2: membership GET/PATCH + status sync + UI suspend/activate _(evidence: docs/ORG_MEMBERSHIP_1.md; scripts/verifyOrgMembership1.ts)_
 - **INV-ITEM-CREATE** — DONE — Create stock-item cards from the dedicated Items tab using existing authenticated API; no stock quantity is created by item setup _(evidence: scripts/verifyInvItemCreate.ts; docs/INV_ITEM_CREATE.md; src/components/InventoryWorkspaceView.tsx)_
+- **INV-INTRANSIT-1** — DONE — UI filter/summary for IN_TRANSIT warehouse transfers; credentials on transfer fetches _(evidence: docs/INV_INTRANSIT_1.md; scripts/verifyInvIntransit.ts)_
+- **INV-INTRANSIT-1b** — DONE — Fix verifyInvIntransit S12 regex window (200→500) to match server.ts layout _(evidence: scripts/verifyInvIntransit.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

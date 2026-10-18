@@ -3,8 +3,8 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "lastUpdated": "2026-10-17",
-  "lastChange": "INV-ITEM-CREATE: dedicated item creation UI wired to existing tenant-scoped POST /api/inventory/items",
+  "lastUpdated": "2026-10-18",
+  "lastChange": "INV-INTRANSIT-1b: widen S12 verify window for transfers status filter (no behavior change)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -263,6 +263,18 @@
       "status": "DONE",
       "scope": "Create stock-item cards from the dedicated Items tab using existing authenticated API; no stock quantity is created by item setup",
       "evidence": "scripts/verifyInvItemCreate.ts; docs/INV_ITEM_CREATE.md; src/components/InventoryWorkspaceView.tsx"
+    },
+    {
+      "id": "INV-INTRANSIT-1",
+      "status": "DONE",
+      "scope": "UI filter/summary for IN_TRANSIT warehouse transfers; credentials on transfer fetches",
+      "evidence": "docs/INV_INTRANSIT_1.md; scripts/verifyInvIntransit.ts"
+    },
+    {
+      "id": "INV-INTRANSIT-1b",
+      "status": "DONE",
+      "scope": "Fix verifyInvIntransit S12 regex window (200→500) to match server.ts layout",
+      "evidence": "scripts/verifyInvIntransit.ts"
     }
   ],
   "defects": [

@@ -27,7 +27,7 @@ check('S8 receive credentials', /transfers\/\$\{transferId\}\/receive[\s\S]{0,12
 check('S9 dispatch + receive handlers remain', /handleDispatchTransfer/.test(ui) && /handleReceiveTransfer/.test(ui));
 check('S10 server dispatch route', /app\.post\('\/api\/inventory\/transfers\/:id\/dispatch'/.test(server));
 check('S11 server receive route', /app\.post\('\/api\/inventory\/transfers\/:id\/receive'/.test(server));
-check('S12 server lists transfers with status filter', /app\.get\('\/api\/inventory\/transfers'[\s\S]{0,200}status/.test(server));
+check('S12 server lists transfers with status filter', /app\.get\('\/api\/inventory\/transfers'[\s\S]{0,500}status/.test(server));
 check('R1 INV-INTRANSIT-1 DONE', byId['INV-INTRANSIT-1']?.status === 'DONE');
 check('R2 INV-ITEM-CREATE remains DONE', byId['INV-ITEM-CREATE']?.status === 'DONE');
 
