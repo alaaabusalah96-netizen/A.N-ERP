@@ -76,7 +76,7 @@ import {
   CustodyExpenseVoucher,
   DocumentAttachment,
   ItemPrice,
-} from '../StoragePort';
+, CompanyGroup } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 import { SEED_TENANT_ID } from '../../seed/seedOnly';
 
@@ -84,6 +84,7 @@ export class InMemoryAdapter implements StoragePort {
   readonly adapterName = 'InMemoryAdapter (Development Only - Non-Persistent)';
 
   private tenants = new Map<string, TenantCompany>();
+  private companyGroups = new Map<string, CompanyGroup>();
   private users = new Map<string, User>();
   private orgNodes = new Map<string, OrgNode>();
   private lastLogins = new Map<string, LoginAttemptRecord>();
@@ -1058,6 +1059,32 @@ export class InMemoryAdapter implements StoragePort {
   public async listTenants(): Promise<StorageResult<TenantCompany[]>> {
     return { success: true, data: Array.from(this.tenants.values()) };
   }
+
+  public async listCompanyGroups(): Promise<StorageResult<CompanyGroup[]>> {
+    return { success: true, data: Array.from(this.companyGroups.values()) };
+  }
+
+  public async getCompanyGroup(groupId: string): Promise<StorageResult<CompanyGroup>> {
+    const g = this.companyGroups.get(groupId);
+    if (!g) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/group-not-found',
+          title: 'المجموعة غير موجودة',
+          status: 404,
+          detail: 'لا توجد مجموعة شركات بهذا المعرّف.',
+        },
+      };
+    }
+    return { success: true, data: g };
+  }
+
+  public async saveCompanyGroup(group: CompanyGroup, _idempotencyKey: string): Promise<StorageResult<CompanyGroup>> {
+    this.companyGroups.set(group.id, group);
+    return { success: true, data: group };
+  }
+
 
   public async overrideSequence(
     tenantId: string,

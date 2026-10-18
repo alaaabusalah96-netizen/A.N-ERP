@@ -51,6 +51,18 @@ export interface TenantCompany {
 
 export type CompanyProfile = TenantCompany;
 
+/** ORG-GROUP-1: multi-company group (platform-level). Members are legal tenants. */
+export interface CompanyGroup {
+  id: string;
+  code: string;
+  nameAr: string;
+  nameEn?: string;
+  status: 'ACTIVE' | 'SUSPENDED';
+  memberTenantIds: string[];
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface GeoLocation {
   city: string;
   country: string;
@@ -998,6 +1010,11 @@ export interface StoragePort {
   getTenant(tenantId: string): Promise<StorageResult<TenantCompany>>;
   saveTenant(tenant: TenantCompany, idempotencyKey: string, skipIdempotency?: boolean): Promise<StorageResult<TenantCompany>>;
   listTenants(): Promise<StorageResult<TenantCompany[]>>;
+
+  // ORG-GROUP-1: company groups (platform directory)
+  listCompanyGroups(): Promise<StorageResult<CompanyGroup[]>>;
+  getCompanyGroup(groupId: string): Promise<StorageResult<CompanyGroup>>;
+  saveCompanyGroup(group: CompanyGroup, idempotencyKey: string): Promise<StorageResult<CompanyGroup>>;
 
   // Users & RBAC
   getUser(tenantId: string, userId: string): Promise<StorageResult<User>>;

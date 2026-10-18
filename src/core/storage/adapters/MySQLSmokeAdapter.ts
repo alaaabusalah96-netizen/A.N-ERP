@@ -14,6 +14,7 @@ import {
   AccountingPeriod,
   AccountingPeriodStatus,
   TenantCompany,
+  CompanyGroup,
   User,
   Account,
   JournalEntry,
@@ -343,5 +344,16 @@ export class MySQLSmokeAdapter implements StoragePort {
 
   listUserWarehouseAccess(..._a: any[]) { return this.smokeOnlyError<any>('listUserWarehouseAccess'); }
   setUserWarehouseAccess(..._a: any[]) { return this.smokeOnlyError<any>('setUserWarehouseAccess'); }
+
+
+  public async listCompanyGroups(): Promise<StorageResult<CompanyGroup[]>> {
+    return { success: true, data: [] };
+  }
+  public async getCompanyGroup(groupId: string): Promise<StorageResult<CompanyGroup>> {
+    return { success: false, error: { type: 'https://api.an-erp.local/errors/group-not-found', title: 'المجموعة غير موجودة', status: 404, detail: 'لا توجد مجموعة.' } };
+  }
+  public async saveCompanyGroup(group: CompanyGroup, _idempotencyKey: string): Promise<StorageResult<CompanyGroup>> {
+    return { success: true, data: group };
+  }
 
 }

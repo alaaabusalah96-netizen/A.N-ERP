@@ -64,7 +64,8 @@ import { AccountingService } from './src/core/accounting/AccountingService';
 import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
 import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
 import { requirePermission, hasPermission, PermissionGroup, isPermissionGroup, ALL_PERMISSION_GROUPS, normalizeRole } from './src/core/auth/PermissionMatrix';
-import { checkRoleAssignment, checkTargetAccess, checkSelfRoleChange } from './src/core/auth/UserAdminGuards';
+import { checkRoleAssignment, checkTargetAccess, checkSelfRoleChange } from './src/core/auth/UserAdminGuards'
+import { validateNewGroupInput, assertTenantCanJoin, buildCompanyGroup } from './src/core/org/CompanyGroupService';;
 import { requestContextALS } from './src/core/context/RequestContext';
 import { parseIsoDate, parseNonNegativeMoney, validationError, validateJournalInput, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
 
@@ -2805,7 +2806,109 @@ async function startServer() {
   });
 
   // 2B: List Registered Tenants / Companies (Platform Route — Section 4.6B)
-  app.get('/api/tenants', requirePlatformAdmin, async (req: Request, res: Response) => {
+  
+  // ORG-GROUP-1: platform company groups
+  app.get('/api/groups', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const result = await storage.listCompanyGroups();
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر جلب المجموعات', detail: e?.message });
+    }
+  });
+
+  app.post('/api/groups', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const v = validateNewGroupInput(req.body || {});
+      if (!v.ok) return res.status(v.status).json({ type: v.type, title: v.title, status: v.status, detail: v.detail });
+      const existing = await storage.listCompanyGroups();
+      if (existing.success && existing.data.some((g) => g.code === v.code)) {
+        return res.status(409).json({
+          type: 'https://api.an-erp.local/errors/group-code-exists',
+          title: 'رمز المجموعة مستخدم',
+          status: 409,
+          detail: 'اختر رمزًا آخر للمجموعة.',
+        });
+      }
+      const group = buildCompanyGroup({ code: v.code!, nameAr: v.nameAr!, nameEn: v.nameEn });
+      const key = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || `grp-${group.id}-${Date.now()}`);
+      const saved = await storage.saveCompanyGroup(group, key);
+      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
+      return res.status(201).json(saved);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر إنشاء المجموعة', detail: e?.message });
+    }
+  });
+
+  app.get('/api/groups/:id', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const result = await storage.getCompanyGroup(String(req.params.id || ''));
+      if (!result.success) return res.status(result.error?.status || 404).json(result.error);
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر جلب المجموعة', detail: e?.message });
+    }
+  });
+
+  app.post('/api/groups/:id/members', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const groupId = String(req.params.id || '');
+      const tenantId = String(req.body?.tenantId || '').trim();
+      const gRes = await storage.getCompanyGroup(groupId);
+      if (!gRes.success || !gRes.data) return res.status(gRes.error?.status || 404).json(gRes.error);
+      const tRes = await storage.listTenants();
+      if (!tRes.success) return res.status(tRes.error?.status || 500).json(tRes.error);
+      const gate = assertTenantCanJoin(tenantId, tRes.data || [], gRes.data);
+      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
+      const updated = {
+        ...gRes.data,
+        memberTenantIds: [...gRes.data.memberTenantIds, tenantId],
+        updatedAt: new Date().toISOString(),
+      };
+      const key = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || `grp-mem-${groupId}-${tenantId}`);
+      const saved = await storage.saveCompanyGroup(updated, key);
+      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
+      return res.json(saved);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر إضافة العضو', detail: e?.message });
+    }
+  });
+
+  app.delete('/api/groups/:id/members/:tenantId', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const groupId = String(req.params.id || '');
+      const tenantId = String(req.params.tenantId || '');
+      const gRes = await storage.getCompanyGroup(groupId);
+      if (!gRes.success || !gRes.data) return res.status(gRes.error?.status || 404).json(gRes.error);
+      if (!gRes.data.memberTenantIds.includes(tenantId)) {
+        return res.status(404).json({
+          type: 'https://api.an-erp.local/errors/member-not-found',
+          title: 'العضو غير موجود',
+          status: 404,
+          detail: 'هذه الشركة ليست ضمن المجموعة.',
+        });
+      }
+      const updated = {
+        ...gRes.data,
+        memberTenantIds: gRes.data.memberTenantIds.filter((id) => id !== tenantId),
+        updatedAt: new Date().toISOString(),
+      };
+      const key = String(req.headers['idempotency-key'] || `grp-rm-${groupId}-${tenantId}-${Date.now()}`);
+      const saved = await storage.saveCompanyGroup(updated, key);
+      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
+      return res.json(saved);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر إزالة العضو', detail: e?.message });
+    }
+  });
+
+app.get('/api/tenants', requirePlatformAdmin, async (req: Request, res: Response) => {
     const storage = masterStorage; // Explicitly allowed: Platform tenant directory (4.6B)
     const result = await storage.listTenants();
     if (!result.success) {
