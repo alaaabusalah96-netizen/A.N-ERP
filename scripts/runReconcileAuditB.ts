@@ -74,6 +74,7 @@ const BATTERIES: { name: string; script: string; expected?: number }[] = [
   { name: 'InvItemCard', script: 'scripts/verifyInvItemCard.ts', expected: 13 },
   { name: 'InvUiTabs', script: 'scripts/verifyInvUiTabs.ts', expected: 12 },
   { name: 'InvItemCreate', script: 'scripts/verifyInvItemCreate.ts', expected: 15 },
+  { name: 'InvIntransit', script: 'scripts/verifyInvIntransit.ts', expected: 14 },
   { name: 'InvMovementsFilter', script: 'scripts/verifyInvMovementsFilter.ts', expected: isPg ? undefined : 14 },
   { name: 'Db1', script: 'scripts/verifyDb1.ts', expected: isPg ? undefined : 20 },
   { name: 'Ops1', script: 'scripts/verifyOps1.ts', expected: 28 },

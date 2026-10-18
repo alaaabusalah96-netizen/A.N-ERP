@@ -126,6 +126,8 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
   const [stocks, setStocks] = useState<WarehouseStockRow[]>([]);
   const [movements, setMovements] = useState<StockMovementRow[]>([]);
   const [transfers, setTransfers] = useState<StockTransferRow[]>([]);
+  const [transferStatusFilter, setTransferStatusFilter] = useState<'ALL' | 'REQUESTED' | 'IN_TRANSIT' | 'RECEIVED'>('ALL');
+
   const [counts, setCounts] = useState<StockCountRow[]>([]);
 
   // Filter states
@@ -191,13 +193,14 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
   const loadData = async () => {
     setIsLoading(true);
     try {
+      const cred = { credentials: 'include' as RequestCredentials };
       const [whRes, itRes, stRes, movRes, trfRes, cntRes] = await Promise.all([
-        fetch('/api/inventory/warehouses').then(r => r.json()).catch(() => ({ data: [] })),
-        fetch('/api/inventory/items').then(r => r.json()).catch(() => ({ data: [] })),
-        fetch('/api/inventory/stock').then(r => r.json()).catch(() => ({ data: [] })),
-        fetch('/api/inventory/movements').then(r => r.json()).catch(() => ({ data: [] })),
-        fetch('/api/inventory/transfers').then(r => r.json()).catch(() => ({ data: [] })),
-        fetch('/api/inventory/counts').then(r => r.json()).catch(() => ({ data: [] })),
+        fetch('/api/inventory/warehouses', cred).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch('/api/inventory/items', cred).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch('/api/inventory/stock', cred).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch('/api/inventory/movements', cred).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch('/api/inventory/transfers', cred).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch('/api/inventory/counts', cred).then(r => r.json()).catch(() => ({ data: [] })),
       ]);
 
       if (whRes.data) setWarehouses(whRes.data);
@@ -427,6 +430,7 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
       const idemKey = `trf-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
       const res = await fetch('/api/inventory/transfers', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': idemKey,
@@ -460,6 +464,7 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
       const idemKey = `disp-${transferId}-${Date.now()}`;
       const res = await fetch(`/api/inventory/transfers/${transferId}/dispatch`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': idemKey,
@@ -488,6 +493,7 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
       const idemKey = `recv-${transferId}-${Date.now()}`;
       const res = await fetch(`/api/inventory/transfers/${transferId}/receive`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': idemKey,
@@ -589,6 +595,17 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
       (item?.itemCode.includes(searchTerm) || false);
     return matchesWarehouse && matchesSearch;
   });
+
+  // INV-INTRANSIT-1: filter + open-in-transit summary for warehouse transfers
+  const transferCountByStatus = {
+    REQUESTED: transfers.filter((t) => t.status === 'REQUESTED').length,
+    IN_TRANSIT: transfers.filter((t) => t.status === 'IN_TRANSIT').length,
+    RECEIVED: transfers.filter((t) => t.status === 'RECEIVED').length,
+  };
+  const filteredTransfers =
+    transferStatusFilter === 'ALL'
+      ? transfers
+      : transfers.filter((t) => t.status === transferStatusFilter);
 
   return (
     <div className="space-y-6">
@@ -731,7 +748,7 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
           }`}
         >
           <ArrowRightLeft className="w-4 h-4" />
-          التحويلات بين المستودعات ({transfers.length})
+          التحويلات بين المستودعات ({transfers.length}{transferCountByStatus.IN_TRANSIT > 0 ? ` · ${transferCountByStatus.IN_TRANSIT} في الطريق` : ''})
         </button>
 
         <button
@@ -1127,8 +1144,40 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
         </div>
       )}
 
-      {/* Tab Content: Transfers */}
+      {/* Tab Content: Transfers (INV-INTRANSIT-1) */}
       {activeTab === 'transfers' && (
+        <div className="space-y-3">
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs text-slate-600">
+              <span className="font-bold text-slate-900">الشحنات في الطريق: </span>
+              <span className="font-mono font-bold text-blue-700">{transferCountByStatus.IN_TRANSIT}</span>
+              <span className="mx-2 text-slate-300">|</span>
+              بانتظار الإرسال: <span className="font-mono">{transferCountByStatus.REQUESTED}</span>
+              <span className="mx-2 text-slate-300">|</span>
+              مكتمل: <span className="font-mono">{transferCountByStatus.RECEIVED}</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {([
+                ['ALL', 'الكل'],
+                ['REQUESTED', 'بانتظار الإرسال'],
+                ['IN_TRANSIT', 'في الطريق'],
+                ['RECEIVED', 'مكتمل'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setTransferStatusFilter(key)}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                    transferStatusFilter === key
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
           <div className="overflow-x-auto">
             <table className="w-full text-right text-xs">
@@ -1145,14 +1194,16 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {transfers.length === 0 ? (
+                {filteredTransfers.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="text-center py-8 text-slate-400">
-                      لا توجد طلبات تحويل بين المستودعات.
+                      {transfers.length === 0
+                        ? 'لا توجد طلبات تحويل بين المستودعات.'
+                        : 'لا توجد تحويلات تطابق عامل التصفية (جرّب «الكل» أو «في الطريق»).'}
                     </td>
                   </tr>
                 ) : (
-                  transfers.map((trf) => (
+                  filteredTransfers.map((trf) => (
                     <tr key={trf.id} className="hover:bg-slate-50 transition-colors">
                       <td className="py-3 px-4 font-mono font-bold text-slate-900">{trf.transferNumber}</td>
                       <td className="py-3 px-4 text-slate-700">{trf.sourceWarehouseNameAr}</td>
@@ -1200,6 +1251,7 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
               </tbody>
             </table>
           </div>
+        </div>
         </div>
       )}
 
