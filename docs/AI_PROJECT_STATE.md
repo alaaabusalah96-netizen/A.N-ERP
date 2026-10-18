@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-18 — MASTER-ITEM-GROUP-1: group master items + publish StockItem shells to member tenants
+**Last update**: 2026-10-18 — STK-XCOMPANY-1: cross-company transfers within group with issue/receive lifecycle
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-18)
 
 ## Gates
@@ -55,6 +55,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **ORG-GROUP-1** — DONE — Platform CompanyGroup model + CRUD/membership APIs; pure validation helpers _(evidence: docs/ORG_GROUP_1.md; scripts/verifyOrgGroup1.ts; src/core/org/CompanyGroupService.ts)_
 - **ORG-GROUP-1b** — DONE — Fix invalid import comma for CompanyGroup in InMemoryAdapter _(evidence: src/core/storage/adapters/InMemoryAdapter.ts)_
 - **MASTER-ITEM-GROUP-1** — DONE — GroupMasterItem model + platform APIs + publish zero-qty StockItem to group members _(evidence: docs/MASTER_ITEM_GROUP_1.md; scripts/verifyMasterItemGroup1.ts)_
+- **STK-XCOMPANY-1** — DONE — CrossCompanyTransfer model + platform create/dispatch/receive using per-tenant issue/receive _(evidence: docs/STK_XCOMPANY_1.md; scripts/verifyStkXcompany1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

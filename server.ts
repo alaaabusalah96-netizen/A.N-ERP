@@ -67,6 +67,7 @@ import { requirePermission, hasPermission, PermissionGroup, isPermissionGroup, A
 import { checkRoleAssignment, checkTargetAccess, checkSelfRoleChange } from './src/core/auth/UserAdminGuards';
 import { validateNewGroupInput, assertTenantCanJoin, buildCompanyGroup } from './src/core/org/CompanyGroupService';
 import { validateGroupMasterItemInput, assertUniqueItemCodeInGroup, buildGroupMasterItem, stockItemShellFromGroupMaster } from './src/core/org/GroupMasterItemService';
+import { validateCrossCompanyCreate, buildCrossCompanyTransfer, assertCanDispatch, assertCanReceive } from './src/core/org/CrossCompanyTransferService';
 import { defaultStockAccountingConfig } from './src/core/storage/StoragePort';
 import { requestContextALS } from './src/core/context/RequestContext';
 import { parseIsoDate, parseNonNegativeMoney, validationError, validateJournalInput, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
@@ -2989,6 +2990,172 @@ async function startServer() {
       return res.json({ success: true, data: { itemId: gmi.id, itemCode: gmi.itemCode, published, skipped } });
     } catch (e: any) {
       return res.status(500).json({ status: 500, title: 'تعذر نشر الصنف للأعضاء', detail: e?.message });
+    }
+  });
+
+
+  // STK-XCOMPANY-1: inter-company stock transfers (same group; books stay separate)
+  app.get('/api/xcompany/transfers', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const result = await storage.listCrossCompanyTransfers({
+        groupId: req.query.groupId as string | undefined,
+        status: req.query.status as string | undefined,
+      });
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر جلب التحويلات', detail: e?.message });
+    }
+  });
+
+  app.post('/api/xcompany/transfers', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const body = req.body || {};
+      const groupId = String(body.groupId || '').trim();
+      const g = await storage.getCompanyGroup(groupId);
+      const gate = validateCrossCompanyCreate({
+        group: g.success ? g.data : null,
+        sourceTenantId: body.sourceTenantId,
+        targetTenantId: body.targetTenantId,
+        sourceWarehouseId: body.sourceWarehouseId,
+        targetWarehouseId: body.targetWarehouseId,
+        itemCode: body.itemCode,
+        quantity: body.quantity,
+      });
+      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
+      const tr = buildCrossCompanyTransfer({
+        groupId,
+        sourceTenantId: String(body.sourceTenantId).trim(),
+        targetTenantId: String(body.targetTenantId).trim(),
+        sourceWarehouseId: String(body.sourceWarehouseId).trim(),
+        targetWarehouseId: String(body.targetWarehouseId).trim(),
+        itemCode: String(body.itemCode).trim(),
+        quantity: Number(body.quantity),
+        unitCost: body.unitCost != null ? Number(body.unitCost) : 0,
+        notes: body.notes,
+      });
+      const key = String(req.headers['idempotency-key'] || body.idempotencyKey || `xct-${tr.id}`);
+      const saved = await storage.saveCrossCompanyTransfer(tr, key);
+      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
+      return res.status(201).json(saved);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر إنشاء التحويل', detail: e?.message });
+    }
+  });
+
+  app.post('/api/xcompany/transfers/:id/dispatch', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const id = String(req.params.id || '');
+      const trRes = await storage.getCrossCompanyTransfer(id);
+      if (!trRes.success || !trRes.data) return res.status(trRes.error?.status || 404).json(trRes.error);
+      const tr = trRes.data;
+      const gate = assertCanDispatch(tr);
+      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
+      const items = await storage.listStockItems(tr.sourceTenantId);
+      if (!items.success) return res.status(items.error?.status || 500).json(items.error);
+      const srcItem = (items.data || []).find((it) => it.itemCode === tr.itemCode);
+      if (!srcItem) {
+        return res.status(404).json({ type: 'https://api.an-erp.local/errors/item-missing-source', title: 'الصنف غير موجود عند المصدر', status: 404, detail: 'انشر صنف المجموعة أو أنشئ البطاقة في شركة المصدر.' });
+      }
+      const pe = new PostingEngine(storage);
+      const ne = new NumberingEngine(storage);
+      const inv = new InventoryService(storage, pe, ne);
+      const actor = (req as any).authContext || {};
+      const idem = String(req.headers['idempotency-key'] || `xct-disp-${tr.id}`);
+      const issue = await inv.issueStock(tr.sourceTenantId, {
+        warehouseId: tr.sourceWarehouseId,
+        itemId: srcItem.id,
+        quantity: tr.quantity,
+        notes: `XCOMPANY ${tr.id}`,
+        performedBy: actor.userId || 'platform',
+        performedByName: actor.username || 'platform',
+        idempotencyKey: idem,
+        sourceDocumentType: 'XCOMPANY_TRANSFER',
+        sourceDocumentId: tr.id,
+        header: {
+          warehouseId: tr.sourceWarehouseId,
+          notes: `XCOMPANY ${tr.id}`,
+          performedBy: actor.userId || 'platform',
+          performedByName: actor.username || 'platform',
+          idempotencyKey: idem,
+          sourceDocumentType: 'XCOMPANY_TRANSFER',
+          sourceDocumentId: tr.id,
+        },
+      });
+      if (!issue.success) return res.status(issue.error?.status || 400).json(issue.error);
+      const updated = {
+        ...tr,
+        status: 'IN_TRANSIT' as const,
+        dispatchedAt: new Date().toISOString(),
+        itemIdSource: srcItem.id,
+        sourceIssueDocumentId: issue.data?.id,
+        unitCost: tr.unitCost || srcItem.averageCost || 0,
+      };
+      const saved = await storage.saveCrossCompanyTransfer(updated, `${idem}-save`);
+      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
+      return res.json(saved);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر إرسال التحويل', detail: e?.message });
+    }
+  });
+
+  app.post('/api/xcompany/transfers/:id/receive', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const id = String(req.params.id || '');
+      const trRes = await storage.getCrossCompanyTransfer(id);
+      if (!trRes.success || !trRes.data) return res.status(trRes.error?.status || 404).json(trRes.error);
+      const tr = trRes.data;
+      const gate = assertCanReceive(tr);
+      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
+      const items = await storage.listStockItems(tr.targetTenantId);
+      if (!items.success) return res.status(items.error?.status || 500).json(items.error);
+      let tgtItem = (items.data || []).find((it) => it.itemCode === tr.itemCode);
+      if (!tgtItem) {
+        return res.status(404).json({ type: 'https://api.an-erp.local/errors/item-missing-target', title: 'الصنف غير موجود عند الوجهة', status: 404, detail: 'انشر صنف المجموعة إلى شركة الوجهة أولًا.' });
+      }
+      const pe = new PostingEngine(storage);
+      const ne = new NumberingEngine(storage);
+      const inv = new InventoryService(storage, pe, ne);
+      const actor = (req as any).authContext || {};
+      const idem = String(req.headers['idempotency-key'] || `xct-recv-${tr.id}`);
+      const recv = await inv.receiveStock(tr.targetTenantId, {
+        warehouseId: tr.targetWarehouseId,
+        itemId: tgtItem.id,
+        quantity: tr.quantity,
+        unitCost: tr.unitCost || tgtItem.averageCost || 0,
+        notes: `XCOMPANY ${tr.id}`,
+        performedBy: actor.userId || 'platform',
+        performedByName: actor.username || 'platform',
+        idempotencyKey: idem,
+        sourceDocumentType: 'XCOMPANY_TRANSFER',
+        sourceDocumentId: tr.id,
+        header: {
+          warehouseId: tr.targetWarehouseId,
+          notes: `XCOMPANY ${tr.id}`,
+          performedBy: actor.userId || 'platform',
+          performedByName: actor.username || 'platform',
+          idempotencyKey: idem,
+          sourceDocumentType: 'XCOMPANY_TRANSFER',
+          sourceDocumentId: tr.id,
+        },
+      });
+      if (!recv.success) return res.status(recv.error?.status || 400).json(recv.error);
+      const updated = {
+        ...tr,
+        status: 'RECEIVED' as const,
+        receivedAt: new Date().toISOString(),
+        itemIdTarget: tgtItem.id,
+        targetReceiveDocumentId: recv.data?.id,
+      };
+      const saved = await storage.saveCrossCompanyTransfer(updated, `${idem}-save`);
+      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
+      return res.json(saved);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر استلام التحويل', detail: e?.message });
     }
   });
 

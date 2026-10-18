@@ -78,6 +78,7 @@ import {
   ItemPrice,
   CompanyGroup,
   GroupMasterItem,
+  CrossCompanyTransfer,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 import { SEED_TENANT_ID } from '../../seed/seedOnly';
@@ -88,6 +89,7 @@ export class InMemoryAdapter implements StoragePort {
   private tenants = new Map<string, TenantCompany>();
   private companyGroups = new Map<string, CompanyGroup>();
   private groupMasterItems = new Map<string, GroupMasterItem>();
+  private crossCompanyTransfers = new Map<string, CrossCompanyTransfer>();
   private users = new Map<string, User>();
   private orgNodes = new Map<string, OrgNode>();
   private lastLogins = new Map<string, LoginAttemptRecord>();
@@ -1114,6 +1116,24 @@ export class InMemoryAdapter implements StoragePort {
   public async saveGroupMasterItem(item: GroupMasterItem, _idempotencyKey: string): Promise<StorageResult<GroupMasterItem>> {
     this.groupMasterItems.set(`${item.groupId}:${item.id}`, { ...item });
     return { success: true, data: item };
+  }
+
+  public async listCrossCompanyTransfers(filter?: { groupId?: string; status?: string }): Promise<StorageResult<CrossCompanyTransfer[]>> {
+    let list = Array.from(this.crossCompanyTransfers.values());
+    if (filter?.groupId) list = list.filter((t) => t.groupId === filter.groupId);
+    if (filter?.status) list = list.filter((t) => t.status === filter.status);
+    return { success: true, data: list };
+  }
+  public async getCrossCompanyTransfer(id: string): Promise<StorageResult<CrossCompanyTransfer>> {
+    const t = this.crossCompanyTransfers.get(id);
+    if (!t) {
+      return { success: false, error: { type: 'https://api.an-erp.local/errors/xcompany-not-found', title: 'التحويل غير موجود', status: 404, detail: 'لا يوجد تحويل بين شركات بهذا المعرّف.' } };
+    }
+    return { success: true, data: t };
+  }
+  public async saveCrossCompanyTransfer(tr: CrossCompanyTransfer, _idempotencyKey: string): Promise<StorageResult<CrossCompanyTransfer>> {
+    this.crossCompanyTransfers.set(tr.id, { ...tr });
+    return { success: true, data: tr };
   }
 
   public async overrideSequence(

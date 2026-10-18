@@ -77,6 +77,28 @@ export interface GroupMasterItem {
   updatedAt?: string;
 }
 
+/** STK-XCOMPANY-1: stock transfer between two legal companies in the same group. */
+export interface CrossCompanyTransfer {
+  id: string;
+  groupId: string;
+  sourceTenantId: string;
+  targetTenantId: string;
+  sourceWarehouseId: string;
+  targetWarehouseId: string;
+  itemCode: string;
+  itemIdSource?: string;
+  itemIdTarget?: string;
+  quantity: number;
+  unitCost: number;
+  status: 'REQUESTED' | 'IN_TRANSIT' | 'RECEIVED' | 'CANCELLED';
+  notes?: string;
+  createdAt: string;
+  dispatchedAt?: string;
+  receivedAt?: string;
+  sourceIssueDocumentId?: string;
+  targetReceiveDocumentId?: string;
+}
+
 export interface GeoLocation {
   city: string;
   country: string;
@@ -1032,6 +1054,9 @@ export interface StoragePort {
   listGroupMasterItems(groupId: string): Promise<StorageResult<GroupMasterItem[]>>;
   getGroupMasterItem(groupId: string, itemId: string): Promise<StorageResult<GroupMasterItem>>;
   saveGroupMasterItem(item: GroupMasterItem, idempotencyKey: string): Promise<StorageResult<GroupMasterItem>>;
+  listCrossCompanyTransfers(filter?: { groupId?: string; status?: string }): Promise<StorageResult<CrossCompanyTransfer[]>>;
+  getCrossCompanyTransfer(id: string): Promise<StorageResult<CrossCompanyTransfer>>;
+  saveCrossCompanyTransfer(tr: CrossCompanyTransfer, idempotencyKey: string): Promise<StorageResult<CrossCompanyTransfer>>;
 
   // Users & RBAC
   getUser(tenantId: string, userId: string): Promise<StorageResult<User>>;

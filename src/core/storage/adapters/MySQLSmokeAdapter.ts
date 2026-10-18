@@ -16,6 +16,7 @@ import {
   TenantCompany,
   CompanyGroup,
   GroupMasterItem,
+  CrossCompanyTransfer,
   User,
   Account,
   JournalEntry,
@@ -367,5 +368,12 @@ export class MySQLSmokeAdapter implements StoragePort {
   public async saveGroupMasterItem(item: GroupMasterItem, _idempotencyKey: string): Promise<StorageResult<GroupMasterItem>> {
     return { success: true, data: item };
   }
+
+
+  public async listCrossCompanyTransfers(): Promise<StorageResult<CrossCompanyTransfer[]>> { return { success: true, data: [] }; }
+  public async getCrossCompanyTransfer(id: string): Promise<StorageResult<CrossCompanyTransfer>> {
+    return { success: false, error: { type: 'https://api.an-erp.local/errors/xcompany-not-found', title: 'التحويل غير موجود', status: 404, detail: 'غير متاح.' } };
+  }
+  public async saveCrossCompanyTransfer(tr: CrossCompanyTransfer, _k: string): Promise<StorageResult<CrossCompanyTransfer>> { return { success: true, data: tr }; }
 
 }

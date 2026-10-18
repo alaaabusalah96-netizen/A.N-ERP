@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-18** — MASTER-ITEM-GROUP-1: group master items + publish StockItem shells to member tenants
+Last update: **2026-10-18** — STK-XCOMPANY-1: cross-company transfers within group with issue/receive lifecycle
 
 ## Verdict
 | Field | Value |

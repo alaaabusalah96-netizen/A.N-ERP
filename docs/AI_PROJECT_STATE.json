@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-18",
-  "lastChange": "MASTER-ITEM-GROUP-1: group master items + publish StockItem shells to member tenants",
+  "lastChange": "STK-XCOMPANY-1: cross-company transfers within group with issue/receive lifecycle",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -293,6 +293,12 @@
       "status": "DONE",
       "scope": "GroupMasterItem model + platform APIs + publish zero-qty StockItem to group members",
       "evidence": "docs/MASTER_ITEM_GROUP_1.md; scripts/verifyMasterItemGroup1.ts"
+    },
+    {
+      "id": "STK-XCOMPANY-1",
+      "status": "DONE",
+      "scope": "CrossCompanyTransfer model + platform create/dispatch/receive using per-tenant issue/receive",
+      "evidence": "docs/STK_XCOMPANY_1.md; scripts/verifyStkXcompany1.ts"
     }
   ],
   "defects": [
