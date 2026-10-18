@@ -69,6 +69,7 @@ import { validateNewGroupInput, assertTenantCanJoin, buildCompanyGroup } from '.
 import { validateGroupMasterItemInput, assertUniqueItemCodeInGroup, buildGroupMasterItem, stockItemShellFromGroupMaster } from './src/core/org/GroupMasterItemService';
 import { validateCrossCompanyCreate, buildCrossCompanyTransfer, assertCanDispatch, assertCanReceive } from './src/core/org/CrossCompanyTransferService';
 import { assertCanCloseEntity, assertCanReopenEntity, assertEntityOpenForStockMove, buildClosedState, buildReopenedState } from './src/core/accounting/EntityCloseService';
+import { aggregateGroupKpis, sumStockValue } from './src/core/org/GroupReportService';
 import { defaultStockAccountingConfig } from './src/core/storage/StoragePort';
 import { requestContextALS } from './src/core/context/RequestContext';
 import { parseIsoDate, parseNonNegativeMoney, validationError, validateJournalInput, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
@@ -2914,7 +2915,56 @@ async function startServer() {
 
 
   // MASTER-ITEM-GROUP-1: group-level item masters
-  app.get('/api/groups/:id/items', requirePlatformAdmin, async (req: Request, res: Response) => {
+  
+  // RPT-GROUP-1: read-only group KPI summary (platform)
+  app.get('/api/groups/:id/report/summary', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const groupId = String(req.params.id || '');
+      const g = await storage.getCompanyGroup(groupId);
+      if (!g.success || !g.data) return res.status(g.error?.status || 404).json(g.error);
+      const group = g.data;
+      const xct = await storage.listCrossCompanyTransfers({ groupId });
+      const xctList = xct.success ? xct.data || [] : [];
+      const members: any[] = [];
+      for (const tenantId of group.memberTenantIds) {
+        const tRes = await storage.getTenant(tenantId);
+        const items = await storage.listStockItems(tenantId);
+        const wh = await storage.listWarehouses(tenantId);
+        let stockRows: any[] = [];
+        try {
+          const st = await storage.listWarehouseStock(tenantId);
+          if (st.success && st.data) stockRows = st.data as any[];
+        } catch {
+          stockRows = [];
+        }
+        const books = await storage.getEntityBooksState(tenantId);
+        const openOut = xctList.filter((t) => t.sourceTenantId === tenantId && (t.status === 'REQUESTED' || t.status === 'IN_TRANSIT')).length;
+        const openIn = xctList.filter((t) => t.targetTenantId === tenantId && (t.status === 'REQUESTED' || t.status === 'IN_TRANSIT')).length;
+        members.push({
+          tenantId,
+          tenantNameAr: tRes.success ? tRes.data?.nameAr : undefined,
+          itemCount: items.success ? (items.data || []).length : 0,
+          warehouseCount: wh.success ? (wh.data || []).length : 0,
+          stockValue: sumStockValue(stockRows),
+          openXcompanyOut: openOut,
+          openXcompanyIn: openIn,
+          entityBooksStatus: books.success && books.data ? books.data.status : 'UNKNOWN',
+        });
+      }
+      const summary = aggregateGroupKpis({
+        groupId: group.id,
+        groupCode: group.code,
+        groupNameAr: group.nameAr,
+        members,
+      });
+      return res.json({ success: true, data: summary });
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر بناء تقرير المجموعة', detail: e?.message });
+    }
+  });
+
+app.get('/api/groups/:id/items', requirePlatformAdmin, async (req: Request, res: Response) => {
     try {
       const storage = masterStorage;
       const groupId = String(req.params.id || '');
