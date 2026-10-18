@@ -77,6 +77,18 @@ export interface GroupMasterItem {
   updatedAt?: string;
 }
 
+/** ACC-ENTITY-CLOSE-1: legal entity (tenant) books open/closed beyond single period flags. */
+export interface EntityBooksState {
+  tenantId: string;
+  status: 'OPEN' | 'CLOSED';
+  closedPeriodCode?: string;
+  closedPeriodId?: string;
+  closedAt?: string;
+  closedBy?: string;
+  reopenReason?: string;
+  updatedAt: string;
+}
+
 /** STK-XCOMPANY-1: stock transfer between two legal companies in the same group. */
 export interface CrossCompanyTransfer {
   id: string;
@@ -1057,6 +1069,8 @@ export interface StoragePort {
   listCrossCompanyTransfers(filter?: { groupId?: string; status?: string }): Promise<StorageResult<CrossCompanyTransfer[]>>;
   getCrossCompanyTransfer(id: string): Promise<StorageResult<CrossCompanyTransfer>>;
   saveCrossCompanyTransfer(tr: CrossCompanyTransfer, idempotencyKey: string): Promise<StorageResult<CrossCompanyTransfer>>;
+  getEntityBooksState(tenantId: string): Promise<StorageResult<EntityBooksState>>;
+  saveEntityBooksState(state: EntityBooksState, idempotencyKey: string): Promise<StorageResult<EntityBooksState>>;
 
   // Users & RBAC
   getUser(tenantId: string, userId: string): Promise<StorageResult<User>>;

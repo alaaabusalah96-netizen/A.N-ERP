@@ -18,6 +18,7 @@ import {
   CompanyGroup,
   GroupMasterItem,
   CrossCompanyTransfer,
+  EntityBooksState,
   User,
   Account,
   JournalEntry,
@@ -353,5 +354,13 @@ export class MongoDBSmokeAdapter implements StoragePort {
     return { success: false, error: { type: 'https://api.an-erp.local/errors/xcompany-not-found', title: 'التحويل غير موجود', status: 404, detail: 'غير متاح.' } };
   }
   public async saveCrossCompanyTransfer(tr: CrossCompanyTransfer, _k: string): Promise<StorageResult<CrossCompanyTransfer>> { return { success: true, data: tr }; }
+
+
+  public async getEntityBooksState(tenantId: string): Promise<StorageResult<EntityBooksState>> {
+    return { success: true, data: { tenantId, status: 'OPEN', updatedAt: new Date().toISOString() } };
+  }
+  public async saveEntityBooksState(state: EntityBooksState, _k: string): Promise<StorageResult<EntityBooksState>> {
+    return { success: true, data: state };
+  }
 
 }

@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-18",
-  "lastChange": "STK-XCOMPANY-1: cross-company transfers within group with issue/receive lifecycle",
+  "lastChange": "ACC-ENTITY-CLOSE-1: entity books close/reopen + block xcompany when closed",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -299,6 +299,12 @@
       "status": "DONE",
       "scope": "CrossCompanyTransfer model + platform create/dispatch/receive using per-tenant issue/receive",
       "evidence": "docs/STK_XCOMPANY_1.md; scripts/verifyStkXcompany1.ts"
+    },
+    {
+      "id": "ACC-ENTITY-CLOSE-1",
+      "status": "DONE",
+      "scope": "EntityBooksState + close/reopen APIs; xcompany dispatch/receive gated",
+      "evidence": "docs/ACC_ENTITY_CLOSE_1.md; scripts/verifyAccEntityClose1.ts"
     }
   ],
   "defects": [

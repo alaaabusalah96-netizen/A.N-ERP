@@ -79,6 +79,7 @@ import {
   CompanyGroup,
   GroupMasterItem,
   CrossCompanyTransfer,
+  EntityBooksState,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 import { SEED_TENANT_ID } from '../../seed/seedOnly';
@@ -90,6 +91,7 @@ export class InMemoryAdapter implements StoragePort {
   private companyGroups = new Map<string, CompanyGroup>();
   private groupMasterItems = new Map<string, GroupMasterItem>();
   private crossCompanyTransfers = new Map<string, CrossCompanyTransfer>();
+  private entityBooksStates = new Map<string, EntityBooksState>();
   private users = new Map<string, User>();
   private orgNodes = new Map<string, OrgNode>();
   private lastLogins = new Map<string, LoginAttemptRecord>();
@@ -1134,6 +1136,17 @@ export class InMemoryAdapter implements StoragePort {
   public async saveCrossCompanyTransfer(tr: CrossCompanyTransfer, _idempotencyKey: string): Promise<StorageResult<CrossCompanyTransfer>> {
     this.crossCompanyTransfers.set(tr.id, { ...tr });
     return { success: true, data: tr };
+  }
+
+  public async getEntityBooksState(tenantId: string): Promise<StorageResult<EntityBooksState>> {
+    const existing = this.entityBooksStates.get(tenantId);
+    if (existing) return { success: true, data: existing };
+    const open: EntityBooksState = { tenantId, status: 'OPEN', updatedAt: new Date().toISOString() };
+    return { success: true, data: open };
+  }
+  public async saveEntityBooksState(state: EntityBooksState, _k: string): Promise<StorageResult<EntityBooksState>> {
+    this.entityBooksStates.set(state.tenantId, { ...state });
+    return { success: true, data: state };
   }
 
   public async overrideSequence(

@@ -68,6 +68,7 @@ import { checkRoleAssignment, checkTargetAccess, checkSelfRoleChange } from './s
 import { validateNewGroupInput, assertTenantCanJoin, buildCompanyGroup } from './src/core/org/CompanyGroupService';
 import { validateGroupMasterItemInput, assertUniqueItemCodeInGroup, buildGroupMasterItem, stockItemShellFromGroupMaster } from './src/core/org/GroupMasterItemService';
 import { validateCrossCompanyCreate, buildCrossCompanyTransfer, assertCanDispatch, assertCanReceive } from './src/core/org/CrossCompanyTransferService';
+import { assertCanCloseEntity, assertCanReopenEntity, assertEntityOpenForStockMove, buildClosedState, buildReopenedState } from './src/core/accounting/EntityCloseService';
 import { defaultStockAccountingConfig } from './src/core/storage/StoragePort';
 import { requestContextALS } from './src/core/context/RequestContext';
 import { parseIsoDate, parseNonNegativeMoney, validationError, validateJournalInput, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
@@ -3054,6 +3055,12 @@ async function startServer() {
       const tr = trRes.data;
       const gate = assertCanDispatch(tr);
       if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
+      const srcBooks = await storage.getEntityBooksState(tr.sourceTenantId);
+      const srcGate = assertEntityOpenForStockMove(srcBooks.success ? srcBooks.data : null, 'source');
+      if (!srcGate.ok) return res.status(srcGate.status).json({ type: srcGate.type, title: srcGate.title, status: srcGate.status, detail: srcGate.detail });
+      const tgtBooksD = await storage.getEntityBooksState(tr.targetTenantId);
+      const tgtGateD = assertEntityOpenForStockMove(tgtBooksD.success ? tgtBooksD.data : null, 'target');
+      if (!tgtGateD.ok) return res.status(tgtGateD.status).json({ type: tgtGateD.type, title: tgtGateD.title, status: tgtGateD.status, detail: tgtGateD.detail });
       const items = await storage.listStockItems(tr.sourceTenantId);
       if (!items.success) return res.status(items.error?.status || 500).json(items.error);
       const srcItem = (items.data || []).find((it) => it.itemCode === tr.itemCode);
@@ -3111,6 +3118,12 @@ async function startServer() {
       const tr = trRes.data;
       const gate = assertCanReceive(tr);
       if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
+      const srcBooksR = await storage.getEntityBooksState(tr.sourceTenantId);
+      const srcGateR = assertEntityOpenForStockMove(srcBooksR.success ? srcBooksR.data : null, 'source');
+      if (!srcGateR.ok) return res.status(srcGateR.status).json({ type: srcGateR.type, title: srcGateR.title, status: srcGateR.status, detail: srcGateR.detail });
+      const tgtBooks = await storage.getEntityBooksState(tr.targetTenantId);
+      const tgtGate = assertEntityOpenForStockMove(tgtBooks.success ? tgtBooks.data : null, 'target');
+      if (!tgtGate.ok) return res.status(tgtGate.status).json({ type: tgtGate.type, title: tgtGate.title, status: tgtGate.status, detail: tgtGate.detail });
       const items = await storage.listStockItems(tr.targetTenantId);
       if (!items.success) return res.status(items.error?.status || 500).json(items.error);
       let tgtItem = (items.data || []).find((it) => it.itemCode === tr.itemCode);
@@ -3636,7 +3649,65 @@ app.get('/api/tenants', requirePlatformAdmin, async (req: Request, res: Response
     }
   });
 
-  app.post('/api/accounting/periods/reopen', requireAuth, requirePermission('PERIOD_CLOSE'), async (req: Request, res: Response) => {
+  
+  // ACC-ENTITY-CLOSE-1: legal entity books close (after period close)
+  app.get('/api/accounting/entity-close-status', requireAuth, requirePermission('PERIOD_CLOSE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const result = await storage.getEntityBooksState(tenantId);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر جلب حالة إقفال الكيان', detail: e?.message });
+    }
+  });
+
+  app.post('/api/accounting/entity-close', requireAuth, requirePermission('PERIOD_CLOSE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const userId = (req as any).authContext.userId || 'user';
+      const periodId = String(req.body?.periodId || '').trim();
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const current = await storage.getEntityBooksState(tenantId);
+      const svc = getAccountingService(req, res);
+      if (!svc) return;
+      const periods = await svc.listFiscalPeriods(tenantId);
+      const period = periods.find((p: any) => p.id === periodId || p.code === periodId);
+      const gate = assertCanCloseEntity({ current: current.success ? current.data : null, period: period || null });
+      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
+      const state = buildClosedState(tenantId, period, userId);
+      const key = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || `entity-close-${tenantId}-${periodId}`);
+      const saved = await storage.saveEntityBooksState(state, key);
+      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
+      return res.json(saved);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر إقفال الكيان', detail: e?.message });
+    }
+  });
+
+  app.post('/api/accounting/entity-reopen', requireAuth, requirePermission('PERIOD_CLOSE'), async (req: Request, res: Response) => {
+    try {
+      const tenantId = (req as any).authContext.tenantId;
+      const reason = String(req.body?.reason || '');
+      const storage = getRequestStorage(req, res);
+      if (!storage) return;
+      const current = await storage.getEntityBooksState(tenantId);
+      const gate = assertCanReopenEntity({ current: current.success ? current.data : null, reason });
+      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
+      const state = buildReopenedState(tenantId, reason);
+      const key = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || `entity-reopen-${tenantId}-${Date.now()}`);
+      const saved = await storage.saveEntityBooksState(state, key);
+      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
+      return res.json(saved);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر إعادة فتح الكيان', detail: e?.message });
+    }
+  });
+
+app.post('/api/accounting/periods/reopen', requireAuth, requirePermission('PERIOD_CLOSE'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
       const userId = (req as any).authContext.userId;
