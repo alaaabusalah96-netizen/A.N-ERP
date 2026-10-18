@@ -66,6 +66,8 @@ import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
 import { requirePermission, hasPermission, PermissionGroup, isPermissionGroup, ALL_PERMISSION_GROUPS, normalizeRole } from './src/core/auth/PermissionMatrix';
 import { checkRoleAssignment, checkTargetAccess, checkSelfRoleChange } from './src/core/auth/UserAdminGuards';
 import { validateNewGroupInput, assertTenantCanJoin, buildCompanyGroup } from './src/core/org/CompanyGroupService';
+import { validateGroupMasterItemInput, assertUniqueItemCodeInGroup, buildGroupMasterItem, stockItemShellFromGroupMaster } from './src/core/org/GroupMasterItemService';
+import { defaultStockAccountingConfig } from './src/core/storage/StoragePort';
 import { requestContextALS } from './src/core/context/RequestContext';
 import { parseIsoDate, parseNonNegativeMoney, validationError, validateJournalInput, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
 
@@ -2905,6 +2907,88 @@ async function startServer() {
       return res.json(saved);
     } catch (e: any) {
       return res.status(500).json({ status: 500, title: 'تعذر إزالة العضو', detail: e?.message });
+    }
+  });
+
+
+  // MASTER-ITEM-GROUP-1: group-level item masters
+  app.get('/api/groups/:id/items', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const groupId = String(req.params.id || '');
+      const g = await storage.getCompanyGroup(groupId);
+      if (!g.success) return res.status(g.error?.status || 404).json(g.error);
+      const result = await storage.listGroupMasterItems(groupId);
+      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر جلب أصناف المجموعة', detail: e?.message });
+    }
+  });
+
+  app.post('/api/groups/:id/items', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const groupId = String(req.params.id || '');
+      const g = await storage.getCompanyGroup(groupId);
+      if (!g.success || !g.data) return res.status(g.error?.status || 404).json(g.error);
+      const v = validateGroupMasterItemInput(req.body || {});
+      if (!v.ok) return res.status(v.status).json({ type: v.type, title: v.title, status: v.status, detail: v.detail });
+      const existing = await storage.listGroupMasterItems(groupId);
+      if (!existing.success) return res.status(existing.error?.status || 500).json(existing.error);
+      const uniq = assertUniqueItemCodeInGroup(v.itemCode!, existing.data || []);
+      if (!uniq.ok) return res.status(uniq.status).json({ type: uniq.type, title: uniq.title, status: uniq.status, detail: uniq.detail });
+      const item = buildGroupMasterItem({
+        groupId,
+        itemCode: v.itemCode!,
+        nameAr: v.nameAr!,
+        nameEn: v.nameEn,
+        category: v.category!,
+        uom: v.uom!,
+      });
+      const key = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || `gmi-${item.id}`);
+      const saved = await storage.saveGroupMasterItem(item, key);
+      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
+      return res.status(201).json(saved);
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر إنشاء صنف المجموعة', detail: e?.message });
+    }
+  });
+
+  app.post('/api/groups/:id/items/:itemId/publish', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const groupId = String(req.params.id || '');
+      const itemId = String(req.params.itemId || '');
+      const g = await storage.getCompanyGroup(groupId);
+      if (!g.success || !g.data) return res.status(g.error?.status || 404).json(g.error);
+      const itemRes = await storage.getGroupMasterItem(groupId, itemId);
+      if (!itemRes.success || !itemRes.data) return res.status(itemRes.error?.status || 404).json(itemRes.error);
+      const gmi = itemRes.data;
+      const published: string[] = [];
+      const skipped: string[] = [];
+      for (const tenantId of g.data.memberTenantIds) {
+        const list = await storage.listStockItems(tenantId);
+        const has = !!(list.success && list.data && list.data.some((it) => it.itemCode === gmi.itemCode));
+        if (has) {
+          skipped.push(tenantId);
+          continue;
+        }
+        const cfg = defaultStockAccountingConfig(tenantId);
+        const shell = stockItemShellFromGroupMaster(tenantId, gmi, {
+          inventoryAccountCode: cfg.defaultInventoryAccountCode,
+          cogsAccountCode: cfg.defaultCogsAccountCode,
+          adjustmentExpenseAccountCode: cfg.adjustmentExpenseAccountCode,
+          adjustmentGainAccountCode: cfg.adjustmentGainAccountCode,
+        });
+        const key = String(req.headers['idempotency-key'] || `pub-${groupId}-${gmi.itemCode}-${tenantId}`);
+        const saved = await storage.saveStockItem(tenantId, shell, key);
+        if (saved.success) published.push(tenantId);
+        else skipped.push(tenantId);
+      }
+      return res.json({ success: true, data: { itemId: gmi.id, itemCode: gmi.itemCode, published, skipped } });
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر نشر الصنف للأعضاء', detail: e?.message });
     }
   });
 

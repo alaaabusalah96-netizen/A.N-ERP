@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-18 — ORG-GROUP-1b: fix InMemoryAdapter CompanyGroup import syntax
+**Last update**: 2026-10-18 — MASTER-ITEM-GROUP-1: group master items + publish StockItem shells to member tenants
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-18)
 
 ## Gates
@@ -54,6 +54,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **INV-INTRANSIT-1b** — DONE — Fix verifyInvIntransit S12 regex window (200→500) to match server.ts layout _(evidence: scripts/verifyInvIntransit.ts)_
 - **ORG-GROUP-1** — DONE — Platform CompanyGroup model + CRUD/membership APIs; pure validation helpers _(evidence: docs/ORG_GROUP_1.md; scripts/verifyOrgGroup1.ts; src/core/org/CompanyGroupService.ts)_
 - **ORG-GROUP-1b** — DONE — Fix invalid import comma for CompanyGroup in InMemoryAdapter _(evidence: src/core/storage/adapters/InMemoryAdapter.ts)_
+- **MASTER-ITEM-GROUP-1** — DONE — GroupMasterItem model + platform APIs + publish zero-qty StockItem to group members _(evidence: docs/MASTER_ITEM_GROUP_1.md; scripts/verifyMasterItemGroup1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

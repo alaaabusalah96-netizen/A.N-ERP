@@ -77,6 +77,7 @@ import {
   DocumentAttachment,
   ItemPrice,
   CompanyGroup,
+  GroupMasterItem,
 } from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 import { SEED_TENANT_ID } from '../../seed/seedOnly';
@@ -86,6 +87,7 @@ export class InMemoryAdapter implements StoragePort {
 
   private tenants = new Map<string, TenantCompany>();
   private companyGroups = new Map<string, CompanyGroup>();
+  private groupMasterItems = new Map<string, GroupMasterItem>();
   private users = new Map<string, User>();
   private orgNodes = new Map<string, OrgNode>();
   private lastLogins = new Map<string, LoginAttemptRecord>();
@@ -1086,6 +1088,33 @@ export class InMemoryAdapter implements StoragePort {
     return { success: true, data: group };
   }
 
+
+  public async listGroupMasterItems(groupId: string): Promise<StorageResult<GroupMasterItem[]>> {
+    const list = Array.from(this.groupMasterItems.values()).filter((i) => i.groupId === groupId);
+    return { success: true, data: list };
+  }
+
+  public async getGroupMasterItem(groupId: string, itemId: string): Promise<StorageResult<GroupMasterItem>> {
+    const item = this.groupMasterItems.get(`${groupId}:${itemId}`)
+      || Array.from(this.groupMasterItems.values()).find((i) => i.groupId === groupId && (i.id === itemId || i.itemCode === itemId));
+    if (!item) {
+      return {
+        success: false,
+        error: {
+          type: 'https://api.an-erp.local/errors/group-item-not-found',
+          title: 'صنف المجموعة غير موجود',
+          status: 404,
+          detail: 'لا يوجد صنف رئيسي بهذا المعرّف في المجموعة.',
+        },
+      };
+    }
+    return { success: true, data: item };
+  }
+
+  public async saveGroupMasterItem(item: GroupMasterItem, _idempotencyKey: string): Promise<StorageResult<GroupMasterItem>> {
+    this.groupMasterItems.set(`${item.groupId}:${item.id}`, { ...item });
+    return { success: true, data: item };
+  }
 
   public async overrideSequence(
     tenantId: string,

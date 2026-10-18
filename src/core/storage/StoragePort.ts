@@ -63,6 +63,20 @@ export interface CompanyGroup {
   updatedAt?: string;
 }
 
+/** MASTER-ITEM-GROUP-1: item master shared by a company group (qty/cost remain per tenant). */
+export interface GroupMasterItem {
+  id: string;
+  groupId: string;
+  itemCode: string;
+  nameAr: string;
+  nameEn?: string;
+  category: string;
+  uom: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface GeoLocation {
   city: string;
   country: string;
@@ -1015,6 +1029,9 @@ export interface StoragePort {
   listCompanyGroups(): Promise<StorageResult<CompanyGroup[]>>;
   getCompanyGroup(groupId: string): Promise<StorageResult<CompanyGroup>>;
   saveCompanyGroup(group: CompanyGroup, idempotencyKey: string): Promise<StorageResult<CompanyGroup>>;
+  listGroupMasterItems(groupId: string): Promise<StorageResult<GroupMasterItem[]>>;
+  getGroupMasterItem(groupId: string, itemId: string): Promise<StorageResult<GroupMasterItem>>;
+  saveGroupMasterItem(item: GroupMasterItem, idempotencyKey: string): Promise<StorageResult<GroupMasterItem>>;
 
   // Users & RBAC
   getUser(tenantId: string, userId: string): Promise<StorageResult<User>>;

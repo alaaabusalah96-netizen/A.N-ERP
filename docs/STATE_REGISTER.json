@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-18",
-  "lastChange": "ORG-GROUP-1b: fix InMemoryAdapter CompanyGroup import syntax",
+  "lastChange": "MASTER-ITEM-GROUP-1: group master items + publish StockItem shells to member tenants",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -287,6 +287,12 @@
       "status": "DONE",
       "scope": "Fix invalid import comma for CompanyGroup in InMemoryAdapter",
       "evidence": "src/core/storage/adapters/InMemoryAdapter.ts"
+    },
+    {
+      "id": "MASTER-ITEM-GROUP-1",
+      "status": "DONE",
+      "scope": "GroupMasterItem model + platform APIs + publish zero-qty StockItem to group members",
+      "evidence": "docs/MASTER_ITEM_GROUP_1.md; scripts/verifyMasterItemGroup1.ts"
     }
   ],
   "defects": [

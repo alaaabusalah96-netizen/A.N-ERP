@@ -17,6 +17,7 @@ import {
   AccountingPeriodStatus,
   TenantCompany,
   CompanyGroup,
+  GroupMasterItem,
   User,
   Account,
   JournalEntry,
@@ -372,6 +373,17 @@ export class FirebaseSmokeAdapter implements StoragePort {
   }
   public async saveCompanyGroup(group: CompanyGroup, _idempotencyKey: string): Promise<StorageResult<CompanyGroup>> {
     return { success: true, data: group };
+  }
+
+
+  public async listGroupMasterItems(groupId: string): Promise<StorageResult<GroupMasterItem[]>> {
+    return { success: true, data: [] };
+  }
+  public async getGroupMasterItem(groupId: string, itemId: string): Promise<StorageResult<GroupMasterItem>> {
+    return { success: false, error: { type: 'https://api.an-erp.local/errors/group-item-not-found', title: 'صنف المجموعة غير موجود', status: 404, detail: 'غير متاح.' } };
+  }
+  public async saveGroupMasterItem(item: GroupMasterItem, _idempotencyKey: string): Promise<StorageResult<GroupMasterItem>> {
+    return { success: true, data: item };
   }
 
 }
