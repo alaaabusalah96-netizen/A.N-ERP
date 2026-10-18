@@ -55,3 +55,13 @@ node server.cjs   # or npm start
 ```
 
 Dev Studio with the default `postgres` superuser should leave `AN_ENFORCE_PROD_ROLE` unset (probe stays WARN-only).
+
+## Pre-launch package (OPS-PROD-LAUNCH-1)
+
+| Artifact | Purpose |
+|---|---|
+| `scripts/ops/create_an_erp_app_role.sql` | Create/alter `an_erp_app` with `NOSUPERUSER NOBYPASSRLS` |
+| `scripts/ops/backup_before_launch.sh` | Manual `pg_dump -Fc` before launch |
+| `docs/ops/PRE_LAUNCH_CHECKLIST.md` | Operator checklist |
+
+These scripts **do not** change live roles by themselves; an operator must run them against the target database.

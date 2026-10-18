@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-18",
-  "lastChange": "GATE-PROD-1: production readiness checklist API and wave gate",
+  "lastChange": "OPS-PROD-LAUNCH-1: an_erp_app role SQL + manual pre-launch backup + checklist",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -323,6 +323,12 @@
       "status": "DONE",
       "scope": "Production readiness gate: required packages + P1 + platform checklist API",
       "evidence": "docs/GATE_PROD_1.md; scripts/verifyGateProd1.ts; GET /api/platform/gate-prod"
+    },
+    {
+      "id": "OPS-PROD-LAUNCH-1",
+      "status": "DONE",
+      "scope": "Operator scripts: create NOBYPASSRLS app role + pg_dump backup + pre-launch checklist",
+      "evidence": "scripts/ops/create_an_erp_app_role.sql; scripts/ops/backup_before_launch.sh; docs/ops/PRE_LAUNCH_CHECKLIST.md"
     }
   ],
   "defects": [
@@ -363,7 +369,7 @@
       "severity": "P2",
       "status": "CONFIG",
       "title": "The application database role may bypass RLS",
-      "evidence": "docs/ops/PROD-PG-ROLE.md; server boot refuse under AN_ENFORCE_PROD_ROLE=1; scripts/verifySecProdRole.ts / verifySec4ProdRole.ts. Package SEC-PROD-ROLE is DONE in code; deploy still needs NOSUPERUSER NOBYPASSRLS role + AN_ENFORCE_PROD_ROLE=1.",
+      "evidence": "docs/ops/PROD-PG-ROLE.md; docs/ops/PRE_LAUNCH_CHECKLIST.md; scripts/ops/create_an_erp_app_role.sql; scripts/ops/backup_before_launch.sh; server boot refuse under AN_ENFORCE_PROD_ROLE=1. Package OPS-PROD-LAUNCH-1 delivers operator scripts; defect remains CONFIG until production DATABASE_URL uses an_erp_app.",
       "fix": "Point DATABASE_URL at an_erp_app (NOSUPERUSER NOBYPASSRLS) and set AN_ENFORCE_PROD_ROLE=1 in production."
     },
     {
