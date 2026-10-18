@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-18 — RPT-GROUP-1: read-only group KPI summary API
+**Last update**: 2026-10-18 — CONSOL-1: consolidated trial balance merge for company groups
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-18)
 
 ## Gates
@@ -58,6 +58,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **STK-XCOMPANY-1** — DONE — CrossCompanyTransfer model + platform create/dispatch/receive using per-tenant issue/receive _(evidence: docs/STK_XCOMPANY_1.md; scripts/verifyStkXcompany1.ts)_
 - **ACC-ENTITY-CLOSE-1** — DONE — EntityBooksState + close/reopen APIs; xcompany dispatch/receive gated _(evidence: docs/ACC_ENTITY_CLOSE_1.md; scripts/verifyAccEntityClose1.ts)_
 - **RPT-GROUP-1** — DONE — GET /api/groups/:id/report/summary platform KPI rollup _(evidence: docs/RPT_GROUP_1.md; scripts/verifyRptGroup1.ts)_
+- **CONSOL-1** — DONE — GET /api/groups/:id/consol/trial-balance read-only account-code merge _(evidence: docs/CONSOL_1.md; scripts/verifyConsol1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

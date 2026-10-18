@@ -70,6 +70,7 @@ import { validateGroupMasterItemInput, assertUniqueItemCodeInGroup, buildGroupMa
 import { validateCrossCompanyCreate, buildCrossCompanyTransfer, assertCanDispatch, assertCanReceive } from './src/core/org/CrossCompanyTransferService';
 import { assertCanCloseEntity, assertCanReopenEntity, assertEntityOpenForStockMove, buildClosedState, buildReopenedState } from './src/core/accounting/EntityCloseService';
 import { aggregateGroupKpis, sumStockValue } from './src/core/org/GroupReportService';
+import { mergeTrialBalances } from './src/core/org/ConsolidationService';
 import { defaultStockAccountingConfig } from './src/core/storage/StoragePort';
 import { requestContextALS } from './src/core/context/RequestContext';
 import { parseIsoDate, parseNonNegativeMoney, validationError, validateJournalInput, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
@@ -2917,7 +2918,42 @@ async function startServer() {
   // MASTER-ITEM-GROUP-1: group-level item masters
   
   // RPT-GROUP-1: read-only group KPI summary (platform)
-  app.get('/api/groups/:id/report/summary', requirePlatformAdmin, async (req: Request, res: Response) => {
+  
+  // CONSOL-1: consolidated trial balance (platform, read-only merge by account code)
+  app.get('/api/groups/:id/consol/trial-balance', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      const storage = masterStorage;
+      const groupId = String(req.params.id || '');
+      const asOfDate = String(req.query.asOfDate || new Date().toISOString().split('T')[0]);
+      const g = await storage.getCompanyGroup(groupId);
+      if (!g.success || !g.data) return res.status(g.error?.status || 404).json(g.error);
+      const group = g.data;
+      const byTenant: Record<string, any[]> = {};
+      const acct = new AccountingService(storage);
+      for (const tenantId of group.memberTenantIds) {
+        try {
+          const tb = await acct.getTrialBalance(tenantId, asOfDate);
+          byTenant[tenantId] = tb?.rows || [];
+        } catch {
+          byTenant[tenantId] = [];
+        }
+      }
+      const xct = await storage.listCrossCompanyTransfers({ groupId });
+      const openX = (xct.success ? xct.data || [] : []).filter((t) => t.status === 'REQUESTED' || t.status === 'IN_TRANSIT').length;
+      const report = mergeTrialBalances({
+        groupId: group.id,
+        asOfDate,
+        memberTenantIds: group.memberTenantIds,
+        byTenant,
+        openXcompanyCount: openX,
+      });
+      return res.json({ success: true, data: report });
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر بناء ميزان المراجعة المجمّع', detail: e?.message });
+    }
+  });
+
+app.get('/api/groups/:id/report/summary', requirePlatformAdmin, async (req: Request, res: Response) => {
     try {
       const storage = masterStorage;
       const groupId = String(req.params.id || '');

@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-18",
-  "lastChange": "RPT-GROUP-1: read-only group KPI summary API",
+  "lastChange": "CONSOL-1: consolidated trial balance merge for company groups",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -311,6 +311,12 @@
       "status": "DONE",
       "scope": "GET /api/groups/:id/report/summary platform KPI rollup",
       "evidence": "docs/RPT_GROUP_1.md; scripts/verifyRptGroup1.ts"
+    },
+    {
+      "id": "CONSOL-1",
+      "status": "DONE",
+      "scope": "GET /api/groups/:id/consol/trial-balance read-only account-code merge",
+      "evidence": "docs/CONSOL_1.md; scripts/verifyConsol1.ts"
     }
   ],
   "defects": [

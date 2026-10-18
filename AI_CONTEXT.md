@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-18** — RPT-GROUP-1: read-only group KPI summary API
+Last update: **2026-10-18** — CONSOL-1: consolidated trial balance merge for company groups
 
 ## Verdict
 | Field | Value |
