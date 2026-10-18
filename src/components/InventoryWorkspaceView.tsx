@@ -145,6 +145,18 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isCountModalOpen, setIsCountModalOpen] = useState(false);
 
+  const [isCreateItemModalOpen, setIsCreateItemModalOpen] = useState(false);
+  const [isSavingItem, setIsSavingItem] = useState(false);
+  const [newItemCode, setNewItemCode] = useState('');
+  const [newItemNameAr, setNewItemNameAr] = useState('');
+  const [newItemNameEn, setNewItemNameEn] = useState('');
+  const [newItemCategory, setNewItemCategory] = useState('');
+  const [newItemUom, setNewItemUom] = useState('قطعة');
+  const [newItemValuationMethod, setNewItemValuationMethod] = useState('WEIGHTED_AVERAGE');
+  const [newItemReorderPoint, setNewItemReorderPoint] = useState<number>(0);
+  const [newItemTrackBatch, setNewItemTrackBatch] = useState(false);
+  const [newItemTrackSerial, setNewItemTrackSerial] = useState(false);
+
   // Form states for Receive
   const [recWarehouseId, setRecWarehouseId] = useState('');
   const [recItemId, setRecItemId] = useState('');
@@ -255,6 +267,62 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
       onNotification('فشل فحص بطارية قبول المخزون.');
     } finally {
       setIsRunningBattery(false);
+    }
+  };
+
+  // Create a stock item through the existing tenant-scoped API.
+  const handleCreateItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newItemCode.trim() || !newItemNameAr.trim() || !newItemCategory.trim()) {
+      onNotification('كود الصنف والاسم العربي والتصنيف حقول إلزامية.');
+      return;
+    }
+
+    setIsSavingItem(true);
+    try {
+      const idemKey = `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const res = await fetch('/api/inventory/items', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idemKey,
+        },
+        body: JSON.stringify({
+          itemCode: newItemCode.trim(),
+          nameAr: newItemNameAr.trim(),
+          nameEn: newItemNameEn.trim() || undefined,
+          category: newItemCategory.trim(),
+          uom: newItemUom.trim() || 'قطعة',
+          valuationMethod: newItemValuationMethod,
+          reorderPoint: newItemReorderPoint,
+          trackBatch: newItemTrackBatch,
+          trackSerial: newItemTrackSerial,
+          isActive: true,
+          idempotencyKey: idemKey,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        onNotification(`تم إنشاء بطاقة الصنف ${data.data?.itemCode || newItemCode.trim()} بنجاح.`);
+        setIsCreateItemModalOpen(false);
+        setNewItemCode('');
+        setNewItemNameAr('');
+        setNewItemNameEn('');
+        setNewItemCategory('');
+        setNewItemUom('قطعة');
+        setNewItemValuationMethod('WEIGHTED_AVERAGE');
+        setNewItemReorderPoint(0);
+        setNewItemTrackBatch(false);
+        setNewItemTrackSerial(false);
+        await loadData();
+      } else {
+        onNotification(data.error?.detail || data.detail || 'تعذر إنشاء بطاقة الصنف. راجع البيانات والصلاحيات.');
+      }
+    } catch {
+      onNotification('تعذر الاتصال بالخادم أثناء إنشاء بطاقة الصنف.');
+    } finally {
+      setIsSavingItem(false);
     }
   };
 
@@ -709,6 +777,14 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
             <p className="text-[11px] text-slate-500">
               قائمة الأصناف المعرفة — اضغط «بطاقة» لفتح كارتة الصنف حتى لو الرصيد صفر.
             </p>
+            <button
+              type="button"
+              onClick={() => setIsCreateItemModalOpen(true)}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700"
+            >
+              <Plus className="w-4 h-4" />
+              إنشاء صنف جديد
+            </button>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
@@ -739,7 +815,7 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
                     <tr>
                       <td colSpan={8} className="text-center py-10 text-slate-400">
                         {items.length === 0
-                          ? 'لا توجد أصناف معرفة بعد. أنشئ صنفًا من مسار التوريد أو واجهة الأصناف عند توفرها — هذا التبويب يبقى ظاهرًا دائمًا.'
+                          ? 'لا توجد أصناف معرفة بعد. استخدم «إنشاء صنف جديد» لإضافة أول بطاقة صنف.'
                           : 'لا نتائج مطابقة لبحث الأصناف.'}
                       </td>
                     </tr>
@@ -1278,6 +1354,69 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal: Create Stock Item (INV-ITEM-CREATE) */}
+      {isCreateItemModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-xl border border-slate-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between gap-3 mb-5">
+              <h2 className="text-base font-bold text-slate-900">إنشاء بطاقة صنف جديدة</h2>
+              <button type="button" onClick={() => setIsCreateItemModalOpen(false)} className="text-slate-500 hover:text-slate-900" aria-label="إغلاق">✕</button>
+            </div>
+            <form onSubmit={handleCreateItem} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">كود الصنف *</label>
+                  <input value={newItemCode} onChange={e => setNewItemCode(e.target.value)} maxLength={64} required className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">الاسم العربي *</label>
+                  <input value={newItemNameAr} onChange={e => setNewItemNameAr(e.target.value)} maxLength={200} required className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">الاسم الإنجليزي</label>
+                  <input value={newItemNameEn} onChange={e => setNewItemNameEn(e.target.value)} maxLength={200} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">التصنيف *</label>
+                  <input value={newItemCategory} onChange={e => setNewItemCategory(e.target.value)} maxLength={100} required className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">وحدة القياس</label>
+                  <input value={newItemUom} onChange={e => setNewItemUom(e.target.value)} maxLength={40} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">طريقة التقييم</label>
+                  <select value={newItemValuationMethod} onChange={e => setNewItemValuationMethod(e.target.value)} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50">
+                    <option value="WEIGHTED_AVERAGE">المتوسط المرجح</option>
+                    <option value="FIFO">الوارد أولاً يصرف أولاً (FIFO)</option>
+                    <option value="SPECIFIC_LOT">التكلفة المحددة للدفعة</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">حد إعادة الطلب</label>
+                  <input type="number" min="0" step="any" value={newItemReorderPoint} onChange={e => setNewItemReorderPoint(Math.max(0, Number(e.target.value) || 0))} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-5">
+                <label className="inline-flex items-center gap-2 text-slate-700">
+                  <input type="checkbox" checked={newItemTrackBatch} onChange={e => setNewItemTrackBatch(e.target.checked)} />
+                  تتبع التشغيلات / الدُفعات
+                </label>
+                <label className="inline-flex items-center gap-2 text-slate-700">
+                  <input type="checkbox" checked={newItemTrackSerial} onChange={e => setNewItemTrackSerial(e.target.checked)} />
+                  تتبع الرقم المسلسل
+                </label>
+              </div>
+              <p className="text-[11px] text-slate-500">إنشاء البطاقة لا يضيف رصيدًا للمخزون؛ يتم تسجيل الكميات لاحقًا بإذن توريد معتمد.</p>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setIsCreateItemModalOpen(false)} disabled={isSavingItem} className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-semibold disabled:opacity-50">إلغاء</button>
+                <button type="submit" disabled={isSavingItem} className="px-4 py-2 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-50">{isSavingItem ? 'جارٍ الحفظ...' : 'حفظ بطاقة الصنف'}</button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

@@ -73,12 +73,14 @@ const BATTERIES: { name: string; script: string; expected?: number }[] = [
   { name: 'Ph8Reorder', script: 'scripts/verifyPh8Reorder.ts', expected: 14 },
   { name: 'InvItemCard', script: 'scripts/verifyInvItemCard.ts', expected: 13 },
   { name: 'InvUiTabs', script: 'scripts/verifyInvUiTabs.ts', expected: 12 },
+  { name: 'InvItemCreate', script: 'scripts/verifyInvItemCreate.ts', expected: 15 },
   { name: 'InvMovementsFilter', script: 'scripts/verifyInvMovementsFilter.ts', expected: isPg ? undefined : 14 },
   { name: 'Db1', script: 'scripts/verifyDb1.ts', expected: isPg ? undefined : 20 },
   { name: 'Ops1', script: 'scripts/verifyOps1.ts', expected: 28 },
   { name: 'DocSyncFull', script: 'scripts/verifyDocSyncFull.ts', expected: 19 },
   { name: 'BatteryCoverage', script: 'scripts/verifyBatteryCoverage.ts', expected: 19 },
   { name: 'AuditWire', script: 'scripts/verifyAuditWire.ts', expected: 28 },
+  { name: 'SecRoleCeiling', script: 'scripts/verifySecRoleCeiling.ts', expected: 24 },
   { name: 'BaselineMap', script: 'scripts/verifyBaselineMap.ts', expected: 12 },
   { name: 'SecAuthMatrix', script: 'scripts/verifySecAuthMatrix.ts', expected: 18 },
   { name: 'SecSessionPassword', script: 'scripts/verifySecSessionPassword.ts', expected: 15 },
@@ -96,7 +98,7 @@ const BATTERIES: { name: string; script: string; expected?: number }[] = [
   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
 ];
 // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
-const CRITICAL = ['Sec1TwoFactor', 'Sec2Rls', 'Sec2bRls', 'Sec3Ids', 'Sec4ProdRole', 'SecA', 'RepairBatch1', 'P8aProcurement', 'P8cThreeWay', 'F2Decisions', 'FixP1P2pAutopost', 'Ph8Return', 'FixJ1Accounts', 'FixStockReturnCumulative', 'BatteryCoverage', 'AuditWire'];
+const CRITICAL = ['Sec1TwoFactor', 'Sec2Rls', 'Sec2bRls', 'Sec3Ids', 'Sec4ProdRole', 'SecA', 'RepairBatch1', 'P8aProcurement', 'P8cThreeWay', 'F2Decisions', 'FixP1P2pAutopost', 'Ph8Return', 'FixJ1Accounts', 'FixStockReturnCumulative', 'BatteryCoverage', 'AuditWire', 'SecRoleCeiling'];
 
 const gates: Gate[] = [];
 let f07Verdict = 'NOT_RUN', f07Parse: { passed: number | null; failed: number | null } = { passed: null, failed: null };

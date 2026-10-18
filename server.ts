@@ -64,6 +64,7 @@ import { AccountingService } from './src/core/accounting/AccountingService';
 import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
 import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
 import { requirePermission, hasPermission, PermissionGroup, isPermissionGroup, ALL_PERMISSION_GROUPS, normalizeRole } from './src/core/auth/PermissionMatrix';
+import { checkRoleAssignment, checkTargetAccess, checkSelfRoleChange } from './src/core/auth/UserAdminGuards';
 import { requestContextALS } from './src/core/context/RequestContext';
 import { parseIsoDate, parseNonNegativeMoney, validationError, validateJournalInput, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
 
@@ -1784,6 +1785,9 @@ async function startServer() {
     if (!sodCheck.allowed && sodCheck.problem) {
       return res.status(sodCheck.problem.status).json(sodCheck.problem);
     }
+    // SEC-ROLE-CEILING-1: a platform-level role can be assigned only by someone who holds PLATFORM_ADMIN
+    const roleCeiling = checkRoleAssignment((req as any).authContext, role);
+    if (!roleCeiling.ok) return res.status(roleCeiling.status).json({ type: roleCeiling.type, title: roleCeiling.title, status: roleCeiling.status, detail: roleCeiling.detail });
 
     const encryptedPii = EncryptionService.encryptPII({ email, phone, nationalId });
     // SEC-PASSWORD-UX-1: admin may set temporaryPassword (min 12); otherwise system generates one-time secret
@@ -1869,6 +1873,9 @@ async function startServer() {
           detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
         });
       }
+      // SEC-ROLE-CEILING-1: only a PLATFORM_ADMIN holder can modify an account that holds PLATFORM_ADMIN
+      const protectedTarget = checkTargetAccess((req as any).authContext, existing.data);
+      if (!protectedTarget.ok) return res.status(protectedTarget.status).json({ type: protectedTarget.type, title: protectedTarget.title, status: protectedTarget.status, detail: protectedTarget.detail });
       const body = req.body || {};
       const updates: any = {};
       if (body.status === 'ACTIVE' || body.status === 'INACTIVE') {
@@ -1887,6 +1894,11 @@ async function startServer() {
         if (!sodCheck.allowed && sodCheck.problem) {
           return res.status(sodCheck.problem.status).json(sodCheck.problem);
         }
+        // SEC-ROLE-CEILING-1: nobody changes their own role, and a platform-level role is assignable only by a PLATFORM_ADMIN holder
+        const selfRole = checkSelfRoleChange(actorId, targetId);
+        if (!selfRole.ok) return res.status(selfRole.status).json({ type: selfRole.type, title: selfRole.title, status: selfRole.status, detail: selfRole.detail });
+        const patchCeiling = checkRoleAssignment((req as any).authContext, body.role);
+        if (!patchCeiling.ok) return res.status(patchCeiling.status).json({ type: patchCeiling.type, title: patchCeiling.title, status: patchCeiling.status, detail: patchCeiling.detail });
         updates.role = body.role.trim();
         if (typeof body.roleTitleAr === 'string') updates.roleTitleAr = body.roleTitleAr;
       }
@@ -2099,6 +2111,7 @@ async function startServer() {
   });
 
   // SEC-USER-ADMIN: admin resets password → temporary password once + requiresPasswordChange
+  // SEC-ROLE-CEILING-1: a lower admin cannot reset the password of a platform-level account (that would be account takeover)
   app.post('/api/users/:id/reset-password', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
     try {
       const tenantId = (req as any).authContext.tenantId;
@@ -2115,6 +2128,7 @@ async function startServer() {
           detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
         });
       }
+      const resetGuard = checkTargetAccess((req as any).authContext, existing.data); if (!resetGuard.ok) return res.status(403).json({ type: resetGuard.type, title: resetGuard.title, status: 403, detail: resetGuard.detail });
       // SEC-PASSWORD-UX-1: optional admin-provided temporary password
       let temporaryPassword: string;
       const adminTemp = req.body?.temporaryPassword;
@@ -2175,6 +2189,9 @@ async function startServer() {
           detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
         });
       }
+      // SEC-ROLE-CEILING-1: a lower admin cannot kick a platform-level account out
+      const revokeGuard = checkTargetAccess((req as any).authContext, existing.data);
+      if (!revokeGuard.ok) return res.status(revokeGuard.status).json({ type: revokeGuard.type, title: revokeGuard.title, status: revokeGuard.status, detail: revokeGuard.detail });
       const sessions = await storage.listActiveSessionsByUser(targetId);
       if (!sessions.success) {
         return res.status(500).json(sessions.error || { status: 500, title: 'تعذر جلب الجلسات' });

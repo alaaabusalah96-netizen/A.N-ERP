@@ -1,7 +1,7 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-17 — ORG-MEMBERSHIP-1: membership API + sync with user status + UsersAndSod UI
-**Verdict**: **CONDITIONAL GO** (rendered 2026-10-17)
+**Last update**: 2026-10-17 — INV-ITEM-CREATE: dedicated item creation UI wired to existing tenant-scoped POST /api/inventory/items
+**Verdict**: **CONDITIONAL GO** (rendered 2026-10-18)
 
 ## Gates
 _Gates were not run in this render. Run `npm test` to execute them and refresh this file._
@@ -49,6 +49,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **UI-AUDIT-PRINT-1** — DONE — Wire audit-chain verify in AuditTrailView; official print from PrintVoucherModal _(evidence: docs/UI_AUDIT_PRINT_1.md; scripts/verifyUiAuditPrint1.ts)_
 - **DEMO-LOGIN-ROLES-1** — DONE — Seed 8 operational roles for MAIN; replace 3 login buttons with full preset grid _(evidence: docs/DEMO_LOGIN_ROLES_1.md; scripts/verifyDemoLoginRoles1.ts)_
 - **ORG-MEMBERSHIP-1** — DONE — Wave 2: membership GET/PATCH + status sync + UI suspend/activate _(evidence: docs/ORG_MEMBERSHIP_1.md; scripts/verifyOrgMembership1.ts)_
+- **INV-ITEM-CREATE** — DONE — Create stock-item cards from the dedicated Items tab using existing authenticated API; no stock quantity is created by item setup _(evidence: scripts/verifyInvItemCreate.ts; docs/INV_ITEM_CREATE.md; src/components/InventoryWorkspaceView.tsx)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

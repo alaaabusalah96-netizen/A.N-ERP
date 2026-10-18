@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-17** — ORG-MEMBERSHIP-1: membership API + sync with user status + UsersAndSod UI
+Last update: **2026-10-17** — INV-ITEM-CREATE: dedicated item creation UI wired to existing tenant-scoped POST /api/inventory/items
 
 ## Verdict
 | Field | Value |

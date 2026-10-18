@@ -301,7 +301,7 @@ Passed: 14 | Failed: 0
 [PASS] F5c replaying the same request (same idempotency key) is not mistaken for a duplicate
 [PASS] F6a the creator cannot approve their own invoice (403 sod-violation); another user can
 [PASS] F6b re-approving an already posted invoice is an idempotent success (no second journal)
-[PASS] F6c SUPPLIER_INVOICE_APPROVE: admin and financial_approver have it; accountant and warehouse_manager (who keep PURCHASE_MANAGE) do not; approve/reject routes require it, create/match still PURCHASE_MANAGE
+[FAIL] F6c SUPPLIER_INVOICE_APPROVE: admin and financial_approver have it; accountant and warehouse_manager (who keep PURCHASE_MANAGE) do not; approve/reject routes require it, create/match still PURCHASE_MANAGE
 [PASS] F7a the payable account comes from the company policy (2150), not from code
 [PASS] F7b a configured account that does not exist in the chart blocks approval (422 account-not-usable); nothing posted
 [PASS] F8 invoice update fails after posting (injected): first call reports it, a retry with a NEW idempotency key finishes the invoice and the payable is credited exactly once (80)
@@ -310,7 +310,7 @@ Passed: 14 | Failed: 0
 [PASS] F10b post lost the race (entry already POSTED by the winner): approval succeeds, no second posting (payable 80)
 [PASS] F10c entry exists but is not posted yet and posting failed: clean 409 approval-in-progress (not 5xx), invoice not marked POSTED
 
-Passed: 22 | Failed: 0
+Passed: 21 | Failed: 1
 
 === P15Purchasing ===
 [PASS] (أ) create PO
@@ -927,6 +927,22 @@ Passed: 14 | Failed: 0
 
 Passed: 13 | Failed: 0
 
+=== InvUiTabs ===
+[PASS] S1 activeTab includes items
+[PASS] S2 default tab is items
+[PASS] S3 tab button الأصناف
+[PASS] S4 items panel activeTab === items
+[PASS] S5 empty state without items
+[PASS] S6 open card from items list setCardItemId
+[PASS] S7 itemsSearch filter
+[PASS] S8 ItemCardPanel still wired
+[PASS] S9 stock and movements tabs remain
+[PASS] S10 Package icon used for items tab
+[PASS] R1 package INV-UI-TABS DONE
+[PASS] R2 INV-ITEM-CARD still DONE
+
+Passed: 12 | Failed: 0
+
 === InvMovementsFilter ===
 [PASS] S1 UI filter bar title
 [PASS] S2 UI filter state fields
@@ -1054,11 +1070,12 @@ Passed: 19 | Failed: 0
 [PASS] W Ph8Reorder is registered with its script and expected=14
 [PASS] W InvItemCard is registered with its script and expected=13
 [PASS] W InvMovementsFilter is registered with its script and expected=14
+[PASS] W InvUiTabs is registered with its script and expected=12
 [PASS] W Db1 is registered with its script and expected=20
 [PASS] W Ops1 is registered with its script and expected=28
 [PASS] W DocSyncFull is registered with its script and expected=19
 [PASS] W BatteryCoverage is registered with its script and expected=19
-[PASS] W AuditWire is registered with its script and expected=27
+[PASS] W AuditWire is registered with its script and expected=28
 [PASS] W battery names and script paths are unique
 [PASS] K FixP1P2pAutopost is a CRITICAL gate
 [PASS] K Ph8Return is a CRITICAL gate
@@ -1067,8 +1084,8 @@ Passed: 19 | Failed: 0
 [PASS] K BatteryCoverage is a CRITICAL gate
 [PASS] K AuditWire is a CRITICAL gate
 [PASS] K no CRITICAL name is dangling (each one is a registered battery)
-[PASS] R the register records AUDIT-UNIFY-1 as DONE and as the most recent package
-[PASS] R lastChange names that package
+[FAIL] R the register records AUDIT-UNIFY-1 as DONE and as the most recent package | last=ORG-MEMBERSHIP-1
+[FAIL] R lastChange names that package
 [PASS] R DEF-P1-003 evidence does not contradict its FIXED status
 [PASS] R the double-refund defect that DEF-P1-003 refers to is FIXED in the register
 [PASS] R no known risk claims DB-1/OPS-1 are unregistered
@@ -1076,7 +1093,290 @@ Passed: 19 | Failed: 0
 [PASS] S every tenant_id table is covered by the RLS array or an explicit ALTER TABLE ... ENABLE ROW LEVEL SECURITY (static)
 [PASS] S an_company_profiles is protected by an explicit statement
 
-Passed: 27 | Failed: 0
+Passed: 26 | Failed: 2
+
+=== SecRoleCeiling ===
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+Error: Transform failed with 1 error:
+/app/applet/scripts/verifySecRoleCeiling.ts:46:32: ERROR: Expected ")" but found "s"
+    at failureErrorWithLog (/app/applet/node_modules/tsx/node_modules/esbuild/lib/main.js:1752:15)
+    at /app/applet/node_modules/tsx/node_modules/esbuild/lib/main.js:1019:50
+    at responseCallbacks.<computed> (/app/applet/node_modules/tsx/node_modules/esbuild/lib/main.js:886:9)
+    at handleIncomingPacket (/app/applet/node_modules/tsx/node_modules/esbuild/lib/main.js:941:12)
+    at Socket.readFromStdout (/app/applet/node_modules/tsx/node_modules/esbuild/lib/main.js:864:7)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23) {
+  name: 'TransformError'
+}
+
+Node.js v22.23.3
+
+=== BaselineMap ===
+[PASS] S1 GAP_MAP_BASELINE.md exists and names BASELINE-MAP-1
+[PASS] S2 ROADMAP_WAVES.md has 7 waves table
+[PASS] S3 package BASELINE-MAP-1 DONE
+[FAIL] S4 lastChange mentions SEC-SESSION-PASSWORD
+[PASS] S5 gap map records Open P1 = 0
+[PASS] S6 gap map records CONFIG PROD-ROLE-BYPASSRLS
+[PASS] S7 tree: INV-UI-TABS items tab present
+[PASS] S8 tree: no CompanyGroup in StoragePort (gap still valid)
+[PASS] S9 tree: requirePermission present on server
+[PASS] S10 tree: AUDIT-UNIFY-1 still DONE
+[PASS] S11 roadmap defers AI self-heal
+[PASS] S12 no OPEN defects in register (CONFIG allowed)
+
+Passed: 11 | Failed: 1
+
+=== SecAuthMatrix ===
+[PASS] R /api/approvals/policies requires APPROVAL_POLICY_MANAGE
+[PASS] R /api/approvals/inbox requires ENTRY_APPROVE
+[PASS] R /api/approvals/:id/approve requires ENTRY_APPROVE
+[PASS] R /api/approvals/:id/reject requires ENTRY_APPROVE
+[PASS] R /api/accounting/units requires ENTRY_VIEW
+[PASS] R /api/accounting/migration/templates requires COMPANY_SETTINGS_MANAGE
+[PASS] R /api/expenses/categories requires EXPENSE_SUBMIT
+[PASS] R /api/expenses/requests requires EXPENSE_SUBMIT
+[PASS] R /api/expenses/requests/:id requires EXPENSE_SUBMIT
+[PASS] R /api/attachments requires ENTRY_VIEW
+[PASS] R /api/master-data/partners requires PURCHASE_VIEW
+[PASS] R /api/tenant-modules requires COMPANY_SETTINGS_MANAGE
+[PASS] R /api/custom-fields requires COMPANY_SETTINGS_MANAGE
+[PASS] R /api/print/:docType/:docId requires ENTRY_VIEW
+[PASS] R POST /api/attachments requires ENTRY_CREATE
+[PASS] D matrix doc names SEC-AUTH-MATRIX
+[PASS] D matrix lists intentional public routes
+[PASS] P package SEC-AUTH-MATRIX DONE
+[FAIL] P lastChange mentions SEC-USER-ADMIN
+
+Passed: 18 | Failed: 1
+
+=== SecSessionPassword ===
+[PASS] S1 change-password route exists
+[PASS] S2 sessions list route
+[PASS] S3 revoke-others route
+[PASS] S4 gate PASSWORD_CHANGE_REQUIRED
+[PASS] S5 gate allows change-password path
+[PASS] S6 login exposes requiresPasswordChange
+[PASS] S7 me exposes requiresPasswordChange
+[PASS] S8 change-password uses argon2.verify and hash
+[PASS] S9 min password length 12
+[PASS] S10 clears requiresPasswordChange on success
+[PASS] S11 AuthContext field
+[PASS] S12 doc present
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R SEC-AUTH-MATRIX still DONE
+
+Passed: 14 | Failed: 1
+
+=== SecUserAdmin ===
+[PASS] S1 PATCH /api/users/:id + USER_MANAGE
+[PASS] S2 reset-password route
+[PASS] S3 revoke-sessions route
+[PASS] S4 cannot deactivate self
+[PASS] S5 reset sets requiresPasswordChange true
+[PASS] S6 reset returns temporaryPassword once
+[PASS] S7 list users exposes status
+[PASS] S8 list users exposes requiresPasswordChange
+[PASS] S9 create user still requiresPasswordChange
+[PASS] S10 tenant isolation on patch
+[PASS] S11 doc SEC-USER-ADMIN
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R SEC-SESSION-PASSWORD DONE
+[PASS] R SEC-AUTH-MATRIX DONE
+
+Passed: 14 | Failed: 1
+
+=== OrgCompany1 ===
+[PASS] S1 TenantCompany is legal entity type
+[PASS] S2 GET /api/company strips backendConfig
+[PASS] S3 GET does not return whole tenant object
+[PASS] S4 PUT validates empty nameAr
+[PASS] S5 PUT validates CR 10 digits
+[PASS] S6 tax 15-digit still present
+[PASS] S7 PATCH tenants status platform
+[PASS] S8 status ACTIVE|SUSPENDED only
+[PASS] S9 CompanyProfile alias
+[PASS] S10 doc ORG-COMPANY-1
+[PASS] S11 no CompanyGroup yet (wave 4)
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R SEC-USER-ADMIN DONE
+
+Passed: 13 | Failed: 1
+
+=== SecPasswordUx ===
+[PASS] S1 PASSWORD_CHANGE_SELF in PermissionGroup
+[PASS] S2 forced path allows change-password without self perm
+[PASS] S3 self-change requires PASSWORD_CHANGE_SELF
+[PASS] S4 create accepts admin temporaryPassword
+[PASS] S5 reset accepts admin temporaryPassword
+[PASS] S6 ForcePasswordChangeScreen exists
+[PASS] S7 App gates on requiresPasswordChange
+[PASS] S8 App me bootstrap respects flag
+[PASS] S9 users form optional temporaryPassword
+[PASS] S10 min 12 on admin temp
+[PASS] S11 doc present
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R ORG-COMPANY-1 DONE
+[PASS] R SEC-SESSION-PASSWORD DONE
+
+Passed: 14 | Failed: 1
+
+=== SecPermOverride ===
+[PASS] S1 hasPermission accepts overrides
+[PASS] S2 requirePermission uses authHasPermission
+[PASS] S3 authContext loads user.permissions
+[PASS] S4 admin role lacks STOCK_ISSUE
+[PASS] S5 admin role has USER_MANAGE
+[PASS] S6 system_admin lacks ENTRY_POST
+[PASS] S7 super_admin still has STOCK_ISSUE
+[PASS] S8 override grants STOCK_VIEW to admin-shaped role
+[PASS] S9 without override admin lacks STOCK_VIEW
+[PASS] S10 cannot self-edit permissions message
+[PASS] S11 grant validation isPermissionGroup
+[PASS] S12 ALL_PERMISSION_GROUPS non-empty
+[PASS] S13 doc present
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R SEC-PASSWORD-UX-1 DONE
+
+Passed: 15 | Failed: 1
+
+=== UiUsers1 ===
+[PASS] S1 handleToggleStatus PATCH users
+[PASS] S2 handleResetPassword route
+[PASS] S3 handleRevokeSessions route
+[PASS] S4 status column UI
+[PASS] S5 actions column
+[PASS] S6 requiresPasswordChange hint
+[PASS] S7 server PATCH still present
+[PASS] S8 server reset-password present
+[PASS] S9 server revoke-sessions present
+[PASS] S10 temporaryPassword in form state
+[PASS] S11 credentials include on list
+[PASS] S12 doc UI-USERS-1
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R SEC-PERM-OVERRIDE-1 DONE
+
+Passed: 14 | Failed: 1
+
+=== UiOps1 ===
+[PASS] S1 save uses /api/transactions/post
+[PASS] S2 no POST bare /api/transactions in save
+[PASS] S3 entry+idempotencyKey body
+[PASS] S4 modal passes lines
+[PASS] S5 inbox fetch
+[PASS] S6 approve/reject routes in UI
+[PASS] S7 server inbox route exists
+[PASS] S8 server transactions/post exists
+[PASS] S9 approvals section panel
+[PASS] S10 doc
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R UI-USERS-1 DONE
+[PASS] R SEC-PERM-OVERRIDE-1 DONE
+
+Passed: 13 | Failed: 1
+
+=== UiP2p1 ===
+[PASS] S1 handleInvoiceMatch
+[PASS] S2 match path
+[PASS] S3 handleInvoiceApprove
+[PASS] S4 handleInvoiceReject
+[PASS] S5 actions column
+[PASS] S6 server match route
+[PASS] S7 server approve route
+[PASS] S8 server reject route
+[PASS] S9 doc
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R UI-OPS-1 DONE
+[PASS] R UI-USERS-1 DONE
+
+Passed: 12 | Failed: 1
+
+=== Ui2faSetup1 ===
+[PASS] S1 start setup calls /api/auth/2fa/setup
+[PASS] S2 verify-setup
+[PASS] S3 QR display
+[PASS] S4 not always showing enabled
+[PASS] S5 self sessions path
+[PASS] S6 revoke-others
+[PASS] S7 server setup route
+[PASS] S8 server verify-setup
+[PASS] S9 doc
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R UI-P2P-1 DONE
+[PASS] R UI-OPS-1 DONE
+
+Passed: 12 | Failed: 1
+
+=== UiAuditPrint1 ===
+[PASS] S1 verifyAuditChain handler
+[PASS] S2 POST audit-chain/verify
+[PASS] S3 chain result UI
+[PASS] S4 audit-trail credentials
+[PASS] S5 official print handler
+[PASS] S6 print journal-entry path
+[PASS] S7 format=raw or Accept html
+[PASS] S8 local print retained
+[PASS] S9 server routes exist
+[PASS] S10 doc
+[PASS] P package DONE
+[PASS] P lastChange
+[PASS] R UI-2FA-SETUP-1 DONE
+[PASS] R UI-P2P-1 DONE
+
+Passed: 14 | Failed: 0
+
+=== DemoLoginRoles1 ===
+[PASS] S seed has accountant
+[PASS] S seed has approver
+[PASS] S seed has warehouse
+[PASS] S seed has whmanager
+[PASS] S seed has auditor
+[PASS] S seed has branch
+[PASS] S seed has sales
+[PASS] S seed has sysadmin
+[PASS] S INITIAL_USER_PASSWORD still used
+[PASS] S DEMO_ROLE_PRESETS in LoginScreen
+[PASS] S presets include sysadmin
+[PASS] S grid maps presets
+[PASS] S no fixed password in LoginScreen
+[PASS] S doc
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R UI-AUDIT-PRINT-1 DONE
+
+Passed: 16 | Failed: 1
+
+=== OrgMembership1 ===
+[PASS] S1 GET membership route
+[PASS] S2 PATCH membership route
+[PASS] S3 setMembershipStatus on user INACTIVE
+[PASS] S4 setMembershipStatus on user ACTIVE
+[PASS] S5 no self-suspend
+[PASS] S6 UI handler
+[PASS] S7 UI button
+[PASS] S8 credentials on membership patch
+[PASS] S9 doc
+[PASS] P package DONE
+[PASS] P lastChange
+[PASS] R ORG-COMPANY-1 DONE
+[PASS] R DEMO-LOGIN-ROLES-1 DONE
+
+Passed: 13 | Failed: 0
 
 === P9Validation ===
 ◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
@@ -1174,7 +1474,7 @@ Passed: 27 | Failed: 0
 [PASS] (أ) validateJournalInput rejects debit Infinity
 [PASS] (أ) validateJournalInput rejects empty / non-array lines
 [PASS] (أ) validateJournalInput rejects a null line
-◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
 [phase-4] DECISION: DB role bypasses RLS -> global membership backfill
 [PASS] (ب) seed receipt succeeds
 [PASS] (ب) receiveStock quantity=NaN | success=false status=400 movements 1→1 documents 1→1

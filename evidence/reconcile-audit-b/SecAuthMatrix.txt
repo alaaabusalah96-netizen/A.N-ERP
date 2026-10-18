@@ -1,0 +1,21 @@
+[PASS] R /api/approvals/policies requires APPROVAL_POLICY_MANAGE
+[PASS] R /api/approvals/inbox requires ENTRY_APPROVE
+[PASS] R /api/approvals/:id/approve requires ENTRY_APPROVE
+[PASS] R /api/approvals/:id/reject requires ENTRY_APPROVE
+[PASS] R /api/accounting/units requires ENTRY_VIEW
+[PASS] R /api/accounting/migration/templates requires COMPANY_SETTINGS_MANAGE
+[PASS] R /api/expenses/categories requires EXPENSE_SUBMIT
+[PASS] R /api/expenses/requests requires EXPENSE_SUBMIT
+[PASS] R /api/expenses/requests/:id requires EXPENSE_SUBMIT
+[PASS] R /api/attachments requires ENTRY_VIEW
+[PASS] R /api/master-data/partners requires PURCHASE_VIEW
+[PASS] R /api/tenant-modules requires COMPANY_SETTINGS_MANAGE
+[PASS] R /api/custom-fields requires COMPANY_SETTINGS_MANAGE
+[PASS] R /api/print/:docType/:docId requires ENTRY_VIEW
+[PASS] R POST /api/attachments requires ENTRY_CREATE
+[PASS] D matrix doc names SEC-AUTH-MATRIX
+[PASS] D matrix lists intentional public routes
+[PASS] P package SEC-AUTH-MATRIX DONE
+[FAIL] P lastChange mentions SEC-USER-ADMIN
+
+Passed: 18 | Failed: 1

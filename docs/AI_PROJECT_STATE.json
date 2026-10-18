@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-17",
-  "lastChange": "ORG-MEMBERSHIP-1: membership API + sync with user status + UsersAndSod UI",
+  "lastChange": "INV-ITEM-CREATE: dedicated item creation UI wired to existing tenant-scoped POST /api/inventory/items",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -257,6 +257,12 @@
       "status": "DONE",
       "scope": "Wave 2: membership GET/PATCH + status sync + UI suspend/activate",
       "evidence": "docs/ORG_MEMBERSHIP_1.md; scripts/verifyOrgMembership1.ts"
+    },
+    {
+      "id": "INV-ITEM-CREATE",
+      "status": "DONE",
+      "scope": "Create stock-item cards from the dedicated Items tab using existing authenticated API; no stock quantity is created by item setup",
+      "evidence": "scripts/verifyInvItemCreate.ts; docs/INV_ITEM_CREATE.md; src/components/InventoryWorkspaceView.tsx"
     }
   ],
   "defects": [
@@ -427,7 +433,7 @@
     }
   },
   "policy": "Edit docs/STATE_REGISTER.json by hand. AI_CONTEXT.md and docs/AI_PROJECT_STATE.* are rendered from it by scripts/runReconcileAuditB.ts and must not be replaced by a template.",
-  "renderedAt": "2026-10-17T00:00:00Z",
+  "renderedAt": "2026-10-18T00:00:00Z",
   "authoritativeVerdict": "CONDITIONAL_GO",
   "f07": {
     "verdict": "NOT_RUN",

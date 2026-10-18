@@ -1,0 +1,16 @@
+[PASS] S1 verifyAuditChain handler
+[PASS] S2 POST audit-chain/verify
+[PASS] S3 chain result UI
+[PASS] S4 audit-trail credentials
+[PASS] S5 official print handler
+[PASS] S6 print journal-entry path
+[PASS] S7 format=raw or Accept html
+[PASS] S8 local print retained
+[PASS] S9 server routes exist
+[PASS] S10 doc
+[PASS] P package DONE
+[PASS] P lastChange
+[PASS] R UI-2FA-SETUP-1 DONE
+[PASS] R UI-P2P-1 DONE
+
+Passed: 14 | Failed: 0

@@ -1,0 +1,16 @@
+[PASS] S1 save uses /api/transactions/post
+[PASS] S2 no POST bare /api/transactions in save
+[PASS] S3 entry+idempotencyKey body
+[PASS] S4 modal passes lines
+[PASS] S5 inbox fetch
+[PASS] S6 approve/reject routes in UI
+[PASS] S7 server inbox route exists
+[PASS] S8 server transactions/post exists
+[PASS] S9 approvals section panel
+[PASS] S10 doc
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R UI-USERS-1 DONE
+[PASS] R SEC-PERM-OVERRIDE-1 DONE
+
+Passed: 13 | Failed: 1

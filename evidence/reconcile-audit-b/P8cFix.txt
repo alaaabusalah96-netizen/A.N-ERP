@@ -12,7 +12,7 @@
 [PASS] F5c replaying the same request (same idempotency key) is not mistaken for a duplicate
 [PASS] F6a the creator cannot approve their own invoice (403 sod-violation); another user can
 [PASS] F6b re-approving an already posted invoice is an idempotent success (no second journal)
-[PASS] F6c SUPPLIER_INVOICE_APPROVE: admin and financial_approver have it; accountant and warehouse_manager (who keep PURCHASE_MANAGE) do not; approve/reject routes require it, create/match still PURCHASE_MANAGE
+[FAIL] F6c SUPPLIER_INVOICE_APPROVE: admin and financial_approver have it; accountant and warehouse_manager (who keep PURCHASE_MANAGE) do not; approve/reject routes require it, create/match still PURCHASE_MANAGE
 [PASS] F7a the payable account comes from the company policy (2150), not from code
 [PASS] F7b a configured account that does not exist in the chart blocks approval (422 account-not-usable); nothing posted
 [PASS] F8 invoice update fails after posting (injected): first call reports it, a retry with a NEW idempotency key finishes the invoice and the payable is credited exactly once (80)
@@ -21,4 +21,4 @@
 [PASS] F10b post lost the race (entry already POSTED by the winner): approval succeeds, no second posting (payable 80)
 [PASS] F10c entry exists but is not posted yet and posting failed: clean 409 approval-in-progress (not 5xx), invoice not marked POSTED
 
-Passed: 22 | Failed: 0
+Passed: 21 | Failed: 1

@@ -32,7 +32,7 @@ check('C6 every wired script file exists and is not empty', wired.every(w => fs.
 check('C7 battery names are unique', new Set(wired.map(w => w.name)).size === wired.length);
 check('C8 no wired battery declares an expected count of 0', wired.every(w => !w.expected || !/(^|[^\d])0$/.test(w.expected)));
 check('C9 the BATTERIES array was parsed (sanity: at least 30 entries)', wired.length >= 30, `parsed ${wired.length}`);
-for (const must of ['verifyFixP1P2pAutopost', 'verifyPh8InvTab', 'verifyPh8Return', 'verifyPh8Reorder', 'verifyInvItemCard', 'verifyInvMovementsFilter', 'verifyDb1', 'verifyOps1', 'verifyDocSyncFull', 'verifyBatteryCoverage']) {
+for (const must of ['verifyFixP1P2pAutopost', 'verifyPh8InvTab', 'verifyPh8Return', 'verifyPh8Reorder', 'verifyInvItemCard', 'verifyInvItemCreate', 'verifyInvMovementsFilter', 'verifyDb1', 'verifyOps1', 'verifyDocSyncFull', 'verifyBatteryCoverage']) {
   const w = wired.find(x => x.script === must);
   check(`C10 ${must} is wired with an expected count`, !!w && !!w.expected, w ? `expected=${w.expected}` : 'not wired');
 }

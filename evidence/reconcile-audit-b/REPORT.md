@@ -1,5 +1,5 @@
-# Reconcile Audit B — 2026-10-15
-Verdict: CONDITIONAL_GO
+# Reconcile Audit B — 2026-10-17
+Verdict: NO_GO
 F07: PASS
 DATABASE_URL: set
 
@@ -17,7 +17,7 @@ DATABASE_URL: set
 | RepairBatch1 | PASS | 37 | 0 | 37 |
 | P8aProcurement | PASS | 24 | 0 | 24 |
 | P8cThreeWay | PASS | 14 | 0 | 14 |
-| P8cFix | PASS | 22 | 0 | 22 |
+| P8cFix | FAIL | 21 | 1 | 22 |
 | P15Purchasing | PASS | 25 | 0 | 25 |
 | P10StockAtomicMem | PASS | 12 | 0 | 12 |
 | P11TransfersMem | PASS | 12 | 0 | 12 |
@@ -41,12 +41,28 @@ DATABASE_URL: set
 | Ph8Return | PASS | 18 | 0 | 18 |
 | Ph8Reorder | PASS | 14 | 0 | 14 |
 | InvItemCard | PASS | 13 | 0 | 13 |
+| InvUiTabs | PASS | 12 | 0 | 12 |
 | InvMovementsFilter | PASS | 14 | 0 | — |
 | Db1 | PASS | 20 | 0 | — |
 | Ops1 | PASS | 28 | 0 | 28 |
 | DocSyncFull | PASS | 19 | 0 | 19 |
 | BatteryCoverage | PASS | 19 | 0 | 19 |
-| AuditWire | PASS | 27 | 0 | 27 |
+| AuditWire | FAIL | 26 | 2 | 28 |
+| SecRoleCeiling | ERROR | — | — | 24 |
+| BaselineMap | FAIL | 11 | 1 | 12 |
+| SecAuthMatrix | FAIL | 18 | 1 | 18 |
+| SecSessionPassword | FAIL | 14 | 1 | 15 |
+| SecUserAdmin | FAIL | 14 | 1 | 15 |
+| OrgCompany1 | FAIL | 13 | 1 | 14 |
+| SecPasswordUx | FAIL | 14 | 1 | 15 |
+| SecPermOverride | FAIL | 15 | 1 | 16 |
+| UiUsers1 | FAIL | 14 | 1 | 15 |
+| UiOps1 | FAIL | 13 | 1 | 14 |
+| UiP2p1 | FAIL | 12 | 1 | 13 |
+| Ui2faSetup1 | FAIL | 12 | 1 | 13 |
+| UiAuditPrint1 | PASS | 14 | 0 | 14 |
+| DemoLoginRoles1 | FAIL | 16 | 1 | 16 |
+| OrgMembership1 | PASS | 13 | 0 | 13 |
 | P9Validation | PASS | 144 | 0 | — |
 
 F07: PASS (passed=8 failed=0)

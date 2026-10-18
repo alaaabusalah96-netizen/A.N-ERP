@@ -1,0 +1,16 @@
+[PASS] S1 TenantCompany is legal entity type
+[PASS] S2 GET /api/company strips backendConfig
+[PASS] S3 GET does not return whole tenant object
+[PASS] S4 PUT validates empty nameAr
+[PASS] S5 PUT validates CR 10 digits
+[PASS] S6 tax 15-digit still present
+[PASS] S7 PATCH tenants status platform
+[PASS] S8 status ACTIVE|SUSPENDED only
+[PASS] S9 CompanyProfile alias
+[PASS] S10 doc ORG-COMPANY-1
+[PASS] S11 no CompanyGroup yet (wave 4)
+[PASS] P package DONE
+[FAIL] P lastChange
+[PASS] R SEC-USER-ADMIN DONE
+
+Passed: 13 | Failed: 1
