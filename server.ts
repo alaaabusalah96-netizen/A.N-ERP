@@ -71,6 +71,8 @@ import { validateCrossCompanyCreate, buildCrossCompanyTransfer, assertCanDispatc
 import { assertCanCloseEntity, assertCanReopenEntity, assertEntityOpenForStockMove, buildClosedState, buildReopenedState } from './src/core/accounting/EntityCloseService';
 import { aggregateGroupKpis, sumStockValue } from './src/core/org/GroupReportService';
 import { mergeTrialBalances } from './src/core/org/ConsolidationService';
+import { evaluateGateProd, GATE_REQUIRED_PACKAGES } from './src/core/platform/GateProdService';
+import * as fs from 'fs';
 import { defaultStockAccountingConfig } from './src/core/storage/StoragePort';
 import { requestContextALS } from './src/core/context/RequestContext';
 import { parseIsoDate, parseNonNegativeMoney, validationError, validateJournalInput, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
@@ -2920,7 +2922,39 @@ async function startServer() {
   // RPT-GROUP-1: read-only group KPI summary (platform)
   
   // CONSOL-1: consolidated trial balance (platform, read-only merge by account code)
-  app.get('/api/groups/:id/consol/trial-balance', requirePlatformAdmin, async (req: Request, res: Response) => {
+  
+  // GATE-PROD-1: production readiness checklist (platform, read-only)
+  app.get('/api/platform/gate-prod', requirePlatformAdmin, async (req: Request, res: Response) => {
+    try {
+      let packagesDone: string[] = [];
+      let openP1Count = 0;
+      let configDefectIds: string[] = [];
+      try {
+        const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+        packagesDone = (reg.packages || []).filter((p: any) => p.status === 'DONE').map((p: any) => p.id);
+        openP1Count = (reg.defects || []).filter((d: any) => d.status === 'OPEN' && String(d.severity || '').toUpperCase() === 'P1').length;
+        configDefectIds = (reg.defects || []).filter((d: any) => d.status === 'CONFIG').map((d: any) => d.id);
+      } catch {
+        packagesDone = [];
+      }
+      const report = evaluateGateProd({
+        packagesDone,
+        requiredPackages: [...GATE_REQUIRED_PACKAGES],
+        openP1Count,
+        configDefectIds,
+        hasHealthRoute: true,
+        hasConsolRoute: packagesDone.includes('CONSOL-1'),
+        hasGroupReportRoute: packagesDone.includes('RPT-GROUP-1'),
+        hasXcompanyRoutes: packagesDone.includes('STK-XCOMPANY-1'),
+        hasEntityCloseRoutes: packagesDone.includes('ACC-ENTITY-CLOSE-1'),
+      });
+      return res.json({ success: true, data: report });
+    } catch (e: any) {
+      return res.status(500).json({ status: 500, title: 'تعذر تقييم بوابة الإنتاج', detail: e?.message });
+    }
+  });
+
+app.get('/api/groups/:id/consol/trial-balance', requirePlatformAdmin, async (req: Request, res: Response) => {
     try {
       const storage = masterStorage;
       const groupId = String(req.params.id || '');

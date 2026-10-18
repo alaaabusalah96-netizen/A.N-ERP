@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-18",
-  "lastChange": "CONSOL-1: consolidated trial balance merge for company groups",
+  "lastChange": "GATE-PROD-1: production readiness checklist API and wave gate",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -317,6 +317,12 @@
       "status": "DONE",
       "scope": "GET /api/groups/:id/consol/trial-balance read-only account-code merge",
       "evidence": "docs/CONSOL_1.md; scripts/verifyConsol1.ts"
+    },
+    {
+      "id": "GATE-PROD-1",
+      "status": "DONE",
+      "scope": "Production readiness gate: required packages + P1 + platform checklist API",
+      "evidence": "docs/GATE_PROD_1.md; scripts/verifyGateProd1.ts; GET /api/platform/gate-prod"
     }
   ],
   "defects": [
