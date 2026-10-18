@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-18",
-  "lastChange": "INV-INTRANSIT-1b: widen S12 verify window for transfers status filter (no behavior change)",
+  "lastChange": "ORG-GROUP-1b: fix InMemoryAdapter CompanyGroup import syntax",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -275,6 +275,18 @@
       "status": "DONE",
       "scope": "Fix verifyInvIntransit S12 regex window (200→500) to match server.ts layout",
       "evidence": "scripts/verifyInvIntransit.ts"
+    },
+    {
+      "id": "ORG-GROUP-1",
+      "status": "DONE",
+      "scope": "Platform CompanyGroup model + CRUD/membership APIs; pure validation helpers",
+      "evidence": "docs/ORG_GROUP_1.md; scripts/verifyOrgGroup1.ts; src/core/org/CompanyGroupService.ts"
+    },
+    {
+      "id": "ORG-GROUP-1b",
+      "status": "DONE",
+      "scope": "Fix invalid import comma for CompanyGroup in InMemoryAdapter",
+      "evidence": "src/core/storage/adapters/InMemoryAdapter.ts"
     }
   ],
   "defects": [

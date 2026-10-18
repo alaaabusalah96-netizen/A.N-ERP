@@ -76,7 +76,8 @@ import {
   CustodyExpenseVoucher,
   DocumentAttachment,
   ItemPrice,
-, CompanyGroup } from '../StoragePort';
+  CompanyGroup,
+} from '../StoragePort';
 import { AuditChainService, GENESIS_PREVIOUS_HASH } from '../../audit/AuditChainService';
 import { SEED_TENANT_ID } from '../../seed/seedOnly';
 

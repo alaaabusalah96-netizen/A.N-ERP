@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-18",
-  "lastChange": "ORG-GROUP-1: CompanyGroup entity + platform APIs for group membership",
+  "lastChange": "ORG-GROUP-1b: fix InMemoryAdapter CompanyGroup import syntax",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -281,6 +281,12 @@
       "status": "DONE",
       "scope": "Platform CompanyGroup model + CRUD/membership APIs; pure validation helpers",
       "evidence": "docs/ORG_GROUP_1.md; scripts/verifyOrgGroup1.ts; src/core/org/CompanyGroupService.ts"
+    },
+    {
+      "id": "ORG-GROUP-1b",
+      "status": "DONE",
+      "scope": "Fix invalid import comma for CompanyGroup in InMemoryAdapter",
+      "evidence": "src/core/storage/adapters/InMemoryAdapter.ts"
     }
   ],
   "defects": [

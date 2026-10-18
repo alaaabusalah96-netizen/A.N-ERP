@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-18 — INV-INTRANSIT-1b: widen S12 verify window for transfers status filter (no behavior change)
+**Last update**: 2026-10-18 — ORG-GROUP-1b: fix InMemoryAdapter CompanyGroup import syntax
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-18)
 
 ## Gates
@@ -52,6 +52,8 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **INV-ITEM-CREATE** — DONE — Create stock-item cards from the dedicated Items tab using existing authenticated API; no stock quantity is created by item setup _(evidence: scripts/verifyInvItemCreate.ts; docs/INV_ITEM_CREATE.md; src/components/InventoryWorkspaceView.tsx)_
 - **INV-INTRANSIT-1** — DONE — UI filter/summary for IN_TRANSIT warehouse transfers; credentials on transfer fetches _(evidence: docs/INV_INTRANSIT_1.md; scripts/verifyInvIntransit.ts)_
 - **INV-INTRANSIT-1b** — DONE — Fix verifyInvIntransit S12 regex window (200→500) to match server.ts layout _(evidence: scripts/verifyInvIntransit.ts)_
+- **ORG-GROUP-1** — DONE — Platform CompanyGroup model + CRUD/membership APIs; pure validation helpers _(evidence: docs/ORG_GROUP_1.md; scripts/verifyOrgGroup1.ts; src/core/org/CompanyGroupService.ts)_
+- **ORG-GROUP-1b** — DONE — Fix invalid import comma for CompanyGroup in InMemoryAdapter _(evidence: src/core/storage/adapters/InMemoryAdapter.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

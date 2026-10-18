@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-18** — INV-INTRANSIT-1b: widen S12 verify window for transfers status filter (no behavior change)
+Last update: **2026-10-18** — ORG-GROUP-1b: fix InMemoryAdapter CompanyGroup import syntax
 
 ## Verdict
 | Field | Value |
