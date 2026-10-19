@@ -1,0 +1,447 @@
+# A.N ERP — UI-GOVERNANCE-1 — سياسات الاعتماد + نطاق المستودعات
+
+> على ZIP: `A.N-ERP-main - 2026-10-19T231153.976.zip`
+> واجهة فقط فوق APIs الجاهزة. لا تغيير خادم.
+
+## الخطوات
+1. PRECHECK: `grep -q "/api/approvals/policies" server.ts && grep -q warehouse-access server.ts`
+   ALREADY_DONE: `test -f src/components/GovernanceView.tsx && grep -q UI-GOVERNANCE-1 docs/STATE_REGISTER.json`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyUiGovernance1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyUiCompanyWizard1.ts` · `npx tsx scripts/verifyUiCompanySettingsFix.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `feat(ui): governance policies and warehouse access`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+327de6e302c5fd7138dfc0fdaee20826cac09856b0023f0fcfba2c17bcd023f9  .phase_tmp/ORDER.txt
+65b94ee35ee1c94fa2db590069b8ef617dfc3222bc56de36eb6647418a464f68  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+abaafb162fd8a003d7e88a67ad55943a49d43fca65e14511fbb05dc2f998579e  .phase_tmp/FINAL.txt
+10828d48296ef9c932592d051427b05ab436304977225b002bd5bfe18d801fe1  .phase_tmp/01_src__components__Sidebar_tsx.patch
+3a4cfd2ae6b95d02717a3987c0116fc96130b8b2617b487d02f21e9e870a2722  .phase_tmp/02_src__App_tsx.patch
+2037f3528bedc3a14766259dd28d11791efc0c54e0304acb89897d75c5395e7b  .phase_tmp/03_docs__STATE_REGISTER_json.patch
+fa5a646c32315771e387790096bd3abe3505e125aa0b785f1f36a00947660f63  .phase_tmp/04_scripts__runReconcileAuditB_ts.patch
+96eafe5e966fb18a6fa37cf163a767ecc4b3b2e3988d5217aae9e3f7ad99a2fe  .phase_tmp/n0_01.part
+03bb298b376ece797012ff4101f0eb96ef6b4ad2915e894df7ce94686c253e5f  .phase_tmp/n1_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__components__Sidebar_tsx.patch
+02_src__App_tsx.patch
+03_docs__STATE_REGISTER_json.patch
+04_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+src/components/GovernanceView.tsx|n0
+scripts/verifyUiGovernance1.ts|n1
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+7bf623ad246fed5d25f6a0484289a9d015afcf7dd708bc5a27a8da89df744d0e  src/components/Sidebar.tsx
+e3dd8240e81bc25e7d588646d8d2fee79853b743f1c510806fdefd65c64891b2  src/App.tsx
+a889d85a49c7af373383be638e3427a7ec95ab4e98a3ef53a851608664600498  docs/STATE_REGISTER.json
+d9faa49f4e30c0b2d37d64687687cb37335a3e2669b10a3f76a9c6573be5cc41  scripts/runReconcileAuditB.ts
+96eafe5e966fb18a6fa37cf163a767ecc4b3b2e3988d5217aae9e3f7ad99a2fe  src/components/GovernanceView.tsx
+03bb298b376ece797012ff4101f0eb96ef6b4ad2915e894df7ce94686c253e5f  scripts/verifyUiGovernance1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -14,8 +14,7 @@
+   CreditCard,
+   Boxes,
+   Truck,
+-  X,
+-} from 'lucide-react';
++  X,, ShieldAlert } from 'lucide-react';
+ 
+ export type ActiveSection =
+   | 'overview'
+@@ -26,6 +25,7 @@
+   | 'profile'
+   | 'company'
+   | 'company_wizard'
++  | 'governance'
+   | 'users_sod'
+   | 'custom_fields'
+   | 'audit_trail'
+@@ -68,6 +68,7 @@
+     { id: 'profile' as ActiveSection, label: 'الملف الشخصي والجلسات', icon: User },
+     { id: 'company' as ActiveSection, label: 'إعدادات المنشأة والنظام', icon: Building2 },
+     { id: 'company_wizard' as ActiveSection, label: 'إنشاء منشأة (المنصة)', icon: Building2 },
++    { id: 'governance' as ActiveSection, label: 'سياسات الاعتماد والمستودعات', icon: ShieldAlert },
+     { id: 'users_sod' as ActiveSection, label: 'المستخدمون وفصل المهام', icon: Users },
+     { id: 'custom_fields' as ActiveSection, label: 'التخصيص بدون كود', icon: Sliders },
+     { id: 'audit_trail' as ActiveSection, label: 'سجل التدقيق التشغيلي', icon: History },
+===== END FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+
+===== FILE: .phase_tmp/02_src__App_tsx.patch =====
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -9,6 +9,7 @@
+ import { UserProfileView } from './components/UserProfileView';
+ import { CompanySettingsView } from './components/CompanySettingsView';
+ import { CompanyWizardView } from './components/CompanyWizardView';
++import { GovernanceView } from './components/GovernanceView';
+ import { UsersAndSodView } from './components/UsersAndSodView';
+ import { CustomFieldsView } from './components/CustomFieldsView';
+ import { AuditTrailView } from './components/AuditTrailView';
+@@ -383,6 +384,10 @@
+             <CompanyWizardView onNotification={showNotification} />
+           )}
+ 
++          {activeSection === 'governance' && (
++            <GovernanceView onNotification={showNotification} />
++          )}
++
+           {activeSection === 'users_sod' && (
+             <UsersAndSodView onNotification={showNotification} />
+           )}
+===== END FILE: .phase_tmp/02_src__App_tsx.patch =====
+
+===== FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -341,6 +341,12 @@
+       "status": "DONE",
+       "scope": "Platform UI: create company via POST /api/wizard/create-company + activity templates",
+       "evidence": "src/components/CompanyWizardView.tsx; scripts/verifyUiCompanyWizard1.ts"
++    },
++    {
++      "id": "UI-GOVERNANCE-1",
++      "status": "DONE",
++      "scope": "UI: approval policies manage + user warehouse access scope",
++      "evidence": "src/components/GovernanceView.tsx; scripts/verifyUiGovernance1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -106,6 +106,7 @@
+   { name: 'OpsProdLaunch1', script: 'scripts/verifyOpsProdLaunch1.ts', expected: 14 },
+   { name: 'UiCompanySettingsFix', script: 'scripts/verifyUiCompanySettingsFix.ts', expected: 12 },
+   { name: 'UiCompanyWizard1', script: 'scripts/verifyUiCompanyWizard1.ts', expected: 14 },
++  { name: 'UiGovernance1', script: 'scripts/verifyUiGovernance1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+import React, { useEffect, useState } from 'react';
+import { ShieldCheck, Warehouse, Save, AlertCircle } from 'lucide-react';
+
+interface GovernanceViewProps {
+  onNotification: (msg: string) => void;
+}
+
+type Policy = { documentType: string; mode?: string; isActive?: boolean };
+type UserRow = { id: string; fullName?: string; username?: string; role?: string };
+type Wh = { id: string; nameAr?: string; code?: string };
+
+const DOC_TYPES = [
+  { id: 'GOODS_RECEIPT_SUPPLIER', label: 'استلام بضاعة من مورد' },
+  { id: 'STOCK_ISSUE', label: 'صرف مخزني' },
+  { id: 'STOCK_TRANSFER_RECEIPT', label: 'استلام تحويل مخزني' },
+];
+
+export const GovernanceView: React.FC<GovernanceViewProps> = ({ onNotification }) => {
+  const [tab, setTab] = useState<'policies' | 'warehouses'>('policies');
+  const [error, setError] = useState<string | null>(null);
+  const [policies, setPolicies] = useState<Policy[]>([]);
+  const [polBusy, setPolBusy] = useState(false);
+  const [editType, setEditType] = useState('GOODS_RECEIPT_SUPPLIER');
+  const [mode, setMode] = useState<'DIRECT' | 'STEPS'>('DIRECT');
+  const [isActive, setIsActive] = useState(true);
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [warehouses, setWarehouses] = useState<Wh[]>([]);
+  const [userId, setUserId] = useState('');
+  const [selectedWh, setSelectedWh] = useState<string[]>([]);
+  const [whBusy, setWhBusy] = useState(false);
+
+  const loadPolicies = async () => {
+    try {
+      const res = await fetch('/api/approvals/policies', { credentials: 'include' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || 'تعذر تحميل سياسات الاعتماد');
+        return;
+      }
+      setPolicies(Array.isArray(data?.data) ? data.data : []);
+    } catch {
+      setError('تعذر الاتصال أثناء تحميل السياسات');
+    }
+  };
+
+  const loadUsersAndWh = async () => {
+    try {
+      const [uRes, wRes] = await Promise.all([
+        fetch('/api/users', { credentials: 'include' }),
+        fetch('/api/inventory/warehouses', { credentials: 'include' }),
+      ]);
+      const uData = await uRes.json().catch(() => null);
+      const wData = await wRes.json().catch(() => null);
+      if (uRes.ok && Array.isArray(uData?.data)) setUsers(uData.data);
+      if (wRes.ok) {
+        const list = wData?.data || wData?.warehouses || wData || [];
+        setWarehouses(Array.isArray(list) ? list : []);
+      }
+    } catch {
+      onNotification('تعذر تحميل المستخدمين أو المستودعات');
+    }
+  };
+
+  useEffect(() => {
+    loadPolicies();
+    loadUsersAndWh();
+  }, []);
+
+  useEffect(() => {
+    if (!userId) {
+      setSelectedWh([]);
+      return;
+    }
+    (async () => {
+      try {
+        const res = await fetch(`/api/inventory/warehouse-access/${encodeURIComponent(userId)}`, {
+          credentials: 'include',
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok) {
+          const ids = data?.data || [];
+          setSelectedWh(Array.isArray(ids) ? ids.map(String) : []);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, [userId]);
+
+  const savePolicy = async () => {
+    setError(null);
+    setPolBusy(true);
+    try {
+      const idem =
+        (typeof crypto !== 'undefined' && crypto.randomUUID && crypto.randomUUID()) ||
+        `apol-${Date.now()}`;
+      const steps =
+        mode === 'STEPS'
+          ? [{ label: 'اعتماد', approverType: 'ROLE', approverRef: 'financial_approver', stepKind: 'GENERAL' }]
+          : [];
+      const res = await fetch(`/api/approvals/policies/${encodeURIComponent(editType)}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idem },
+        body: JSON.stringify({ mode, steps, enforceDistinctApprovers: true, isActive, idempotencyKey: idem }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل حفظ السياسة');
+        return;
+      }
+      onNotification('تم حفظ سياسة الاعتماد');
+      await loadPolicies();
+    } catch {
+      setError('تعذر الاتصال أثناء حفظ السياسة');
+    } finally {
+      setPolBusy(false);
+    }
+  };
+
+  const toggleWh = (id: string) => {
+    setSelectedWh((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const saveWarehouseAccess = async () => {
+    if (!userId) {
+      setError('اختر مستخدمًا أولًا');
+      return;
+    }
+    setError(null);
+    setWhBusy(true);
+    try {
+      const idem =
+        (typeof crypto !== 'undefined' && crypto.randomUUID && crypto.randomUUID()) ||
+        `whacc-${Date.now()}`;
+      const res = await fetch(`/api/inventory/warehouse-access/${encodeURIComponent(userId)}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idem },
+        body: JSON.stringify({ warehouseIds: selectedWh }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل حفظ نطاق المستودعات');
+        return;
+      }
+      onNotification('تم تحديث صلاحيات المستودع للمستخدم');
+    } catch {
+      setError('تعذر الاتصال أثناء حفظ نطاق المستودعات');
+    } finally {
+      setWhBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
+        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <ShieldCheck className="w-5 h-5 text-blue-700" />
+          الحوكمة: سياسات الاعتماد ونطاق المستودعات
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">
+          إدارة سياسات الموافقات وصلاحيات المستودع للمستخدم — مربوط بالـ API الحالي دون تغيير الخادم.
+        </p>
+      </div>
+
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setTab('policies')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'policies' ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-700'}`}>
+          سياسات الاعتماد
+        </button>
+        <button type="button" onClick={() => setTab('warehouses')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold ${tab === 'warehouses' ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-700'}`}>
+          نطاق المستودعات
+        </button>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-100 rounded-xl p-3">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {tab === 'policies' && (
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
+          <div className="text-xs text-slate-600">
+            السياسات الحالية: {policies.length ? policies.map((p) => p.documentType).join(', ') : 'لا توجد بعد'}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <label className="space-y-1">
+              <span className="font-bold">نوع المستند</span>
+              <select className="w-full border border-slate-200 rounded-xl px-3 py-2" value={editType}
+                onChange={(e) => setEditType(e.target.value)}>
+                {DOC_TYPES.map((d) => (
+                  <option key={d.id} value={d.id}>{d.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="font-bold">الوضع</span>
+              <select className="w-full border border-slate-200 rounded-xl px-3 py-2" value={mode}
+                onChange={(e) => setMode(e.target.value as 'DIRECT' | 'STEPS')}>
+                <option value="DIRECT">مباشر (DIRECT)</option>
+                <option value="STEPS">خطوات (STEPS)</option>
+              </select>
+            </label>
+            <label className="space-y-1 flex items-end gap-2 pb-2">
+              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+              <span className="font-bold">سياسة نشطة</span>
+            </label>
+          </div>
+          <button type="button" disabled={polBusy} onClick={savePolicy}
+            className="flex items-center gap-2 px-5 py-2.5 bg-blue-700 text-white text-xs font-bold rounded-xl">
+            <Save className="w-4 h-4" />
+            {polBusy ? 'جارٍ الحفظ...' : 'حفظ السياسة'}
+          </button>
+        </div>
+      )}
+
+      {tab === 'warehouses' && (
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
+          <label className="text-xs space-y-1 block">
+            <span className="font-bold flex items-center gap-2">
+              <Warehouse className="w-4 h-4" /> المستخدم
+            </span>
+            <select className="w-full border border-slate-200 rounded-xl px-3 py-2" value={userId}
+              onChange={(e) => setUserId(e.target.value)}>
+              <option value="">— اختر —</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.fullName || u.username} ({u.role})</option>
+              ))}
+            </select>
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto">
+            {warehouses.map((w) => {
+              const id = String(w.id);
+              return (
+                <label key={id} className="flex items-center gap-2 text-xs border border-slate-100 rounded-xl px-3 py-2">
+                  <input type="checkbox" checked={selectedWh.includes(id)} onChange={() => toggleWh(id)} />
+                  <span>{w.nameAr || w.code || id}</span>
+                </label>
+              );
+            })}
+            {!warehouses.length && (
+              <p className="text-xs text-slate-500">لا توجد مستودعات أو لا صلاحية STOCK_VIEW.</p>
+            )}
+          </div>
+          <button type="button" disabled={whBusy || !userId} onClick={saveWarehouseAccess}
+            className="flex items-center gap-2 px-5 py-2.5 bg-blue-700 text-white text-xs font-bold rounded-xl disabled:opacity-50">
+            <Save className="w-4 h-4" />
+            {whBusy ? 'جارٍ الحفظ...' : 'حفظ نطاق المستودعات'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+===== END FILE: .phase_tmp/n0_01.part =====
+
+===== FILE: .phase_tmp/n1_01.part =====
+/**
+ * @file verifyUiGovernance1.ts
+ * UI-GOVERNANCE-1 — approval policies + warehouse access UI.
+ * Run: npx tsx scripts/verifyUiGovernance1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const view = fs.readFileSync('src/components/GovernanceView.tsx', 'utf8');
+const app = fs.readFileSync('src/App.tsx', 'utf8');
+const side = fs.readFileSync('src/components/Sidebar.tsx', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 GovernanceView exists', fs.existsSync('src/components/GovernanceView.tsx'));
+check('S2 loads approval policies', /\/api\/approvals\/policies/.test(view));
+check('S3 saves policy with PUT and Idempotency-Key', /method:\s*'PUT'/.test(view) && /Idempotency-Key/.test(view) && /approvals\/policies\//.test(view));
+check('S4 warehouse access GET', /\/api\/inventory\/warehouse-access\//.test(view));
+check('S5 warehouse access PUT warehouseIds', /warehouseIds/.test(view));
+check('S6 credentials include', /credentials:\s*'include'/.test(view));
+check('S7 Sidebar governance section', /governance/.test(side) && /سياسات الاعتماد/.test(side));
+check('S8 App wires GovernanceView', /GovernanceView/.test(app));
+check('S9 App renders governance section', /activeSection === 'governance'/.test(app));
+check('S10 DOC types include GOODS_RECEIPT_SUPPLIER', /GOODS_RECEIPT_SUPPLIER/.test(view));
+check('S11 package UI-GOVERNANCE-1 DONE', byId['UI-GOVERNANCE-1']?.status === 'DONE');
+check('S12 UI-COMPANY-WIZARD-1 remains DONE', byId['UI-COMPANY-WIZARD-1']?.status === 'DONE');
+check('S13 UI-COMPANY-SETTINGS-FIX remains DONE', byId['UI-COMPANY-SETTINGS-FIX']?.status === 'DONE');
+check('S14 lastChange mentions UI-GOVERNANCE-1', String(reg.lastChange || '').includes('UI-GOVERNANCE-1'));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n1_01.part =====

@@ -9,6 +9,7 @@ import { ForcePasswordChangeScreen } from './components/ForcePasswordChangeScree
 import { UserProfileView } from './components/UserProfileView';
 import { CompanySettingsView } from './components/CompanySettingsView';
 import { CompanyWizardView } from './components/CompanyWizardView';
+import { GovernanceView } from './components/GovernanceView';
 import { UsersAndSodView } from './components/UsersAndSodView';
 import { CustomFieldsView } from './components/CustomFieldsView';
 import { AuditTrailView } from './components/AuditTrailView';
@@ -381,6 +382,10 @@ export default function App() {
 
           {activeSection === 'company_wizard' && (
             <CompanyWizardView onNotification={showNotification} />
+          )}
+
+          {activeSection === 'governance' && (
+            <GovernanceView onNotification={showNotification} />
           )}
 
           {activeSection === 'users_sod' && (

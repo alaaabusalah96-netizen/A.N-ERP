@@ -14,8 +14,7 @@ import {
   CreditCard,
   Boxes,
   Truck,
-  X,
-} from 'lucide-react';
+  X, ShieldAlert } from 'lucide-react';
 
 export type ActiveSection =
   | 'overview'
@@ -26,6 +25,7 @@ export type ActiveSection =
   | 'profile'
   | 'company'
   | 'company_wizard'
+  | 'governance'
   | 'users_sod'
   | 'custom_fields'
   | 'audit_trail'
@@ -68,6 +68,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'profile' as ActiveSection, label: 'الملف الشخصي والجلسات', icon: User },
     { id: 'company' as ActiveSection, label: 'إعدادات المنشأة والنظام', icon: Building2 },
     { id: 'company_wizard' as ActiveSection, label: 'إنشاء منشأة (المنصة)', icon: Building2 },
+    { id: 'governance' as ActiveSection, label: 'سياسات الاعتماد والمستودعات', icon: ShieldAlert },
     { id: 'users_sod' as ActiveSection, label: 'المستخدمون وفصل المهام', icon: Users },
     { id: 'custom_fields' as ActiveSection, label: 'التخصيص بدون كود', icon: Sliders },
     { id: 'audit_trail' as ActiveSection, label: 'سجل التدقيق التشغيلي', icon: History },
