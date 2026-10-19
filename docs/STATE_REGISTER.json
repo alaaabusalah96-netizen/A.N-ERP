@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "UI-INV-CONFIG-1: inventory settings accounting config barcode (after UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
+  "lastChange": "UI-ORG-GROUPS-1: platform groups members group items (after UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -353,6 +353,12 @@
       "status": "DONE",
       "scope": "UI: inventory settings + stock accounting config + barcode search",
       "evidence": "src/components/InvConfigView.tsx; scripts/verifyUiInvConfig1.ts"
+    },
+    {
+      "id": "UI-ORG-GROUPS-1",
+      "status": "DONE",
+      "scope": "UI: platform groups manage + members + group master items + publish",
+      "evidence": "src/components/OrgGroupsView.tsx; scripts/verifyUiOrgGroups1.ts"
     }
   ],
   "defects": [

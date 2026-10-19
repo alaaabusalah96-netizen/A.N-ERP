@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-19 — UI-INV-CONFIG-1: inventory settings accounting config barcode (after UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)
+**Last update**: 2026-10-19 — UI-ORG-GROUPS-1: platform groups members group items (after UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-19)
 
 ## Gates
@@ -65,6 +65,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **UI-COMPANY-WIZARD-1** — DONE — Platform UI: create company via POST /api/wizard/create-company + activity templates _(evidence: src/components/CompanyWizardView.tsx; scripts/verifyUiCompanyWizard1.ts)_
 - **UI-GOVERNANCE-1** — DONE — UI: approval policies manage + user warehouse access scope _(evidence: src/components/GovernanceView.tsx; scripts/verifyUiGovernance1.ts)_
 - **UI-INV-CONFIG-1** — DONE — UI: inventory settings + stock accounting config + barcode search _(evidence: src/components/InvConfigView.tsx; scripts/verifyUiInvConfig1.ts)_
+- **UI-ORG-GROUPS-1** — DONE — UI: platform groups manage + members + group master items + publish _(evidence: src/components/OrgGroupsView.tsx; scripts/verifyUiOrgGroups1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

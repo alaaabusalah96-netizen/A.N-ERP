@@ -1,0 +1,557 @@
+# A.N ERP — UI-ORG-GROUPS-1 — مجموعات الشركات + الأعضاء + أصناف المجموعة
+
+> على ZIP: `A.N-ERP-main - 2026-10-19T232614.634.zip`
+> واجهة منصة فقط (requirePlatformAdmin). لا تغيير خادم.
+
+## الخطوات
+1. PRECHECK: `grep -q "app.get('/api/groups'" server.ts`
+   ALREADY_DONE: `test -f src/components/OrgGroupsView.tsx && grep -q UI-ORG-GROUPS-1 docs/STATE_REGISTER.json`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyUiOrgGroups1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyUiInvConfig1.ts` · `npx tsx scripts/verifyUiGovernance1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `feat(ui): org groups members and group master items`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+327de6e302c5fd7138dfc0fdaee20826cac09856b0023f0fcfba2c17bcd023f9  .phase_tmp/ORDER.txt
+7b622f117a0cc068571a3cc4eb06d14da6d996d1c8aea0aa56d5034de0c5f23b  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+4bf7f6033d843699a29c04b157658af95d2f0f3e3de477ac56771e7ecdd8be5f  .phase_tmp/FINAL.txt
+7a296b16c50527fbe6818cf2b4241e73edcbcdd3d564c6027563db89001958cd  .phase_tmp/01_src__components__Sidebar_tsx.patch
+94eea2110caa4eb7218e83668f2cd849eca173ac1a0985f427a04abfbbb0318d  .phase_tmp/02_src__App_tsx.patch
+f52a3867c6de50996d0aa049cea115a8e49ec0362c445125b855def0b6534480  .phase_tmp/03_docs__STATE_REGISTER_json.patch
+e87818a26c5b00bf99c1703813c823379172f57a03e5e0b21b8861aff827bace  .phase_tmp/04_scripts__runReconcileAuditB_ts.patch
+239cc441e7f66a605a5128938772feb2b2f1b65d7c6abf3bc5f20513af27628a  .phase_tmp/n0_01.part
+49184006c873ac6fad9a937602f73793a2190209681865f2907c05840c207704  .phase_tmp/n1_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__components__Sidebar_tsx.patch
+02_src__App_tsx.patch
+03_docs__STATE_REGISTER_json.patch
+04_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+src/components/OrgGroupsView.tsx|n0
+scripts/verifyUiOrgGroups1.ts|n1
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+780709ffd458e94c7be0794bc2a1722f6dcc8a62c35aed79c0d8e25c40c59f73  src/components/Sidebar.tsx
+4f62609568c97d9fecf4fc364204bc4300296de43aebc4b564ee2e917f485f06  src/App.tsx
+06a15e76662f60356423a9cde08482dbf6a2f81064b0562a2614ce7ad487558a  docs/STATE_REGISTER.json
+605d6a9e6831580987cedcc5f44137f397b23b22ef41094cd70775f2b460771e  scripts/runReconcileAuditB.ts
+239cc441e7f66a605a5128938772feb2b2f1b65d7c6abf3bc5f20513af27628a  src/components/OrgGroupsView.tsx
+49184006c873ac6fad9a937602f73793a2190209681865f2907c05840c207704  scripts/verifyUiOrgGroups1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -14,7 +14,7 @@
+   CreditCard,
+   Boxes,
+   Truck,
+-  X, ShieldAlert } from 'lucide-react';
++  X, ShieldAlert, Network } from 'lucide-react';
+ 
+ export type ActiveSection =
+   | 'overview'
+@@ -27,6 +27,7 @@
+   | 'company_wizard'
+   | 'governance'
+   | 'inv_config'
++  | 'org_groups'
+   | 'users_sod'
+   | 'custom_fields'
+   | 'audit_trail'
+@@ -71,6 +72,7 @@
+     { id: 'company_wizard' as ActiveSection, label: 'إنشاء منشأة (المنصة)', icon: Building2 },
+     { id: 'governance' as ActiveSection, label: 'سياسات الاعتماد والمستودعات', icon: ShieldAlert },
+     { id: 'inv_config' as ActiveSection, label: 'إعدادات المخزون والمحاسبة', icon: Boxes },
++    { id: 'org_groups' as ActiveSection, label: 'مجموعات الشركات', icon: Network },
+     { id: 'users_sod' as ActiveSection, label: 'المستخدمون وفصل المهام', icon: Users },
+     { id: 'custom_fields' as ActiveSection, label: 'التخصيص بدون كود', icon: Sliders },
+     { id: 'audit_trail' as ActiveSection, label: 'سجل التدقيق التشغيلي', icon: History },
+===== END FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+
+===== FILE: .phase_tmp/02_src__App_tsx.patch =====
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -11,6 +11,7 @@
+ import { CompanyWizardView } from './components/CompanyWizardView';
+ import { GovernanceView } from './components/GovernanceView';
+ import { InvConfigView } from './components/InvConfigView';
++import { OrgGroupsView } from './components/OrgGroupsView';
+ import { UsersAndSodView } from './components/UsersAndSodView';
+ import { CustomFieldsView } from './components/CustomFieldsView';
+ import { AuditTrailView } from './components/AuditTrailView';
+@@ -393,6 +394,10 @@
+             <InvConfigView onNotification={showNotification} />
+           )}
+ 
++          {activeSection === 'org_groups' && (
++            <OrgGroupsView onNotification={showNotification} />
++          )}
++
+           {activeSection === 'users_sod' && (
+             <UsersAndSodView onNotification={showNotification} />
+           )}
+===== END FILE: .phase_tmp/02_src__App_tsx.patch =====
+
+===== FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -353,6 +353,12 @@
+       "status": "DONE",
+       "scope": "UI: inventory settings + stock accounting config + barcode search",
+       "evidence": "src/components/InvConfigView.tsx; scripts/verifyUiInvConfig1.ts"
++    },
++    {
++      "id": "UI-ORG-GROUPS-1",
++      "status": "DONE",
++      "scope": "UI: company groups + members + group master items + publish",
++      "evidence": "src/components/OrgGroupsView.tsx; scripts/verifyUiOrgGroups1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -108,6 +108,7 @@
+   { name: 'UiCompanyWizard1', script: 'scripts/verifyUiCompanyWizard1.ts', expected: 14 },
+   { name: 'UiGovernance1', script: 'scripts/verifyUiGovernance1.ts', expected: 14 },
+   { name: 'UiInvConfig1', script: 'scripts/verifyUiInvConfig1.ts', expected: 14 },
++  { name: 'UiOrgGroups1', script: 'scripts/verifyUiOrgGroups1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+import React, { useEffect, useState } from 'react';
+import { Network, Save, AlertCircle, Package } from 'lucide-react';
+
+interface OrgGroupsViewProps {
+  onNotification: (msg: string) => void;
+}
+
+type Group = {
+  id: string;
+  code?: string;
+  nameAr?: string;
+  memberTenantIds?: string[];
+};
+type Tenant = { id: string; nameAr?: string; code?: string };
+type Gmi = { id: string; itemCode?: string; nameAr?: string; category?: string; uom?: string };
+
+export const OrgGroupsView: React.FC<OrgGroupsViewProps> = ({ onNotification }) => {
+  const [error, setError] = useState<string | null>(null);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [selectedId, setSelectedId] = useState('');
+  const [items, setItems] = useState<Gmi[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const [code, setCode] = useState('');
+  const [nameAr, setNameAr] = useState('');
+  const [memberTenantId, setMemberTenantId] = useState('');
+  const [itemCode, setItemCode] = useState('');
+  const [itemNameAr, setItemNameAr] = useState('');
+  const [category, setCategory] = useState('عام');
+  const [uom, setUom] = useState('قطعة');
+
+  const idem = () =>
+    (typeof crypto !== 'undefined' && crypto.randomUUID && crypto.randomUUID()) ||
+    `grp-${Date.now()}`;
+
+  const loadGroups = async () => {
+    try {
+      const res = await fetch('/api/groups', { credentials: 'include' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || 'تعذر تحميل المجموعات (يلزم مدير منصة)');
+        return;
+      }
+      const list = data?.data || data || [];
+      setGroups(Array.isArray(list) ? list : []);
+    } catch {
+      setError('تعذر الاتصال أثناء تحميل المجموعات');
+    }
+  };
+
+  const loadTenants = async () => {
+    try {
+      const res = await fetch('/api/tenants', { credentials: 'include' });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        const list = data?.data || data || [];
+        setTenants(Array.isArray(list) ? list : []);
+      }
+    } catch {
+      /* optional */
+    }
+  };
+
+  const loadItems = async (groupId: string) => {
+    if (!groupId) {
+      setItems([]);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/groups/${encodeURIComponent(groupId)}/items`, {
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        const list = data?.data || data || [];
+        setItems(Array.isArray(list) ? list : []);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    loadGroups();
+    loadTenants();
+  }, []);
+
+  useEffect(() => {
+    loadItems(selectedId);
+  }, [selectedId]);
+
+  const selected = groups.find((g) => g.id === selectedId);
+
+  const createGroup = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const key = idem();
+      const res = await fetch('/api/groups', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body: JSON.stringify({ code, nameAr, idempotencyKey: key }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل إنشاء المجموعة');
+        return;
+      }
+      onNotification('تم إنشاء المجموعة');
+      setCode('');
+      setNameAr('');
+      await loadGroups();
+    } catch {
+      setError('تعذر الاتصال أثناء إنشاء المجموعة');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addMember = async () => {
+    if (!selectedId || !memberTenantId) {
+      setError('اختر مجموعة وشركة');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      const key = idem();
+      const res = await fetch(`/api/groups/${encodeURIComponent(selectedId)}/members`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body: JSON.stringify({ tenantId: memberTenantId, idempotencyKey: key }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل إضافة العضو');
+        return;
+      }
+      onNotification('تمت إضافة الشركة للمجموعة');
+      await loadGroups();
+    } catch {
+      setError('تعذر الاتصال أثناء إضافة العضو');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createItem = async () => {
+    if (!selectedId) {
+      setError('اختر مجموعة');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      const key = idem();
+      const res = await fetch(`/api/groups/${encodeURIComponent(selectedId)}/items`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body: JSON.stringify({
+          itemCode,
+          nameAr: itemNameAr,
+          category,
+          uom,
+          idempotencyKey: key,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل إنشاء صنف المجموعة');
+        return;
+      }
+      onNotification('تم إنشاء صنف المجموعة');
+      setItemCode('');
+      setItemNameAr('');
+      await loadItems(selectedId);
+    } catch {
+      setError('تعذر الاتصال أثناء إنشاء الصنف');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const publishItem = async (itemId: string) => {
+    if (!selectedId) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const key = idem();
+      const res = await fetch(
+        `/api/groups/${encodeURIComponent(selectedId)}/items/${encodeURIComponent(itemId)}/publish`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Idempotency-Key': key },
+        },
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل نشر الصنف');
+        return;
+      }
+      const pub = data?.data?.published?.length ?? 0;
+      const skip = data?.data?.skipped?.length ?? 0;
+      onNotification(`نشر الصنف: نُشر لـ ${pub}، تخطي ${skip}`);
+    } catch {
+      setError('تعذر الاتصال أثناء النشر');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
+        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <Network className="w-5 h-5 text-blue-700" />
+          مجموعات الشركات وأصناف المجموعة
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">
+          شاشة مدير المنصة — مجموعات، أعضاء، أصناف موحّدة، ونشر للشركاء.
+        </p>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-100 rounded-xl p-3">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-3 text-xs">
+          <p className="font-bold text-slate-800">إنشاء مجموعة</p>
+          <input
+            className="w-full border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="الرمز (CODE)"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+          <input
+            className="w-full border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="الاسم العربي"
+            value={nameAr}
+            onChange={(e) => setNameAr(e.target.value)}
+          />
+          <button
+            type="button"
+            disabled={busy}
+            onClick={createGroup}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white font-bold rounded-xl"
+          >
+            <Save className="w-4 h-4" /> إنشاء
+          </button>
+          <p className="font-bold text-slate-800 pt-2">المجموعات</p>
+          <select
+            className="w-full border border-slate-200 rounded-xl px-3 py-2"
+            value={selectedId}
+            onChange={(e) => setSelectedId(e.target.value)}
+          >
+            <option value="">— اختر —</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.nameAr || g.code || g.id} ({(g.memberTenantIds || []).length} أعضاء)
+              </option>
+            ))}
+          </select>
+          {selected && (
+            <p className="text-slate-500">
+              أعضاء: {(selected.memberTenantIds || []).join(', ') || 'لا يوجد'}
+            </p>
+          )}
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-3 text-xs">
+          <p className="font-bold text-slate-800">إضافة شركة للمجموعة</p>
+          <select
+            className="w-full border border-slate-200 rounded-xl px-3 py-2"
+            value={memberTenantId}
+            onChange={(e) => setMemberTenantId(e.target.value)}
+          >
+            <option value="">— شركة —</option>
+            {tenants.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.nameAr || t.code || t.id}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={busy || !selectedId}
+            onClick={addMember}
+            className="px-4 py-2 bg-blue-700 text-white font-bold rounded-xl disabled:opacity-50"
+          >
+            إضافة عضو
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-3 text-xs">
+        <p className="font-bold text-slate-800 flex items-center gap-2">
+          <Package className="w-4 h-4" /> أصناف المجموعة
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+          <input
+            className="border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="كود الصنف"
+            value={itemCode}
+            onChange={(e) => setItemCode(e.target.value)}
+          />
+          <input
+            className="border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="الاسم العربي"
+            value={itemNameAr}
+            onChange={(e) => setItemNameAr(e.target.value)}
+          />
+          <input
+            className="border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="التصنيف"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+          />
+          <input
+            className="border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="وحدة القياس"
+            value={uom}
+            onChange={(e) => setUom(e.target.value)}
+          />
+        </div>
+        <button
+          type="button"
+          disabled={busy || !selectedId}
+          onClick={createItem}
+          className="px-4 py-2 bg-blue-700 text-white font-bold rounded-xl disabled:opacity-50"
+        >
+          إنشاء صنف مجموعة
+        </button>
+        <ul className="space-y-2">
+          {items.map((it) => (
+            <li
+              key={it.id}
+              className="flex items-center justify-between border border-slate-100 rounded-xl px-3 py-2"
+            >
+              <span>
+                {it.itemCode} — {it.nameAr}
+              </span>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => publishItem(it.id)}
+                className="text-blue-700 font-bold"
+              >
+                نشر للأعضاء
+              </button>
+            </li>
+          ))}
+          {!items.length && selectedId && (
+            <li className="text-slate-500">لا أصناف بعد لهذه المجموعة</li>
+          )}
+        </ul>
+      </div>
+    </div>
+  );
+};
+===== END FILE: .phase_tmp/n0_01.part =====
+
+===== FILE: .phase_tmp/n1_01.part =====
+/**
+ * @file verifyUiOrgGroups1.ts
+ * UI-ORG-GROUPS-1 — platform groups / members / group items UI.
+ * Run: npx tsx scripts/verifyUiOrgGroups1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const view = fs.readFileSync('src/components/OrgGroupsView.tsx', 'utf8');
+const app = fs.readFileSync('src/App.tsx', 'utf8');
+const side = fs.readFileSync('src/components/Sidebar.tsx', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+const server = fs.readFileSync('server.ts', 'utf8');
+
+check('S1 OrgGroupsView exists', fs.existsSync('src/components/OrgGroupsView.tsx'));
+check('S2 lists groups', /fetch\('\/api\/groups'/.test(view));
+check('S3 creates group POST', /method:\s*'POST'/.test(view) && /\/api\/groups'/.test(view));
+check('S4 adds members', /\/members'/.test(view) && /tenantId/.test(view));
+check('S5 group items + publish', /\/items'/.test(view) && /\/publish'/.test(view));
+check('S6 credentials + Idempotency-Key', /credentials:\s*'include'/.test(view) && /Idempotency-Key/.test(view));
+check('S7 Sidebar org_groups', /org_groups/.test(side) && /مجموعات الشركات/.test(side));
+check('S8 App wires OrgGroupsView', /OrgGroupsView/.test(app));
+check('S9 App renders org_groups', /activeSection === 'org_groups'/.test(app));
+check('S10 server groups still platform-admin', /\/api\/groups',\s*requirePlatformAdmin/.test(server));
+check('S11 package UI-ORG-GROUPS-1 DONE', byId['UI-ORG-GROUPS-1']?.status === 'DONE');
+check('S12 UI-INV-CONFIG-1 remains DONE', byId['UI-INV-CONFIG-1']?.status === 'DONE');
+check('S13 UI-GOVERNANCE-1 remains DONE', byId['UI-GOVERNANCE-1']?.status === 'DONE');
+check('S14 lastChange mentions UI-ORG-GROUPS-1', String(reg.lastChange || '').includes('UI-ORG-GROUPS-1'));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n1_01.part =====
