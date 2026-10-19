@@ -18,7 +18,7 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="${BACKUP_DIR}/an-erp-prelaunch-${STAMP}.dump"
 
 echo "Writing custom-format dump to ${OUT}"
-# -Fc custom format; no --clean so restore is explicit and safer (no drop database)
+# -Fc custom format; no clean flag so restore is explicit and safer
 pg_dump "$DATABASE_URL" -Fc --no-owner --no-acl -f "$OUT"
 echo "OK backup: ${OUT}"
 echo "Restore example (review first): pg_restore -d YOUR_DATABASE_URL --no-owner --no-acl ${OUT}"

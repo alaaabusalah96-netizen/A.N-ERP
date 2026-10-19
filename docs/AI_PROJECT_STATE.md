@@ -1,7 +1,7 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-18 — GATE-PROD-1: production readiness checklist API and wave gate
-**Verdict**: **CONDITIONAL GO** (rendered 2026-10-18)
+**Last update**: 2026-10-18 — OPS-PROD-LAUNCH-1: an_erp_app role SQL + manual pre-launch backup + checklist
+**Verdict**: **CONDITIONAL GO** (rendered 2026-10-19)
 
 ## Gates
 _Gates were not run in this render. Run `npm test` to execute them and refresh this file._
@@ -60,6 +60,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **RPT-GROUP-1** — DONE — GET /api/groups/:id/report/summary platform KPI rollup _(evidence: docs/RPT_GROUP_1.md; scripts/verifyRptGroup1.ts)_
 - **CONSOL-1** — DONE — GET /api/groups/:id/consol/trial-balance read-only account-code merge _(evidence: docs/CONSOL_1.md; scripts/verifyConsol1.ts)_
 - **GATE-PROD-1** — DONE — Production readiness gate: required packages + P1 + platform checklist API _(evidence: docs/GATE_PROD_1.md; scripts/verifyGateProd1.ts; GET /api/platform/gate-prod)_
+- **OPS-PROD-LAUNCH-1** — DONE — Operator scripts: create NOBYPASSRLS app role + pg_dump backup + pre-launch checklist _(evidence: scripts/ops/create_an_erp_app_role.sql; scripts/ops/backup_before_launch.sh; docs/ops/PRE_LAUNCH_CHECKLIST.md)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
@@ -68,7 +69,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 | DEF-STOCK-RETURN-CUMULATIVE | P1 | **FIXED** | Stock returns did not accumulate prior returns or duplicate lines against the original qty | verifyFixStockReturnCumulative (posted + concurrent); assertOriginalPosted; PG/InMemory status |
 | DEF-CUSTODY-REVERSAL-DOUBLE-REFUND | P1 | **FIXED** | Reversing a custody expense voucher restores the custody balance twice | scripts/verifyFixP1Custody.ts; single restore in reverseCustodyExpenseVoucher only |
 | DEF-P2P-AUTOPOST-OFF | P1 | **FIXED** | Supplier invoice approval is wrong under the default stock-accounting config (autoPostEnabled=false) | scripts/verifyFixP1P2pAutopost.ts; approveSupplierInvoice Dr Inventory when autoPostEnabled=false, Dr GR/IR when true (code on tree) |
-| PROD-ROLE-BYPASSRLS | P2 | **CONFIG** | The application database role may bypass RLS | docs/ops/PROD-PG-ROLE.md; server boot refuse under AN_ENFORCE_PROD_ROLE=1; scripts/verifySecProdRole.ts / verifySec4ProdRole.ts. Package SEC-PROD-ROLE is DONE in code; deploy still needs NOSUPERUSER NOBYPASSRLS role + AN_ENFORCE_PROD_ROLE=1. |
+| PROD-ROLE-BYPASSRLS | P2 | **CONFIG** | The application database role may bypass RLS | docs/ops/PROD-PG-ROLE.md; docs/ops/PRE_LAUNCH_CHECKLIST.md; scripts/ops/create_an_erp_app_role.sql; scripts/ops/backup_before_launch.sh; server boot refuse under AN_ENFORCE_PROD_ROLE=1. Package OPS-PROD-LAUNCH-1 delivers operator scripts; defect remains CONFIG until production DATABASE_URL uses an_erp_app. |
 | DEF-P1-001 | P1 | **FIXED** | Stock count approval atomicity | scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review) |
 | DEF-P1-002 | P1 | **FIXED** | Stock return atomicity (PENDING_RETRY instead of silent success) | scripts/verifyRepairBatch1.ts 37/37 (InMemory; PostgreSQL not re-run in this review) |
 | DEF-P1-003 | P1 | **FIXED** | Custody reversal posts the journal before changing balances | Ordering fixed (journal posts before balances change); the separate double-refund defect (DEF-CUSTODY-REVERSAL-DOUBLE-REFUND) is also FIXED in this register. |

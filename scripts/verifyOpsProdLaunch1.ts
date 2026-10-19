@@ -35,6 +35,5 @@ check('S12 boot enforce still present', /AN_ENFORCE_PROD_ROLE/.test(server));
 check('R1 OPS-PROD-LAUNCH-1 DONE', byId['OPS-PROD-LAUNCH-1']?.status === 'DONE');
 check('R2 PROD-ROLE-BYPASSRLS still tracked until env applied', !!defect && (defect.status === 'CONFIG' || defect.status === 'OPEN'));
 
-console.log(`
-Passed: ${pass} | Failed: ${fail}`);
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
 process.exit(fail ? 1 : 0);

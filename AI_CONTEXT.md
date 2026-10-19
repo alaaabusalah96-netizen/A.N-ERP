@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-18** — GATE-PROD-1: production readiness checklist API and wave gate
+Last update: **2026-10-18** — OPS-PROD-LAUNCH-1: an_erp_app role SQL + manual pre-launch backup + checklist
 
 ## Verdict
 | Field | Value |
