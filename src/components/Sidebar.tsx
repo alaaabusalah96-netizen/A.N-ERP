@@ -25,6 +25,7 @@ export type ActiveSection =
   | 'purchasing'
   | 'profile'
   | 'company'
+  | 'company_wizard'
   | 'users_sod'
   | 'custom_fields'
   | 'audit_trail'
@@ -66,6 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const adminMenuItems = [
     { id: 'profile' as ActiveSection, label: 'الملف الشخصي والجلسات', icon: User },
     { id: 'company' as ActiveSection, label: 'إعدادات المنشأة والنظام', icon: Building2 },
+    { id: 'company_wizard' as ActiveSection, label: 'إنشاء منشأة (المنصة)', icon: Building2 },
     { id: 'users_sod' as ActiveSection, label: 'المستخدمون وفصل المهام', icon: Users },
     { id: 'custom_fields' as ActiveSection, label: 'التخصيص بدون كود', icon: Sliders },
     { id: 'audit_trail' as ActiveSection, label: 'سجل التدقيق التشغيلي', icon: History },

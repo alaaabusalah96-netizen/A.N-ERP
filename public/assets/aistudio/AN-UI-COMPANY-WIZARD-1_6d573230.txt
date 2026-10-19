@@ -1,0 +1,439 @@
+# A.N ERP — UI-COMPANY-WIZARD-1 — شاشة إنشاء منشأة (المنصة)
+
+> على ZIP: `A.N-ERP-main - 2026-10-19T230343.502.zip`
+> واجهة فقط فوق `POST /api/wizard/create-company` (requirePlatformAdmin). لا تغيير خادم.
+
+## الخطوات
+1. PRECHECK: `grep -q requirePlatformAdmin server.ts`
+   ALREADY_DONE: `test -f src/components/CompanyWizardView.tsx && grep -q UI-COMPANY-WIZARD-1 docs/STATE_REGISTER.json`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyUiCompanyWizard1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyUiCompanySettingsFix.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `feat(ui): platform company creation wizard screen`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+327de6e302c5fd7138dfc0fdaee20826cac09856b0023f0fcfba2c17bcd023f9  .phase_tmp/ORDER.txt
+ffa39af653a02c111d83cdf4627f759755502d64e231c1975b86868e891e0241  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+55a21893a9c5318fbee3653558a86dd464de1b19218f04f903e0fbfc4b44aad4  .phase_tmp/FINAL.txt
+a7095d23627d17b1a93e62af798913386408a7250b3630f931248615a2dacd31  .phase_tmp/01_src__components__Sidebar_tsx.patch
+fe538b7f9e829d5e8391df04f5ea3663ac04970eec20b38581b9450f7848973d  .phase_tmp/02_src__App_tsx.patch
+4753b9d0e793b91c1d9939588be1a58c282b60251acc241d451d7b75f0ee818b  .phase_tmp/03_docs__STATE_REGISTER_json.patch
+82edad1f15017b3d6955da799c5da5da87aae1a16fd2bc956a9b5eae57e73d97  .phase_tmp/04_scripts__runReconcileAuditB_ts.patch
+82adc154e197e7225ee14c729f99246806cae1a3310e1506a13f71b18fb6375a  .phase_tmp/n0_01.part
+83b1fa3a278534db6e419675e1aee2413fef95d3dec4456e24f73d01cd2d5267  .phase_tmp/n1_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__components__Sidebar_tsx.patch
+02_src__App_tsx.patch
+03_docs__STATE_REGISTER_json.patch
+04_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+src/components/CompanyWizardView.tsx|n0
+scripts/verifyUiCompanyWizard1.ts|n1
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+e18f2069f8fb584192cbccfd0bcf8fc4a6f2a31f7e721be225a646fddb9f93c8  src/components/Sidebar.tsx
+281e9d0176b8cb35abc9516362bff78b8a6e1b7416e2a4f06f6ba7917ccd8ed2  src/App.tsx
+137ede33d491a605c2e599d83b8bb89aed7bd15a39ff6fe60a2d8b3a1eb0bbec  docs/STATE_REGISTER.json
+55eef0d934ffad7882cada7664ef7679dc8ad318d07546c1235880337610dc04  scripts/runReconcileAuditB.ts
+82adc154e197e7225ee14c729f99246806cae1a3310e1506a13f71b18fb6375a  src/components/CompanyWizardView.tsx
+83b1fa3a278534db6e419675e1aee2413fef95d3dec4456e24f73d01cd2d5267  scripts/verifyUiCompanyWizard1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -25,6 +25,7 @@
+   | 'purchasing'
+   | 'profile'
+   | 'company'
++  | 'company_wizard'
+   | 'users_sod'
+   | 'custom_fields'
+   | 'audit_trail'
+@@ -66,6 +67,7 @@
+   const adminMenuItems = [
+     { id: 'profile' as ActiveSection, label: 'الملف الشخصي والجلسات', icon: User },
+     { id: 'company' as ActiveSection, label: 'إعدادات المنشأة والنظام', icon: Building2 },
++    { id: 'company_wizard' as ActiveSection, label: 'إنشاء منشأة (المنصة)', icon: Building2 },
+     { id: 'users_sod' as ActiveSection, label: 'المستخدمون وفصل المهام', icon: Users },
+     { id: 'custom_fields' as ActiveSection, label: 'التخصيص بدون كود', icon: Sliders },
+     { id: 'audit_trail' as ActiveSection, label: 'سجل التدقيق التشغيلي', icon: History },
+===== END FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+
+===== FILE: .phase_tmp/02_src__App_tsx.patch =====
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -8,6 +8,7 @@
+ import { ForcePasswordChangeScreen } from './components/ForcePasswordChangeScreen';
+ import { UserProfileView } from './components/UserProfileView';
+ import { CompanySettingsView } from './components/CompanySettingsView';
++import { CompanyWizardView } from './components/CompanyWizardView';
+ import { UsersAndSodView } from './components/UsersAndSodView';
+ import { CustomFieldsView } from './components/CustomFieldsView';
+ import { AuditTrailView } from './components/AuditTrailView';
+@@ -378,6 +379,10 @@
+             <CompanySettingsView onNotification={showNotification} />
+           )}
+ 
++          {activeSection === 'company_wizard' && (
++            <CompanyWizardView onNotification={showNotification} />
++          )}
++
+           {activeSection === 'users_sod' && (
+             <UsersAndSodView onNotification={showNotification} />
+           )}
+===== END FILE: .phase_tmp/02_src__App_tsx.patch =====
+
+===== FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "UI-COMPANY-SETTINGS-FIX: company settings fetch credentials + Idempotency-Key + CR validation",
++  "lastChange": "UI-COMPANY-WIZARD-1: platform create-company wizard screen",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -335,6 +335,12 @@
+       "status": "DONE",
+       "scope": "CompanySettingsView: credentials include, Idempotency-Key on PUT, CR 10-digit client check, safer JSON errors",
+       "evidence": "src/components/CompanySettingsView.tsx; scripts/verifyUiCompanySettingsFix.ts"
++    },
++    {
++      "id": "UI-COMPANY-WIZARD-1",
++      "status": "DONE",
++      "scope": "Platform UI: create company via POST /api/wizard/create-company + activity templates",
++      "evidence": "src/components/CompanyWizardView.tsx; scripts/verifyUiCompanyWizard1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -105,6 +105,7 @@
+   { name: 'GateProd1', script: 'scripts/verifyGateProd1.ts', expected: 14 },
+   { name: 'OpsProdLaunch1', script: 'scripts/verifyOpsProdLaunch1.ts', expected: 14 },
+   { name: 'UiCompanySettingsFix', script: 'scripts/verifyUiCompanySettingsFix.ts', expected: 12 },
++  { name: 'UiCompanyWizard1', script: 'scripts/verifyUiCompanyWizard1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+import React, { useEffect, useState } from 'react';
+import { Building2, Save, AlertCircle } from 'lucide-react';
+
+interface CompanyWizardViewProps {
+  onNotification: (msg: string) => void;
+}
+
+type TemplateRow = { id: string; nameAr?: string; categoryAr?: string };
+
+export const CompanyWizardView: React.FC<CompanyWizardViewProps> = ({ onNotification }) => {
+  const [templates, setTemplates] = useState<TemplateRow[]>([]);
+  const [loadingTpl, setLoadingTpl] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    countryCode: 'SA',
+    companyNameAr: '',
+    companyNameEn: '',
+    taxNumber: '',
+    activityTemplateId: 'tmpl-01',
+    adminUsername: '',
+    adminFullName: '',
+    adminEmail: '',
+    adminPassword: '',
+  });
+
+  useEffect(() => {
+    (async () => {
+      setLoadingTpl(true);
+      try {
+        const res = await fetch('/api/wizard/activity-templates', { credentials: 'include' });
+        const data = await res.json().catch(() => null);
+        const list = (data?.data || data || []) as TemplateRow[];
+        if (Array.isArray(list) && list.length) {
+          setTemplates(list);
+          if (!list.some((t) => t.id === form.activityTemplateId)) {
+            setForm((p) => ({ ...p, activityTemplateId: list[0].id }));
+          }
+        }
+      } catch {
+        onNotification('تعذر تحميل قوالب النشاط');
+      } finally {
+        setLoadingTpl(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onChange = (k: string, v: string) => setForm((p) => ({ ...p, [k]: v }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!form.companyNameAr.trim()) {
+      setError('اسم المنشأة بالعربية مطلوب');
+      return;
+    }
+    if (!form.adminUsername.trim() || !form.adminPassword.trim()) {
+      setError('بيانات مدير الشركة الأول مطلوبة');
+      return;
+    }
+    setSaving(true);
+    try {
+      const idem =
+        (typeof crypto !== 'undefined' && crypto.randomUUID && crypto.randomUUID()) ||
+        `wizard-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const body = {
+        countryCode: form.countryCode,
+        companyNameAr: form.companyNameAr.trim(),
+        companyNameEn: form.companyNameEn.trim() || undefined,
+        taxNumber: form.taxNumber.trim() || undefined,
+        activityTemplateId: form.activityTemplateId,
+        backendConfig: {
+          adapterType: 'inmemory',
+          connectionRef: 'DATABASE_URL',
+          isolationLevel: 'Shared',
+        },
+        firstAdmin: {
+          username: form.adminUsername.trim(),
+          fullName: form.adminFullName.trim() || form.adminUsername.trim(),
+          email: form.adminEmail.trim() || `${form.adminUsername.trim()}@example.local`,
+          password: form.adminPassword,
+        },
+        idempotencyKey: idem,
+      };
+      const res = await fetch('/api/wizard/create-company', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idem,
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل إنشاء المنشأة');
+        return;
+      }
+      onNotification('تم إنشاء المنشأة بنجاح (معالج المنصة).');
+      setForm((p) => ({
+        ...p,
+        companyNameAr: '',
+        companyNameEn: '',
+        taxNumber: '',
+        adminUsername: '',
+        adminFullName: '',
+        adminEmail: '',
+        adminPassword: '',
+      }));
+    } catch {
+      setError('تعذر الاتصال بالخادم أثناء إنشاء المنشأة');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
+        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <Building2 className="w-5 h-5 text-blue-700" />
+          إنشاء منشأة جديدة (المنصة)
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">
+          مسار مدير المنصة فقط — يستدعي معالج الإنشاء الخلفي الجاهز. يتطلب صلاحية platform_admin أو super_admin.
+        </p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+        {error && (
+          <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-100 rounded-xl p-3">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="text-xs space-y-1">
+            <span className="font-bold text-slate-700">الدولة</span>
+            <select
+              className="w-full border border-slate-200 rounded-xl px-3 py-2"
+              value={form.countryCode}
+              onChange={(e) => onChange('countryCode', e.target.value)}
+            >
+              <option value="SA">السعودية (SA)</option>
+              <option value="EG">مصر (EG)</option>
+              <option value="AE">الإمارات (AE)</option>
+              <option value="OM">عُمان (OM)</option>
+              <option value="BH">البحرين (BH)</option>
+            </select>
+          </label>
+          <label className="text-xs space-y-1">
+            <span className="font-bold text-slate-700">قالب النشاط</span>
+            <select
+              className="w-full border border-slate-200 rounded-xl px-3 py-2"
+              value={form.activityTemplateId}
+              onChange={(e) => onChange('activityTemplateId', e.target.value)}
+              disabled={loadingTpl}
+            >
+              {(templates.length ? templates : [{ id: 'tmpl-01', nameAr: 'قالب افتراضي' }]).map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.nameAr || t.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs space-y-1 sm:col-span-2">
+            <span className="font-bold text-slate-700">اسم المنشأة (عربي) *</span>
+            <input
+              className="w-full border border-slate-200 rounded-xl px-3 py-2"
+              value={form.companyNameAr}
+              onChange={(e) => onChange('companyNameAr', e.target.value)}
+              required
+            />
+          </label>
+          <label className="text-xs space-y-1">
+            <span className="font-bold text-slate-700">الاسم الإنجليزي</span>
+            <input
+              className="w-full border border-slate-200 rounded-xl px-3 py-2"
+              value={form.companyNameEn}
+              onChange={(e) => onChange('companyNameEn', e.target.value)}
+            />
+          </label>
+          <label className="text-xs space-y-1">
+            <span className="font-bold text-slate-700">الرقم الضريبي</span>
+            <input
+              className="w-full border border-slate-200 rounded-xl px-3 py-2"
+              value={form.taxNumber}
+              onChange={(e) => onChange('taxNumber', e.target.value)}
+            />
+          </label>
+        </div>
+
+        <div className="border-t border-slate-100 pt-4 space-y-3">
+          <p className="text-xs font-bold text-slate-800">مدير الشركة الأول</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="text-xs space-y-1">
+              <span className="font-bold text-slate-700">اسم المستخدم *</span>
+              <input
+                className="w-full border border-slate-200 rounded-xl px-3 py-2"
+                value={form.adminUsername}
+                onChange={(e) => onChange('adminUsername', e.target.value)}
+                required
+              />
+            </label>
+            <label className="text-xs space-y-1">
+              <span className="font-bold text-slate-700">الاسم الكامل</span>
+              <input
+                className="w-full border border-slate-200 rounded-xl px-3 py-2"
+                value={form.adminFullName}
+                onChange={(e) => onChange('adminFullName', e.target.value)}
+              />
+            </label>
+            <label className="text-xs space-y-1">
+              <span className="font-bold text-slate-700">البريد</span>
+              <input
+                type="email"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2"
+                value={form.adminEmail}
+                onChange={(e) => onChange('adminEmail', e.target.value)}
+              />
+            </label>
+            <label className="text-xs space-y-1">
+              <span className="font-bold text-slate-700">كلمة المرور *</span>
+              <input
+                type="password"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2"
+                value={form.adminPassword}
+                onChange={(e) => onChange('adminPassword', e.target.value)}
+                required
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={saving}
+            className="flex items-center gap-2 px-6 py-2.5 bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold rounded-xl"
+          >
+            <Save className="w-4 h-4" />
+            {saving ? 'جارٍ الإنشاء...' : 'إنشاء المنشأة'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+===== END FILE: .phase_tmp/n0_01.part =====
+
+===== FILE: .phase_tmp/n1_01.part =====
+/**
+ * @file verifyUiCompanyWizard1.ts
+ * UI-COMPANY-WIZARD-1 — platform create-company wizard UI.
+ * Run: npx tsx scripts/verifyUiCompanyWizard1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const view = fs.readFileSync('src/components/CompanyWizardView.tsx', 'utf8');
+const app = fs.readFileSync('src/App.tsx', 'utf8');
+const side = fs.readFileSync('src/components/Sidebar.tsx', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+const server = fs.readFileSync('server.ts', 'utf8');
+
+check('S1 CompanyWizardView exists', fs.existsSync('src/components/CompanyWizardView.tsx'));
+check('S2 posts to /api/wizard/create-company', /\/api\/wizard\/create-company/.test(view));
+check('S3 credentials include on create', /credentials:\s*'include'/.test(view));
+check('S4 Idempotency-Key sent', /Idempotency-Key/.test(view));
+check('S5 loads activity templates', /\/api\/wizard\/activity-templates/.test(view));
+check('S6 payload includes firstAdmin and backendConfig', /firstAdmin/.test(view) && /backendConfig/.test(view));
+check('S7 idempotencyKey in body', /idempotencyKey/.test(view));
+check('S8 Sidebar has company_wizard section', /company_wizard/.test(side) && /إنشاء منشأة/.test(side));
+check('S9 App imports CompanyWizardView', /CompanyWizardView/.test(app));
+check('S10 App renders company_wizard section', /activeSection === 'company_wizard'/.test(app));
+check('S11 server route still platform-guarded', /create-company['"],\s*requirePlatformAdmin/.test(server) || /create-company',\s*requirePlatformAdmin/.test(server));
+check('S12 package UI-COMPANY-WIZARD-1 DONE', byId['UI-COMPANY-WIZARD-1']?.status === 'DONE');
+check('S13 previous UI-COMPANY-SETTINGS-FIX remains DONE', byId['UI-COMPANY-SETTINGS-FIX']?.status === 'DONE');
+check('S14 lastChange mentions UI-COMPANY-WIZARD-1', String(reg.lastChange || '').includes('UI-COMPANY-WIZARD-1'));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n1_01.part =====

@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "UI-COMPANY-SETTINGS-FIX: company settings fetch credentials + Idempotency-Key + CR validation",
+  "lastChange": "UI-COMPANY-WIZARD-1: platform create-company wizard screen (after UI-COMPANY-SETTINGS-FIX)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -335,6 +335,12 @@
       "status": "DONE",
       "scope": "CompanySettingsView: credentials include, Idempotency-Key on PUT, CR 10-digit client check, safer JSON errors",
       "evidence": "src/components/CompanySettingsView.tsx; scripts/verifyUiCompanySettingsFix.ts"
+    },
+    {
+      "id": "UI-COMPANY-WIZARD-1",
+      "status": "DONE",
+      "scope": "Platform UI: create company via POST /api/wizard/create-company + activity templates",
+      "evidence": "src/components/CompanyWizardView.tsx; scripts/verifyUiCompanyWizard1.ts"
     }
   ],
   "defects": [

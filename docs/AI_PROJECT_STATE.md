@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-19 — UI-COMPANY-SETTINGS-FIX: company settings fetch credentials + Idempotency-Key + CR validation
+**Last update**: 2026-10-19 — UI-COMPANY-WIZARD-1: platform create-company wizard screen (after UI-COMPANY-SETTINGS-FIX)
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-19)
 
 ## Gates
@@ -62,6 +62,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **GATE-PROD-1** — DONE — Production readiness gate: required packages + P1 + platform checklist API _(evidence: docs/GATE_PROD_1.md; scripts/verifyGateProd1.ts; GET /api/platform/gate-prod)_
 - **OPS-PROD-LAUNCH-1** — DONE — Operator scripts: create NOBYPASSRLS app role + pg_dump backup + pre-launch checklist _(evidence: scripts/ops/create_an_erp_app_role.sql; scripts/ops/backup_before_launch.sh; docs/ops/PRE_LAUNCH_CHECKLIST.md)_
 - **UI-COMPANY-SETTINGS-FIX** — DONE — CompanySettingsView: credentials include, Idempotency-Key on PUT, CR 10-digit client check, safer JSON errors _(evidence: src/components/CompanySettingsView.tsx; scripts/verifyUiCompanySettingsFix.ts)_
+- **UI-COMPANY-WIZARD-1** — DONE — Platform UI: create company via POST /api/wizard/create-company + activity templates _(evidence: src/components/CompanyWizardView.tsx; scripts/verifyUiCompanyWizard1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-19** — UI-COMPANY-SETTINGS-FIX: company settings fetch credentials + Idempotency-Key + CR validation
+Last update: **2026-10-19** — UI-COMPANY-WIZARD-1: platform create-company wizard screen (after UI-COMPANY-SETTINGS-FIX)
 
 ## Verdict
 | Field | Value |
