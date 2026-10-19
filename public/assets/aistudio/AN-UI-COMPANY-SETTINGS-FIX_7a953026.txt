@@ -1,0 +1,229 @@
+# A.N ERP — UI-COMPANY-SETTINGS-FIX — إصلاح حفظ إعدادات المنشأة
+
+> على ZIP: `A.N-ERP-main - 2026-10-19T174853.931.zip`
+> إصلاح واجهة فقط: credentials + Idempotency-Key + تحقق CR + رسائل أوضح. لا تغيير خادم.
+
+## الخطوات
+1. PRECHECK: `test -f src/components/CompanySettingsView.tsx`
+   ALREADY_DONE: `grep -q "UI-COMPANY-SETTINGS-FIX" docs/STATE_REGISTER.json && grep -q "credentials: 'include'" src/components/CompanySettingsView.tsx`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyUiCompanySettingsFix.ts` → `Passed: 12 | Failed: 0`
+10. انحدار: لا يلزم بوابات ثقيلة؛ اختياري `verifyOpsProdLaunch1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `fix(ui): company settings credentials + Idempotency-Key`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+8d3b5a41e81978d025360227cd2729ac81e194f4f3f3f974ac43872922c20dc8  .phase_tmp/ORDER.txt
+14fbbe2dbcca7bbdaf897e8b1b3f16f78aca53a208638195e80aab699d6ccab0  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+cb98c4d17cb2cfda33c555e5279a83bffee53a653e5caccb65ecf0368f7ba18e  .phase_tmp/FINAL.txt
+1e7e90470135899336200c5686e84c38e35c21331f562a34c95b7b2f5e8715cb  .phase_tmp/01_src__components__CompanySettingsView_tsx.patch
+03bf8892118e09a43645a86c29d6190c5655950e7af315a5df9cc5d9bb90ef4c  .phase_tmp/02_docs__STATE_REGISTER_json.patch
+88d15f23d5c4fdad9780b27f9fcc08a3b4a516e1b33306992c27405869dd8903  .phase_tmp/03_scripts__runReconcileAuditB_ts.patch
+7afe44a2ca593d31c8c1d8a96d28979a5ea548935b9b796966856e8d0abc2f06  .phase_tmp/n0_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__components__CompanySettingsView_tsx.patch
+02_docs__STATE_REGISTER_json.patch
+03_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+scripts/verifyUiCompanySettingsFix.ts|n0
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+5620966db591f3828e0aaf233117d98099f75c612f5d04ff4be00167a876e95a  src/components/CompanySettingsView.tsx
+cabb7b21f44ecf949f1f510254bbfd3e276eed326712dbfe24b68121430d494b  docs/STATE_REGISTER.json
+6b3fd33fa77fe46685bf70b3e0bc64c72e115413b2f24163092448bd3dc8bb08  scripts/runReconcileAuditB.ts
+7afe44a2ca593d31c8c1d8a96d28979a5ea548935b9b796966856e8d0abc2f06  scripts/verifyUiCompanySettingsFix.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__components__CompanySettingsView_tsx.patch =====
+--- a/src/components/CompanySettingsView.tsx
++++ b/src/components/CompanySettingsView.tsx
+@@ -31,10 +31,29 @@
+   const fetchCompanyData = async () => {
+     setIsLoading(true);
+     try {
+-      const res = await fetch('/api/company');
+-      const data = await res.json();
++      const res = await fetch('/api/company', { credentials: 'include' });
++      let data: any = null;
++      try {
++        data = await res.json();
++      } catch {
++        onNotification('تعذر قراءة رد الخادم أثناء تحميل بيانات المنشأة');
++        return;
++      }
++      if (!res.ok) {
++        onNotification(data?.detail || data?.title || 'تعذر استرجاع بيانات المنشأة');
++        return;
++      }
+       if (data.success && data.data) {
+-        setFormData(data.data);
++        setFormData((prev) => ({
++          ...prev,
++          nameAr: data.data.nameAr ?? prev.nameAr,
++          nameEn: data.data.nameEn ?? prev.nameEn,
++          crNumber: data.data.crNumber ?? prev.crNumber,
++          taxNumber: data.data.taxNumber ?? prev.taxNumber,
++          baseCurrency: data.data.baseCurrency ?? prev.baseCurrency,
++          auditRetentionPolicyYears:
++            data.data.auditRetentionPolicyYears ?? prev.auditRetentionPolicyYears,
++        }));
+       }
+     } catch {
+       onNotification('تعذر استرجاع بيانات المنشأة');
+@@ -47,24 +66,51 @@
+     e.preventDefault();
+     setTaxError(null);
+ 
+-    // Validate 15-digit ZATCA Tax ID
+-    if (!/^\d{15}$/.test(formData.taxNumber.trim())) {
+-      setTaxError('الرقم الضريبي يجب أن يتكون من 15 رقماً ويبدأ وينتهي بالرقم 3.');
++    const cr = String(formData.crNumber || '').trim();
++    if (cr && !/^\d{10}$/.test(cr)) {
++      setTaxError('رقم السجل التجاري يجب أن يكون 10 أرقام عند إدخاله.');
+       return;
+     }
+ 
++    const tax = String(formData.taxNumber || '').trim();
++    if (tax && !/^\d{15}$/.test(tax)) {
++      setTaxError('الرقم الضريبي يجب أن يتكون من 15 رقماً.');
++      return;
++    }
++
+     setIsSaving(true);
+     try {
++      const idem =
++        (typeof crypto !== 'undefined' && crypto.randomUUID && crypto.randomUUID()) ||
++        `company-settings-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
++      const payload = {
++        nameAr: formData.nameAr,
++        nameEn: formData.nameEn,
++        crNumber: formData.crNumber,
++        taxNumber: formData.taxNumber,
++        baseCurrency: formData.baseCurrency,
++        auditRetentionPolicyYears: formData.auditRetentionPolicyYears,
++      };
+       const res = await fetch('/api/company', {
+         method: 'PUT',
+-        headers: { 'Content-Type': 'application/json' },
+-        body: JSON.stringify(formData),
++        credentials: 'include',
++        headers: {
++          'Content-Type': 'application/json',
++          'Idempotency-Key': idem,
++        },
++        body: JSON.stringify(payload),
+       });
+-      const data = await res.json();
++      let data: any = null;
++      try {
++        data = await res.json();
++      } catch {
++        onNotification('حدث خطأ أثناء الاتصال بالخادم');
++        return;
++      }
+       if (res.ok) {
+         onNotification('تم تحديث إعدادات وبيانات المنشأة بنجاح.');
+       } else {
+-        setTaxError(data.detail || 'فشل حفظ التعديلات');
++        setTaxError(data.detail || data.title || 'فشل حفظ التعديلات');
+       }
+     } catch {
+       onNotification('حدث خطأ أثناء الاتصال بالخادم');
+===== END FILE: .phase_tmp/01_src__components__CompanySettingsView_tsx.patch =====
+
+===== FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -3,8 +3,8 @@
+     "name": "A.N ERP",
+     "version": "7.2.0"
+   },
+-  "lastUpdated": "2026-10-18",
+-  "lastChange": "OPS-PROD-LAUNCH-1: an_erp_app role SQL + manual pre-launch backup + checklist",
++  "lastUpdated": "2026-10-19",
++  "lastChange": "UI-COMPANY-SETTINGS-FIX: company settings fetch credentials + Idempotency-Key + CR validation",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -329,6 +329,12 @@
+       "status": "DONE",
+       "scope": "Operator scripts: create NOBYPASSRLS app role + pg_dump backup + pre-launch checklist",
+       "evidence": "scripts/ops/create_an_erp_app_role.sql; scripts/ops/backup_before_launch.sh; docs/ops/PRE_LAUNCH_CHECKLIST.md"
++    },
++    {
++      "id": "UI-COMPANY-SETTINGS-FIX",
++      "status": "DONE",
++      "scope": "CompanySettingsView: credentials include, Idempotency-Key on PUT, CR 10-digit client check, safer JSON errors",
++      "evidence": "src/components/CompanySettingsView.tsx; scripts/verifyUiCompanySettingsFix.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -104,6 +104,7 @@
+   { name: 'Consol1', script: 'scripts/verifyConsol1.ts', expected: 14 },
+   { name: 'GateProd1', script: 'scripts/verifyGateProd1.ts', expected: 14 },
+   { name: 'OpsProdLaunch1', script: 'scripts/verifyOpsProdLaunch1.ts', expected: 14 },
++  { name: 'UiCompanySettingsFix', script: 'scripts/verifyUiCompanySettingsFix.ts', expected: 12 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file verifyUiCompanySettingsFix.ts
+ * UI-COMPANY-SETTINGS-FIX — company settings session + idempotency + validation.
+ * Run: npx tsx scripts/verifyUiCompanySettingsFix.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const view = fs.readFileSync('src/components/CompanySettingsView.tsx', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 GET /api/company uses credentials include', /fetch\('\/api\/company',\s*\{\s*credentials:\s*'include'\s*\}\)/.test(view));
+check('S2 PUT /api/company uses credentials include', /method:\s*'PUT'[\s\S]{0,200}credentials:\s*'include'/.test(view));
+check('S3 PUT sends Idempotency-Key header', /'Idempotency-Key'/.test(view));
+check('S4 client validates CR as 10 digits', /\\d\{10\}/.test(view) && /السجل التجاري/.test(view));
+check('S5 client validates tax as 15 digits', /\\d\{15\}/.test(view));
+check('S6 PUT body does not send backendConfig', /payload\s*=\s*\{[\s\S]*?nameAr[\s\S]*?\}/.test(view) && !/JSON\.stringify\(formData\)/.test(view));
+check('S7 load merges fields without wiping form defaults blindly', /setFormData\(\(prev\)\s*=>/.test(view));
+check('S8 non-OK responses surface detail', /data\.detail/.test(view));
+check('S9 package UI-COMPANY-SETTINGS-FIX DONE', byId['UI-COMPANY-SETTINGS-FIX']?.status === 'DONE');
+check('S10 previous OPS-PROD-LAUNCH-1 remains DONE', byId['OPS-PROD-LAUNCH-1']?.status === 'DONE');
+check('S11 lastChange mentions UI-COMPANY-SETTINGS-FIX', String(reg.lastChange || '').includes('UI-COMPANY-SETTINGS-FIX'));
+check('S12 CompanySettingsView still the settings screen title', /إعدادات المنشأة والنظام/.test(view));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n0_01.part =====

@@ -31,10 +31,29 @@ export const CompanySettingsView: React.FC<CompanySettingsViewProps> = ({ onNoti
   const fetchCompanyData = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/company');
-      const data = await res.json();
+      const res = await fetch('/api/company', { credentials: 'include' });
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        onNotification('تعذر قراءة رد الخادم أثناء تحميل بيانات المنشأة');
+        return;
+      }
+      if (!res.ok) {
+        onNotification(data?.detail || data?.title || 'تعذر استرجاع بيانات المنشأة');
+        return;
+      }
       if (data.success && data.data) {
-        setFormData(data.data);
+        setFormData((prev) => ({
+          ...prev,
+          nameAr: data.data.nameAr ?? prev.nameAr,
+          nameEn: data.data.nameEn ?? prev.nameEn,
+          crNumber: data.data.crNumber ?? prev.crNumber,
+          taxNumber: data.data.taxNumber ?? prev.taxNumber,
+          baseCurrency: data.data.baseCurrency ?? prev.baseCurrency,
+          auditRetentionPolicyYears:
+            data.data.auditRetentionPolicyYears ?? prev.auditRetentionPolicyYears,
+        }));
       }
     } catch {
       onNotification('تعذر استرجاع بيانات المنشأة');
@@ -47,24 +66,51 @@ export const CompanySettingsView: React.FC<CompanySettingsViewProps> = ({ onNoti
     e.preventDefault();
     setTaxError(null);
 
-    // Validate 15-digit ZATCA Tax ID
-    if (!/^\d{15}$/.test(formData.taxNumber.trim())) {
-      setTaxError('الرقم الضريبي يجب أن يتكون من 15 رقماً ويبدأ وينتهي بالرقم 3.');
+    const cr = String(formData.crNumber || '').trim();
+    if (cr && !/^\d{10}$/.test(cr)) {
+      setTaxError('رقم السجل التجاري يجب أن يكون 10 أرقام عند إدخاله.');
+      return;
+    }
+
+    const tax = String(formData.taxNumber || '').trim();
+    if (tax && !/^\d{15}$/.test(tax)) {
+      setTaxError('الرقم الضريبي يجب أن يتكون من 15 رقماً.');
       return;
     }
 
     setIsSaving(true);
     try {
+      const idem =
+        (typeof crypto !== 'undefined' && crypto.randomUUID && crypto.randomUUID()) ||
+        `company-settings-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const payload = {
+        nameAr: formData.nameAr,
+        nameEn: formData.nameEn,
+        crNumber: formData.crNumber,
+        taxNumber: formData.taxNumber,
+        baseCurrency: formData.baseCurrency,
+        auditRetentionPolicyYears: formData.auditRetentionPolicyYears,
+      };
       const res = await fetch('/api/company', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idem,
+        },
+        body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        onNotification('حدث خطأ أثناء الاتصال بالخادم');
+        return;
+      }
       if (res.ok) {
         onNotification('تم تحديث إعدادات وبيانات المنشأة بنجاح.');
       } else {
-        setTaxError(data.detail || 'فشل حفظ التعديلات');
+        setTaxError(data.detail || data.title || 'فشل حفظ التعديلات');
       }
     } catch {
       onNotification('حدث خطأ أثناء الاتصال بالخادم');

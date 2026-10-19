@@ -3,8 +3,8 @@
     "name": "A.N ERP",
     "version": "7.2.0"
   },
-  "lastUpdated": "2026-10-18",
-  "lastChange": "OPS-PROD-LAUNCH-1: an_erp_app role SQL + manual pre-launch backup + checklist",
+  "lastUpdated": "2026-10-19",
+  "lastChange": "UI-COMPANY-SETTINGS-FIX: company settings fetch credentials + Idempotency-Key + CR validation",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -329,6 +329,12 @@
       "status": "DONE",
       "scope": "Operator scripts: create NOBYPASSRLS app role + pg_dump backup + pre-launch checklist",
       "evidence": "scripts/ops/create_an_erp_app_role.sql; scripts/ops/backup_before_launch.sh; docs/ops/PRE_LAUNCH_CHECKLIST.md"
+    },
+    {
+      "id": "UI-COMPANY-SETTINGS-FIX",
+      "status": "DONE",
+      "scope": "CompanySettingsView: credentials include, Idempotency-Key on PUT, CR 10-digit client check, safer JSON errors",
+      "evidence": "src/components/CompanySettingsView.tsx; scripts/verifyUiCompanySettingsFix.ts"
     }
   ],
   "defects": [

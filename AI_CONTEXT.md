@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-18** — OPS-PROD-LAUNCH-1: an_erp_app role SQL + manual pre-launch backup + checklist
+Last update: **2026-10-19** — UI-COMPANY-SETTINGS-FIX: company settings fetch credentials + Idempotency-Key + CR validation
 
 ## Verdict
 | Field | Value |
