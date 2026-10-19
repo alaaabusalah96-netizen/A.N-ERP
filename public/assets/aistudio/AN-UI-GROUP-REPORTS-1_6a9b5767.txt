@@ -1,0 +1,329 @@
+# A.N ERP — UI-GROUP-REPORTS-1 — تقارير المجموعة + ميزان مجمّع
+
+> على ZIP: `A.N-ERP-main - 2026-10-19T234932.829.zip`
+> واجهة قراءة فقط للمنصة. لا تغيير خادم.
+
+## الخطوات
+1. PRECHECK: `grep -q "report/summary" server.ts && grep -q "consol/trial-balance" server.ts`
+   ALREADY_DONE: `test -f src/components/GroupReportsView.tsx && grep -q UI-GROUP-REPORTS-1 docs/STATE_REGISTER.json`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyUiGroupReports1.ts` → `Passed: 12 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyUiXcompany1.ts` · `npx tsx scripts/verifyUiOrgGroups1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `feat(ui): group reports and consolidated trial balance`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+327de6e302c5fd7138dfc0fdaee20826cac09856b0023f0fcfba2c17bcd023f9  .phase_tmp/ORDER.txt
+d5b7185dd56bb6c8f5d3f39d0842967845dd239433c3a5103de6f6d119631267  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+f9cb6f677ac3a55e6cb6bb7460cc2847bffca148b93bcb408219451f776dfb15  .phase_tmp/FINAL.txt
+53b0cbdcd8d9d5653f8585871d902fe9234594865fac802caddcd0fb9f5addba  .phase_tmp/01_src__components__Sidebar_tsx.patch
+9440b40ac079bff884eec6f2a980e9de43221ffffb278268826765bebe2982e1  .phase_tmp/02_src__App_tsx.patch
+dbb89f0eb037ab59162cea886ae6638344cc549f137d995317c0076c09499e4a  .phase_tmp/03_docs__STATE_REGISTER_json.patch
+d068f15b19863e890ee1ea8b64ece524a7156a29de7c33323ef8b9780151865e  .phase_tmp/04_scripts__runReconcileAuditB_ts.patch
+8479110567ce0dcca76ec8ce3d205ad55cfaec2d5caf70bde8c4e4d6b4c40091  .phase_tmp/n0_01.part
+18bedcdd333ac8529a32346c5816a8bf5543ce1daf56e2f49c391d5e4ab53814  .phase_tmp/n1_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__components__Sidebar_tsx.patch
+02_src__App_tsx.patch
+03_docs__STATE_REGISTER_json.patch
+04_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+src/components/GroupReportsView.tsx|n0
+scripts/verifyUiGroupReports1.ts|n1
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+28ac417c730821683bac0b0ed06abf0631b36365de6aba4f22d864eef9ca5bcd  src/components/Sidebar.tsx
+8484ee0787f4c46621c7f2b6b14d5a390938c2fbcb5eced31d30c0376afd480a  src/App.tsx
+4b41fa7ffbf09303f9b8caa25f93dffd20906f669afd962421be4e9aff6f8f83  docs/STATE_REGISTER.json
+feeaeace9b69663d05f0e0c331e1b44e0d0271a134c73702a181e4bc594ac4a3  scripts/runReconcileAuditB.ts
+8479110567ce0dcca76ec8ce3d205ad55cfaec2d5caf70bde8c4e4d6b4c40091  src/components/GroupReportsView.tsx
+18bedcdd333ac8529a32346c5816a8bf5543ce1daf56e2f49c391d5e4ab53814  scripts/verifyUiGroupReports1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -29,6 +29,7 @@
+   | 'inv_config'
+   | 'org_groups'
+   | 'xcompany'
++  | 'group_reports'
+   | 'users_sod'
+   | 'custom_fields'
+   | 'audit_trail'
+@@ -75,6 +76,7 @@
+     { id: 'inv_config' as ActiveSection, label: 'إعدادات المخزون والمحاسبة', icon: Boxes },
+     { id: 'org_groups' as ActiveSection, label: 'مجموعات الشركات وأصنافها', icon: Network },
+     { id: 'xcompany' as ActiveSection, label: 'تحويل بين شركات', icon: ArrowLeftRight },
++    { id: 'group_reports' as ActiveSection, label: 'تقارير المجموعة', icon: BarChart3 },
+     { id: 'users_sod' as ActiveSection, label: 'المستخدمون وفصل المهام', icon: Users },
+     { id: 'custom_fields' as ActiveSection, label: 'التخصيص بدون كود', icon: Sliders },
+     { id: 'audit_trail' as ActiveSection, label: 'سجل التدقيق التشغيلي', icon: History },
+===== END FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+
+===== FILE: .phase_tmp/02_src__App_tsx.patch =====
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -13,6 +13,7 @@
+ import { InvConfigView } from './components/InvConfigView';
+ import { OrgGroupsView } from './components/OrgGroupsView';
+ import { XcompanyView } from './components/XcompanyView';
++import { GroupReportsView } from './components/GroupReportsView';
+ import { UsersAndSodView } from './components/UsersAndSodView';
+ import { CustomFieldsView } from './components/CustomFieldsView';
+ import { AuditTrailView } from './components/AuditTrailView';
+@@ -403,6 +404,10 @@
+             <XcompanyView onNotification={showNotification} />
+           )}
+ 
++          {activeSection === 'group_reports' && (
++            <GroupReportsView onNotification={showNotification} />
++          )}
++
+           {activeSection === 'users_sod' && (
+             <UsersAndSodView onNotification={showNotification} />
+           )}
+===== END FILE: .phase_tmp/02_src__App_tsx.patch =====
+
+===== FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "UI-XCOMPANY-1: cross-company stock transfer UI (after UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
++  "lastChange": "UI-GROUP-REPORTS-1: group KPI summary + consolidated trial balance UI",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -365,6 +365,12 @@
+       "status": "DONE",
+       "scope": "UI: cross-company stock transfers create/dispatch/receive",
+       "evidence": "src/components/XcompanyView.tsx; scripts/verifyUiXcompany1.ts"
++    },
++    {
++      "id": "UI-GROUP-REPORTS-1",
++      "status": "DONE",
++      "scope": "UI: group report summary + consol trial-balance",
++      "evidence": "src/components/GroupReportsView.tsx; scripts/verifyUiGroupReports1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -110,6 +110,7 @@
+   { name: 'UiInvConfig1', script: 'scripts/verifyUiInvConfig1.ts', expected: 14 },
+   { name: 'UiOrgGroups1', script: 'scripts/verifyUiOrgGroups1.ts', expected: 14 },
+   { name: 'UiXcompany1', script: 'scripts/verifyUiXcompany1.ts', expected: 14 },
++  { name: 'UiGroupReports1', script: 'scripts/verifyUiGroupReports1.ts', expected: 12 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+import React, { useEffect, useState } from 'react';
+import { BarChart3, AlertCircle } from 'lucide-react';
+
+interface GroupReportsViewProps {
+  onNotification: (msg: string) => void;
+}
+
+type Group = { id: string; nameAr?: string; code?: string };
+
+export const GroupReportsView: React.FC<GroupReportsViewProps> = ({ onNotification }) => {
+  const [error, setError] = useState<string | null>(null);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [groupId, setGroupId] = useState('');
+  const [asOfDate, setAsOfDate] = useState(new Date().toISOString().slice(0, 10));
+  const [summary, setSummary] = useState<string>('');
+  const [trial, setTrial] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/groups', { credentials: 'include' });
+        const data = await res.json().catch(() => null);
+        if (res.ok) {
+          const list = data?.data || data || [];
+          setGroups(Array.isArray(list) ? list : []);
+        }
+      } catch {
+        setError('تعذر تحميل المجموعات');
+      }
+    })();
+  }, []);
+
+  const loadReports = async () => {
+    if (!groupId) {
+      setError('اختر مجموعة');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    setSummary('');
+    setTrial('');
+    try {
+      const [sRes, tRes] = await Promise.all([
+        fetch(`/api/groups/${encodeURIComponent(groupId)}/report/summary`, { credentials: 'include' }),
+        fetch(
+          `/api/groups/${encodeURIComponent(groupId)}/consol/trial-balance?asOfDate=${encodeURIComponent(asOfDate)}`,
+          { credentials: 'include' },
+        ),
+      ]);
+      const sData = await sRes.json().catch(() => null);
+      const tData = await tRes.json().catch(() => null);
+      if (!sRes.ok) {
+        setError(sData?.detail || 'فشل ملخص المجموعة');
+      } else {
+        setSummary(JSON.stringify(sData?.data ?? sData, null, 2));
+      }
+      if (!tRes.ok) {
+        setError((prev) => prev || tData?.detail || 'فشل الميزان المجمّع');
+      } else {
+        setTrial(JSON.stringify(tData?.data ?? tData, null, 2));
+      }
+      if (sRes.ok && tRes.ok) onNotification('تم تحميل تقارير المجموعة');
+    } catch {
+      setError('تعذر الاتصال أثناء تحميل التقارير');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
+        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <BarChart3 className="w-5 h-5 text-blue-700" />
+          تقارير المجموعة والتجميع
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">
+          ملخص KPI للمجموعة وميزان مراجعة مجمّع — قراءة فقط لمدير المنصة.
+        </p>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-100 rounded-xl p-3">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div className="bg-white p-5 rounded-2xl border border-slate-200 flex flex-wrap gap-3 items-end text-xs">
+        <label className="space-y-1">
+          <span className="font-bold">المجموعة</span>
+          <select
+            className="block border border-slate-200 rounded-xl px-3 py-2 min-w-[12rem]"
+            value={groupId}
+            onChange={(e) => setGroupId(e.target.value)}
+          >
+            <option value="">— اختر —</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.nameAr || g.code || g.id}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1">
+          <span className="font-bold">تاريخ الميزان</span>
+          <input
+            type="date"
+            className="block border border-slate-200 rounded-xl px-3 py-2"
+            value={asOfDate}
+            onChange={(e) => setAsOfDate(e.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={loadReports}
+          className="px-5 py-2.5 bg-blue-700 text-white font-bold rounded-xl"
+        >
+          {busy ? 'جارٍ التحميل...' : 'تحميل التقارير'}
+        </button>
+      </div>
+
+      {summary && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200">
+          <p className="text-xs font-bold mb-2">ملخص المجموعة</p>
+          <pre className="text-[11px] bg-slate-50 border border-slate-100 rounded-xl p-3 overflow-auto max-h-72">
+            {summary}
+          </pre>
+        </div>
+      )}
+      {trial && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200">
+          <p className="text-xs font-bold mb-2">ميزان المراجعة المجمّع</p>
+          <pre className="text-[11px] bg-slate-50 border border-slate-100 rounded-xl p-3 overflow-auto max-h-96">
+            {trial}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+};
+===== END FILE: .phase_tmp/n0_01.part =====
+
+===== FILE: .phase_tmp/n1_01.part =====
+/**
+ * @file verifyUiGroupReports1.ts
+ * UI-GROUP-REPORTS-1 — group summary + consol TB UI.
+ * Run: npx tsx scripts/verifyUiGroupReports1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const view = fs.readFileSync('src/components/GroupReportsView.tsx', 'utf8');
+const app = fs.readFileSync('src/App.tsx', 'utf8');
+const side = fs.readFileSync('src/components/Sidebar.tsx', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 GroupReportsView exists', fs.existsSync('src/components/GroupReportsView.tsx'));
+check('S2 summary endpoint', /\/report\/summary/.test(view));
+check('S3 consol trial-balance endpoint', /\/consol\/trial-balance/.test(view));
+check('S4 credentials include', /credentials:\s*'include'/.test(view));
+check('S5 Sidebar group_reports', /group_reports/.test(side) && /تقارير المجموعة/.test(side));
+check('S6 App wires GroupReportsView', /GroupReportsView/.test(app));
+check('S7 App renders group_reports', /activeSection === 'group_reports'/.test(app));
+check('S8 asOfDate control', /asOfDate/.test(view));
+check('S9 package UI-GROUP-REPORTS-1 DONE', byId['UI-GROUP-REPORTS-1']?.status === 'DONE');
+check('S10 UI-XCOMPANY-1 remains DONE', byId['UI-XCOMPANY-1']?.status === 'DONE');
+check('S11 UI-ORG-GROUPS-1 remains DONE', byId['UI-ORG-GROUPS-1']?.status === 'DONE');
+check('S12 lastChange mentions UI-GROUP-REPORTS-1', String(reg.lastChange || '').includes('UI-GROUP-REPORTS-1'));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n1_01.part =====

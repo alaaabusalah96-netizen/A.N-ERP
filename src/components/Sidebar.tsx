@@ -29,6 +29,7 @@ export type ActiveSection =
   | 'inv_config'
   | 'org_groups'
   | 'xcompany'
+  | 'group_reports'
   | 'users_sod'
   | 'custom_fields'
   | 'audit_trail'
@@ -75,6 +76,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'inv_config' as ActiveSection, label: 'إعدادات المخزون والمحاسبة', icon: Boxes },
     { id: 'org_groups' as ActiveSection, label: 'مجموعات الشركات وأصنافها', icon: Network },
     { id: 'xcompany' as ActiveSection, label: 'تحويل بين شركات', icon: ArrowLeftRight },
+    { id: 'group_reports' as ActiveSection, label: 'تقارير المجموعة', icon: BarChart3 },
     { id: 'users_sod' as ActiveSection, label: 'المستخدمون وفصل المهام', icon: Users },
     { id: 'custom_fields' as ActiveSection, label: 'التخصيص بدون كود', icon: Sliders },
     { id: 'audit_trail' as ActiveSection, label: 'سجل التدقيق التشغيلي', icon: History },

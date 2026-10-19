@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "UI-XCOMPANY-1: cross-company stock transfer UI (after UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
+  "lastChange": "UI-GROUP-REPORTS-1: group KPI summary + consolidated trial balance UI (after UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -365,6 +365,12 @@
       "status": "DONE",
       "scope": "UI: cross-company stock transfers create/dispatch/receive",
       "evidence": "src/components/XcompanyView.tsx; scripts/verifyUiXcompany1.ts"
+    },
+    {
+      "id": "UI-GROUP-REPORTS-1",
+      "status": "DONE",
+      "scope": "UI: group report summary + consol trial-balance",
+      "evidence": "src/components/GroupReportsView.tsx; scripts/verifyUiGroupReports1.ts"
     }
   ],
   "defects": [
