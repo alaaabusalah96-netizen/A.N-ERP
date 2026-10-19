@@ -12,6 +12,7 @@ import { CompanyWizardView } from './components/CompanyWizardView';
 import { GovernanceView } from './components/GovernanceView';
 import { InvConfigView } from './components/InvConfigView';
 import { OrgGroupsView } from './components/OrgGroupsView';
+import { XcompanyView } from './components/XcompanyView';
 import { UsersAndSodView } from './components/UsersAndSodView';
 import { CustomFieldsView } from './components/CustomFieldsView';
 import { AuditTrailView } from './components/AuditTrailView';
@@ -396,6 +397,10 @@ export default function App() {
 
           {activeSection === 'org_groups' && (
             <OrgGroupsView onNotification={showNotification} />
+          )}
+
+          {activeSection === 'xcompany' && (
+            <XcompanyView onNotification={showNotification} />
           )}
 
           {activeSection === 'users_sod' && (

@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "UI-ORG-GROUPS-1: platform groups members group items (after UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
+  "lastChange": "UI-XCOMPANY-1: cross-company stock transfer UI (after UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -359,6 +359,12 @@
       "status": "DONE",
       "scope": "UI: platform groups manage + members + group master items + publish",
       "evidence": "src/components/OrgGroupsView.tsx; scripts/verifyUiOrgGroups1.ts"
+    },
+    {
+      "id": "UI-XCOMPANY-1",
+      "status": "DONE",
+      "scope": "UI: cross-company stock transfers create/dispatch/receive",
+      "evidence": "src/components/XcompanyView.tsx; scripts/verifyUiXcompany1.ts"
     }
   ],
   "defects": [
