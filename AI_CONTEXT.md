@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-19** — UI-GOVERNANCE-1: approval policies and warehouse access (after UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)
+Last update: **2026-10-19** — UI-INV-CONFIG-1: inventory settings accounting config barcode (after UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)
 
 ## Verdict
 | Field | Value |

@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "UI-GOVERNANCE-1: approval policies and warehouse access (after UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
+  "lastChange": "UI-INV-CONFIG-1: inventory settings accounting config barcode (after UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -347,6 +347,12 @@
       "status": "DONE",
       "scope": "UI: approval policies manage + user warehouse access scope",
       "evidence": "src/components/GovernanceView.tsx; scripts/verifyUiGovernance1.ts"
+    },
+    {
+      "id": "UI-INV-CONFIG-1",
+      "status": "DONE",
+      "scope": "UI: inventory settings + stock accounting config + barcode search",
+      "evidence": "src/components/InvConfigView.tsx; scripts/verifyUiInvConfig1.ts"
     }
   ],
   "defects": [

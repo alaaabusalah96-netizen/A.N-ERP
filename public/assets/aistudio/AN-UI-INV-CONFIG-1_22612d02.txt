@@ -1,0 +1,479 @@
+# A.N ERP — UI-INV-CONFIG-1 — إعدادات المخزون + الربط المحاسبي + باركود
+
+> على ZIP: `A.N-ERP-main - 2026-10-19T232051.504.zip`
+> واجهة فقط فوق APIs الجاهزة. لا تغيير خادم.
+
+## الخطوات
+1. PRECHECK: `grep -q "/api/inventory/settings" server.ts && grep -q accounting-config server.ts`
+   ALREADY_DONE: `test -f src/components/InvConfigView.tsx && grep -q UI-INV-CONFIG-1 docs/STATE_REGISTER.json`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyUiInvConfig1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyUiGovernance1.ts` · `npx tsx scripts/verifyUiCompanyWizard1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `feat(ui): inventory settings accounting config barcode`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+327de6e302c5fd7138dfc0fdaee20826cac09856b0023f0fcfba2c17bcd023f9  .phase_tmp/ORDER.txt
+c02db2a6780cd200d05e9c403b640d1f644cf28d840a2d7303294ba9781783e3  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+f52264693099ab741d6f233db7c83673f5eb9752849e91912e98e72ce87403a9  .phase_tmp/FINAL.txt
+3d1a66e7e97ad206d789d9c903a908cce2573f8b801c7bf50438ff873ad6d51e  .phase_tmp/01_src__components__Sidebar_tsx.patch
+847f4060493a87a8c8acfe9b293cd261c26813cdf53e2550cb10bf5c48e29ed8  .phase_tmp/02_src__App_tsx.patch
+a38d95f3bebd6416bf17990627eb20239d0957ee46fd0ce2f434b097c63bed74  .phase_tmp/03_docs__STATE_REGISTER_json.patch
+9fe8409a3068cbce2cf2a80bddf73e724ed0e7d9284789874f1fa644a778f3fc  .phase_tmp/04_scripts__runReconcileAuditB_ts.patch
+78247fa2e22fcb56ff070cf7d2e800d6d36725de54883fd6c42c1020c0a3fd55  .phase_tmp/n0_01.part
+99e2d413cb8a1ebabe5dfe7a70adb0fc23ffd538369d014abca223f454e2f2b1  .phase_tmp/n1_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__components__Sidebar_tsx.patch
+02_src__App_tsx.patch
+03_docs__STATE_REGISTER_json.patch
+04_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+src/components/InvConfigView.tsx|n0
+scripts/verifyUiInvConfig1.ts|n1
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+670f12cd9f1887a2caad59333d05830172469edcb916a0d5829d3351ef6b5096  src/components/Sidebar.tsx
+66ab0c353dc3d95a9d339a0cc048441c33a98beded7b05f85e6ed231a3d401c0  src/App.tsx
+682a2a99d812fdaaa75648c5482e7d1d845bd9801877669e81aa411de574cbec  docs/STATE_REGISTER.json
+aee26d615b6c5c77dbc13f7e3dd21b831b3b23f325983f6e39ced1520194d2ce  scripts/runReconcileAuditB.ts
+78247fa2e22fcb56ff070cf7d2e800d6d36725de54883fd6c42c1020c0a3fd55  src/components/InvConfigView.tsx
+99e2d413cb8a1ebabe5dfe7a70adb0fc23ffd538369d014abca223f454e2f2b1  scripts/verifyUiInvConfig1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -26,6 +26,7 @@
+   | 'company'
+   | 'company_wizard'
+   | 'governance'
++  | 'inv_config'
+   | 'users_sod'
+   | 'custom_fields'
+   | 'audit_trail'
+@@ -69,6 +70,7 @@
+     { id: 'company' as ActiveSection, label: 'إعدادات المنشأة والنظام', icon: Building2 },
+     { id: 'company_wizard' as ActiveSection, label: 'إنشاء منشأة (المنصة)', icon: Building2 },
+     { id: 'governance' as ActiveSection, label: 'سياسات الاعتماد والمستودعات', icon: ShieldAlert },
++    { id: 'inv_config' as ActiveSection, label: 'إعدادات المخزون والمحاسبة', icon: Boxes },
+     { id: 'users_sod' as ActiveSection, label: 'المستخدمون وفصل المهام', icon: Users },
+     { id: 'custom_fields' as ActiveSection, label: 'التخصيص بدون كود', icon: Sliders },
+     { id: 'audit_trail' as ActiveSection, label: 'سجل التدقيق التشغيلي', icon: History },
+===== END FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+
+===== FILE: .phase_tmp/02_src__App_tsx.patch =====
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -10,6 +10,7 @@
+ import { CompanySettingsView } from './components/CompanySettingsView';
+ import { CompanyWizardView } from './components/CompanyWizardView';
+ import { GovernanceView } from './components/GovernanceView';
++import { InvConfigView } from './components/InvConfigView';
+ import { UsersAndSodView } from './components/UsersAndSodView';
+ import { CustomFieldsView } from './components/CustomFieldsView';
+ import { AuditTrailView } from './components/AuditTrailView';
+@@ -388,6 +389,10 @@
+             <GovernanceView onNotification={showNotification} />
+           )}
+ 
++          {activeSection === 'inv_config' && (
++            <InvConfigView onNotification={showNotification} />
++          )}
++
+           {activeSection === 'users_sod' && (
+             <UsersAndSodView onNotification={showNotification} />
+           )}
+===== END FILE: .phase_tmp/02_src__App_tsx.patch =====
+
+===== FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -347,6 +347,12 @@
+       "status": "DONE",
+       "scope": "UI: approval policies manage + user warehouse access scope",
+       "evidence": "src/components/GovernanceView.tsx; scripts/verifyUiGovernance1.ts"
++    },
++    {
++      "id": "UI-INV-CONFIG-1",
++      "status": "DONE",
++      "scope": "UI: inventory settings + stock accounting config + barcode search",
++      "evidence": "src/components/InvConfigView.tsx; scripts/verifyUiInvConfig1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -107,6 +107,7 @@
+   { name: 'UiCompanySettingsFix', script: 'scripts/verifyUiCompanySettingsFix.ts', expected: 12 },
+   { name: 'UiCompanyWizard1', script: 'scripts/verifyUiCompanyWizard1.ts', expected: 14 },
+   { name: 'UiGovernance1', script: 'scripts/verifyUiGovernance1.ts', expected: 14 },
++  { name: 'UiInvConfig1', script: 'scripts/verifyUiInvConfig1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+import React, { useEffect, useState } from 'react';
+import { Settings2, Save, AlertCircle, Barcode } from 'lucide-react';
+
+interface InvConfigViewProps {
+  onNotification: (msg: string) => void;
+}
+
+export const InvConfigView: React.FC<InvConfigViewProps> = ({ onNotification }) => {
+  const [tab, setTab] = useState<'settings' | 'accounting' | 'barcode'>('settings');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const [defaultValuationMethod, setDefaultValuationMethod] = useState('FIFO');
+  const [allowNegativeStock, setAllowNegativeStock] = useState(false);
+  const [overReceiptTolerancePct, setOverReceiptTolerancePct] = useState(0);
+
+  const [autoPostEnabled, setAutoPostEnabled] = useState(false);
+  const [grirAccountCode, setGrirAccountCode] = useState('');
+  const [inTransitAccountCode, setInTransitAccountCode] = useState('');
+  const [defaultInventoryAccountCode, setDefaultInventoryAccountCode] = useState('');
+  const [defaultCogsAccountCode, setDefaultCogsAccountCode] = useState('');
+
+  const [barcodeQuery, setBarcodeQuery] = useState('');
+  const [barcodeResult, setBarcodeResult] = useState<string>('');
+
+  const loadSettings = async () => {
+    try {
+      const res = await fetch('/api/inventory/settings', { credentials: 'include' });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.data) {
+        const d = data.data;
+        setDefaultValuationMethod(d.defaultValuationMethod || d.default_valuation_method || 'FIFO');
+        setAllowNegativeStock(!!(d.allowNegativeStock ?? d.allow_negative_stock));
+        setOverReceiptTolerancePct(Number(d.overReceiptTolerancePct ?? d.over_receipt_tolerance_pct ?? 0));
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const loadAccounting = async () => {
+    try {
+      const res = await fetch('/api/inventory/accounting-config', { credentials: 'include' });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.data) {
+        const d = data.data;
+        setAutoPostEnabled(!!(d.autoPostEnabled ?? d.auto_post_enabled));
+        setGrirAccountCode(d.grirAccountCode || d.grir_account_code || '');
+        setInTransitAccountCode(d.inTransitAccountCode || d.in_transit_account_code || '');
+        setDefaultInventoryAccountCode(d.defaultInventoryAccountCode || d.default_inventory_account_code || '');
+        setDefaultCogsAccountCode(d.defaultCogsAccountCode || d.default_cogs_account_code || '');
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    loadSettings();
+    loadAccounting();
+  }, []);
+
+  const idem = () =>
+    (typeof crypto !== 'undefined' && crypto.randomUUID && crypto.randomUUID()) ||
+    `invcfg-${Date.now()}`;
+
+  const saveSettings = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const key = idem();
+      const res = await fetch('/api/inventory/settings', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body: JSON.stringify({
+          defaultValuationMethod,
+          allowNegativeStock,
+          overReceiptTolerancePct: Number(overReceiptTolerancePct) || 0,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل حفظ إعدادات المخزون');
+        return;
+      }
+      onNotification('تم حفظ إعدادات المخزون');
+      await loadSettings();
+    } catch {
+      setError('تعذر الاتصال أثناء حفظ إعدادات المخزون');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveAccounting = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const key = idem();
+      const res = await fetch('/api/inventory/accounting-config', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body: JSON.stringify({
+          autoPostEnabled,
+          grirAccountCode,
+          inTransitAccountCode,
+          defaultInventoryAccountCode,
+          defaultCogsAccountCode,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل حفظ الربط المحاسبي');
+        return;
+      }
+      onNotification('تم حفظ إعدادات محاسبة المخزون');
+      await loadAccounting();
+    } catch {
+      setError('تعذر الاتصال أثناء حفظ الربط المحاسبي');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const searchBarcode = async () => {
+    setError(null);
+    setBarcodeResult('');
+    if (!barcodeQuery.trim()) {
+      setError('أدخل رمز باركود');
+      return;
+    }
+    try {
+      const res = await fetch(
+        `/api/inventory/items/search/barcode?barcode=${encodeURIComponent(barcodeQuery.trim())}`,
+        { credentials: 'include' },
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.error || 'لم يُعثر على الصنف');
+        return;
+      }
+      setBarcodeResult(JSON.stringify(data?.data ?? data, null, 2));
+    } catch {
+      setError('تعذر الاتصال أثناء بحث الباركود');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
+        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <Settings2 className="w-5 h-5 text-blue-700" />
+          إعدادات المخزون والربط المحاسبي
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">
+          إعدادات التقييم والسالب والتحمل، وحسابات المخزون، وبحث الباركود — فوق الـ API الحالي.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            ['settings', 'إعدادات المخزون'],
+            ['accounting', 'الربط المحاسبي'],
+            ['barcode', 'بحث باركود'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={`px-4 py-2 rounded-xl text-xs font-bold ${
+              tab === id ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-700'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-100 rounded-xl p-3">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {tab === 'settings' && (
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-4 text-xs">
+          <label className="block space-y-1">
+            <span className="font-bold">طريقة التقييم الافتراضية</span>
+            <select
+              className="w-full border border-slate-200 rounded-xl px-3 py-2"
+              value={defaultValuationMethod}
+              onChange={(e) => setDefaultValuationMethod(e.target.value)}
+            >
+              <option value="FIFO">FIFO</option>
+              <option value="WEIGHTED_AVERAGE">متوسط مرجح</option>
+              <option value="STANDARD">تكلفة معيارية</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={allowNegativeStock}
+              onChange={(e) => setAllowNegativeStock(e.target.checked)}
+            />
+            <span className="font-bold">السماح برصيد سالب</span>
+          </label>
+          <label className="block space-y-1">
+            <span className="font-bold">نسبة تحمل زيادة الاستلام %</span>
+            <input
+              type="number"
+              className="w-full border border-slate-200 rounded-xl px-3 py-2"
+              value={overReceiptTolerancePct}
+              onChange={(e) => setOverReceiptTolerancePct(Number(e.target.value))}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={saveSettings}
+            className="flex items-center gap-2 px-5 py-2.5 bg-blue-700 text-white font-bold rounded-xl"
+          >
+            <Save className="w-4 h-4" />
+            {busy ? 'جارٍ الحفظ...' : 'حفظ إعدادات المخزون'}
+          </button>
+        </div>
+      )}
+
+      {tab === 'accounting' && (
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-3 text-xs">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={autoPostEnabled}
+              onChange={(e) => setAutoPostEnabled(e.target.checked)}
+            />
+            <span className="font-bold">ترحيل قيود المخزون تلقائيًا</span>
+          </label>
+          {(
+            [
+              ['حساب GR/IR', grirAccountCode, setGrirAccountCode],
+              ['حساب البضاعة في الطريق', inTransitAccountCode, setInTransitAccountCode],
+              ['حساب المخزون الافتراضي', defaultInventoryAccountCode, setDefaultInventoryAccountCode],
+              ['حساب تكلفة البضاعة المباعة', defaultCogsAccountCode, setDefaultCogsAccountCode],
+            ] as const
+          ).map(([label, val, set]) => (
+            <label key={label} className="block space-y-1">
+              <span className="font-bold">{label}</span>
+              <input
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 font-mono"
+                value={val}
+                onChange={(e) => set(e.target.value)}
+              />
+            </label>
+          ))}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={saveAccounting}
+            className="flex items-center gap-2 px-5 py-2.5 bg-blue-700 text-white font-bold rounded-xl"
+          >
+            <Save className="w-4 h-4" />
+            {busy ? 'جارٍ الحفظ...' : 'حفظ الربط المحاسبي'}
+          </button>
+        </div>
+      )}
+
+      {tab === 'barcode' && (
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-3 text-xs">
+          <label className="block space-y-1">
+            <span className="font-bold flex items-center gap-2">
+              <Barcode className="w-4 h-4" /> رمز الباركود
+            </span>
+            <input
+              className="w-full border border-slate-200 rounded-xl px-3 py-2"
+              value={barcodeQuery}
+              onChange={(e) => setBarcodeQuery(e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={searchBarcode}
+            className="px-5 py-2.5 bg-blue-700 text-white font-bold rounded-xl"
+          >
+            بحث
+          </button>
+          {barcodeResult && (
+            <pre className="text-[11px] bg-slate-50 border border-slate-200 rounded-xl p-3 overflow-auto max-h-64">
+              {barcodeResult}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+===== END FILE: .phase_tmp/n0_01.part =====
+
+===== FILE: .phase_tmp/n1_01.part =====
+/**
+ * @file verifyUiInvConfig1.ts
+ * UI-INV-CONFIG-1 — inventory settings + accounting config + barcode UI.
+ * Run: npx tsx scripts/verifyUiInvConfig1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const view = fs.readFileSync('src/components/InvConfigView.tsx', 'utf8');
+const app = fs.readFileSync('src/App.tsx', 'utf8');
+const side = fs.readFileSync('src/components/Sidebar.tsx', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 InvConfigView exists', fs.existsSync('src/components/InvConfigView.tsx'));
+check('S2 GET/PUT inventory settings', /\/api\/inventory\/settings/.test(view));
+check('S3 GET/PUT accounting-config', /\/api\/inventory\/accounting-config/.test(view));
+check('S4 barcode search endpoint', /\/api\/inventory\/items\/search\/barcode/.test(view));
+check('S5 Idempotency-Key on saves', /Idempotency-Key/.test(view));
+check('S6 credentials include', /credentials:\s*'include'/.test(view));
+check('S7 Sidebar inv_config', /inv_config/.test(side) && /إعدادات المخزون/.test(side));
+check('S8 App wires InvConfigView', /InvConfigView/.test(app));
+check('S9 App renders inv_config', /activeSection === 'inv_config'/.test(app));
+check('S10 valuation method control', /defaultValuationMethod|FIFO/.test(view));
+check('S11 package UI-INV-CONFIG-1 DONE', byId['UI-INV-CONFIG-1']?.status === 'DONE');
+check('S12 UI-GOVERNANCE-1 remains DONE', byId['UI-GOVERNANCE-1']?.status === 'DONE');
+check('S13 UI-COMPANY-WIZARD-1 remains DONE', byId['UI-COMPANY-WIZARD-1']?.status === 'DONE');
+check('S14 lastChange mentions UI-INV-CONFIG-1', String(reg.lastChange || '').includes('UI-INV-CONFIG-1'));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n1_01.part =====
