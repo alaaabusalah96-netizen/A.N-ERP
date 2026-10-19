@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "UI-GROUP-REPORTS-1: group KPI summary + consolidated trial balance UI (after UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
+  "lastChange": "UI-LEDGER-DEPTH-1: entity close, stock recon, docs journal, attachments UI (after UI-GROUP-REPORTS-1, UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -371,6 +371,12 @@
       "status": "DONE",
       "scope": "UI: group report summary + consol trial-balance",
       "evidence": "src/components/GroupReportsView.tsx; scripts/verifyUiGroupReports1.ts"
+    },
+    {
+      "id": "UI-LEDGER-DEPTH-1",
+      "status": "DONE",
+      "scope": "UI: entity close/reopen, inventory reconciliation, stock doc post-journal, attachments",
+      "evidence": "src/components/LedgerDepthView.tsx; scripts/verifyUiLedgerDepth1.ts"
     }
   ],
   "defects": [

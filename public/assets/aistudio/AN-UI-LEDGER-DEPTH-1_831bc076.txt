@@ -1,0 +1,557 @@
+# A.N ERP — UI-LEDGER-DEPTH-1 — إقفال كيان + مطابقة + مستندات + مرفقات
+
+> على ZIP: `A.N-ERP-main - 2026-10-19T235533.296.zip`
+> واجهة فقط فوق APIs الجاهزة. **آخر حزمة من خطة الـ8.**
+
+## الخطوات
+1. PRECHECK: `grep -q entity-close server.ts && grep -q inventory/reconciliation server.ts`
+   ALREADY_DONE: `test -f src/components/LedgerDepthView.tsx && grep -q UI-LEDGER-DEPTH-1 docs/STATE_REGISTER.json`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyUiLedgerDepth1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyUiGroupReports1.ts` · `npx tsx scripts/verifyUiXcompany1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `feat(ui): ledger depth entity close recon docs attachments`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+327de6e302c5fd7138dfc0fdaee20826cac09856b0023f0fcfba2c17bcd023f9  .phase_tmp/ORDER.txt
+766303bb9ae902f2e1deb9033963424ff0da644ac2db40829758770bf84b726a  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+638251fa10bc851b0e71a2f44f92239a8126756cbb4476a11003c930ecb6370b  .phase_tmp/FINAL.txt
+c5c2b0db3aad4854565003cda3b5df1feff5312e55894f33a18740a8e83ca608  .phase_tmp/01_src__components__Sidebar_tsx.patch
+45454564622b94ea158dfefa7e744fdcd3dda43f7ada6836f0b5acd6f116e2c6  .phase_tmp/02_src__App_tsx.patch
+597f73e39d3fb7bce6fb4da77bcef1b6f696a7f5c94279228431da8171681225  .phase_tmp/03_docs__STATE_REGISTER_json.patch
+3e9b0fa4bd7ead3ee8ed22a34e3b0482c77823e9aa5a98ba5b9fc641f0a154c4  .phase_tmp/04_scripts__runReconcileAuditB_ts.patch
+aaa338749b0ca86589dca76b5593e4735c93367c48f96746607e6e06b128a29a  .phase_tmp/n0_01.part
+1339da21558e5aaba686049121c01c9f881ac136253e5bfb0977c0fb08c2d19c  .phase_tmp/n1_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__components__Sidebar_tsx.patch
+02_src__App_tsx.patch
+03_docs__STATE_REGISTER_json.patch
+04_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+src/components/LedgerDepthView.tsx|n0
+scripts/verifyUiLedgerDepth1.ts|n1
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+f7fe41097e994ebbafde53b937f5335c036d658de2cedc593dec7a316b5074d8  src/components/Sidebar.tsx
+42e32a40bea881b498d84e2c3041c64e94bd81d9abd4b4f3b17cc8965417e2e0  src/App.tsx
+65cc56dc06721cfa439bdb7eeff4e6d1dc38bb5722c1c9206d2317eb7b6c3ad2  docs/STATE_REGISTER.json
+c2d64c1e988eacbe9dd151813697e6eb414b1752ca7c968f55182a7c2b5840c6  scripts/runReconcileAuditB.ts
+aaa338749b0ca86589dca76b5593e4735c93367c48f96746607e6e06b128a29a  src/components/LedgerDepthView.tsx
+1339da21558e5aaba686049121c01c9f881ac136253e5bfb0977c0fb08c2d19c  scripts/verifyUiLedgerDepth1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -30,6 +30,7 @@
+   | 'org_groups'
+   | 'xcompany'
+   | 'group_reports'
++  | 'ledger_depth'
+   | 'users_sod'
+   | 'custom_fields'
+   | 'audit_trail'
+@@ -77,6 +78,7 @@
+     { id: 'org_groups' as ActiveSection, label: 'مجموعات الشركات وأصنافها', icon: Network },
+     { id: 'xcompany' as ActiveSection, label: 'تحويل بين شركات', icon: ArrowLeftRight },
+     { id: 'group_reports' as ActiveSection, label: 'تقارير المجموعة', icon: BarChart3 },
++    { id: 'ledger_depth' as ActiveSection, label: 'إقفال ومطابقة ومرفقات', icon: FileText },
+     { id: 'users_sod' as ActiveSection, label: 'المستخدمون وفصل المهام', icon: Users },
+     { id: 'custom_fields' as ActiveSection, label: 'التخصيص بدون كود', icon: Sliders },
+     { id: 'audit_trail' as ActiveSection, label: 'سجل التدقيق التشغيلي', icon: History },
+===== END FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+
+===== FILE: .phase_tmp/02_src__App_tsx.patch =====
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -14,6 +14,7 @@
+ import { OrgGroupsView } from './components/OrgGroupsView';
+ import { XcompanyView } from './components/XcompanyView';
+ import { GroupReportsView } from './components/GroupReportsView';
++import { LedgerDepthView } from './components/LedgerDepthView';
+ import { UsersAndSodView } from './components/UsersAndSodView';
+ import { CustomFieldsView } from './components/CustomFieldsView';
+ import { AuditTrailView } from './components/AuditTrailView';
+@@ -408,6 +409,10 @@
+             <GroupReportsView onNotification={showNotification} />
+           )}
+ 
++          {activeSection === 'ledger_depth' && (
++            <LedgerDepthView onNotification={showNotification} />
++          )}
++
+           {activeSection === 'users_sod' && (
+             <UsersAndSodView onNotification={showNotification} />
+           )}
+===== END FILE: .phase_tmp/02_src__App_tsx.patch =====
+
+===== FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "UI-GROUP-REPORTS-1: group KPI summary + consolidated trial balance UI (after UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
++  "lastChange": "UI-LEDGER-DEPTH-1: entity close, stock recon, docs journal, attachments UI",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -371,6 +371,12 @@
+       "status": "DONE",
+       "scope": "UI: group report summary + consol trial-balance",
+       "evidence": "src/components/GroupReportsView.tsx; scripts/verifyUiGroupReports1.ts"
++    },
++    {
++      "id": "UI-LEDGER-DEPTH-1",
++      "status": "DONE",
++      "scope": "UI: entity close/reopen, inventory reconciliation, stock doc post-journal, attachments",
++      "evidence": "src/components/LedgerDepthView.tsx; scripts/verifyUiLedgerDepth1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -111,6 +111,7 @@
+   { name: 'UiOrgGroups1', script: 'scripts/verifyUiOrgGroups1.ts', expected: 14 },
+   { name: 'UiXcompany1', script: 'scripts/verifyUiXcompany1.ts', expected: 14 },
+   { name: 'UiGroupReports1', script: 'scripts/verifyUiGroupReports1.ts', expected: 12 },
++  { name: 'UiLedgerDepth1', script: 'scripts/verifyUiLedgerDepth1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+import React, { useEffect, useState } from 'react';
+import { BookOpen, Save, AlertCircle, Paperclip } from 'lucide-react';
+
+interface LedgerDepthViewProps {
+  onNotification: (msg: string) => void;
+}
+
+export const LedgerDepthView: React.FC<LedgerDepthViewProps> = ({ onNotification }) => {
+  const [tab, setTab] = useState<'close' | 'recon' | 'docs' | 'attach'>('close');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [statusJson, setStatusJson] = useState('');
+  const [periodId, setPeriodId] = useState('');
+  const [reopenReason, setReopenReason] = useState('');
+  const [reconJson, setReconJson] = useState('');
+  const [docsJson, setDocsJson] = useState('');
+  const [docId, setDocId] = useState('');
+  const [attachDocType, setAttachDocType] = useState('JOURNAL_ENTRY');
+  const [attachDocId, setAttachDocId] = useState('');
+  const [attachList, setAttachList] = useState('');
+  const [fileUrl, setFileUrl] = useState('https://example.com/file.pdf');
+  const [fileName, setFileName] = useState('file.pdf');
+  const [mimeType, setMimeType] = useState('application/pdf');
+  const [fileSize, setFileSize] = useState(1024);
+
+  const idem = () =>
+    (typeof crypto !== 'undefined' && crypto.randomUUID && crypto.randomUUID()) ||
+    `ld-${Date.now()}`;
+
+  const loadCloseStatus = async () => {
+    try {
+      const res = await fetch('/api/accounting/entity-close-status', { credentials: 'include' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || 'تعذر جلب حالة الإقفال');
+        return;
+      }
+      setStatusJson(JSON.stringify(data?.data ?? data, null, 2));
+    } catch {
+      setError('تعذر الاتصال أثناء جلب حالة الإقفال');
+    }
+  };
+
+  useEffect(() => {
+    loadCloseStatus();
+  }, []);
+
+  const closeEntity = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const key = idem();
+      const res = await fetch('/api/accounting/entity-close', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body: JSON.stringify({ periodId, idempotencyKey: key }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل إقفال الكيان');
+        return;
+      }
+      onNotification('تم إقفال الكيان');
+      await loadCloseStatus();
+    } catch {
+      setError('تعذر الاتصال أثناء الإقفال');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reopenEntity = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const key = idem();
+      const res = await fetch('/api/accounting/entity-reopen', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body: JSON.stringify({ reason: reopenReason, idempotencyKey: key }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل إعادة الفتح');
+        return;
+      }
+      onNotification('تم إعادة فتح الكيان');
+      await loadCloseStatus();
+    } catch {
+      setError('تعذر الاتصال أثناء إعادة الفتح');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadRecon = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch('/api/inventory/reconciliation', { credentials: 'include' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || 'فشل تقرير المطابقة');
+        return;
+      }
+      setReconJson(JSON.stringify(data?.data ?? data, null, 2));
+      onNotification('تم تحميل مطابقة المخزن×الدفتر');
+    } catch {
+      setError('تعذر الاتصال أثناء المطابقة');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadDocs = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch('/api/inventory/documents', { credentials: 'include' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || 'فشل جلب مستندات المخزون');
+        return;
+      }
+      setDocsJson(JSON.stringify(data?.data ?? data, null, 2));
+    } catch {
+      setError('تعذر الاتصال أثناء جلب المستندات');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const postJournal = async () => {
+    if (!docId.trim()) {
+      setError('أدخل معرّف المستند');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      const key = idem();
+      const res = await fetch(`/api/inventory/documents/${encodeURIComponent(docId.trim())}/post-journal`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Idempotency-Key': key },
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل ترحيل القيد');
+        return;
+      }
+      onNotification('تم ترحيل قيد مستند المخزون');
+    } catch {
+      setError('تعذر الاتصال أثناء ترحيل القيد');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadAttachments = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const q = `documentType=${encodeURIComponent(attachDocType)}&documentId=${encodeURIComponent(attachDocId)}`;
+      const res = await fetch(`/api/attachments?${q}`, { credentials: 'include' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || 'فشل جلب المرفقات');
+        return;
+      }
+      setAttachList(JSON.stringify(data?.data ?? data, null, 2));
+    } catch {
+      setError('تعذر الاتصال أثناء جلب المرفقات');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addAttachment = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const key = idem();
+      const res = await fetch('/api/attachments', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body: JSON.stringify({
+          documentType: attachDocType,
+          documentId: attachDocId,
+          fileUrl,
+          fileName,
+          mimeType,
+          fileSize,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.detail || data?.title || 'فشل إضافة المرفق');
+        return;
+      }
+      onNotification('تمت إضافة المرفق');
+      await loadAttachments();
+    } catch {
+      setError('تعذر الاتصال أثناء إضافة المرفق');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
+        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+          <BookOpen className="w-5 h-5 text-blue-700" />
+          تعميق الدفتر: إقفال، مطابقة، مستندات، مرفقات
+        </h2>
+        <p className="text-xs text-slate-500 mt-1">شاشات فوق APIs الجاهزة دون تغيير الخادم.</p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            ['close', 'إقفال الكيان'],
+            ['recon', 'مطابقة مخزن×دفتر'],
+            ['docs', 'مستندات المخزون'],
+            ['attach', 'مرفقات'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={`px-4 py-2 rounded-xl text-xs font-bold ${
+              tab === id ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-700'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-100 rounded-xl p-3">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {tab === 'close' && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-3 text-xs">
+          <button type="button" onClick={loadCloseStatus} className="text-blue-700 font-bold">
+            تحديث الحالة
+          </button>
+          {statusJson && (
+            <pre className="bg-slate-50 border border-slate-100 rounded-xl p-3 overflow-auto max-h-48 text-[11px]">
+              {statusJson}
+            </pre>
+          )}
+          <input
+            className="w-full border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="periodId / code"
+            value={periodId}
+            onChange={(e) => setPeriodId(e.target.value)}
+          />
+          <button
+            type="button"
+            disabled={busy}
+            onClick={closeEntity}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white font-bold rounded-xl"
+          >
+            <Save className="w-4 h-4" /> إقفال الكيان
+          </button>
+          <input
+            className="w-full border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="سبب إعادة الفتح"
+            value={reopenReason}
+            onChange={(e) => setReopenReason(e.target.value)}
+          />
+          <button
+            type="button"
+            disabled={busy}
+            onClick={reopenEntity}
+            className="px-4 py-2 bg-slate-800 text-white font-bold rounded-xl"
+          >
+            إعادة فتح
+          </button>
+        </div>
+      )}
+
+      {tab === 'recon' && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-3 text-xs">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={loadRecon}
+            className="px-4 py-2 bg-blue-700 text-white font-bold rounded-xl"
+          >
+            تشغيل المطابقة
+          </button>
+          {reconJson && (
+            <pre className="bg-slate-50 border border-slate-100 rounded-xl p-3 overflow-auto max-h-96 text-[11px]">
+              {reconJson}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {tab === 'docs' && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-3 text-xs">
+          <button type="button" disabled={busy} onClick={loadDocs} className="px-4 py-2 bg-blue-700 text-white font-bold rounded-xl">
+            جلب المستندات
+          </button>
+          {docsJson && (
+            <pre className="bg-slate-50 border border-slate-100 rounded-xl p-3 overflow-auto max-h-64 text-[11px]">
+              {docsJson}
+            </pre>
+          )}
+          <input
+            className="w-full border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="معرّف مستند للترحيل"
+            value={docId}
+            onChange={(e) => setDocId(e.target.value)}
+          />
+          <button type="button" disabled={busy} onClick={postJournal} className="px-4 py-2 bg-emerald-700 text-white font-bold rounded-xl">
+            ترحيل قيد المستند
+          </button>
+        </div>
+      )}
+
+      {tab === 'attach' && (
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-3 text-xs">
+          <p className="font-bold flex items-center gap-2">
+            <Paperclip className="w-4 h-4" /> مرفقات المستند
+          </p>
+          <input
+            className="w-full border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="documentType"
+            value={attachDocType}
+            onChange={(e) => setAttachDocType(e.target.value)}
+          />
+          <input
+            className="w-full border border-slate-200 rounded-xl px-3 py-2"
+            placeholder="documentId"
+            value={attachDocId}
+            onChange={(e) => setAttachDocId(e.target.value)}
+          />
+          <button type="button" disabled={busy} onClick={loadAttachments} className="px-4 py-2 bg-slate-700 text-white font-bold rounded-xl">
+            عرض المرفقات
+          </button>
+          {attachList && (
+            <pre className="bg-slate-50 border border-slate-100 rounded-xl p-3 overflow-auto max-h-48 text-[11px]">
+              {attachList}
+            </pre>
+          )}
+          <input className="w-full border border-slate-200 rounded-xl px-3 py-2" value={fileUrl} onChange={(e) => setFileUrl(e.target.value)} placeholder="fileUrl" />
+          <input className="w-full border border-slate-200 rounded-xl px-3 py-2" value={fileName} onChange={(e) => setFileName(e.target.value)} placeholder="fileName" />
+          <input className="w-full border border-slate-200 rounded-xl px-3 py-2" value={mimeType} onChange={(e) => setMimeType(e.target.value)} placeholder="mimeType" />
+          <input type="number" className="w-full border border-slate-200 rounded-xl px-3 py-2" value={fileSize} onChange={(e) => setFileSize(Number(e.target.value))} placeholder="fileSize" />
+          <button type="button" disabled={busy} onClick={addAttachment} className="px-4 py-2 bg-blue-700 text-white font-bold rounded-xl">
+            إضافة مرفق
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+===== END FILE: .phase_tmp/n0_01.part =====
+
+===== FILE: .phase_tmp/n1_01.part =====
+/**
+ * @file verifyUiLedgerDepth1.ts
+ * UI-LEDGER-DEPTH-1 — entity close, recon, docs, attachments UI.
+ * Run: npx tsx scripts/verifyUiLedgerDepth1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const view = fs.readFileSync('src/components/LedgerDepthView.tsx', 'utf8');
+const app = fs.readFileSync('src/App.tsx', 'utf8');
+const side = fs.readFileSync('src/components/Sidebar.tsx', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 LedgerDepthView exists', fs.existsSync('src/components/LedgerDepthView.tsx'));
+check('S2 entity-close-status + close + reopen', /entity-close-status/.test(view) && /entity-close'/.test(view) && /entity-reopen/.test(view));
+check('S3 inventory reconciliation', /\/api\/inventory\/reconciliation/.test(view));
+check('S4 inventory documents + post-journal', /\/api\/inventory\/documents/.test(view) && /post-journal/.test(view));
+check('S5 attachments GET/POST', /\/api\/attachments/.test(view));
+check('S6 credentials + Idempotency-Key', /credentials:\s*'include'/.test(view) && /Idempotency-Key/.test(view));
+check('S7 Sidebar ledger_depth', /ledger_depth/.test(side) && /إقفال ومطابقة/.test(side));
+check('S8 App wires LedgerDepthView', /LedgerDepthView/.test(app));
+check('S9 App renders ledger_depth', /activeSection === 'ledger_depth'/.test(app));
+check('S10 package UI-LEDGER-DEPTH-1 DONE', byId['UI-LEDGER-DEPTH-1']?.status === 'DONE');
+check('S11 UI-GROUP-REPORTS-1 remains DONE', byId['UI-GROUP-REPORTS-1']?.status === 'DONE');
+check('S12 UI-XCOMPANY-1 remains DONE', byId['UI-XCOMPANY-1']?.status === 'DONE');
+check('S13 UI-ORG-GROUPS-1 remains DONE', byId['UI-ORG-GROUPS-1']?.status === 'DONE');
+check('S14 lastChange mentions UI-LEDGER-DEPTH-1', String(reg.lastChange || '').includes('UI-LEDGER-DEPTH-1'));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n1_01.part =====

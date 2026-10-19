@@ -14,6 +14,7 @@ import { InvConfigView } from './components/InvConfigView';
 import { OrgGroupsView } from './components/OrgGroupsView';
 import { XcompanyView } from './components/XcompanyView';
 import { GroupReportsView } from './components/GroupReportsView';
+import { LedgerDepthView } from './components/LedgerDepthView';
 import { UsersAndSodView } from './components/UsersAndSodView';
 import { CustomFieldsView } from './components/CustomFieldsView';
 import { AuditTrailView } from './components/AuditTrailView';
@@ -406,6 +407,10 @@ export default function App() {
 
           {activeSection === 'group_reports' && (
             <GroupReportsView onNotification={showNotification} />
+          )}
+
+          {activeSection === 'ledger_depth' && (
+            <LedgerDepthView onNotification={showNotification} />
           )}
 
           {activeSection === 'users_sod' && (

@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-19 — UI-GROUP-REPORTS-1: group KPI summary + consolidated trial balance UI (after UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)
+**Last update**: 2026-10-19 — UI-LEDGER-DEPTH-1: entity close, stock recon, docs journal, attachments UI (after UI-GROUP-REPORTS-1, UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-19)
 
 ## Gates
@@ -68,6 +68,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **UI-ORG-GROUPS-1** — DONE — UI: platform groups manage + members + group master items + publish _(evidence: src/components/OrgGroupsView.tsx; scripts/verifyUiOrgGroups1.ts)_
 - **UI-XCOMPANY-1** — DONE — UI: cross-company stock transfers create/dispatch/receive _(evidence: src/components/XcompanyView.tsx; scripts/verifyUiXcompany1.ts)_
 - **UI-GROUP-REPORTS-1** — DONE — UI: group report summary + consol trial-balance _(evidence: src/components/GroupReportsView.tsx; scripts/verifyUiGroupReports1.ts)_
+- **UI-LEDGER-DEPTH-1** — DONE — UI: entity close/reopen, inventory reconciliation, stock doc post-journal, attachments _(evidence: src/components/LedgerDepthView.tsx; scripts/verifyUiLedgerDepth1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
