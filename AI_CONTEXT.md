@@ -4,7 +4,7 @@
 
 **Canonical files:** `AI_CONTEXT.md` · `docs/AI_PROJECT_STATE.md` · `docs/AI_PROJECT_STATE.json` — rendered from `docs/STATE_REGISTER.json` (edit that file by hand, then run `npm test`).
 
-Last update: **2026-10-19** — FIX-SESSION-REVOKE-1: revoke token families + require live session on auth (after UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)
+Last update: **2026-10-19** — FIX-TENANT-SUSPEND-1: block suspended tenants on auth/refresh; revoke sessions on suspend (after FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)
 
 ## Verdict
 | Field | Value |

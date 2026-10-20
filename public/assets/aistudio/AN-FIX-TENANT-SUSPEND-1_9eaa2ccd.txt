@@ -1,0 +1,226 @@
+# A.N ERP — FIX-TENANT-SUSPEND-1 — إيقاف الشركة يمنع الوصول بالجلسات القائمة
+
+> على ZIP: `A.N-ERP-main - 2026-10-20T203638.788.zip`
+>
+> **المشكلة:** إيقاف المنشأة (SUSPENDED) كان لا يمنع الطلبات برمز دخول قائم؛ `requireAuth` يحمّل المنشأة دون فحص `status`.
+>
+> **الإصلاح:**
+> 1. `requireAuth`: إذا `tenant.status !== 'ACTIVE'` → 403 `tenant-suspended`.
+> 2. `POST /api/auth/login`: رفض تسجيل الدخول لمنشأة موقوفة.
+> 3. `POST /api/auth/refresh`: رفض التجديد ومسح الكوكيز.
+> 4. `PATCH /api/tenants/:id/status` عند `SUSPENDED`: إبطال كل الجلسات وعائلات التوكن (`TENANT_SUSPENDED`) وإرجاع `sessionsRevoked`.
+
+## الخطوات
+1. PRECHECK: `grep -q "tenants/:id/status" server.ts && grep -q getTenant server.ts`
+   ALREADY_DONE: `grep -q FIX-TENANT-SUSPEND-1 docs/STATE_REGISTER.json && grep -q TENANT_SUSPENDED server.ts`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyFixTenantSuspend1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyFixSessionRevoke1.ts` · `npx tsx scripts/verifySecSessionPassword.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `fix(auth): block suspended tenants on session and login`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+bd6f2956fcdf99bd4dc1758961b0ad6166cf6374431da625c8d32504bc2d8275  .phase_tmp/ORDER.txt
+ca18117c8705f81e542c3ac0332efe96e2ee2e62afdf5e4b945ab3161b16846d  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+93b9d6089863ea71db2fb7dfb8952339fa928b0a5d3ce70c848a07312eeee8b7  .phase_tmp/FINAL.txt
+4a41907f7c16a18a257d2649fa56c2bc88fbe133a3f7f696008c604b94857c16  .phase_tmp/01_server_ts.patch
+7adaa0f6b7c0a79e5905c786fbfada5ce87bc58167331aef1b3e90b849debdaf  .phase_tmp/02_docs__STATE_REGISTER_json.patch
+46afa3784b3ea94ab82addcc3ed7a88b86503e52cb37a504fec238d09aafbcbd  .phase_tmp/03_scripts__runReconcileAuditB_ts.patch
+198ef789f0cb82f482ab4f612166dbae7da4aa38a80eda12d47b818a55f2c571  .phase_tmp/n0_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_server_ts.patch
+02_docs__STATE_REGISTER_json.patch
+03_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+scripts/verifyFixTenantSuspend1.ts|n0
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+de4a1c6e5f763724df7b79bdeee27411a6edf9c509b23007c9786c2250a44e6d  server.ts
+3dc2d3b7f58df4a1d95b7ad24879cb4e31398f7471b966efdd590eaab52379a7  docs/STATE_REGISTER.json
+61f0d364126ba58fb83d04791ad4c70fe086fe5d67a0dd7acb755ee470226ef3  scripts/runReconcileAuditB.ts
+198ef789f0cb82f482ab4f612166dbae7da4aa38a80eda12d47b818a55f2c571  scripts/verifyFixTenantSuspend1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_server_ts.patch =====
+--- a/server.ts
++++ b/server.ts
+@@ -887,6 +887,15 @@
+         });
+       }
+       const tenant = tenantRes.data;
++      // FIX-TENANT-SUSPEND-1: suspended company blocks all authenticated requests (not only new logins)
++      if (tenant.status && tenant.status !== 'ACTIVE') {
++        return res.status(403).json({
++          type: 'https://api.an-erp.local/errors/tenant-suspended',
++          title: 'المنشأة موقوفة',
++          status: 403,
++          detail: 'تم إيقاف هذه المنشأة. لا يمكن استخدام الجلسات الحالية حتى إعادة تفعيلها.',
++        });
++      }
+       const tenantStorage = await globalStorageRouter.resolveAdapterAsync(tenant);
+       const tokenService = new TokenService(tenantStorage);
+ 
+@@ -1036,6 +1045,15 @@
+       return res.status(tenantResolution.error?.status || 400).json(tenantResolution.error);
+     }
+     const targetTenant = tenantResolution.tenant;
++    // FIX-TENANT-SUSPEND-1: reject login to suspended legal companies
++    if (targetTenant.status && targetTenant.status !== 'ACTIVE') {
++      return res.status(403).json({
++        type: 'https://api.an-erp.local/errors/tenant-suspended',
++        title: 'المنشأة موقوفة',
++        status: 403,
++        detail: 'لا يمكن تسجيل الدخول إلى منشأة موقوفة. تواصل مع مدير المنصة.',
++      });
++    }
+     let targetStorage: StoragePort;
+     try {
+       targetStorage = await globalStorageRouter.resolveAdapterAsync(targetTenant);
+@@ -1347,6 +1365,17 @@
+         if (payload.tenantId) {
+           const tRes = await masterStorage.getTenant(payload.tenantId);
+           if (tRes.success && tRes.data) {
++            // FIX-TENANT-SUSPEND-1: do not rotate tokens for suspended tenants
++            if (tRes.data.status && tRes.data.status !== 'ACTIVE') {
++              res.clearCookie('an_access_token', { path: '/' });
++              res.clearCookie('an_refresh_token', { path: '/' });
++              return res.status(403).json({
++                type: 'https://api.an-erp.local/errors/tenant-suspended',
++                title: 'المنشأة موقوفة',
++                status: 403,
++                detail: 'تم إيقاف المنشأة؛ لا يمكن تجديد الجلسة.',
++              });
++            }
+             targetStorage = await globalStorageRouter.resolveAdapterAsync(tRes.data);
+           }
+         }
+@@ -3312,6 +3341,23 @@
+       if (!saved.success) {
+         return res.status(500).json(saved.error || { status: 500, title: 'تعذر الحفظ' });
+       }
++      // FIX-TENANT-SUSPEND-1: on suspend, invalidate all live sessions/token families for this tenant
++      let sessionsRevoked = 0;
++      if (status === 'SUSPENDED') {
++        try {
++          const tenantStorage = await globalStorageRouter.resolveAdapterAsync(updated);
++          const tokenService = new TokenService(tenantStorage);
++          const sessions = await tenantStorage.listActiveSessions(tenantId);
++          if (sessions.success && sessions.data) {
++            for (const sess of sessions.data) {
++              await tokenService.revokeSessionAndFamily(sess, 'TENANT_SUSPENDED');
++              sessionsRevoked++;
++            }
++          }
++        } catch (revErr: any) {
++          console.error(`[tenant-status] session revoke partial failure tenant=${tenantId}: ${revErr?.message || revErr}`);
++        }
++      }
+       return res.json({
+         success: true,
+         data: {
+@@ -3319,6 +3365,7 @@
+           code: updated.code,
+           nameAr: updated.nameAr,
+           status: updated.status,
++          sessionsRevoked,
+         },
+       });
+     } catch (err: any) {
+===== END FILE: .phase_tmp/01_server_ts.patch =====
+
+===== FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "FIX-SESSION-REVOKE-1: revoke token families + require live session on auth (after UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
++  "lastChange": "FIX-TENANT-SUSPEND-1: block suspended tenants on auth/refresh; revoke sessions on suspend",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -401,6 +401,12 @@
+       "status": "DONE",
+       "scope": "Revoke token families on session end; fail-closed family check; require active session in requireAuth",
+       "evidence": "src/core/auth/TokenService.ts; server.ts; scripts/verifyFixSessionRevoke1.ts"
++    },
++    {
++      "id": "FIX-TENANT-SUSPEND-1",
++      "status": "DONE",
++      "scope": "requireAuth/login/refresh reject non-ACTIVE tenants; suspend path revokes sessions+families",
++      "evidence": "server.ts; scripts/verifyFixTenantSuspend1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -116,6 +116,7 @@
+   { name: 'UiTransfersHub1', script: 'scripts/verifyUiTransfersHub1.ts', expected: 14 },
+   { name: 'UiPlatformHub1', script: 'scripts/verifyUiPlatformHub1.ts', expected: 14 },
+   { name: 'FixSessionRevoke1', script: 'scripts/verifyFixSessionRevoke1.ts', expected: 14 },
++  { name: 'FixTenantSuspend1', script: 'scripts/verifyFixTenantSuspend1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file verifyFixTenantSuspend1.ts
+ * FIX-TENANT-SUSPEND-1 — suspended tenants cannot use sessions or login/refresh.
+ * Run: npx tsx scripts/verifyFixTenantSuspend1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean) => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}`); }
+};
+
+const srv = fs.readFileSync('server.ts', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 requireAuth rejects non-ACTIVE tenant', /tenant\.status !== 'ACTIVE'/.test(srv) && /tenant-suspended/.test(srv));
+check('S2 requireAuth message منشأة موقوفة', /تم إيقاف هذه المنشأة/.test(srv));
+check('S3 login rejects suspended tenant', /auth\/login[\s\S]{0,1200}targetTenant\.status !== 'ACTIVE'/.test(srv) || /FIX-TENANT-SUSPEND-1: reject login[\s\S]{0,400}status !== 'ACTIVE'/.test(srv));
+check('S4 refresh rejects suspended tenant', /\/api\/auth\/refresh[\s\S]{0,900}status !== 'ACTIVE'/.test(srv) || /do not rotate tokens for suspended/.test(srv));
+check('S5 refresh clears cookies on suspend', /tenant-suspended[\s\S]{0,200}clearCookie\('an_access_token'/.test(srv) || /clearCookie\('an_access_token'[\s\S]{0,120}tenant-suspended/.test(srv) || /suspended[\s\S]{0,300}clearCookie\('an_refresh_token'/.test(srv));
+check('S6 suspend path uses TENANT_SUSPENDED reason', /TENANT_SUSPENDED/.test(srv));
+check('S7 suspend revokes session families', /revokeSessionAndFamily[\s\S]{0,40}TENANT_SUSPENDED|TENANT_SUSPENDED[\s\S]{0,40}revokeSessionAndFamily/.test(srv) || /revokeSessionAndFamily\(sess, 'TENANT_SUSPENDED'\)/.test(srv));
+check('S8 tenants status route still present', /\/api\/tenants\/:id\/status/.test(srv));
+check('S9 sessionsRevoked reported on suspend response', /sessionsRevoked/.test(srv));
+check('S10 package FIX-TENANT-SUSPEND-1 DONE', byId['FIX-TENANT-SUSPEND-1']?.status === 'DONE');
+check('S11 lastChange mentions FIX-TENANT-SUSPEND-1', String(reg.lastChange || '').includes('FIX-TENANT-SUSPEND-1'));
+check('S12 prior FIX-SESSION-REVOKE-1 remains DONE', !byId['FIX-SESSION-REVOKE-1'] || byId['FIX-SESSION-REVOKE-1']?.status === 'DONE');
+check('S13 problem type tenant-suspended', /errors\/tenant-suspended/.test(srv));
+check('S14 login detail mentions موقوفة', /لا يمكن تسجيل الدخول إلى منشأة موقوفة/.test(srv));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n0_01.part =====

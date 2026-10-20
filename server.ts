@@ -887,6 +887,15 @@ async function startServer() {
         });
       }
       const tenant = tenantRes.data;
+      // FIX-TENANT-SUSPEND-1: suspended company blocks all authenticated requests (not only new logins)
+      if (tenant.status && tenant.status !== 'ACTIVE') {
+        return res.status(403).json({
+          type: 'https://api.an-erp.local/errors/tenant-suspended',
+          title: 'المنشأة موقوفة',
+          status: 403,
+          detail: 'تم إيقاف هذه المنشأة. لا يمكن استخدام الجلسات الحالية حتى إعادة تفعيلها.',
+        });
+      }
       const tenantStorage = await globalStorageRouter.resolveAdapterAsync(tenant);
       const tokenService = new TokenService(tenantStorage);
 
@@ -1036,6 +1045,15 @@ async function startServer() {
       return res.status(tenantResolution.error?.status || 400).json(tenantResolution.error);
     }
     const targetTenant = tenantResolution.tenant;
+    // FIX-TENANT-SUSPEND-1: reject login to suspended legal companies
+    if (targetTenant.status && targetTenant.status !== 'ACTIVE') {
+      return res.status(403).json({
+        type: 'https://api.an-erp.local/errors/tenant-suspended',
+        title: 'المنشأة موقوفة',
+        status: 403,
+        detail: 'لا يمكن تسجيل الدخول إلى منشأة موقوفة. تواصل مع مدير المنصة.',
+      });
+    }
     let targetStorage: StoragePort;
     try {
       targetStorage = await globalStorageRouter.resolveAdapterAsync(targetTenant);
@@ -1347,6 +1365,17 @@ async function startServer() {
         if (payload.tenantId) {
           const tRes = await masterStorage.getTenant(payload.tenantId);
           if (tRes.success && tRes.data) {
+            // FIX-TENANT-SUSPEND-1: do not rotate tokens for suspended tenants
+            if (tRes.data.status && tRes.data.status !== 'ACTIVE') {
+              res.clearCookie('an_access_token', { path: '/' });
+              res.clearCookie('an_refresh_token', { path: '/' });
+              return res.status(403).json({
+                type: 'https://api.an-erp.local/errors/tenant-suspended',
+                title: 'المنشأة موقوفة',
+                status: 403,
+                detail: 'تم إيقاف المنشأة؛ لا يمكن تجديد الجلسة.',
+              });
+            }
             targetStorage = await globalStorageRouter.resolveAdapterAsync(tRes.data);
           }
         }
@@ -3312,6 +3341,23 @@ app.get('/api/tenants', requirePlatformAdmin, async (req: Request, res: Response
       if (!saved.success) {
         return res.status(500).json(saved.error || { status: 500, title: 'تعذر الحفظ' });
       }
+      // FIX-TENANT-SUSPEND-1: on suspend, invalidate all live sessions/token families for this tenant
+      let sessionsRevoked = 0;
+      if (status === 'SUSPENDED') {
+        try {
+          const tenantStorage = await globalStorageRouter.resolveAdapterAsync(updated);
+          const tokenService = new TokenService(tenantStorage);
+          const sessions = await tenantStorage.listActiveSessions(tenantId);
+          if (sessions.success && sessions.data) {
+            for (const sess of sessions.data) {
+              await tokenService.revokeSessionAndFamily(sess, 'TENANT_SUSPENDED');
+              sessionsRevoked++;
+            }
+          }
+        } catch (revErr: any) {
+          console.error(`[tenant-status] session revoke partial failure tenant=${tenantId}: ${revErr?.message || revErr}`);
+        }
+      }
       return res.json({
         success: true,
         data: {
@@ -3319,6 +3365,7 @@ app.get('/api/tenants', requirePlatformAdmin, async (req: Request, res: Response
           code: updated.code,
           nameAr: updated.nameAr,
           status: updated.status,
+          sessionsRevoked,
         },
       });
     } catch (err: any) {
