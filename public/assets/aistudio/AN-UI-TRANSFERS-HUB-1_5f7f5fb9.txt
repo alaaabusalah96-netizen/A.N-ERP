@@ -1,0 +1,370 @@
+# A.N ERP — UI-TRANSFERS-HUB-1 — شاشة تحويلات موحّدة (واجهة فقط)
+
+> على ZIP: `A.N-ERP-main - 2026-10-20T160946.652.zip`
+>
+> - تبويب التحويلات: اختيار «داخل الشركة» أو «بين شركات المجموعة».
+> - داخل الشركة → `/api/inventory/transfers` (بدون تغيير).
+> - بين شركات → `/api/xcompany/transfers` (يظهر لـ super_admin / platform_admin فقط).
+> - لا دمج للمحركات المحاسبية.
+
+## الخطوات
+1. PRECHECK: `grep -q "/api/inventory/transfers" src/components/InventoryWorkspaceView.tsx`
+   ALREADY_DONE: `grep -q UI-TRANSFERS-HUB-1 docs/STATE_REGISTER.json && grep -q transferScope src/components/InventoryWorkspaceView.tsx`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyUiTransfersHub1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyUiWarehouseCreate1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `feat(ui): unified transfers hub internal vs xcompany`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+b1e2fdd95c986fb2df112f7b6f2625ac9596922c6f0fb9da996bb5be298c6820  .phase_tmp/ORDER.txt
+0167d9f1bfdd8ddc8692209b39f81254fd3e9f8c9df0a7395ade2d15a7946d87  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+b4afc4dd967972a1e5c72aa30afd9d9a61458df324af046adafc793bc7b15cae  .phase_tmp/FINAL.txt
+4e9b81802059f7f1e5c4b9c8d7baabf32d36ebbda2464094dcb3119c3c4ca665  .phase_tmp/01_src__components__InventoryWorkspaceView_tsx.patch
+bccde0d9c500ed1223c73e2099918efce1f002047cae9fb970675f282d84668f  .phase_tmp/02_docs__STATE_REGISTER_json.patch
+0f7b6c2a3bc0cc9f834876a779f620f4db16f880e4723d3dd73ddf3bdd1bcfdd  .phase_tmp/03_scripts__runReconcileAuditB_ts.patch
+a2b3b53d4503283936c91b5fe53b925c30461e9280c4de6e13bd68353f9b4df8  .phase_tmp/n0_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__components__InventoryWorkspaceView_tsx.patch
+02_docs__STATE_REGISTER_json.patch
+03_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+scripts/verifyUiTransfersHub1.ts|n0
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+a14a97bdfd04c5ace577697a641dff14ff6e515b7a5d6823cc4eca2342d08d62  src/components/InventoryWorkspaceView.tsx
+d7c7b2ffb1c262ae0bb5ca2a42245e1d63a96f59f0a42772e093689bf9adfd8d  docs/STATE_REGISTER.json
+3bfc6018a92c8bf558f77f40a83385a2ab8264d7697f3ca01fa50fc1eebe6ad9  scripts/runReconcileAuditB.ts
+a2b3b53d4503283936c91b5fe53b925c30461e9280c4de6e13bd68353f9b4df8  scripts/verifyUiTransfersHub1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__components__InventoryWorkspaceView_tsx.patch =====
+--- a/src/components/InventoryWorkspaceView.tsx
++++ b/src/components/InventoryWorkspaceView.tsx
+@@ -118,6 +118,7 @@
+   onNotification,
+ }) => {
+   const [activeTab, setActiveTab] = useState<'items' | 'stock' | 'warehouses' | 'movements' | 'transfers' | 'counts' | 'battery'>('items');
++  const isPlatformTransferRole = ['super_admin', 'platform_admin'].includes(String(currentUser?.role || '').toLowerCase());
+   const [isLoading, setIsLoading] = useState(false);
+ 
+   // Data states
+@@ -127,6 +128,16 @@
+   const [movements, setMovements] = useState<StockMovementRow[]>([]);
+   const [transfers, setTransfers] = useState<StockTransferRow[]>([]);
+   const [transferStatusFilter, setTransferStatusFilter] = useState<'ALL' | 'REQUESTED' | 'IN_TRANSIT' | 'RECEIVED'>('ALL');
++  const [transferScope, setTransferScope] = useState<'INTERNAL' | 'XCOMPANY'>('INTERNAL');
++  const [xcompanyTransfers, setXcompanyTransfers] = useState<any[]>([]);
++  const [xcGroups, setXcGroups] = useState<any[]>([]);
++  const [xcGroupId, setXcGroupId] = useState('');
++  const [xcSourceTenantId, setXcSourceTenantId] = useState('');
++  const [xcTargetTenantId, setXcTargetTenantId] = useState('');
++  const [xcSourceWh, setXcSourceWh] = useState('');
++  const [xcTargetWh, setXcTargetWh] = useState('');
++  const [xcItemCode, setXcItemCode] = useState('');
++  const [xcQty, setXcQty] = useState(1);
+ 
+   const [counts, setCounts] = useState<StockCountRow[]>([]);
+ 
+@@ -227,6 +238,12 @@
+   useEffect(() => {
+     loadData();
+   }, []);
++
++  useEffect(() => {
++    if (activeTab === 'transfers' && isPlatformTransferRole) {
++      loadXcompanyHub();
++    }
++  }, [activeTab]);
+ 
+   const loadMovementsFiltered = async () => {
+     setMovFilterLoading(true);
+@@ -511,6 +528,85 @@
+       }
+     } catch {
+       onNotification('تعذر الاتصال بالخادم أثناء إنشاء التحويل.');
++    }
++  };
++
++
++  const loadXcompanyHub = async () => {
++    if (!isPlatformTransferRole) return;
++    try {
++      const [gRes, tRes] = await Promise.all([
++        fetch('/api/groups', { credentials: 'include' }),
++        fetch('/api/xcompany/transfers', { credentials: 'include' }),
++      ]);
++      const gData = await gRes.json().catch(() => null);
++      const tData = await tRes.json().catch(() => null);
++      if (gRes.ok) {
++        const list = gData?.data || gData || [];
++        setXcGroups(Array.isArray(list) ? list : []);
++      }
++      if (tRes.ok) {
++        const list = tData?.data || tData || [];
++        setXcompanyTransfers(Array.isArray(list) ? list : []);
++      }
++    } catch {
++      /* optional for non-platform */
++    }
++  };
++
++  const handleCreateXcompanyTransfer = async (e: React.FormEvent) => {
++    e.preventDefault();
++    if (!xcGroupId || !xcSourceTenantId || !xcTargetTenantId || !xcSourceWh || !xcTargetWh || !xcItemCode.trim() || xcQty <= 0) {
++      onNotification('أكمل بيانات التحويل بين الشركات (مجموعة، شركتان، مستودعان، صنف، كمية).');
++      return;
++    }
++    try {
++      const idemKey = `xct-hub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
++      const res = await fetch('/api/xcompany/transfers', {
++        method: 'POST',
++        credentials: 'include',
++        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idemKey },
++        body: JSON.stringify({
++          groupId: xcGroupId,
++          sourceTenantId: xcSourceTenantId,
++          targetTenantId: xcTargetTenantId,
++          sourceWarehouseId: xcSourceWh,
++          targetWarehouseId: xcTargetWh,
++          itemCode: xcItemCode.trim(),
++          quantity: Number(xcQty),
++          idempotencyKey: idemKey,
++        }),
++      });
++      const data = await res.json().catch(() => ({}));
++      if (res.ok) {
++        onNotification('تم إنشاء تحويل بين شركات المجموعة.');
++        setIsTransferModalOpen(false);
++        await loadXcompanyHub();
++      } else {
++        onNotification(data.detail || data.title || 'فشل إنشاء التحويل بين الشركات.');
++      }
++    } catch {
++      onNotification('تعذر الاتصال أثناء التحويل بين الشركات.');
++    }
++  };
++
++  const handleXcompanyAct = async (id: string, action: 'dispatch' | 'receive') => {
++    try {
++      const idemKey = `xct-${action}-${id}-${Date.now()}`;
++      const res = await fetch(`/api/xcompany/transfers/${encodeURIComponent(id)}/${action}`, {
++        method: 'POST',
++        credentials: 'include',
++        headers: { 'Idempotency-Key': idemKey },
++      });
++      const data = await res.json().catch(() => ({}));
++      if (res.ok) {
++        onNotification(action === 'dispatch' ? 'تم إرسال التحويل بين الشركات' : 'تم استلام التحويل بين الشركات');
++        await loadXcompanyHub();
++      } else {
++        onNotification(data.detail || data.title || `فشل ${action}`);
++      }
++    } catch {
++      onNotification('تعذر الاتصال أثناء إجراء التحويل بين الشركات');
+     }
+   };
+ 
+@@ -1220,6 +1316,21 @@
+       {/* Tab Content: Transfers (INV-INTRANSIT-1) */}
+       {activeTab === 'transfers' && (
+         <div className="space-y-3">
++          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-wrap items-center gap-2">
++            <span className="text-xs font-bold text-slate-800">نوع التحويل:</span>
++            <button type="button" onClick={() => setTransferScope('INTERNAL')}
++              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border ${transferScope === 'INTERNAL' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}`}>
++              داخل الشركة
++            </button>
++            {isPlatformTransferRole && (
++              <button type="button" onClick={() => setTransferScope('XCOMPANY')}
++                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border ${transferScope === 'XCOMPANY' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}`}>
++                بين شركات المجموعة
++              </button>
++            )}
++            <span className="text-[10px] text-slate-400">الواجهة موحّدة — المسارات الخلفية منفصلة</span>
++          </div>
++          {transferScope === 'INTERNAL' && (
+           <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+             <div className="text-xs text-slate-600">
+               <span className="font-bold text-slate-900">الشحنات في الطريق: </span>
+@@ -1325,10 +1436,81 @@
+             </table>
+           </div>
+         </div>
++          )}
++
++      {transferScope === 'XCOMPANY' && isPlatformTransferRole && (
++        <div className="space-y-3">
++          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs text-xs space-y-3">
++            <p className="font-bold text-slate-800">تحويل بين شركات (خلفية: /api/xcompany/transfers)</p>
++            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
++              <select className="border border-slate-200 rounded-xl px-3 py-2" value={xcGroupId} onChange={(e) => setXcGroupId(e.target.value)}>
++                <option value="">المجموعة</option>
++                {xcGroups.map((g: any) => (
++                  <option key={g.id} value={g.id}>{g.nameAr || g.code || g.id}</option>
++                ))}
++              </select>
++              <select className="border border-slate-200 rounded-xl px-3 py-2" value={xcSourceTenantId} onChange={(e) => setXcSourceTenantId(e.target.value)}>
++                <option value="">شركة المصدر</option>
++                {(xcGroups.find((g: any) => g.id === xcGroupId)?.memberTenantIds || []).map((id: string) => (
++                  <option key={id} value={id}>{id}</option>
++                ))}
++              </select>
++              <select className="border border-slate-200 rounded-xl px-3 py-2" value={xcTargetTenantId} onChange={(e) => setXcTargetTenantId(e.target.value)}>
++                <option value="">شركة الهدف</option>
++                {(xcGroups.find((g: any) => g.id === xcGroupId)?.memberTenantIds || []).map((id: string) => (
++                  <option key={id} value={id}>{id}</option>
++                ))}
++              </select>
++              <input className="border border-slate-200 rounded-xl px-3 py-2" placeholder="مستودع المصدر (id)" value={xcSourceWh} onChange={(e) => setXcSourceWh(e.target.value)} />
++              <input className="border border-slate-200 rounded-xl px-3 py-2" placeholder="مستودع الهدف (id)" value={xcTargetWh} onChange={(e) => setXcTargetWh(e.target.value)} />
++              <input className="border border-slate-200 rounded-xl px-3 py-2" placeholder="كود الصنف" value={xcItemCode} onChange={(e) => setXcItemCode(e.target.value)} />
++              <input type="number" className="border border-slate-200 rounded-xl px-3 py-2" placeholder="الكمية" value={xcQty} onChange={(e) => setXcQty(Number(e.target.value))} />
++            </div>
++            <button type="button" onClick={(e) => handleCreateXcompanyTransfer(e as any)} className="px-4 py-2 bg-blue-700 text-white text-xs font-bold rounded-xl">إنشاء تحويل بين شركات</button>
++          </div>
++          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
++            <table className="w-full text-right text-xs">
++              <thead>
++                <tr className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold">
++                  <th className="py-3 px-4">الصنف</th>
++                  <th className="py-3 px-4">من → إلى</th>
++                  <th className="py-3 px-4 text-center">الكمية</th>
++                  <th className="py-3 px-4 text-center">الحالة</th>
++                  <th className="py-3 px-4 text-center">إجراء</th>
++                </tr>
++              </thead>
++              <tbody className="divide-y divide-slate-100">
++                {xcompanyTransfers.length === 0 ? (
++                  <tr><td colSpan={5} className="text-center py-8 text-slate-400">لا تحويلات بين شركات بعد</td></tr>
++                ) : (
++                  xcompanyTransfers.map((t: any) => (
++                    <tr key={t.id}>
++                      <td className="py-3 px-4 font-mono">{t.itemCode}</td>
++                      <td className="py-3 px-4">{t.sourceTenantId} → {t.targetTenantId}</td>
++                      <td className="py-3 px-4 text-center">{t.quantity}</td>
++                      <td className="py-3 px-4 text-center font-bold">{t.status}</td>
++                      <td className="py-3 px-4 text-center space-x-2 space-x-reverse">
++                        {t.status === 'REQUESTED' && (
++                          <button type="button" className="text-blue-700 font-bold" onClick={() => handleXcompanyAct(t.id, 'dispatch')}>إرسال</button>
++                        )}
++                        {t.status === 'IN_TRANSIT' && (
++                          <button type="button" className="text-emerald-700 font-bold" onClick={() => handleXcompanyAct(t.id, 'receive')}>استلام</button>
++                        )}
++                      </td>
++                    </tr>
++                  ))
++                )}
++              </tbody>
++            </table>
++          </div>
++        </div>
++
++      )}
+         </div>
+       )}
+ 
+       {/* Tab Content: Stock Counts */}
++
+       {activeTab === 'counts' && (
+         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+           <div className="overflow-x-auto">
+===== END FILE: .phase_tmp/01_src__components__InventoryWorkspaceView_tsx.patch =====
+
+===== FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "UI-WAREHOUSE-CREATE-1: warehouse create UI; system_admin gains STOCK_VIEW+STOCK_RECEIVE (after UI-LEDGER-DEPTH-1, UI-GROUP-REPORTS-1, UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
++  "lastChange": "UI-TRANSFERS-HUB-1: unified transfers UI internal vs xcompany backends",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -383,6 +383,12 @@
+       "status": "DONE",
+       "scope": "UI create warehouse; system_admin STOCK_VIEW+STOCK_RECEIVE (with warehouse_manager)",
+       "evidence": "src/components/InventoryWorkspaceView.tsx; src/core/auth/PermissionMatrix.ts; scripts/verifyUiWarehouseCreate1.ts"
++    },
++    {
++      "id": "UI-TRANSFERS-HUB-1",
++      "status": "DONE",
++      "scope": "Unified transfers tab UI; INTERNAL uses /api/inventory/transfers; XCOMPANY uses /api/xcompany/transfers",
++      "evidence": "src/components/InventoryWorkspaceView.tsx; scripts/verifyUiTransfersHub1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -113,6 +113,7 @@
+   { name: 'UiGroupReports1', script: 'scripts/verifyUiGroupReports1.ts', expected: 12 },
+   { name: 'UiLedgerDepth1', script: 'scripts/verifyUiLedgerDepth1.ts', expected: 14 },
+   { name: 'UiWarehouseCreate1', script: 'scripts/verifyUiWarehouseCreate1.ts', expected: 14 },
++  { name: 'UiTransfersHub1', script: 'scripts/verifyUiTransfersHub1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file verifyUiTransfersHub1.ts
+ * UI-TRANSFERS-HUB-1 — unified transfers UI, separate backends.
+ * Run: npx tsx scripts/verifyUiTransfersHub1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const view = fs.readFileSync('src/components/InventoryWorkspaceView.tsx', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+const server = fs.readFileSync('server.ts', 'utf8');
+
+check('S1 transferScope INTERNAL|XCOMPANY state', /transferScope/.test(view) && /INTERNAL/.test(view) && /XCOMPANY/.test(view));
+check('S2 internal API still /api/inventory/transfers', /\/api\/inventory\/transfers/.test(view));
+check('S3 xcompany API used in hub', /\/api\/xcompany\/transfers/.test(view));
+check('S4 platform role gate for xcompany UI', /isPlatformTransferRole/.test(view) && /platform_admin/.test(view));
+check('S5 create xcompany handler', /handleCreateXcompanyTransfer/.test(view));
+check('S6 xcompany dispatch\/receive', /handleXcompanyAct/.test(view));
+check('S7 UI label داخل الشركة', /داخل الشركة/.test(view));
+check('S8 UI label بين شركات', /بين شركات المجموعة/.test(view));
+check('S9 loadXcompanyHub', /loadXcompanyHub/.test(view));
+check('S10 server xcompany route still platform-admin', /xcompany\/transfers',\s*requirePlatformAdmin/.test(server));
+check('S11 package UI-TRANSFERS-HUB-1 DONE', byId['UI-TRANSFERS-HUB-1']?.status === 'DONE');
+check('S12 UI-WAREHOUSE-CREATE-1 remains DONE', byId['UI-WAREHOUSE-CREATE-1']?.status === 'DONE');
+check('S13 lastChange mentions UI-TRANSFERS-HUB-1', String(reg.lastChange || '').includes('UI-TRANSFERS-HUB-1'));
+check('S14 note backends separate in UI', /المسارات الخلفية منفصلة/.test(view));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n0_01.part =====

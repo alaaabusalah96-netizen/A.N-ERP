@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "UI-WAREHOUSE-CREATE-1: warehouse create UI; system_admin gains STOCK_VIEW+STOCK_RECEIVE (after UI-LEDGER-DEPTH-1, UI-GROUP-REPORTS-1, UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
+  "lastChange": "UI-TRANSFERS-HUB-1: unified transfers UI internal vs xcompany backends (after UI-WAREHOUSE-CREATE-1, UI-LEDGER-DEPTH-1, UI-GROUP-REPORTS-1, UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -383,6 +383,12 @@
       "status": "DONE",
       "scope": "UI create warehouse; system_admin STOCK_VIEW+STOCK_RECEIVE (with warehouse_manager)",
       "evidence": "src/components/InventoryWorkspaceView.tsx; src/core/auth/PermissionMatrix.ts; scripts/verifyUiWarehouseCreate1.ts"
+    },
+    {
+      "id": "UI-TRANSFERS-HUB-1",
+      "status": "DONE",
+      "scope": "Unified transfers tab UI; INTERNAL uses /api/inventory/transfers; XCOMPANY uses /api/xcompany/transfers",
+      "evidence": "src/components/InventoryWorkspaceView.tsx; scripts/verifyUiTransfersHub1.ts"
     }
   ],
   "defects": [

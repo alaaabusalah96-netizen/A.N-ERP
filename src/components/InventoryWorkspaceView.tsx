@@ -118,6 +118,7 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
   onNotification,
 }) => {
   const [activeTab, setActiveTab] = useState<'items' | 'stock' | 'warehouses' | 'movements' | 'transfers' | 'counts' | 'battery'>('items');
+  const isPlatformTransferRole = ['super_admin', 'platform_admin'].includes(String(currentUser?.role || '').toLowerCase());
   const [isLoading, setIsLoading] = useState(false);
 
   // Data states
@@ -127,6 +128,16 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
   const [movements, setMovements] = useState<StockMovementRow[]>([]);
   const [transfers, setTransfers] = useState<StockTransferRow[]>([]);
   const [transferStatusFilter, setTransferStatusFilter] = useState<'ALL' | 'REQUESTED' | 'IN_TRANSIT' | 'RECEIVED'>('ALL');
+  const [transferScope, setTransferScope] = useState<'INTERNAL' | 'XCOMPANY'>('INTERNAL');
+  const [xcompanyTransfers, setXcompanyTransfers] = useState<any[]>([]);
+  const [xcGroups, setXcGroups] = useState<any[]>([]);
+  const [xcGroupId, setXcGroupId] = useState('');
+  const [xcSourceTenantId, setXcSourceTenantId] = useState('');
+  const [xcTargetTenantId, setXcTargetTenantId] = useState('');
+  const [xcSourceWh, setXcSourceWh] = useState('');
+  const [xcTargetWh, setXcTargetWh] = useState('');
+  const [xcItemCode, setXcItemCode] = useState('');
+  const [xcQty, setXcQty] = useState(1);
 
   const [counts, setCounts] = useState<StockCountRow[]>([]);
 
@@ -227,6 +238,12 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'transfers' && isPlatformTransferRole) {
+      loadXcompanyHub();
+    }
+  }, [activeTab]);
 
   const loadMovementsFiltered = async () => {
     setMovFilterLoading(true);
@@ -511,6 +528,85 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
       }
     } catch {
       onNotification('تعذر الاتصال بالخادم أثناء إنشاء التحويل.');
+    }
+  };
+
+
+  const loadXcompanyHub = async () => {
+    if (!isPlatformTransferRole) return;
+    try {
+      const [gRes, tRes] = await Promise.all([
+        fetch('/api/groups', { credentials: 'include' }),
+        fetch('/api/xcompany/transfers', { credentials: 'include' }),
+      ]);
+      const gData = await gRes.json().catch(() => null);
+      const tData = await tRes.json().catch(() => null);
+      if (gRes.ok) {
+        const list = gData?.data || gData || [];
+        setXcGroups(Array.isArray(list) ? list : []);
+      }
+      if (tRes.ok) {
+        const list = tData?.data || tData || [];
+        setXcompanyTransfers(Array.isArray(list) ? list : []);
+      }
+    } catch {
+      /* optional for non-platform */
+    }
+  };
+
+  const handleCreateXcompanyTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!xcGroupId || !xcSourceTenantId || !xcTargetTenantId || !xcSourceWh || !xcTargetWh || !xcItemCode.trim() || xcQty <= 0) {
+      onNotification('أكمل بيانات التحويل بين الشركات (مجموعة، شركتان، مستودعان، صنف، كمية).');
+      return;
+    }
+    try {
+      const idemKey = `xct-hub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const res = await fetch('/api/xcompany/transfers', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idemKey },
+        body: JSON.stringify({
+          groupId: xcGroupId,
+          sourceTenantId: xcSourceTenantId,
+          targetTenantId: xcTargetTenantId,
+          sourceWarehouseId: xcSourceWh,
+          targetWarehouseId: xcTargetWh,
+          itemCode: xcItemCode.trim(),
+          quantity: Number(xcQty),
+          idempotencyKey: idemKey,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        onNotification('تم إنشاء تحويل بين شركات المجموعة.');
+        setIsTransferModalOpen(false);
+        await loadXcompanyHub();
+      } else {
+        onNotification(data.detail || data.title || 'فشل إنشاء التحويل بين الشركات.');
+      }
+    } catch {
+      onNotification('تعذر الاتصال أثناء التحويل بين الشركات.');
+    }
+  };
+
+  const handleXcompanyAct = async (id: string, action: 'dispatch' | 'receive') => {
+    try {
+      const idemKey = `xct-${action}-${id}-${Date.now()}`;
+      const res = await fetch(`/api/xcompany/transfers/${encodeURIComponent(id)}/${action}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Idempotency-Key': idemKey },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        onNotification(action === 'dispatch' ? 'تم إرسال التحويل بين الشركات' : 'تم استلام التحويل بين الشركات');
+        await loadXcompanyHub();
+      } else {
+        onNotification(data.detail || data.title || `فشل ${action}`);
+      }
+    } catch {
+      onNotification('تعذر الاتصال أثناء إجراء التحويل بين الشركات');
     }
   };
 
@@ -1220,6 +1316,22 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
       {/* Tab Content: Transfers (INV-INTRANSIT-1) */}
       {activeTab === 'transfers' && (
         <div className="space-y-3">
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold text-slate-800">نوع التحويل:</span>
+            <button type="button" onClick={() => setTransferScope('INTERNAL')}
+              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border ${transferScope === 'INTERNAL' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}`}>
+              داخل الشركة
+            </button>
+            {isPlatformTransferRole && (
+              <button type="button" onClick={() => setTransferScope('XCOMPANY')}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border ${transferScope === 'XCOMPANY' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200'}`}>
+                بين شركات المجموعة
+              </button>
+            )}
+            <span className="text-[10px] text-slate-400">الواجهة موحّدة — المسارات الخلفية منفصلة</span>
+          </div>
+          {transferScope === 'INTERNAL' && (
+          <>
           <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="text-xs text-slate-600">
               <span className="font-bold text-slate-900">الشحنات في الطريق: </span>
@@ -1325,10 +1437,82 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
             </table>
           </div>
         </div>
+          </>
+          )}
+
+      {transferScope === 'XCOMPANY' && isPlatformTransferRole && (
+        <div className="space-y-3">
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs text-xs space-y-3">
+            <p className="font-bold text-slate-800">تحويل بين شركات (خلفية: /api/xcompany/transfers)</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <select className="border border-slate-200 rounded-xl px-3 py-2" value={xcGroupId} onChange={(e) => setXcGroupId(e.target.value)}>
+                <option value="">المجموعة</option>
+                {xcGroups.map((g: any) => (
+                  <option key={g.id} value={g.id}>{g.nameAr || g.code || g.id}</option>
+                ))}
+              </select>
+              <select className="border border-slate-200 rounded-xl px-3 py-2" value={xcSourceTenantId} onChange={(e) => setXcSourceTenantId(e.target.value)}>
+                <option value="">شركة المصدر</option>
+                {(xcGroups.find((g: any) => g.id === xcGroupId)?.memberTenantIds || []).map((id: string) => (
+                  <option key={id} value={id}>{id}</option>
+                ))}
+              </select>
+              <select className="border border-slate-200 rounded-xl px-3 py-2" value={xcTargetTenantId} onChange={(e) => setXcTargetTenantId(e.target.value)}>
+                <option value="">شركة الهدف</option>
+                {(xcGroups.find((g: any) => g.id === xcGroupId)?.memberTenantIds || []).map((id: string) => (
+                  <option key={id} value={id}>{id}</option>
+                ))}
+              </select>
+              <input className="border border-slate-200 rounded-xl px-3 py-2" placeholder="مستودع المصدر (id)" value={xcSourceWh} onChange={(e) => setXcSourceWh(e.target.value)} />
+              <input className="border border-slate-200 rounded-xl px-3 py-2" placeholder="مستودع الهدف (id)" value={xcTargetWh} onChange={(e) => setXcTargetWh(e.target.value)} />
+              <input className="border border-slate-200 rounded-xl px-3 py-2" placeholder="كود الصنف" value={xcItemCode} onChange={(e) => setXcItemCode(e.target.value)} />
+              <input type="number" className="border border-slate-200 rounded-xl px-3 py-2" placeholder="الكمية" value={xcQty} onChange={(e) => setXcQty(Number(e.target.value))} />
+            </div>
+            <button type="button" onClick={(e) => handleCreateXcompanyTransfer(e as any)} className="px-4 py-2 bg-blue-700 text-white text-xs font-bold rounded-xl">إنشاء تحويل بين شركات</button>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+            <table className="w-full text-right text-xs">
+              <thead>
+                <tr className="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold">
+                  <th className="py-3 px-4">الصنف</th>
+                  <th className="py-3 px-4">من → إلى</th>
+                  <th className="py-3 px-4 text-center">الكمية</th>
+                  <th className="py-3 px-4 text-center">الحالة</th>
+                  <th className="py-3 px-4 text-center">إجراء</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {xcompanyTransfers.length === 0 ? (
+                  <tr><td colSpan={5} className="text-center py-8 text-slate-400">لا تحويلات بين شركات بعد</td></tr>
+                ) : (
+                  xcompanyTransfers.map((t: any) => (
+                    <tr key={t.id}>
+                      <td className="py-3 px-4 font-mono">{t.itemCode}</td>
+                      <td className="py-3 px-4">{t.sourceTenantId} → {t.targetTenantId}</td>
+                      <td className="py-3 px-4 text-center">{t.quantity}</td>
+                      <td className="py-3 px-4 text-center font-bold">{t.status}</td>
+                      <td className="py-3 px-4 text-center space-x-2 space-x-reverse">
+                        {t.status === 'REQUESTED' && (
+                          <button type="button" className="text-blue-700 font-bold" onClick={() => handleXcompanyAct(t.id, 'dispatch')}>إرسال</button>
+                        )}
+                        {t.status === 'IN_TRANSIT' && (
+                          <button type="button" className="text-emerald-700 font-bold" onClick={() => handleXcompanyAct(t.id, 'receive')}>استلام</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      )}
         </div>
       )}
 
       {/* Tab Content: Stock Counts */}
+
       {activeTab === 'counts' && (
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
           <div className="overflow-x-auto">
