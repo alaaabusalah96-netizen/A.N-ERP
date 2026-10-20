@@ -895,6 +895,17 @@ async function startServer() {
         return res.status(401).json({ success: false, message: ver.error || 'جلسة غير صالحة' });
       }
 
+      // FIX-SESSION-REVOKE-1: access token must map to a still-active session row
+      if (ver.payload.sessionId) {
+        const sessLive = await tenantStorage.getActiveSession(ver.payload.sessionId);
+        if (!sessLive.success) {
+          return res.status(401).json({ success: false, message: 'تعذر التحقق من الجلسة' });
+        }
+        if (!sessLive.data) {
+          return res.status(401).json({ success: false, message: 'تم إنهاء هذه الجلسة' });
+        }
+      }
+
       // Phase 3 (I2/I3/I7): Verify user membership exists and is ACTIVE in tenant
       const userCheck = typeof (tenantStorage as any).getUser === 'function'
         ? await (tenantStorage as any).getUser(ver.payload.tenantId, ver.payload.sub)
@@ -1602,18 +1613,12 @@ async function startServer() {
       const storage = getRequestStorage(req, res);
       if (!storage) return;
       const auth = (req as any).authContext;
-      const list = await storage.listActiveSessionsByUser(auth.userId);
-      if (!list.success) {
-        return res.status(500).json(list.error || { status: 500, title: 'تعذر جلب الجلسات' });
-      }
-      let revoked = 0;
-      for (const sess of list.data || []) {
-        const sid = (sess as any).sessionId || (sess as any).id;
-        if (sid && sid !== auth.sessionId) {
-          await storage.deleteActiveSession(sid);
-          revoked++;
-        }
-      }
+      const tokenService = new TokenService(storage);
+      const revoked = await tokenService.revokeSessionsForUser(
+        auth.userId,
+        'USER_REVOKE_OTHERS',
+        auth.sessionId
+      );
       return res.json({ success: true, revoked });
     } catch (err: any) {
       return res.status(500).json({ success: false, message: publicErrorMessage(err) });
@@ -1989,13 +1994,9 @@ async function startServer() {
       }
       // If deactivated, revoke all sessions
       if (updates.status === 'INACTIVE') {
-        const sessions = await storage.listActiveSessionsByUser(targetId);
-        if (sessions.success && sessions.data) {
-          for (const sess of sessions.data) {
-            const sid = (sess as any).sessionId || (sess as any).id;
-            if (sid) await storage.deleteActiveSession(sid);
-          }
-        }
+        const tokenServiceSess = new TokenService(storage);
+        await tokenServiceSess.revokeSessionsForUser(targetId, 'USER_DEACTIVATED');
+
       }
       // ORG-MEMBERSHIP-1: sync membership with account status
       if (updates.status === 'INACTIVE') {
@@ -2093,13 +2094,8 @@ async function startServer() {
         await storage.updateUser(targetId, { status: 'ACTIVE' } as any);
       } else if (status === 'SUSPENDED') {
         await storage.updateUser(targetId, { status: 'INACTIVE' } as any);
-        const sessions = await storage.listActiveSessionsByUser(targetId);
-        if (sessions.success && sessions.data) {
-          for (const sess of sessions.data) {
-            const sid = (sess as any).sessionId || (sess as any).id;
-            if (sid) await storage.deleteActiveSession(sid);
-          }
-        }
+        const tokenService = new TokenService(storage);
+        await tokenService.revokeSessionsForUser(targetId, 'USER_SUSPENDED');
       }
       await recordAudit(
         actorId,
@@ -2162,14 +2158,9 @@ async function startServer() {
       if (!upd.success) {
         return res.status(500).json(upd.error || { status: 500, title: 'تعذر إعادة التعيين' });
       }
-      // Revoke all sessions so old cookies die
-      const sessions = await storage.listActiveSessionsByUser(targetId);
-      if (sessions.success && sessions.data) {
-        for (const sess of sessions.data) {
-          const sid = (sess as any).sessionId || (sess as any).id;
-          if (sid) await storage.deleteActiveSession(sid);
-        }
-      }
+      // FIX-SESSION-REVOKE-1: revoke families + delete sessions so old access tokens die
+      const tokenServicePwd = new TokenService(storage);
+      await tokenServicePwd.revokeSessionsForUser(targetId, 'PASSWORD_RESET');
       await recordAudit(actorId, 'المستخدم الحالي', 'RESET_USER_PASSWORD', 'USER', targetId, { requiresPasswordChange: true }, req.ip || '127.0.0.1', tenantId, storage);
       return res.json({
         success: true,
@@ -2201,18 +2192,9 @@ async function startServer() {
       // SEC-ROLE-CEILING-1: a lower admin cannot kick a platform-level account out
       const revokeGuard = checkTargetAccess((req as any).authContext, existing.data);
       if (!revokeGuard.ok) return res.status(revokeGuard.status).json({ type: revokeGuard.type, title: revokeGuard.title, status: revokeGuard.status, detail: revokeGuard.detail });
-      const sessions = await storage.listActiveSessionsByUser(targetId);
-      if (!sessions.success) {
-        return res.status(500).json(sessions.error || { status: 500, title: 'تعذر جلب الجلسات' });
-      }
-      let revoked = 0;
-      for (const sess of sessions.data || []) {
-        const sid = (sess as any).sessionId || (sess as any).id;
-        if (sid) {
-          await storage.deleteActiveSession(sid);
-          revoked++;
-        }
-      }
+      const tokenServiceRev = new TokenService(storage);
+      const revoked = await tokenServiceRev.revokeSessionsForUser(targetId, 'ADMIN_REVOKE_SESSIONS');
+
       await recordAudit(actorId, 'المستخدم الحالي', 'REVOKE_USER_SESSIONS', 'USER', targetId, { revoked }, req.ip || '127.0.0.1', tenantId, storage);
       return res.json({ success: true, revoked });
     } catch (err: any) {

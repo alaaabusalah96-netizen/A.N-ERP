@@ -1,0 +1,334 @@
+# A.N ERP — FIX-SESSION-REVOKE-1 — إبطال الجلسات فعليًا
+
+> على ZIP: `A.N-ERP-main - 2026-10-20T202700.124.zip`
+>
+> **المشكلة:** `revoke-others` كان يحذف صف الجلسة فقط؛ التوكن القديم يبقى صالحًا لأن التحقق لا يشترط جلسة نشطة ولا يُبطل عائلة التوكن.
+>
+> **الإصلاح:**
+> 1. `TokenService.verifyAccessToken`: فشل مغلق عند تعذر/غياب عائلة التوكن؛ رفض العائلة المُبطَلة.
+> 2. `revokeSessionsForUser` / `revokeSessionAndFamily`: إبطال العائلة + حذف الجلسة.
+> 3. `POST /api/auth/sessions/revoke-others` يستخدم المساعد (مع الإبقاء على الجلسة الحالية).
+> 4. إعادة تعيين كلمة المرور وتعطيل المستخدم: نفس الإبطال.
+> 5. `requireAuth`: بعد التحقق من التوكن، يشترط وجود جلسة نشطة في التخزين.
+
+## الخطوات
+1. PRECHECK: `grep -q "sessions/revoke-others" server.ts && grep -q getTokenFamily src/core/auth/TokenService.ts`
+   ALREADY_DONE: `grep -q FIX-SESSION-REVOKE-1 docs/STATE_REGISTER.json && grep -q revokeSessionsForUser src/core/auth/TokenService.ts`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyFixSessionRevoke1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifySecSessionPassword.ts` · `npx tsx scripts/verifyUiPlatformHub1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `fix(auth): revoke token families and require live session`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+86ab0e9268eb4d46bcfafc0293c43166a052e030dd19b0ecb31a5686152dcef7  .phase_tmp/ORDER.txt
+eb9e51d1b0cef9b95ccb7980dbfc8edb0c6c6756627d389c46d545aaa9929074  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+675f2f9f365d783f729d3e2560829fe3bb361bf814877772bb2354347c66dced  .phase_tmp/FINAL.txt
+40bb3bf74399ddba8cb2c2b723d7fa5ca54819bb89fe1adfcdb8e42ca51e8193  .phase_tmp/01_src__core__auth__TokenService_ts.patch
+fca4b575a21b9320bdb176ac764ea873a3acd189d7c215dab415b7b570ca7417  .phase_tmp/02_server_ts.patch
+35899304639028008d79070c4d24d164e864e4e79916ebc78838e51f740c5e01  .phase_tmp/03_docs__STATE_REGISTER_json.patch
+425fe2d0c8056ccfabbe56f7a0d189a91af6c9dc627ae50c77b75c5a4a6b7bc9  .phase_tmp/04_scripts__runReconcileAuditB_ts.patch
+2a35cea47b411e060b7848a11d14a4bd1ba6b168ecbb2f264d799f70bcbe5684  .phase_tmp/n0_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__core__auth__TokenService_ts.patch
+02_server_ts.patch
+03_docs__STATE_REGISTER_json.patch
+04_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+scripts/verifyFixSessionRevoke1.ts|n0
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+e7e9d8a729ab44f3f375d32d9b47344e6e89fe366454fcffcc8b6356bd69cbd5  src/core/auth/TokenService.ts
+f92c7ab48ead822b14d7ae03e707cbfef043f283e44ba2b45d10af0fcc96515d  server.ts
+e0fe67ef48d07f48bb9dbd337c4c27a208ff62a52f97f4b5d42957019aa8ce62  docs/STATE_REGISTER.json
+3da35fb2864e108de41024d67f1f04bdefac88592f409cfcacd2056c747b60f4  scripts/runReconcileAuditB.ts
+2a35cea47b411e060b7848a11d14a4bd1ba6b168ecbb2f264d799f70bcbe5684  scripts/verifyFixSessionRevoke1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__core__auth__TokenService_ts.patch =====
+--- a/src/core/auth/TokenService.ts
++++ b/src/core/auth/TokenService.ts
+@@ -97,9 +97,15 @@
+         return { valid: false, error: 'انتهت صلاحية الجلسة (15 دقيقة)' };
+       }
+ 
+-      // Check if family is invalidated in persistent storage
++      // FIX-SESSION-REVOKE-1: fail-closed on family lookup; reject invalidated or missing family
+       const familyRes = await this.storage.getTokenFamily(payload.familyId);
+-      if (familyRes.success && familyRes.data?.isInvalidated) {
++      if (!familyRes.success) {
++        return { valid: false, error: 'تعذر التحقق من حالة الجلسة' };
++      }
++      if (!familyRes.data) {
++        return { valid: false, error: 'سلسلة الجلسة غير معروفة' };
++      }
++      if (familyRes.data.isInvalidated) {
+         return { valid: false, error: 'تم إبطال سلسلة الجلسة بالكامل' };
+       }
+ 
+@@ -299,6 +305,45 @@
+    * Explicitly invalidates an entire token family (e.g. user logout, remote session termination)
+    */
+   public async revokeFamily(familyId: string, reason = 'EXPLICIT_REVOCATION'): Promise<void> {
++    if (!familyId) return;
+     await this.storage.invalidateTokenFamily(familyId, reason);
+   }
++
++  /**
++   * FIX-SESSION-REVOKE-1: invalidate token family then delete active session row.
++   */
++  public async revokeSessionAndFamily(
++    session: { sessionId?: string; id?: string; familyId?: string },
++    reason: string
++  ): Promise<void> {
++    const familyId = session.familyId;
++    if (familyId) {
++      await this.revokeFamily(familyId, reason);
++    }
++    const sid = session.sessionId || (session as { id?: string }).id;
++    if (sid) {
++      await this.storage.deleteActiveSession(sid);
++    }
++  }
++
++  /**
++   * Revoke sessions for a user; optionally keep one session (current).
++   * Returns number of sessions processed.
++   */
++  public async revokeSessionsForUser(
++    userId: string,
++    reason: string,
++    keepSessionId?: string
++  ): Promise<number> {
++    const list = await this.storage.listActiveSessionsByUser(userId);
++    if (!list.success || !list.data) return 0;
++    let n = 0;
++    for (const sess of list.data) {
++      const sid = sess.sessionId || (sess as { id?: string }).id;
++      if (keepSessionId && sid === keepSessionId) continue;
++      await this.revokeSessionAndFamily(sess, reason);
++      n++;
++    }
++    return n;
++  }
+ }
+===== END FILE: .phase_tmp/01_src__core__auth__TokenService_ts.patch =====
+
+===== FILE: .phase_tmp/02_server_ts.patch =====
+--- a/server.ts
++++ b/server.ts
+@@ -895,6 +895,17 @@
+         return res.status(401).json({ success: false, message: ver.error || 'جلسة غير صالحة' });
+       }
+ 
++      // FIX-SESSION-REVOKE-1: access token must map to a still-active session row
++      if (ver.payload.sessionId) {
++        const sessLive = await tenantStorage.getActiveSession(ver.payload.sessionId);
++        if (!sessLive.success) {
++          return res.status(401).json({ success: false, message: 'تعذر التحقق من الجلسة' });
++        }
++        if (!sessLive.data) {
++          return res.status(401).json({ success: false, message: 'تم إنهاء هذه الجلسة' });
++        }
++      }
++
+       // Phase 3 (I2/I3/I7): Verify user membership exists and is ACTIVE in tenant
+       const userCheck = typeof (tenantStorage as any).getUser === 'function'
+         ? await (tenantStorage as any).getUser(ver.payload.tenantId, ver.payload.sub)
+@@ -1602,18 +1613,12 @@
+       const storage = getRequestStorage(req, res);
+       if (!storage) return;
+       const auth = (req as any).authContext;
+-      const list = await storage.listActiveSessionsByUser(auth.userId);
+-      if (!list.success) {
+-        return res.status(500).json(list.error || { status: 500, title: 'تعذر جلب الجلسات' });
+-      }
+-      let revoked = 0;
+-      for (const sess of list.data || []) {
+-        const sid = (sess as any).sessionId || (sess as any).id;
+-        if (sid && sid !== auth.sessionId) {
+-          await storage.deleteActiveSession(sid);
+-          revoked++;
+-        }
+-      }
++      const tokenService = new TokenService(storage);
++      const revoked = await tokenService.revokeSessionsForUser(
++        auth.userId,
++        'USER_REVOKE_OTHERS',
++        auth.sessionId
++      );
+       return res.json({ success: true, revoked });
+     } catch (err: any) {
+       return res.status(500).json({ success: false, message: publicErrorMessage(err) });
+@@ -1989,13 +1994,9 @@
+       }
+       // If deactivated, revoke all sessions
+       if (updates.status === 'INACTIVE') {
+-        const sessions = await storage.listActiveSessionsByUser(targetId);
+-        if (sessions.success && sessions.data) {
+-          for (const sess of sessions.data) {
+-            const sid = (sess as any).sessionId || (sess as any).id;
+-            if (sid) await storage.deleteActiveSession(sid);
+-          }
+-        }
++        const tokenServiceSess = new TokenService(storage);
++        await tokenServiceSess.revokeSessionsForUser(targetId, 'USER_DEACTIVATED');
++
+       }
+       // ORG-MEMBERSHIP-1: sync membership with account status
+       if (updates.status === 'INACTIVE') {
+@@ -2093,13 +2094,8 @@
+         await storage.updateUser(targetId, { status: 'ACTIVE' } as any);
+       } else if (status === 'SUSPENDED') {
+         await storage.updateUser(targetId, { status: 'INACTIVE' } as any);
+-        const sessions = await storage.listActiveSessionsByUser(targetId);
+-        if (sessions.success && sessions.data) {
+-          for (const sess of sessions.data) {
+-            const sid = (sess as any).sessionId || (sess as any).id;
+-            if (sid) await storage.deleteActiveSession(sid);
+-          }
+-        }
++        const tokenService = new TokenService(storage);
++        await tokenService.revokeSessionsForUser(targetId, 'USER_SUSPENDED');
+       }
+       await recordAudit(
+         actorId,
+@@ -2162,14 +2158,9 @@
+       if (!upd.success) {
+         return res.status(500).json(upd.error || { status: 500, title: 'تعذر إعادة التعيين' });
+       }
+-      // Revoke all sessions so old cookies die
+-      const sessions = await storage.listActiveSessionsByUser(targetId);
+-      if (sessions.success && sessions.data) {
+-        for (const sess of sessions.data) {
+-          const sid = (sess as any).sessionId || (sess as any).id;
+-          if (sid) await storage.deleteActiveSession(sid);
+-        }
+-      }
++      // FIX-SESSION-REVOKE-1: revoke families + delete sessions so old access tokens die
++      const tokenServicePwd = new TokenService(storage);
++      await tokenServicePwd.revokeSessionsForUser(targetId, 'PASSWORD_RESET');
+       await recordAudit(actorId, 'المستخدم الحالي', 'RESET_USER_PASSWORD', 'USER', targetId, { requiresPasswordChange: true }, req.ip || '127.0.0.1', tenantId, storage);
+       return res.json({
+         success: true,
+@@ -2201,18 +2192,9 @@
+       // SEC-ROLE-CEILING-1: a lower admin cannot kick a platform-level account out
+       const revokeGuard = checkTargetAccess((req as any).authContext, existing.data);
+       if (!revokeGuard.ok) return res.status(revokeGuard.status).json({ type: revokeGuard.type, title: revokeGuard.title, status: revokeGuard.status, detail: revokeGuard.detail });
+-      const sessions = await storage.listActiveSessionsByUser(targetId);
+-      if (!sessions.success) {
+-        return res.status(500).json(sessions.error || { status: 500, title: 'تعذر جلب الجلسات' });
+-      }
+-      let revoked = 0;
+-      for (const sess of sessions.data || []) {
+-        const sid = (sess as any).sessionId || (sess as any).id;
+-        if (sid) {
+-          await storage.deleteActiveSession(sid);
+-          revoked++;
+-        }
+-      }
++      const tokenServiceRev = new TokenService(storage);
++      const revoked = await tokenServiceRev.revokeSessionsForUser(targetId, 'ADMIN_REVOKE_SESSIONS');
++
+       await recordAudit(actorId, 'المستخدم الحالي', 'REVOKE_USER_SESSIONS', 'USER', targetId, { revoked }, req.ip || '127.0.0.1', tenantId, storage);
+       return res.json({ success: true, revoked });
+     } catch (err: any) {
+===== END FILE: .phase_tmp/02_server_ts.patch =====
+
+===== FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "UI-PLATFORM-HUB-1: unified platform screen companies + org groups (after UI-TRANSFERS-HUB-1, UI-WAREHOUSE-CREATE-1, UI-LEDGER-DEPTH-1, UI-GROUP-REPORTS-1, UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
++  "lastChange": "FIX-SESSION-REVOKE-1: revoke token families + require live session on auth",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -395,6 +395,12 @@
+       "status": "DONE",
+       "scope": "Unified platform hub: company wizard + org groups in a single view with tab switching",
+       "evidence": "src/components/PlatformHubView.tsx; scripts/verifyUiPlatformHub1.ts"
++    },
++    {
++      "id": "FIX-SESSION-REVOKE-1",
++      "status": "DONE",
++      "scope": "Revoke token families on session end; fail-closed family check; require active session in requireAuth",
++      "evidence": "src/core/auth/TokenService.ts; server.ts; scripts/verifyFixSessionRevoke1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -115,6 +115,7 @@
+   { name: 'UiWarehouseCreate1', script: 'scripts/verifyUiWarehouseCreate1.ts', expected: 14 },
+   { name: 'UiTransfersHub1', script: 'scripts/verifyUiTransfersHub1.ts', expected: 14 },
+   { name: 'UiPlatformHub1', script: 'scripts/verifyUiPlatformHub1.ts', expected: 14 },
++  { name: 'FixSessionRevoke1', script: 'scripts/verifyFixSessionRevoke1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file verifyFixSessionRevoke1.ts
+ * FIX-SESSION-REVOKE-1 — session revoke invalidates token families; auth requires live session.
+ * Run: npx tsx scripts/verifyFixSessionRevoke1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const ts = fs.readFileSync('src/core/auth/TokenService.ts', 'utf8');
+const srv = fs.readFileSync('server.ts', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 fail-closed when family lookup fails', /!familyRes\.success/.test(ts) && /تعذر التحقق من حالة الجلسة/.test(ts));
+check('S2 reject missing family data', /!familyRes\.data/.test(ts) && /غير معروفة/.test(ts));
+check('S3 still reject invalidated family', /isInvalidated/.test(ts));
+check('S4 revokeSessionAndFamily helper', /revokeSessionAndFamily/.test(ts));
+check('S5 revokeSessionsForUser helper', /revokeSessionsForUser/.test(ts));
+check('S6 revoke-others uses revokeSessionsForUser', /revoke-others[\s\S]{0,500}revokeSessionsForUser/.test(srv));
+check('S7 requireAuth checks getActiveSession', /getActiveSession\(ver\.payload\.sessionId\)/.test(srv));
+check('S8 requireAuth rejects missing session', /تم إنهاء هذه الجلسة/.test(srv));
+check('S9 password reset revokes families', /PASSWORD_RESET/.test(srv) && /revokeSessionsForUser/.test(srv));
+check('S10 TokenService.revokeFamily still present', /async revokeFamily/.test(ts));
+check('S11 package FIX-SESSION-REVOKE-1 DONE', byId['FIX-SESSION-REVOKE-1']?.status === 'DONE');
+check('S12 lastChange mentions FIX-SESSION-REVOKE-1', String(reg.lastChange || '').includes('FIX-SESSION-REVOKE-1'));
+check('S13 revoke-others reason USER_REVOKE_OTHERS', /USER_REVOKE_OTHERS/.test(srv));
+check('S14 no success-only path without family check in verifyAccessToken', /getTokenFamily\(payload\.familyId\)/.test(ts) && !/if \(familyRes\.success && familyRes\.data\?\.isInvalidated\)/.test(ts));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n0_01.part =====

@@ -97,9 +97,15 @@ export class TokenService {
         return { valid: false, error: 'انتهت صلاحية الجلسة (15 دقيقة)' };
       }
 
-      // Check if family is invalidated in persistent storage
+      // FIX-SESSION-REVOKE-1: fail-closed on family lookup; reject invalidated or missing family
       const familyRes = await this.storage.getTokenFamily(payload.familyId);
-      if (familyRes.success && familyRes.data?.isInvalidated) {
+      if (!familyRes.success) {
+        return { valid: false, error: 'تعذر التحقق من حالة الجلسة' };
+      }
+      if (!familyRes.data) {
+        return { valid: false, error: 'سلسلة الجلسة غير معروفة' };
+      }
+      if (familyRes.data.isInvalidated) {
         return { valid: false, error: 'تم إبطال سلسلة الجلسة بالكامل' };
       }
 
@@ -299,6 +305,45 @@ export class TokenService {
    * Explicitly invalidates an entire token family (e.g. user logout, remote session termination)
    */
   public async revokeFamily(familyId: string, reason = 'EXPLICIT_REVOCATION'): Promise<void> {
+    if (!familyId) return;
     await this.storage.invalidateTokenFamily(familyId, reason);
+  }
+
+  /**
+   * FIX-SESSION-REVOKE-1: invalidate token family then delete active session row.
+   */
+  public async revokeSessionAndFamily(
+    session: { sessionId?: string; id?: string; familyId?: string },
+    reason: string
+  ): Promise<void> {
+    const familyId = session.familyId;
+    if (familyId) {
+      await this.revokeFamily(familyId, reason);
+    }
+    const sid = session.sessionId || (session as { id?: string }).id;
+    if (sid) {
+      await this.storage.deleteActiveSession(sid);
+    }
+  }
+
+  /**
+   * Revoke sessions for a user; optionally keep one session (current).
+   * Returns number of sessions processed.
+   */
+  public async revokeSessionsForUser(
+    userId: string,
+    reason: string,
+    keepSessionId?: string
+  ): Promise<number> {
+    const list = await this.storage.listActiveSessionsByUser(userId);
+    if (!list.success || !list.data) return 0;
+    let n = 0;
+    for (const sess of list.data) {
+      const sid = sess.sessionId || (sess as { id?: string }).id;
+      if (keepSessionId && sid === keepSessionId) continue;
+      await this.revokeSessionAndFamily(sess, reason);
+      n++;
+    }
+    return n;
   }
 }

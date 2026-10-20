@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "UI-PLATFORM-HUB-1: unified platform screen companies + org groups (after UI-TRANSFERS-HUB-1, UI-WAREHOUSE-CREATE-1, UI-LEDGER-DEPTH-1, UI-GROUP-REPORTS-1, UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
+  "lastChange": "FIX-SESSION-REVOKE-1: revoke token families + require live session on auth (after UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -395,6 +395,12 @@
       "status": "DONE",
       "scope": "Unified platform hub: company wizard + org groups in a single view with tab switching",
       "evidence": "src/components/PlatformHubView.tsx; scripts/verifyUiPlatformHub1.ts"
+    },
+    {
+      "id": "FIX-SESSION-REVOKE-1",
+      "status": "DONE",
+      "scope": "Revoke token families on session end; fail-closed family check; require active session in requireAuth",
+      "evidence": "src/core/auth/TokenService.ts; server.ts; scripts/verifyFixSessionRevoke1.ts"
     }
   ],
   "defects": [
