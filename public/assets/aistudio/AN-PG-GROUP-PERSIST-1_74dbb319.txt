@@ -1,0 +1,258 @@
+# A.N ERP — PG-GROUP-PERSIST-1 — حفظ مجموعات الشركات في PostgreSQL
+
+> على ZIP: `A.N-ERP-main - 2026-10-20T211720.718.zip`
+>
+> **المشكلة:** `list/get/saveCompanyGroup` في `PostgresPrimaryAdapter` كانت صورية: الحفظ يرجع نجاحًا دون SQL، والقائمة دائمًا فارغة.
+>
+> **الإصلاح (هذه الحزمة فقط — مجموعات الشركات، ليس أصناف المجموعة ولا التحويل بين الشركات):**
+> 1. جدول `an_company_groups` (منصة، بدون RLS tenant — مثل سجل المنشآت).
+> 2. `listCompanyGroups` / `getCompanyGroup` / `saveCompanyGroup` بـ SELECT/INSERT … ON CONFLICT ثم قراءة بعد الحفظ.
+> 3. InMemory كما هو (Map حقيقي).
+
+## الخطوات
+1. PRECHECK: `grep -q listCompanyGroups src/core/storage/adapters/PostgresPrimaryAdapter.ts`
+   ALREADY_DONE: `grep -q PG-GROUP-PERSIST-1 docs/STATE_REGISTER.json && grep -q an_company_groups src/core/storage/adapters/PostgresPrimaryAdapter.ts`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyPgGroupPersist1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyOrgGroup1.ts` · `npx tsx scripts/verifyFixTenantSuspend1.ts`
+11. إن وُجد `DATABASE_URL`: بعد إعادة تشغيل الخادم/initializeSchema يُنشأ الجدول تلقائيًا؛ اختياري: حفظ مجموعة ثم list. بدون PG: PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `fix(pg): persist company groups in PostgreSQL`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+592f07fdfbd69e9ed35ea58e6571b93fd194790b79a8f48a1fe1601b8a79b07d  .phase_tmp/ORDER.txt
+d8f9c8708ac48eb1449bc9fa9d8daa76e8f788307f2a0690e73d48c7e3abd625  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+32841c9063db8edee81780a499aef698bd8c01ad4fc8387073f44eae23a85827  .phase_tmp/FINAL.txt
+ef642cee42c36b63c0a3bee5d4deee551b617a1996a49e9fac26b5f651815c66  .phase_tmp/01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch
+8907b451ef5e8432b2edb18a686c54aaf055d265c5abf5608a5f5fbef0df833c  .phase_tmp/02_docs__STATE_REGISTER_json.patch
+ca6cbba0be8cfcc12084609d1e6561cf02225dde6edfceb5dac8d4f729845b6e  .phase_tmp/03_scripts__runReconcileAuditB_ts.patch
+a317bdf169b233d656ac5c56964187f282d207a473bb7b27dd1015461bf74bb7  .phase_tmp/n0_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch
+02_docs__STATE_REGISTER_json.patch
+03_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+scripts/verifyPgGroupPersist1.ts|n0
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+64c9fe57134400278f005acba893106dfd1d2e23413b273bbb7827e057855b0b  src/core/storage/adapters/PostgresPrimaryAdapter.ts
+5418f284d0b2e9008ebc03d74f87042b66031228d186bf4e3b64c282d77b229d  docs/STATE_REGISTER.json
+1e014a97b4552fd13a6e218169fd01d374d3241686cd55ff38d5f0074e325ec4  scripts/runReconcileAuditB.ts
+a317bdf169b233d656ac5c56964187f282d207a473bb7b27dd1015461bf74bb7  scripts/verifyPgGroupPersist1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch =====
+--- a/src/core/storage/adapters/PostgresPrimaryAdapter.ts
++++ b/src/core/storage/adapters/PostgresPrimaryAdapter.ts
+@@ -3651,6 +3651,17 @@
+         timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+       );
+ 
++      CREATE TABLE IF NOT EXISTS an_company_groups (
++        id VARCHAR(64) PRIMARY KEY,
++        code VARCHAR(32) NOT NULL UNIQUE,
++        name_ar VARCHAR(255) NOT NULL,
++        name_en VARCHAR(255),
++        status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
++        member_tenant_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
++        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
++        updated_at TIMESTAMPTZ
++      );
++
+       -- Row Level Security (RLS) enforcement
+       ALTER TABLE an_users ENABLE ROW LEVEL SECURITY;
+       ALTER TABLE an_users FORCE ROW LEVEL SECURITY;
+@@ -3908,14 +3919,91 @@
+     }
+   }
+ 
++  private mapCompanyGroupRow(row: any): CompanyGroup {
++    let members: string[] = [];
++    const raw = row.member_tenant_ids;
++    if (Array.isArray(raw)) members = raw.map(String);
++    else if (typeof raw === 'string') {
++      try { members = JSON.parse(raw).map(String); } catch { members = []; }
++    }
++    return {
++      id: row.id,
++      code: row.code,
++      nameAr: row.name_ar,
++      nameEn: row.name_en || undefined,
++      status: (row.status === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE') as CompanyGroup['status'],
++      memberTenantIds: members,
++      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
++      updatedAt: row.updated_at
++        ? (row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at))
++        : undefined,
++    };
++  }
++
++  /** PG-GROUP-PERSIST-1: real PostgreSQL persistence for company groups (platform-scoped). */
+   public async listCompanyGroups(): Promise<StorageResult<CompanyGroup[]>> {
+-    return { success: true, data: [] };
+-  }
++    if (!this.pool) return this.missingConnError();
++    try {
++      const res = await this.query('SELECT * FROM an_company_groups ORDER BY created_at DESC');
++      return { success: true, data: res.rows.map((r: any) => this.mapCompanyGroupRow(r)) };
++    } catch (err: any) {
++      return this.dbError(err);
++    }
++  }
++
+   public async getCompanyGroup(groupId: string): Promise<StorageResult<CompanyGroup>> {
+-    return { success: false, error: { type: 'https://api.an-erp.local/errors/group-not-found', title: 'المجموعة غير موجودة', status: 404, detail: 'لا توجد مجموعة.' } };
+-  }
++    if (!this.pool) return this.missingConnError();
++    try {
++      const res = await this.query('SELECT * FROM an_company_groups WHERE id = $1', [groupId]);
++      if (!res.rows.length) {
++        return {
++          success: false,
++          error: {
++            type: 'https://api.an-erp.local/errors/group-not-found',
++            title: 'المجموعة غير موجودة',
++            status: 404,
++            detail: 'لا توجد مجموعة.',
++          },
++        };
++      }
++      return { success: true, data: this.mapCompanyGroupRow(res.rows[0]) };
++    } catch (err: any) {
++      return this.dbError(err);
++    }
++  }
++
+   public async saveCompanyGroup(group: CompanyGroup, _idempotencyKey: string): Promise<StorageResult<CompanyGroup>> {
+-    return { success: true, data: group };
++    if (!this.pool) return this.missingConnError();
++    try {
++      const updatedAt = group.updatedAt || new Date().toISOString();
++      const members = JSON.stringify(Array.isArray(group.memberTenantIds) ? group.memberTenantIds : []);
++      await this.query(
++        `INSERT INTO an_company_groups (id, code, name_ar, name_en, status, member_tenant_ids, created_at, updated_at)
++         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
++         ON CONFLICT (id) DO UPDATE SET
++           code = EXCLUDED.code,
++           name_ar = EXCLUDED.name_ar,
++           name_en = EXCLUDED.name_en,
++           status = EXCLUDED.status,
++           member_tenant_ids = EXCLUDED.member_tenant_ids,
++           updated_at = EXCLUDED.updated_at`,
++        [
++          group.id,
++          group.code,
++          group.nameAr,
++          group.nameEn || null,
++          group.status || 'ACTIVE',
++          members,
++          group.createdAt || new Date().toISOString(),
++          updatedAt,
++        ]
++      );
++      const read = await this.getCompanyGroup(group.id);
++      if (read.success && read.data) return { success: true, data: read.data };
++      return { success: true, data: { ...group, updatedAt } };
++    } catch (err: any) {
++      return this.dbError(err);
++    }
+   }
+ 
+   public async listGroupMasterItems(groupId: string): Promise<StorageResult<GroupMasterItem[]>> {
+===== END FILE: .phase_tmp/01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch =====
+
+===== FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "FIX-TENANT-SUSPEND-1: block suspended tenants on auth/refresh; revoke sessions on suspend (after FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
++  "lastChange": "PG-GROUP-PERSIST-1: real Postgres save/list/get for company groups",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -407,6 +407,12 @@
+       "status": "DONE",
+       "scope": "requireAuth/login/refresh reject non-ACTIVE tenants; suspend path revokes sessions+families",
+       "evidence": "server.ts; scripts/verifyFixTenantSuspend1.ts"
++    },
++    {
++      "id": "PG-GROUP-PERSIST-1",
++      "status": "DONE",
++      "scope": "an_company_groups table + PostgresPrimaryAdapter list/get/saveCompanyGroup (no more success-without-write)",
++      "evidence": "src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgGroupPersist1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -117,6 +117,7 @@
+   { name: 'UiPlatformHub1', script: 'scripts/verifyUiPlatformHub1.ts', expected: 14 },
+   { name: 'FixSessionRevoke1', script: 'scripts/verifyFixSessionRevoke1.ts', expected: 14 },
+   { name: 'FixTenantSuspend1', script: 'scripts/verifyFixTenantSuspend1.ts', expected: 14 },
++  { name: 'PgGroupPersist1', script: 'scripts/verifyPgGroupPersist1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file verifyPgGroupPersist1.ts
+ * PG-GROUP-PERSIST-1 — company groups persist on PostgreSQL (not success-without-write stubs).
+ * Run: npx tsx scripts/verifyPgGroupPersist1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean) => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}`); }
+};
+
+const pg = fs.readFileSync('src/core/storage/adapters/PostgresPrimaryAdapter.ts', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 CREATE TABLE an_company_groups', /CREATE TABLE IF NOT EXISTS an_company_groups/.test(pg));
+check('S2 member_tenant_ids JSONB column', /member_tenant_ids JSONB/.test(pg));
+check('S3 listCompanyGroups queries table', /FROM an_company_groups/.test(pg) && /listCompanyGroups[\s\S]{0,400}SELECT \* FROM an_company_groups/.test(pg));
+check('S4 getCompanyGroup queries by id', /getCompanyGroup[\s\S]{0,350}WHERE id = \$1/.test(pg));
+check('S5 saveCompanyGroup INSERT ON CONFLICT', /INSERT INTO an_company_groups/.test(pg) && /ON CONFLICT \(id\) DO UPDATE/.test(pg));
+check('S6 mapCompanyGroupRow helper', /mapCompanyGroupRow/.test(pg));
+check('S7 stubs removed (no empty list success-only)', !/listCompanyGroups\(\)[\s\S]{0,80}return \{ success: true, data: \[\] \}/.test(pg));
+check('S8 stubs removed (no save echo-only)', !/saveCompanyGroup\([^)]*\)[\s\S]{0,80}return \{ success: true, data: group \}/.test(pg));
+check('S9 package PG-GROUP-PERSIST-1 DONE', byId['PG-GROUP-PERSIST-1']?.status === 'DONE');
+check('S10 lastChange mentions PG-GROUP-PERSIST-1', String(reg.lastChange || '').includes('PG-GROUP-PERSIST-1'));
+check('S11 group-not-found error retained', /group-not-found/.test(pg));
+check('S12 status maps ACTIVE|SUSPENDED', /SUSPENDED/.test(pg));
+check('S13 InMemory still has real Map persistence', /companyGroups = new Map/.test(fs.readFileSync('src/core/storage/adapters/InMemoryAdapter.ts', 'utf8')));
+check('S14 FIX-TENANT-SUSPEND-1 still DONE if present', !byId['FIX-TENANT-SUSPEND-1'] || byId['FIX-TENANT-SUSPEND-1']?.status === 'DONE');
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n0_01.part =====

@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "FIX-TENANT-SUSPEND-1: block suspended tenants on auth/refresh; revoke sessions on suspend (after FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
+  "lastChange": "PG-GROUP-PERSIST-1: real Postgres save/list/get for company groups (after FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -407,6 +407,12 @@
       "status": "DONE",
       "scope": "requireAuth/login/refresh reject non-ACTIVE tenants; suspend path revokes sessions+families",
       "evidence": "server.ts; scripts/verifyFixTenantSuspend1.ts"
+    },
+    {
+      "id": "PG-GROUP-PERSIST-1",
+      "status": "DONE",
+      "scope": "an_company_groups table + PostgresPrimaryAdapter list/get/saveCompanyGroup (no more success-without-write)",
+      "evidence": "src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgGroupPersist1.ts"
     }
   ],
   "defects": [

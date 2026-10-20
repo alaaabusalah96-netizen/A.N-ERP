@@ -3651,6 +3651,17 @@ export class PostgresPrimaryAdapter implements StoragePort {
         timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS an_company_groups (
+        id VARCHAR(64) PRIMARY KEY,
+        code VARCHAR(32) NOT NULL UNIQUE,
+        name_ar VARCHAR(255) NOT NULL,
+        name_en VARCHAR(255),
+        status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+        member_tenant_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ
+      );
+
       -- Row Level Security (RLS) enforcement
       ALTER TABLE an_users ENABLE ROW LEVEL SECURITY;
       ALTER TABLE an_users FORCE ROW LEVEL SECURITY;
@@ -3908,14 +3919,91 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
+  private mapCompanyGroupRow(row: any): CompanyGroup {
+    let members: string[] = [];
+    const raw = row.member_tenant_ids;
+    if (Array.isArray(raw)) members = raw.map(String);
+    else if (typeof raw === 'string') {
+      try { members = JSON.parse(raw).map(String); } catch { members = []; }
+    }
+    return {
+      id: row.id,
+      code: row.code,
+      nameAr: row.name_ar,
+      nameEn: row.name_en || undefined,
+      status: (row.status === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE') as CompanyGroup['status'],
+      memberTenantIds: members,
+      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+      updatedAt: row.updated_at
+        ? (row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at))
+        : undefined,
+    };
+  }
+
+  /** PG-GROUP-PERSIST-1: real PostgreSQL persistence for company groups (platform-scoped). */
   public async listCompanyGroups(): Promise<StorageResult<CompanyGroup[]>> {
-    return { success: true, data: [] };
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_company_groups ORDER BY created_at DESC');
+      return { success: true, data: res.rows.map((r: any) => this.mapCompanyGroupRow(r)) };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
   }
+
   public async getCompanyGroup(groupId: string): Promise<StorageResult<CompanyGroup>> {
-    return { success: false, error: { type: 'https://api.an-erp.local/errors/group-not-found', title: 'المجموعة غير موجودة', status: 404, detail: 'لا توجد مجموعة.' } };
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_company_groups WHERE id = $1', [groupId]);
+      if (!res.rows.length) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/group-not-found',
+            title: 'المجموعة غير موجودة',
+            status: 404,
+            detail: 'لا توجد مجموعة.',
+          },
+        };
+      }
+      return { success: true, data: this.mapCompanyGroupRow(res.rows[0]) };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
   }
+
   public async saveCompanyGroup(group: CompanyGroup, _idempotencyKey: string): Promise<StorageResult<CompanyGroup>> {
-    return { success: true, data: group };
+    if (!this.pool) return this.missingConnError();
+    try {
+      const updatedAt = group.updatedAt || new Date().toISOString();
+      const members = JSON.stringify(Array.isArray(group.memberTenantIds) ? group.memberTenantIds : []);
+      await this.query(
+        `INSERT INTO an_company_groups (id, code, name_ar, name_en, status, member_tenant_ids, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+           code = EXCLUDED.code,
+           name_ar = EXCLUDED.name_ar,
+           name_en = EXCLUDED.name_en,
+           status = EXCLUDED.status,
+           member_tenant_ids = EXCLUDED.member_tenant_ids,
+           updated_at = EXCLUDED.updated_at`,
+        [
+          group.id,
+          group.code,
+          group.nameAr,
+          group.nameEn || null,
+          group.status || 'ACTIVE',
+          members,
+          group.createdAt || new Date().toISOString(),
+          updatedAt,
+        ]
+      );
+      const read = await this.getCompanyGroup(group.id);
+      if (read.success && read.data) return { success: true, data: read.data };
+      return { success: true, data: { ...group, updatedAt } };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
   }
 
   public async listGroupMasterItems(groupId: string): Promise<StorageResult<GroupMasterItem[]>> {

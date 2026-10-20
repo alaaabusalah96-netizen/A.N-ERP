@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-19 — FIX-TENANT-SUSPEND-1: block suspended tenants on auth/refresh; revoke sessions on suspend (after FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)
+**Last update**: 2026-10-19 — PG-GROUP-PERSIST-1: real Postgres save/list/get for company groups (after FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-20)
 
 ## Gates
@@ -74,6 +74,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **UI-PLATFORM-HUB-1** — DONE — Unified platform hub: company wizard + org groups in a single view with tab switching _(evidence: src/components/PlatformHubView.tsx; scripts/verifyUiPlatformHub1.ts)_
 - **FIX-SESSION-REVOKE-1** — DONE — Revoke token families on session end; fail-closed family check; require active session in requireAuth _(evidence: src/core/auth/TokenService.ts; server.ts; scripts/verifyFixSessionRevoke1.ts)_
 - **FIX-TENANT-SUSPEND-1** — DONE — requireAuth/login/refresh reject non-ACTIVE tenants; suspend path revokes sessions+families _(evidence: server.ts; scripts/verifyFixTenantSuspend1.ts)_
+- **PG-GROUP-PERSIST-1** — DONE — an_company_groups table + PostgresPrimaryAdapter list/get/saveCompanyGroup (no more success-without-write) _(evidence: src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgGroupPersist1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
