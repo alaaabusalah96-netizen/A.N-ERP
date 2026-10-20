@@ -1,0 +1,317 @@
+# A.N ERP — UI-WAREHOUSE-CREATE-1 — إنشاء مستودع (system_admin + warehouse_manager)
+
+> على ZIP: `A.N-ERP-main - 2026-10-20T000317.674.zip`
+>
+> - واجهة: زر + نموذج «إنشاء مستودع» في تبويب المستودعات.
+> - صلاحيات: `system_admin` يحصل على `STOCK_VIEW` + `STOCK_RECEIVE` (مدير المخازن يملكها أصلًا).
+> - الخادم: `POST /api/inventory/warehouses` يبقى على `STOCK_RECEIVE` بدون تغيير مسار.
+
+## الخطوات
+1. PRECHECK: `grep -q "app.post('/api/inventory/warehouses'" server.ts`
+   ALREADY_DONE: `grep -q UI-WAREHOUSE-CREATE-1 docs/STATE_REGISTER.json && grep -q isCreateWhModalOpen src/components/InventoryWorkspaceView.tsx`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyUiWarehouseCreate1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyUiLedgerDepth1.ts` · `npx tsx scripts/verifySecRoleCeiling.ts` (إن وُجد)
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `feat(ui): warehouse create for system_admin and warehouse_manager`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+0eb8d296cae7c0d50f159f1a17a76227c708aa537ab2fd24298da2f923eeaa22  .phase_tmp/ORDER.txt
+886a7253346da632b2623710b5896eb383cb2cb0ae8103cb332acb1397c2a57d  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+261397aa42abfa918b989c15765666f264a923cd7f5bc95c3ded208750d33349  .phase_tmp/FINAL.txt
+091695d872192b034745f6f6fec740606665519f5e5a2e3285927d5b3a60cf0c  .phase_tmp/01_src__core__auth__PermissionMatrix_ts.patch
+cb19fe3bfb60994cca775d5b496eb67cc30a40c87f55cc2d386f01a6f7f9074b  .phase_tmp/02_src__components__InventoryWorkspaceView_tsx.patch
+cd9ad5aeebd4716d8a2f54de8c5519893834d031255f124a65e977c9dc6f273d  .phase_tmp/03_docs__STATE_REGISTER_json.patch
+80cd0dd2e0936e1514da7286839101d27ce996f42d985473e8d3fd82244647f8  .phase_tmp/04_scripts__runReconcileAuditB_ts.patch
+b2f4c0344d9167fd922e078978e28769e3ee3ce1ceb7640aef1583c107763cf0  .phase_tmp/n0_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__core__auth__PermissionMatrix_ts.patch
+02_src__components__InventoryWorkspaceView_tsx.patch
+03_docs__STATE_REGISTER_json.patch
+04_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+scripts/verifyUiWarehouseCreate1.ts|n0
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+c9332ef424a60da8d974ffbc29ea2b68596d429d11b2663149e6aa7775df3a52  src/core/auth/PermissionMatrix.ts
+aba5cfe987ac1dbfa3a4344fc48806faaea0f3f3617fb86ff2282676fd759d13  src/components/InventoryWorkspaceView.tsx
+d359f79737ee93595f1ffe45b311eddff9ab24e48f9c591d4049d2d793717ba7  docs/STATE_REGISTER.json
+e23bb170ecb0760d17f2b3c9469665e8bcfab17322b41788c060a1bdf6e7545e  scripts/runReconcileAuditB.ts
+b2f4c0344d9167fd922e078978e28769e3ee3ce1ceb7640aef1583c107763cf0  scripts/verifyUiWarehouseCreate1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__core__auth__PermissionMatrix_ts.patch =====
+--- a/src/core/auth/PermissionMatrix.ts
++++ b/src/core/auth/PermissionMatrix.ts
+@@ -148,6 +148,8 @@
+     'APPROVAL_POLICY_MANAGE',
+     'PASSWORD_CHANGE_SELF',
+     'BREAK_GLASS_AUTHORIZE',
++    'STOCK_VIEW',
++    'STOCK_RECEIVE',
+   ]),
+   branch_manager: new Set<PermissionGroup>([
+     'ENTRY_VIEW', 'FINANCIAL_REPORTS',
+===== END FILE: .phase_tmp/01_src__core__auth__PermissionMatrix_ts.patch =====
+
+===== FILE: .phase_tmp/02_src__components__InventoryWorkspaceView_tsx.patch =====
+--- a/src/components/InventoryWorkspaceView.tsx
++++ b/src/components/InventoryWorkspaceView.tsx
+@@ -148,6 +148,14 @@
+   const [isCountModalOpen, setIsCountModalOpen] = useState(false);
+ 
+   const [isCreateItemModalOpen, setIsCreateItemModalOpen] = useState(false);
++  const [isCreateWhModalOpen, setIsCreateWhModalOpen] = useState(false);
++  const [isSavingWh, setIsSavingWh] = useState(false);
++  const [newWhCode, setNewWhCode] = useState('');
++  const [newWhNameAr, setNewWhNameAr] = useState('');
++  const [newWhNameEn, setNewWhNameEn] = useState('');
++  const [newWhLocation, setNewWhLocation] = useState('');
++  const [newWhIsDefault, setNewWhIsDefault] = useState(false);
++  const [newWhValuation, setNewWhValuation] = useState<'WEIGHTED_AVERAGE' | 'FIFO'>('WEIGHTED_AVERAGE');
+   const [isSavingItem, setIsSavingItem] = useState(false);
+   const [newItemCode, setNewItemCode] = useState('');
+   const [newItemNameAr, setNewItemNameAr] = useState('');
+@@ -326,6 +334,54 @@
+       onNotification('تعذر الاتصال بالخادم أثناء إنشاء بطاقة الصنف.');
+     } finally {
+       setIsSavingItem(false);
++    }
++  };
++
++
++  const handleCreateWarehouse = async (e: React.FormEvent) => {
++    e.preventDefault();
++    if (!newWhCode.trim() || !newWhNameAr.trim()) {
++      onNotification('كود المستودع والاسم العربي حقول إلزامية.');
++      return;
++    }
++    setIsSavingWh(true);
++    try {
++      const idemKey = `wh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
++      const res = await fetch('/api/inventory/warehouses', {
++        method: 'POST',
++        credentials: 'include',
++        headers: {
++          'Content-Type': 'application/json',
++          'Idempotency-Key': idemKey,
++        },
++        body: JSON.stringify({
++          code: newWhCode.trim(),
++          nameAr: newWhNameAr.trim(),
++          nameEn: newWhNameEn.trim() || undefined,
++          location: newWhLocation.trim() || undefined,
++          isDefault: newWhIsDefault,
++          valuationMethod: newWhValuation,
++          isActive: true,
++        }),
++      });
++      const data = await res.json().catch(() => ({}));
++      if (res.ok && data.success) {
++        onNotification(`تم إنشاء المستودع ${data.data?.code || newWhCode.trim()} بنجاح.`);
++        setIsCreateWhModalOpen(false);
++        setNewWhCode('');
++        setNewWhNameAr('');
++        setNewWhNameEn('');
++        setNewWhLocation('');
++        setNewWhIsDefault(false);
++        setNewWhValuation('WEIGHTED_AVERAGE');
++        await loadData();
++      } else {
++        onNotification(data.error?.detail || data.detail || 'تعذر إنشاء المستودع. يلزم صلاحية STOCK_RECEIVE (مدير نظام داخلي أو مدير مخازن).');
++      }
++    } catch {
++      onNotification('تعذر الاتصال بالخادم أثناء إنشاء المستودع.');
++    } finally {
++      setIsSavingWh(false);
+     }
+   };
+ 
+@@ -999,7 +1055,18 @@
+ 
+       {/* Tab Content: Warehouses */}
+       {activeTab === 'warehouses' && (
+-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
++        <div className="space-y-4">
++          <div className="flex justify-end">
++            <button
++              type="button"
++              onClick={() => setIsCreateWhModalOpen(true)}
++              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700"
++            >
++              <Plus className="w-4 h-4" />
++              إنشاء مستودع
++            </button>
++          </div>
++          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+           {warehouses.map((wh) => (
+             <div key={wh.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs flex flex-col justify-between">
+               <div>
+@@ -1026,6 +1093,12 @@
+               </div>
+             </div>
+           ))}
++          {warehouses.length === 0 && (
++            <div className="col-span-full text-center py-10 text-slate-400 text-xs">
++              لا توجد مستودعات بعد. استخدم «إنشاء مستودع» (مدير النظام الداخلي أو مدير المخازن).
++            </div>
++          )}
++        </div>
+         </div>
+       )}
+ 
+@@ -1409,6 +1482,50 @@
+         </div>
+       )}
+ 
++
++      {/* Modal: Create Warehouse (UI-WAREHOUSE-CREATE-1) */}
++      {isCreateWhModalOpen && (
++        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
++          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200">
++            <h2 className="text-base font-bold text-slate-900 mb-4">إنشاء مستودع</h2>
++            <p className="text-[11px] text-slate-500 mb-3">متاح لمدير النظام الداخلي ومدير المخازن (صلاحية STOCK_RECEIVE).</p>
++            <form onSubmit={handleCreateWarehouse} className="space-y-4 text-xs">
++              <div>
++                <label className="block font-semibold text-slate-700 mb-1">الكود *</label>
++                <input value={newWhCode} onChange={e => setNewWhCode(e.target.value)} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" required />
++              </div>
++              <div>
++                <label className="block font-semibold text-slate-700 mb-1">الاسم العربي *</label>
++                <input value={newWhNameAr} onChange={e => setNewWhNameAr(e.target.value)} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" required />
++              </div>
++              <div>
++                <label className="block font-semibold text-slate-700 mb-1">الاسم الإنجليزي</label>
++                <input value={newWhNameEn} onChange={e => setNewWhNameEn(e.target.value)} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" />
++              </div>
++              <div>
++                <label className="block font-semibold text-slate-700 mb-1">الموقع</label>
++                <input value={newWhLocation} onChange={e => setNewWhLocation(e.target.value)} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" />
++              </div>
++              <div>
++                <label className="block font-semibold text-slate-700 mb-1">طريقة التقييم</label>
++                <select value={newWhValuation} onChange={e => setNewWhValuation(e.target.value as 'WEIGHTED_AVERAGE' | 'FIFO')} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50">
++                  <option value="WEIGHTED_AVERAGE">المتوسط المرجح</option>
++                  <option value="FIFO">FIFO</option>
++                </select>
++              </div>
++              <label className="inline-flex items-center gap-2 text-slate-700">
++                <input type="checkbox" checked={newWhIsDefault} onChange={e => setNewWhIsDefault(e.target.checked)} />
++                مستودع رئيسي افتراضي
++              </label>
++              <div className="flex justify-end gap-2 pt-2">
++                <button type="button" onClick={() => setIsCreateWhModalOpen(false)} disabled={isSavingWh} className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-semibold disabled:opacity-50">إلغاء</button>
++                <button type="submit" disabled={isSavingWh} className="px-4 py-2 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-50">{isSavingWh ? 'جارٍ الحفظ...' : 'حفظ المستودع'}</button>
++              </div>
++            </form>
++          </div>
++        </div>
++      )}
++
+       {/* Modal: Create Stock Item (INV-ITEM-CREATE) */}
+       {isCreateItemModalOpen && (
+         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+===== END FILE: .phase_tmp/02_src__components__InventoryWorkspaceView_tsx.patch =====
+
+===== FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "UI-LEDGER-DEPTH-1: entity close, stock recon, docs journal, attachments UI (after UI-GROUP-REPORTS-1, UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
++  "lastChange": "UI-WAREHOUSE-CREATE-1: warehouse create UI; system_admin gains STOCK_VIEW+STOCK_RECEIVE",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -377,6 +377,12 @@
+       "status": "DONE",
+       "scope": "UI: entity close/reopen, inventory reconciliation, stock doc post-journal, attachments",
+       "evidence": "src/components/LedgerDepthView.tsx; scripts/verifyUiLedgerDepth1.ts"
++    },
++    {
++      "id": "UI-WAREHOUSE-CREATE-1",
++      "status": "DONE",
++      "scope": "UI create warehouse; system_admin STOCK_VIEW+STOCK_RECEIVE (with warehouse_manager)",
++      "evidence": "src/components/InventoryWorkspaceView.tsx; src/core/auth/PermissionMatrix.ts; scripts/verifyUiWarehouseCreate1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -112,6 +112,7 @@
+   { name: 'UiXcompany1', script: 'scripts/verifyUiXcompany1.ts', expected: 14 },
+   { name: 'UiGroupReports1', script: 'scripts/verifyUiGroupReports1.ts', expected: 12 },
+   { name: 'UiLedgerDepth1', script: 'scripts/verifyUiLedgerDepth1.ts', expected: 14 },
++  { name: 'UiWarehouseCreate1', script: 'scripts/verifyUiWarehouseCreate1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file verifyUiWarehouseCreate1.ts
+ * UI-WAREHOUSE-CREATE-1 — warehouse create UI + system_admin STOCK_RECEIVE.
+ * Run: npx tsx scripts/verifyUiWarehouseCreate1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const view = fs.readFileSync('src/components/InventoryWorkspaceView.tsx', 'utf8');
+const matrix = fs.readFileSync('src/core/auth/PermissionMatrix.ts', 'utf8');
+const server = fs.readFileSync('server.ts', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+// extract system_admin block roughly
+const sysBlock = matrix.match(/system_admin:\s*new Set<PermissionGroup>\(\[([\s\S]*?)\]\)/)?.[1] || '';
+const whMgrBlock = matrix.match(/warehouse_manager:\s*new Set<PermissionGroup>\(\[([\s\S]*?)\]\)/)?.[1] || '';
+
+check('S1 create warehouse posts /api/inventory/warehouses', /\/api\/inventory\/warehouses/.test(view) && /method:\s*'POST'/.test(view));
+check('S2 Idempotency-Key + credentials', /Idempotency-Key/.test(view) && /credentials:\s*'include'/.test(view));
+check('S3 create warehouse modal/handler', /handleCreateWarehouse/.test(view) && /isCreateWhModalOpen/.test(view));
+check('S4 UI button إنشاء مستودع', /إنشاء مستودع/.test(view));
+check('S5 requires code and nameAr client-side', /newWhCode/.test(view) && /newWhNameAr/.test(view));
+check('S6 server still STOCK_RECEIVE on POST warehouses', /app\.post\('\/api\/inventory\/warehouses'[\s\S]{0,120}STOCK_RECEIVE/.test(server));
+check('S7 system_admin has STOCK_RECEIVE', /STOCK_RECEIVE/.test(sysBlock));
+check('S8 system_admin has STOCK_VIEW', /STOCK_VIEW/.test(sysBlock));
+check('S9 warehouse_manager still has STOCK_RECEIVE', /STOCK_RECEIVE/.test(whMgrBlock));
+check('S10 system_admin still lacks PLATFORM_ADMIN', !/PLATFORM_ADMIN/.test(sysBlock));
+check('S11 package UI-WAREHOUSE-CREATE-1 DONE', byId['UI-WAREHOUSE-CREATE-1']?.status === 'DONE');
+check('S12 UI-LEDGER-DEPTH-1 remains DONE', byId['UI-LEDGER-DEPTH-1']?.status === 'DONE');
+check('S13 lastChange mentions UI-WAREHOUSE-CREATE-1', String(reg.lastChange || '').includes('UI-WAREHOUSE-CREATE-1'));
+check('S14 valuationMethod sent on create', /valuationMethod:\s*newWhValuation/.test(view));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n0_01.part =====

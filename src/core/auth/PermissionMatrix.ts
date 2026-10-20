@@ -148,6 +148,8 @@ export const ROLE_PERMISSION_MATRIX: Record<string, ReadonlySet<PermissionGroup>
     'APPROVAL_POLICY_MANAGE',
     'PASSWORD_CHANGE_SELF',
     'BREAK_GLASS_AUTHORIZE',
+    'STOCK_VIEW',
+    'STOCK_RECEIVE',
   ]),
   branch_manager: new Set<PermissionGroup>([
     'ENTRY_VIEW', 'FINANCIAL_REPORTS',

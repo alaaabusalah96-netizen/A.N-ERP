@@ -148,6 +148,14 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
   const [isCountModalOpen, setIsCountModalOpen] = useState(false);
 
   const [isCreateItemModalOpen, setIsCreateItemModalOpen] = useState(false);
+  const [isCreateWhModalOpen, setIsCreateWhModalOpen] = useState(false);
+  const [isSavingWh, setIsSavingWh] = useState(false);
+  const [newWhCode, setNewWhCode] = useState('');
+  const [newWhNameAr, setNewWhNameAr] = useState('');
+  const [newWhNameEn, setNewWhNameEn] = useState('');
+  const [newWhLocation, setNewWhLocation] = useState('');
+  const [newWhIsDefault, setNewWhIsDefault] = useState(false);
+  const [newWhValuation, setNewWhValuation] = useState<'WEIGHTED_AVERAGE' | 'FIFO'>('WEIGHTED_AVERAGE');
   const [isSavingItem, setIsSavingItem] = useState(false);
   const [newItemCode, setNewItemCode] = useState('');
   const [newItemNameAr, setNewItemNameAr] = useState('');
@@ -326,6 +334,54 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
       onNotification('تعذر الاتصال بالخادم أثناء إنشاء بطاقة الصنف.');
     } finally {
       setIsSavingItem(false);
+    }
+  };
+
+
+  const handleCreateWarehouse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newWhCode.trim() || !newWhNameAr.trim()) {
+      onNotification('كود المستودع والاسم العربي حقول إلزامية.');
+      return;
+    }
+    setIsSavingWh(true);
+    try {
+      const idemKey = `wh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const res = await fetch('/api/inventory/warehouses', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idemKey,
+        },
+        body: JSON.stringify({
+          code: newWhCode.trim(),
+          nameAr: newWhNameAr.trim(),
+          nameEn: newWhNameEn.trim() || undefined,
+          location: newWhLocation.trim() || undefined,
+          isDefault: newWhIsDefault,
+          valuationMethod: newWhValuation,
+          isActive: true,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        onNotification(`تم إنشاء المستودع ${data.data?.code || newWhCode.trim()} بنجاح.`);
+        setIsCreateWhModalOpen(false);
+        setNewWhCode('');
+        setNewWhNameAr('');
+        setNewWhNameEn('');
+        setNewWhLocation('');
+        setNewWhIsDefault(false);
+        setNewWhValuation('WEIGHTED_AVERAGE');
+        await loadData();
+      } else {
+        onNotification(data.error?.detail || data.detail || 'تعذر إنشاء المستودع. يلزم صلاحية STOCK_RECEIVE (مدير نظام داخلي أو مدير مخازن).');
+      }
+    } catch {
+      onNotification('تعذر الاتصال بالخادم أثناء إنشاء المستودع.');
+    } finally {
+      setIsSavingWh(false);
     }
   };
 
@@ -999,7 +1055,18 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
 
       {/* Tab Content: Warehouses */}
       {activeTab === 'warehouses' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setIsCreateWhModalOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700"
+            >
+              <Plus className="w-4 h-4" />
+              إنشاء مستودع
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {warehouses.map((wh) => (
             <div key={wh.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs flex flex-col justify-between">
               <div>
@@ -1026,6 +1093,12 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
               </div>
             </div>
           ))}
+          {warehouses.length === 0 && (
+            <div className="col-span-full text-center py-10 text-slate-400 text-xs">
+              لا توجد مستودعات بعد. استخدم «إنشاء مستودع» (مدير النظام الداخلي أو مدير المخازن).
+            </div>
+          )}
+        </div>
         </div>
       )}
 
@@ -1406,6 +1479,50 @@ export const InventoryWorkspaceView: React.FC<InventoryWorkspaceProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+
+      {/* Modal: Create Warehouse (UI-WAREHOUSE-CREATE-1) */}
+      {isCreateWhModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200">
+            <h2 className="text-base font-bold text-slate-900 mb-4">إنشاء مستودع</h2>
+            <p className="text-[11px] text-slate-500 mb-3">متاح لمدير النظام الداخلي ومدير المخازن (صلاحية STOCK_RECEIVE).</p>
+            <form onSubmit={handleCreateWarehouse} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">الكود *</label>
+                <input value={newWhCode} onChange={e => setNewWhCode(e.target.value)} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" required />
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">الاسم العربي *</label>
+                <input value={newWhNameAr} onChange={e => setNewWhNameAr(e.target.value)} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" required />
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">الاسم الإنجليزي</label>
+                <input value={newWhNameEn} onChange={e => setNewWhNameEn(e.target.value)} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" />
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">الموقع</label>
+                <input value={newWhLocation} onChange={e => setNewWhLocation(e.target.value)} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50" />
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">طريقة التقييم</label>
+                <select value={newWhValuation} onChange={e => setNewWhValuation(e.target.value as 'WEIGHTED_AVERAGE' | 'FIFO')} className="w-full border border-slate-200 rounded-xl p-2.5 bg-slate-50">
+                  <option value="WEIGHTED_AVERAGE">المتوسط المرجح</option>
+                  <option value="FIFO">FIFO</option>
+                </select>
+              </div>
+              <label className="inline-flex items-center gap-2 text-slate-700">
+                <input type="checkbox" checked={newWhIsDefault} onChange={e => setNewWhIsDefault(e.target.checked)} />
+                مستودع رئيسي افتراضي
+              </label>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setIsCreateWhModalOpen(false)} disabled={isSavingWh} className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-semibold disabled:opacity-50">إلغاء</button>
+                <button type="submit" disabled={isSavingWh} className="px-4 py-2 rounded-xl bg-blue-600 text-white font-bold disabled:opacity-50">{isSavingWh ? 'جارٍ الحفظ...' : 'حفظ المستودع'}</button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
