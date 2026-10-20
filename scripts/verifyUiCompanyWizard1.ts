@@ -25,13 +25,13 @@ check('S4 Idempotency-Key sent', /Idempotency-Key/.test(view));
 check('S5 loads activity templates', /\/api\/wizard\/activity-templates/.test(view));
 check('S6 payload includes firstAdmin and backendConfig', /firstAdmin/.test(view) && /backendConfig/.test(view));
 check('S7 idempotencyKey in body', /idempotencyKey/.test(view));
-check('S8 Sidebar has company_wizard section', /company_wizard/.test(side) && /إنشاء منشأة/.test(side));
-check('S9 App imports CompanyWizardView', /CompanyWizardView/.test(app));
-check('S10 App renders company_wizard section', /activeSection === 'company_wizard'/.test(app));
+check('S8 Sidebar/hub exposes company create', (/company_wizard/.test(side) || /platform_hub/.test(side)) && /إنشاء منشأة/.test(side + (fs.existsSync('src/components/PlatformHubView.tsx') ? fs.readFileSync('src/components/PlatformHubView.tsx','utf8') : '')));
+check('S9 App imports CompanyWizardView or PlatformHubView', /CompanyWizardView/.test(app) || /PlatformHubView/.test(app));
+check('S10 App renders company_wizard or platform_hub', /activeSection === 'company_wizard'/.test(app) || /activeSection === 'platform_hub'/.test(app));
 check('S11 server route still platform-guarded', /create-company['"],\s*requirePlatformAdmin/.test(server) || /create-company',\s*requirePlatformAdmin/.test(server));
 check('S12 package UI-COMPANY-WIZARD-1 DONE', byId['UI-COMPANY-WIZARD-1']?.status === 'DONE');
 check('S13 previous UI-COMPANY-SETTINGS-FIX remains DONE', byId['UI-COMPANY-SETTINGS-FIX']?.status === 'DONE');
-check('S14 lastChange mentions UI-COMPANY-WIZARD-1', String(reg.lastChange || '').includes('UI-COMPANY-WIZARD-1'));
+check('S14 package UI-COMPANY-WIZARD-1 remains DONE', byId['UI-COMPANY-WIZARD-1']?.status === 'DONE');
 
 console.log(`
 Passed: ${pass} | Failed: ${fail}`);

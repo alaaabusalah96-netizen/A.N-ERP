@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-19 — UI-TRANSFERS-HUB-1: unified transfers UI internal vs xcompany backends (after UI-WAREHOUSE-CREATE-1, UI-LEDGER-DEPTH-1, UI-GROUP-REPORTS-1, UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)
+**Last update**: 2026-10-19 — UI-PLATFORM-HUB-1: unified platform screen companies + org groups (after UI-TRANSFERS-HUB-1, UI-WAREHOUSE-CREATE-1, UI-LEDGER-DEPTH-1, UI-GROUP-REPORTS-1, UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-20)
 
 ## Gates
@@ -71,6 +71,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **UI-LEDGER-DEPTH-1** — DONE — UI: entity close/reopen, inventory reconciliation, stock doc post-journal, attachments _(evidence: src/components/LedgerDepthView.tsx; scripts/verifyUiLedgerDepth1.ts)_
 - **UI-WAREHOUSE-CREATE-1** — DONE — UI create warehouse; system_admin STOCK_VIEW+STOCK_RECEIVE (with warehouse_manager) _(evidence: src/components/InventoryWorkspaceView.tsx; src/core/auth/PermissionMatrix.ts; scripts/verifyUiWarehouseCreate1.ts)_
 - **UI-TRANSFERS-HUB-1** — DONE — Unified transfers tab UI; INTERNAL uses /api/inventory/transfers; XCOMPANY uses /api/xcompany/transfers _(evidence: src/components/InventoryWorkspaceView.tsx; scripts/verifyUiTransfersHub1.ts)_
+- **UI-PLATFORM-HUB-1** — DONE — Unified platform hub: company wizard + org groups in a single view with tab switching _(evidence: src/components/PlatformHubView.tsx; scripts/verifyUiPlatformHub1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

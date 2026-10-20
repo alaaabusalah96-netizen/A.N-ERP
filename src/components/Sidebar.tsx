@@ -25,6 +25,7 @@ export type ActiveSection =
   | 'profile'
   | 'company'
   | 'company_wizard'
+  | 'platform_hub'
   | 'governance'
   | 'inv_config'
   | 'org_groups'
@@ -72,10 +73,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const adminMenuItems = [
     { id: 'profile' as ActiveSection, label: 'الملف الشخصي والجلسات', icon: User },
     { id: 'company' as ActiveSection, label: 'إعدادات المنشأة والنظام', icon: Building2 },
-    { id: 'company_wizard' as ActiveSection, label: 'إنشاء منشأة (المنصة)', icon: Building2 },
+    { id: 'platform_hub' as ActiveSection, label: 'المنصة: شركات ومجموعات', icon: Building2 },
     { id: 'governance' as ActiveSection, label: 'سياسات الاعتماد والمستودعات', icon: ShieldAlert },
     { id: 'inv_config' as ActiveSection, label: 'إعدادات المخزون والمحاسبة', icon: Boxes },
-    { id: 'org_groups' as ActiveSection, label: 'مجموعات الشركات وأصنافها', icon: Network },
     { id: 'xcompany' as ActiveSection, label: 'تحويل بين شركات', icon: ArrowLeftRight },
     { id: 'group_reports' as ActiveSection, label: 'تقارير المجموعة', icon: BarChart3 },
     { id: 'ledger_depth' as ActiveSection, label: 'إقفال ومطابقة ومرفقات', icon: FileText },

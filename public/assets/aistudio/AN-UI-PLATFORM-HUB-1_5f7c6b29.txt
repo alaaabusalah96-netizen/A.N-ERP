@@ -1,0 +1,306 @@
+# A.N ERP — UI-PLATFORM-HUB-1 — المنصة: شركات ومجموعات (شاشة واحدة)
+
+> على ZIP: `A.N-ERP-main - 2026-10-20T170225.966.zip`
+>
+> - عنصر قائمة واحد: «المنصة: شركات ومجموعات».
+> - تبويبان: إنشاء منشأة | مجموعات الشركات وأصنافها.
+> - يعيد استخدام `CompanyWizardView` و `OrgGroupsView` بدون تغيير APIs.
+> - المسارات القديمة company_wizard / org_groups تُوجَّه لنفس الشاشة.
+
+## الخطوات
+1. PRECHECK: `test -f src/components/CompanyWizardView.tsx && test -f src/components/OrgGroupsView.tsx`
+   ALREADY_DONE: `test -f src/components/PlatformHubView.tsx && grep -q UI-PLATFORM-HUB-1 docs/STATE_REGISTER.json`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyUiPlatformHub1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyUiTransfersHub1.ts` · `npx tsx scripts/verifyUiCompanyWizard1.ts` · `npx tsx scripts/verifyUiOrgGroups1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `feat(ui): platform hub companies and org groups`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+16f8d47f42ead234adfcae374655d4e00e0e69a903a5dd972d99aadc9ceb3326  .phase_tmp/ORDER.txt
+a55548cc0b913409787c6d98c1a773e40e9cc60b239670805db0e5affcd8f80a  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+ec121c51b9ff03a16ae76db524b32ff7eaf6e8d1fcb2dc562772e2647cf9d130  .phase_tmp/FINAL.txt
+744c72d12fe50634e9543c5cc4f1e11a4578d542e0c689ccee0b8497188c9f55  .phase_tmp/01_src__components__Sidebar_tsx.patch
+621d614f550a0029d079392be4960f0619dd76fa7e4effc1c5438bd8231a551f  .phase_tmp/02_src__App_tsx.patch
+00774964c562fedb85641b090edf6e0ff4ed79009d96546e5fb68a8e5fe80273  .phase_tmp/03_docs__STATE_REGISTER_json.patch
+c8f7b7e2357fe6b08c706e32513603c93162fe767e96567367a0cca20855595a  .phase_tmp/04_scripts__runReconcileAuditB_ts.patch
+96d6259902a895fa85dee0e986489de836952ad9e55918ad716a6c3892aac247  .phase_tmp/05_scripts__verifyUiCompanyWizard1_ts.patch
+8848f0ad6ac696058a5d90a817856b2eda8766429541358179b657db9df818b6  .phase_tmp/06_scripts__verifyUiOrgGroups1_ts.patch
+e7949bda3e0ef1dcb4b064c8dc7befc158da14f18c0166ecf72ff47dbedcd656  .phase_tmp/n0_01.part
+dc568c0e64684410790eefa5971e2e9d99fa52f3182f065569e8dc6a2471174f  .phase_tmp/n1_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__components__Sidebar_tsx.patch
+02_src__App_tsx.patch
+03_docs__STATE_REGISTER_json.patch
+04_scripts__runReconcileAuditB_ts.patch
+05_scripts__verifyUiCompanyWizard1_ts.patch
+06_scripts__verifyUiOrgGroups1_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+src/components/PlatformHubView.tsx|n0
+scripts/verifyUiPlatformHub1.ts|n1
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+5930f1401bf628a8a33a12e7f73a31c3a17331c82ff5d9705c4498aefacce4b6  src/components/Sidebar.tsx
+eba29bc4078a804103fdc01ef943945d818eb7172099b3eec66d15567bdbd0de  src/App.tsx
+cd239f7fc1c1f39956cc9f2761a79c9c4b875c3648c920c92b8be8f14b7a2033  docs/STATE_REGISTER.json
+0e49a796074c613591101e1c884f6bb9a201c98a6f7e5dddd9f02acbc04a9776  scripts/runReconcileAuditB.ts
+d273c4eb7915843589cf6f0f77bda57a06c5faf3784f7d9e2fd5a6b5152aa1f5  scripts/verifyUiCompanyWizard1.ts
+c4ae43244ed53de38be069343cd0fd95e539e9aa15fa1fd046d1bc1538b7a26d  scripts/verifyUiOrgGroups1.ts
+e7949bda3e0ef1dcb4b064c8dc7befc158da14f18c0166ecf72ff47dbedcd656  src/components/PlatformHubView.tsx
+dc568c0e64684410790eefa5971e2e9d99fa52f3182f065569e8dc6a2471174f  scripts/verifyUiPlatformHub1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -25,6 +25,7 @@
+   | 'profile'
+   | 'company'
+   | 'company_wizard'
++  | 'platform_hub'
+   | 'governance'
+   | 'inv_config'
+   | 'org_groups'
+@@ -72,10 +73,9 @@
+   const adminMenuItems = [
+     { id: 'profile' as ActiveSection, label: 'الملف الشخصي والجلسات', icon: User },
+     { id: 'company' as ActiveSection, label: 'إعدادات المنشأة والنظام', icon: Building2 },
+-    { id: 'company_wizard' as ActiveSection, label: 'إنشاء منشأة (المنصة)', icon: Building2 },
++    { id: 'platform_hub' as ActiveSection, label: 'المنصة: شركات ومجموعات', icon: Building2 },
+     { id: 'governance' as ActiveSection, label: 'سياسات الاعتماد والمستودعات', icon: ShieldAlert },
+     { id: 'inv_config' as ActiveSection, label: 'إعدادات المخزون والمحاسبة', icon: Boxes },
+-    { id: 'org_groups' as ActiveSection, label: 'مجموعات الشركات وأصنافها', icon: Network },
+     { id: 'xcompany' as ActiveSection, label: 'تحويل بين شركات', icon: ArrowLeftRight },
+     { id: 'group_reports' as ActiveSection, label: 'تقارير المجموعة', icon: BarChart3 },
+     { id: 'ledger_depth' as ActiveSection, label: 'إقفال ومطابقة ومرفقات', icon: FileText },
+===== END FILE: .phase_tmp/01_src__components__Sidebar_tsx.patch =====
+
+===== FILE: .phase_tmp/02_src__App_tsx.patch =====
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -9,6 +9,7 @@
+ import { UserProfileView } from './components/UserProfileView';
+ import { CompanySettingsView } from './components/CompanySettingsView';
+ import { CompanyWizardView } from './components/CompanyWizardView';
++import { PlatformHubView } from './components/PlatformHubView';
+ import { GovernanceView } from './components/GovernanceView';
+ import { InvConfigView } from './components/InvConfigView';
+ import { OrgGroupsView } from './components/OrgGroupsView';
+@@ -385,8 +386,12 @@
+             <CompanySettingsView onNotification={showNotification} />
+           )}
+ 
++          {activeSection === 'platform_hub' && (
++            <PlatformHubView onNotification={showNotification} />
++          )}
++
+           {activeSection === 'company_wizard' && (
+-            <CompanyWizardView onNotification={showNotification} />
++            <PlatformHubView onNotification={showNotification} initialTab="companies" />
+           )}
+ 
+           {activeSection === 'governance' && (
+@@ -398,7 +403,7 @@
+           )}
+ 
+           {activeSection === 'org_groups' && (
+-            <OrgGroupsView onNotification={showNotification} />
++            <PlatformHubView onNotification={showNotification} initialTab="groups" />
+           )}
+ 
+           {activeSection === 'xcompany' && (
+===== END FILE: .phase_tmp/02_src__App_tsx.patch =====
+
+===== FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "UI-TRANSFERS-HUB-1: unified transfers UI internal vs xcompany backends (after UI-WAREHOUSE-CREATE-1, UI-LEDGER-DEPTH-1, UI-GROUP-REPORTS-1, UI-XCOMPANY-1, UI-ORG-GROUPS-1, UI-INV-CONFIG-1, UI-GOVERNANCE-1, UI-COMPANY-WIZARD-1, UI-COMPANY-SETTINGS-FIX)",
++  "lastChange": "UI-PLATFORM-HUB-1: unified platform screen companies + org groups",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+===== END FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -114,6 +114,7 @@
+   { name: 'UiLedgerDepth1', script: 'scripts/verifyUiLedgerDepth1.ts', expected: 14 },
+   { name: 'UiWarehouseCreate1', script: 'scripts/verifyUiWarehouseCreate1.ts', expected: 14 },
+   { name: 'UiTransfersHub1', script: 'scripts/verifyUiTransfersHub1.ts', expected: 14 },
++  { name: 'UiPlatformHub1', script: 'scripts/verifyUiPlatformHub1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/05_scripts__verifyUiCompanyWizard1_ts.patch =====
+--- a/scripts/verifyUiCompanyWizard1.ts
++++ b/scripts/verifyUiCompanyWizard1.ts
+@@ -25,13 +25,13 @@
+ check('S5 loads activity templates', /\/api\/wizard\/activity-templates/.test(view));
+ check('S6 payload includes firstAdmin and backendConfig', /firstAdmin/.test(view) && /backendConfig/.test(view));
+ check('S7 idempotencyKey in body', /idempotencyKey/.test(view));
+-check('S8 Sidebar has company_wizard section', /company_wizard/.test(side) && /إنشاء منشأة/.test(side));
+-check('S9 App imports CompanyWizardView', /CompanyWizardView/.test(app));
+-check('S10 App renders company_wizard section', /activeSection === 'company_wizard'/.test(app));
++check('S8 Sidebar/hub exposes company create', (/company_wizard/.test(side) || /platform_hub/.test(side)) && /إنشاء منشأة/.test(side + (fs.existsSync('src/components/PlatformHubView.tsx') ? fs.readFileSync('src/components/PlatformHubView.tsx','utf8') : '')));
++check('S9 App imports CompanyWizardView or PlatformHubView', /CompanyWizardView/.test(app) || /PlatformHubView/.test(app));
++check('S10 App renders company_wizard or platform_hub', /activeSection === 'company_wizard'/.test(app) || /activeSection === 'platform_hub'/.test(app));
+ check('S11 server route still platform-guarded', /create-company['"],\s*requirePlatformAdmin/.test(server) || /create-company',\s*requirePlatformAdmin/.test(server));
+ check('S12 package UI-COMPANY-WIZARD-1 DONE', byId['UI-COMPANY-WIZARD-1']?.status === 'DONE');
+ check('S13 previous UI-COMPANY-SETTINGS-FIX remains DONE', byId['UI-COMPANY-SETTINGS-FIX']?.status === 'DONE');
+-check('S14 lastChange mentions UI-COMPANY-WIZARD-1', String(reg.lastChange || '').includes('UI-COMPANY-WIZARD-1'));
++check('S14 package UI-COMPANY-WIZARD-1 remains DONE', byId['UI-COMPANY-WIZARD-1']?.status === 'DONE');
+ 
+ console.log(`
+ Passed: ${pass} | Failed: ${fail}`);
+===== END FILE: .phase_tmp/05_scripts__verifyUiCompanyWizard1_ts.patch =====
+
+===== FILE: .phase_tmp/06_scripts__verifyUiOrgGroups1_ts.patch =====
+--- a/scripts/verifyUiOrgGroups1.ts
++++ b/scripts/verifyUiOrgGroups1.ts
+@@ -24,14 +24,14 @@
+ check('S4 adds members', /\/members'/.test(view) && /tenantId/.test(view));
+ check('S5 group items + publish', /\/items'/.test(view) && /\/publish'/.test(view));
+ check('S6 credentials + Idempotency-Key', /credentials:\s*'include'/.test(view) && /Idempotency-Key/.test(view));
+-check('S7 Sidebar org_groups', /org_groups/.test(side) && /مجموعات الشركات/.test(side));
+-check('S8 App wires OrgGroupsView', /OrgGroupsView/.test(app));
+-check('S9 App renders org_groups', /activeSection === 'org_groups'/.test(app));
++check('S7 Sidebar/hub exposes groups', (/org_groups/.test(side) || /platform_hub/.test(side)) && /مجموعات الشركات/.test(side + (fs.existsSync('src/components/PlatformHubView.tsx') ? fs.readFileSync('src/components/PlatformHubView.tsx','utf8') : '')));
++check('S8 App wires OrgGroupsView or PlatformHubView', /OrgGroupsView/.test(app) || /PlatformHubView/.test(app));
++check('S9 App renders org_groups or platform_hub', /activeSection === 'org_groups'/.test(app) || /activeSection === 'platform_hub'/.test(app));
+ check('S10 server groups still platform-admin', /\/api\/groups',\s*requirePlatformAdmin/.test(server));
+ check('S11 package UI-ORG-GROUPS-1 DONE', byId['UI-ORG-GROUPS-1']?.status === 'DONE');
+ check('S12 UI-INV-CONFIG-1 remains DONE', byId['UI-INV-CONFIG-1']?.status === 'DONE');
+ check('S13 UI-GOVERNANCE-1 remains DONE', byId['UI-GOVERNANCE-1']?.status === 'DONE');
+-check('S14 lastChange mentions UI-ORG-GROUPS-1', String(reg.lastChange || '').includes('UI-ORG-GROUPS-1'));
++check('S14 package UI-ORG-GROUPS-1 remains DONE', byId['UI-ORG-GROUPS-1']?.status === 'DONE');
+ 
+ console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+ process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/06_scripts__verifyUiOrgGroups1_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+import React, { useState } from 'react';
+import { Building2, Network } from 'lucide-react';
+import { CompanyWizardView } from './CompanyWizardView';
+import { OrgGroupsView } from './OrgGroupsView';
+
+export type PlatformHubTab = 'companies' | 'groups';
+
+interface PlatformHubViewProps {
+  onNotification: (msg: string) => void;
+  initialTab?: PlatformHubTab;
+}
+
+/**
+ * UI-PLATFORM-HUB-1: single platform screen for company create + org groups.
+ * Child views keep their own APIs; this is UI composition only.
+ */
+export const PlatformHubView: React.FC<PlatformHubViewProps> = ({
+  onNotification,
+  initialTab = 'companies',
+}) => {
+  const [tab, setTab] = useState<PlatformHubTab>(initialTab);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs">
+        <h2 className="text-lg font-bold text-slate-900">المنصة: شركات ومجموعات</h2>
+        <p className="text-xs text-slate-500 mt-1">
+          شاشة موحّدة لإنشاء منشأة (معالج المنصة) وإدارة مجموعات الشركات والأصناف — دون تغيير مسارات الـ API.
+        </p>
+        <div className="flex flex-wrap gap-2 mt-4">
+          <button
+            type="button"
+            onClick={() => setTab('companies')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold ${
+              tab === 'companies' ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-700'
+            }`}
+          >
+            <Building2 className="w-4 h-4" />
+            إنشاء منشأة
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('groups')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold ${
+              tab === 'groups' ? 'bg-blue-700 text-white' : 'bg-slate-100 text-slate-700'
+            }`}
+          >
+            <Network className="w-4 h-4" />
+            مجموعات الشركات وأصنافها
+          </button>
+        </div>
+      </div>
+
+      {tab === 'companies' && <CompanyWizardView onNotification={onNotification} />}
+      {tab === 'groups' && <OrgGroupsView onNotification={onNotification} />}
+    </div>
+  );
+};
+===== END FILE: .phase_tmp/n0_01.part =====
+
+===== FILE: .phase_tmp/n1_01.part =====
+/**
+ * @file verifyUiPlatformHub1.ts
+ * UI-PLATFORM-HUB-1 — unified platform companies + groups UI.
+ * Run: npx tsx scripts/verifyUiPlatformHub1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean, extra = '') => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}${extra ? ' | ' + extra : ''}`); }
+};
+
+const hub = fs.readFileSync('src/components/PlatformHubView.tsx', 'utf8');
+const app = fs.readFileSync('src/App.tsx', 'utf8');
+const side = fs.readFileSync('src/components/Sidebar.tsx', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 PlatformHubView exists', fs.existsSync('src/components/PlatformHubView.tsx'));
+check('S2 embeds CompanyWizardView', /CompanyWizardView/.test(hub));
+check('S3 embeds OrgGroupsView', /OrgGroupsView/.test(hub));
+check('S4 tab companies|groups', /companies/.test(hub) && /groups/.test(hub));
+check('S5 labels إنشاء منشأة + مجموعات', /إنشاء منشأة/.test(hub) && /مجموعات الشركات/.test(hub));
+check('S6 Sidebar platform_hub', /platform_hub/.test(side) && /المنصة: شركات ومجموعات/.test(side));
+check('S7 App imports PlatformHubView', /PlatformHubView/.test(app));
+check('S8 App renders platform_hub', /activeSection === 'platform_hub'/.test(app));
+check('S9 company_wizard routes to hub', /activeSection === 'company_wizard'/.test(app) && /PlatformHubView/.test(app));
+check('S10 org_groups routes to hub', /activeSection === 'org_groups'/.test(app));
+check('S11 package UI-PLATFORM-HUB-1 DONE', byId['UI-PLATFORM-HUB-1']?.status === 'DONE');
+check('S12 UI-TRANSFERS-HUB-1 remains DONE', byId['UI-TRANSFERS-HUB-1']?.status === 'DONE');
+check('S13 UI-COMPANY-WIZARD-1 remains DONE', byId['UI-COMPANY-WIZARD-1']?.status === 'DONE');
+check('S14 lastChange mentions UI-PLATFORM-HUB-1', String(reg.lastChange || '').includes('UI-PLATFORM-HUB-1'));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n1_01.part =====

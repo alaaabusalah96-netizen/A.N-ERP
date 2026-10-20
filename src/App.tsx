@@ -9,6 +9,7 @@ import { ForcePasswordChangeScreen } from './components/ForcePasswordChangeScree
 import { UserProfileView } from './components/UserProfileView';
 import { CompanySettingsView } from './components/CompanySettingsView';
 import { CompanyWizardView } from './components/CompanyWizardView';
+import { PlatformHubView } from './components/PlatformHubView';
 import { GovernanceView } from './components/GovernanceView';
 import { InvConfigView } from './components/InvConfigView';
 import { OrgGroupsView } from './components/OrgGroupsView';
@@ -385,8 +386,12 @@ export default function App() {
             <CompanySettingsView onNotification={showNotification} />
           )}
 
+          {activeSection === 'platform_hub' && (
+            <PlatformHubView onNotification={showNotification} />
+          )}
+
           {activeSection === 'company_wizard' && (
-            <CompanyWizardView onNotification={showNotification} />
+            <PlatformHubView onNotification={showNotification} initialTab="companies" />
           )}
 
           {activeSection === 'governance' && (
@@ -398,7 +403,7 @@ export default function App() {
           )}
 
           {activeSection === 'org_groups' && (
-            <OrgGroupsView onNotification={showNotification} />
+            <PlatformHubView onNotification={showNotification} initialTab="groups" />
           )}
 
           {activeSection === 'xcompany' && (

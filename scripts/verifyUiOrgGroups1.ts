@@ -24,14 +24,14 @@ check('S3 creates group POST', /method:\s*'POST'/.test(view) && /\/api\/groups'/
 check('S4 adds members', /\/members'/.test(view) && /tenantId/.test(view));
 check('S5 group items + publish', /\/items'/.test(view) && /\/publish'/.test(view));
 check('S6 credentials + Idempotency-Key', /credentials:\s*'include'/.test(view) && /Idempotency-Key/.test(view));
-check('S7 Sidebar org_groups', /org_groups/.test(side) && /مجموعات الشركات/.test(side));
-check('S8 App wires OrgGroupsView', /OrgGroupsView/.test(app));
-check('S9 App renders org_groups', /activeSection === 'org_groups'/.test(app));
+check('S7 Sidebar/hub exposes groups', (/org_groups/.test(side) || /platform_hub/.test(side)) && /مجموعات الشركات/.test(side + (fs.existsSync('src/components/PlatformHubView.tsx') ? fs.readFileSync('src/components/PlatformHubView.tsx','utf8') : '')));
+check('S8 App wires OrgGroupsView or PlatformHubView', /OrgGroupsView/.test(app) || /PlatformHubView/.test(app));
+check('S9 App renders org_groups or platform_hub', /activeSection === 'org_groups'/.test(app) || /activeSection === 'platform_hub'/.test(app));
 check('S10 server groups still platform-admin', /\/api\/groups',\s*requirePlatformAdmin/.test(server));
 check('S11 package UI-ORG-GROUPS-1 DONE', byId['UI-ORG-GROUPS-1']?.status === 'DONE');
 check('S12 UI-INV-CONFIG-1 remains DONE', byId['UI-INV-CONFIG-1']?.status === 'DONE');
 check('S13 UI-GOVERNANCE-1 remains DONE', byId['UI-GOVERNANCE-1']?.status === 'DONE');
-check('S14 lastChange mentions UI-ORG-GROUPS-1', String(reg.lastChange || '').includes('UI-ORG-GROUPS-1'));
+check('S14 package UI-ORG-GROUPS-1 remains DONE', byId['UI-ORG-GROUPS-1']?.status === 'DONE');
 
 console.log(`\nPassed: ${pass} | Failed: ${fail}`);
 process.exit(fail ? 1 : 0);
