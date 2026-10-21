@@ -3677,6 +3677,29 @@ export class PostgresPrimaryAdapter implements StoragePort {
       );
       CREATE INDEX IF NOT EXISTS idx_an_group_master_items_group ON an_group_master_items (group_id);
 
+      CREATE TABLE IF NOT EXISTS an_cross_company_transfers (
+        id VARCHAR(64) PRIMARY KEY,
+        group_id VARCHAR(64) NOT NULL,
+        source_tenant_id VARCHAR(64) NOT NULL,
+        target_tenant_id VARCHAR(64) NOT NULL,
+        source_warehouse_id VARCHAR(64) NOT NULL,
+        target_warehouse_id VARCHAR(64) NOT NULL,
+        item_code VARCHAR(64) NOT NULL,
+        item_id_source VARCHAR(64),
+        item_id_target VARCHAR(64),
+        quantity NUMERIC(18, 6) NOT NULL,
+        unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
+        status VARCHAR(32) NOT NULL DEFAULT 'REQUESTED',
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        dispatched_at TIMESTAMPTZ,
+        received_at TIMESTAMPTZ,
+        source_issue_document_id VARCHAR(64),
+        target_receive_document_id VARCHAR(64)
+      );
+      CREATE INDEX IF NOT EXISTS idx_an_xcompany_group ON an_cross_company_transfers (group_id);
+      CREATE INDEX IF NOT EXISTS idx_an_xcompany_status ON an_cross_company_transfers (status);
+
       -- Row Level Security (RLS) enforcement
       ALTER TABLE an_users ENABLE ROW LEVEL SECURITY;
       ALTER TABLE an_users FORCE ROW LEVEL SECURITY;
@@ -4114,11 +4137,143 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
-  public async listCrossCompanyTransfers(): Promise<StorageResult<CrossCompanyTransfer[]>> { return { success: true, data: [] }; }
-  public async getCrossCompanyTransfer(id: string): Promise<StorageResult<CrossCompanyTransfer>> {
-    return { success: false, error: { type: 'https://api.an-erp.local/errors/xcompany-not-found', title: 'التحويل غير موجود', status: 404, detail: 'غير متاح.' } };
+  private mapCrossCompanyTransferRow(row: any): CrossCompanyTransfer {
+    const num = (v: any) => (v === null || v === undefined ? 0 : Number(v));
+    const ts = (v: any) => {
+      if (v === null || v === undefined) return undefined;
+      return v instanceof Date ? v.toISOString() : String(v);
+    };
+    return {
+      id: row.id,
+      groupId: row.group_id,
+      sourceTenantId: row.source_tenant_id,
+      targetTenantId: row.target_tenant_id,
+      sourceWarehouseId: row.source_warehouse_id,
+      targetWarehouseId: row.target_warehouse_id,
+      itemCode: row.item_code,
+      itemIdSource: row.item_id_source || undefined,
+      itemIdTarget: row.item_id_target || undefined,
+      quantity: num(row.quantity),
+      unitCost: num(row.unit_cost),
+      status: row.status as CrossCompanyTransfer['status'],
+      notes: row.notes || undefined,
+      createdAt: ts(row.created_at) || new Date().toISOString(),
+      dispatchedAt: ts(row.dispatched_at),
+      receivedAt: ts(row.received_at),
+      sourceIssueDocumentId: row.source_issue_document_id || undefined,
+      targetReceiveDocumentId: row.target_receive_document_id || undefined,
+    };
   }
-  public async saveCrossCompanyTransfer(tr: CrossCompanyTransfer, _k: string): Promise<StorageResult<CrossCompanyTransfer>> { return { success: true, data: tr }; }
+
+  /** PG-XCOMPANY-PERSIST-1: real PostgreSQL persistence for cross-company transfers. */
+  public async listCrossCompanyTransfers(
+    filter?: { groupId?: string; status?: string }
+  ): Promise<StorageResult<CrossCompanyTransfer[]>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const clauses: string[] = [];
+      const params: any[] = [];
+      if (filter?.groupId) {
+        params.push(filter.groupId);
+        clauses.push(`group_id = $${params.length}`);
+      }
+      if (filter?.status) {
+        params.push(filter.status);
+        clauses.push(`status = $${params.length}`);
+      }
+      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+      const res = await this.query(
+        `SELECT * FROM an_cross_company_transfers ${where} ORDER BY created_at DESC`,
+        params
+      );
+      return { success: true, data: res.rows.map((r: any) => this.mapCrossCompanyTransferRow(r)) };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async getCrossCompanyTransfer(id: string): Promise<StorageResult<CrossCompanyTransfer>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_cross_company_transfers WHERE id = $1', [id]);
+      if (!res.rows.length) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/xcompany-not-found',
+            title: 'التحويل غير موجود',
+            status: 404,
+            detail: 'غير متاح.',
+          },
+        };
+      }
+      return { success: true, data: this.mapCrossCompanyTransferRow(res.rows[0]) };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveCrossCompanyTransfer(
+    tr: CrossCompanyTransfer,
+    _k: string
+  ): Promise<StorageResult<CrossCompanyTransfer>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      await this.query(
+        `INSERT INTO an_cross_company_transfers (
+           id, group_id, source_tenant_id, target_tenant_id,
+           source_warehouse_id, target_warehouse_id, item_code,
+           item_id_source, item_id_target, quantity, unit_cost, status, notes,
+           created_at, dispatched_at, received_at,
+           source_issue_document_id, target_receive_document_id
+         ) VALUES (
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+         )
+         ON CONFLICT (id) DO UPDATE SET
+           group_id = EXCLUDED.group_id,
+           source_tenant_id = EXCLUDED.source_tenant_id,
+           target_tenant_id = EXCLUDED.target_tenant_id,
+           source_warehouse_id = EXCLUDED.source_warehouse_id,
+           target_warehouse_id = EXCLUDED.target_warehouse_id,
+           item_code = EXCLUDED.item_code,
+           item_id_source = EXCLUDED.item_id_source,
+           item_id_target = EXCLUDED.item_id_target,
+           quantity = EXCLUDED.quantity,
+           unit_cost = EXCLUDED.unit_cost,
+           status = EXCLUDED.status,
+           notes = EXCLUDED.notes,
+           dispatched_at = EXCLUDED.dispatched_at,
+           received_at = EXCLUDED.received_at,
+           source_issue_document_id = EXCLUDED.source_issue_document_id,
+           target_receive_document_id = EXCLUDED.target_receive_document_id`,
+        [
+          tr.id,
+          tr.groupId,
+          tr.sourceTenantId,
+          tr.targetTenantId,
+          tr.sourceWarehouseId,
+          tr.targetWarehouseId,
+          tr.itemCode,
+          tr.itemIdSource || null,
+          tr.itemIdTarget || null,
+          tr.quantity,
+          tr.unitCost,
+          tr.status || 'REQUESTED',
+          tr.notes || null,
+          tr.createdAt || new Date().toISOString(),
+          tr.dispatchedAt || null,
+          tr.receivedAt || null,
+          tr.sourceIssueDocumentId || null,
+          tr.targetReceiveDocumentId || null,
+        ]
+      );
+      const read = await this.getCrossCompanyTransfer(tr.id);
+      if (read.success && read.data) return { success: true, data: read.data };
+      return { success: true, data: tr };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
 
   public async getEntityBooksState(tenantId: string): Promise<StorageResult<EntityBooksState>> {
     return { success: true, data: { tenantId, status: 'OPEN', updatedAt: new Date().toISOString() } };

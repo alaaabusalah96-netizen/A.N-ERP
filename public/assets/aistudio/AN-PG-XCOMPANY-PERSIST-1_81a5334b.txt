@@ -1,0 +1,322 @@
+# A.N ERP — PG-XCOMPANY-PERSIST-1 — حفظ التحويل بين الشركات في PostgreSQL
+
+> على ZIP: `A.N-ERP-main - 2026-10-21T075324.982.zip`
+>
+> **المشكلة:** `list/get/saveCrossCompanyTransfer` على Postgres كانت صورية.
+>
+> **الإصلاح:**
+> 1. جدول `an_cross_company_transfers` + فهارس group/status.
+> 2. list (مع فلتر groupId/status) / get / save حقيقي + قراءة بعد الحفظ.
+> 3. لا يغيّر منطق الصرف/الاستلام المخزني؛ يثبت فقط سجل التحويل في القاعدة.
+> 4. لا يمس إقفال الكيان.
+
+## الخطوات
+1. PRECHECK: `grep -q listCrossCompanyTransfers src/core/storage/adapters/PostgresPrimaryAdapter.ts`
+   ALREADY_DONE: `grep -q PG-XCOMPANY-PERSIST-1 docs/STATE_REGISTER.json && grep -q an_cross_company_transfers src/core/storage/adapters/PostgresPrimaryAdapter.ts`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyPgXcompanyPersist1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyPgGroupItemPersist1.ts` · `npx tsx scripts/verifyStkXcompany1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `fix(pg): persist cross-company transfers in PostgreSQL`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+592f07fdfbd69e9ed35ea58e6571b93fd194790b79a8f48a1fe1601b8a79b07d  .phase_tmp/ORDER.txt
+7ca0445f6572064f835f19a02d41f74b95a138f15cc206b8b9ab3c4be39de78c  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+423407432b9ac9dd0c6763e39c4e6c1218410452f6ca52eeaf276480ec252529  .phase_tmp/FINAL.txt
+4c5144b2a05fff778a7e81703d674728f5c8830249b1307996d5d829adbd7e0c  .phase_tmp/01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch
+71f59e8031a786990ecb99a15e01c8b3cab569041c4da042cbb2afe4201a89ad  .phase_tmp/02_docs__STATE_REGISTER_json.patch
+874935eb29c87124ce2d355a43f9481aec6899c19309ebaf73a0bb16dd2aa321  .phase_tmp/03_scripts__runReconcileAuditB_ts.patch
+fa14d6aaabed59ce975d8b870ea61699fe6620620f566b1f2e0a3934aab9efb6  .phase_tmp/n0_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch
+02_docs__STATE_REGISTER_json.patch
+03_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+scripts/verifyPgXcompanyPersist1.ts|n0
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+66d52f7b87a96b27132d155278a1f487dcb2b490258fb862714993f0d1ca237f  src/core/storage/adapters/PostgresPrimaryAdapter.ts
+a85d71656cbb60836016473bb345f75fefdcf272dff0bc3de222c4d4b6583d37  docs/STATE_REGISTER.json
+0f3c1620067836d5204064802e338b6effca528abbe6614263a66e78b8b7cb77  scripts/runReconcileAuditB.ts
+fa14d6aaabed59ce975d8b870ea61699fe6620620f566b1f2e0a3934aab9efb6  scripts/verifyPgXcompanyPersist1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch =====
+--- a/src/core/storage/adapters/PostgresPrimaryAdapter.ts
++++ b/src/core/storage/adapters/PostgresPrimaryAdapter.ts
+@@ -3677,6 +3677,29 @@
+       );
+       CREATE INDEX IF NOT EXISTS idx_an_group_master_items_group ON an_group_master_items (group_id);
+ 
++      CREATE TABLE IF NOT EXISTS an_cross_company_transfers (
++        id VARCHAR(64) PRIMARY KEY,
++        group_id VARCHAR(64) NOT NULL,
++        source_tenant_id VARCHAR(64) NOT NULL,
++        target_tenant_id VARCHAR(64) NOT NULL,
++        source_warehouse_id VARCHAR(64) NOT NULL,
++        target_warehouse_id VARCHAR(64) NOT NULL,
++        item_code VARCHAR(64) NOT NULL,
++        item_id_source VARCHAR(64),
++        item_id_target VARCHAR(64),
++        quantity NUMERIC(18, 6) NOT NULL,
++        unit_cost NUMERIC(18, 6) NOT NULL DEFAULT 0,
++        status VARCHAR(32) NOT NULL DEFAULT 'REQUESTED',
++        notes TEXT,
++        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
++        dispatched_at TIMESTAMPTZ,
++        received_at TIMESTAMPTZ,
++        source_issue_document_id VARCHAR(64),
++        target_receive_document_id VARCHAR(64)
++      );
++      CREATE INDEX IF NOT EXISTS idx_an_xcompany_group ON an_cross_company_transfers (group_id);
++      CREATE INDEX IF NOT EXISTS idx_an_xcompany_status ON an_cross_company_transfers (status);
++
+       -- Row Level Security (RLS) enforcement
+       ALTER TABLE an_users ENABLE ROW LEVEL SECURITY;
+       ALTER TABLE an_users FORCE ROW LEVEL SECURITY;
+@@ -4114,11 +4137,143 @@
+     }
+   }
+ 
+-  public async listCrossCompanyTransfers(): Promise<StorageResult<CrossCompanyTransfer[]>> { return { success: true, data: [] }; }
++  private mapCrossCompanyTransferRow(row: any): CrossCompanyTransfer {
++    const num = (v: any) => (v === null || v === undefined ? 0 : Number(v));
++    const ts = (v: any) => {
++      if (v === null || v === undefined) return undefined;
++      return v instanceof Date ? v.toISOString() : String(v);
++    };
++    return {
++      id: row.id,
++      groupId: row.group_id,
++      sourceTenantId: row.source_tenant_id,
++      targetTenantId: row.target_tenant_id,
++      sourceWarehouseId: row.source_warehouse_id,
++      targetWarehouseId: row.target_warehouse_id,
++      itemCode: row.item_code,
++      itemIdSource: row.item_id_source || undefined,
++      itemIdTarget: row.item_id_target || undefined,
++      quantity: num(row.quantity),
++      unitCost: num(row.unit_cost),
++      status: row.status as CrossCompanyTransfer['status'],
++      notes: row.notes || undefined,
++      createdAt: ts(row.created_at) || new Date().toISOString(),
++      dispatchedAt: ts(row.dispatched_at),
++      receivedAt: ts(row.received_at),
++      sourceIssueDocumentId: row.source_issue_document_id || undefined,
++      targetReceiveDocumentId: row.target_receive_document_id || undefined,
++    };
++  }
++
++  /** PG-XCOMPANY-PERSIST-1: real PostgreSQL persistence for cross-company transfers. */
++  public async listCrossCompanyTransfers(
++    filter?: { groupId?: string; status?: string }
++  ): Promise<StorageResult<CrossCompanyTransfer[]>> {
++    if (!this.pool) return this.missingConnError();
++    try {
++      const clauses: string[] = [];
++      const params: any[] = [];
++      if (filter?.groupId) {
++        params.push(filter.groupId);
++        clauses.push(`group_id = $${params.length}`);
++      }
++      if (filter?.status) {
++        params.push(filter.status);
++        clauses.push(`status = $${params.length}`);
++      }
++      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
++      const res = await this.query(
++        `SELECT * FROM an_cross_company_transfers ${where} ORDER BY created_at DESC`,
++        params
++      );
++      return { success: true, data: res.rows.map((r: any) => this.mapCrossCompanyTransferRow(r)) };
++    } catch (err: any) {
++      return this.dbError(err);
++    }
++  }
++
+   public async getCrossCompanyTransfer(id: string): Promise<StorageResult<CrossCompanyTransfer>> {
+-    return { success: false, error: { type: 'https://api.an-erp.local/errors/xcompany-not-found', title: 'التحويل غير موجود', status: 404, detail: 'غير متاح.' } };
+-  }
+-  public async saveCrossCompanyTransfer(tr: CrossCompanyTransfer, _k: string): Promise<StorageResult<CrossCompanyTransfer>> { return { success: true, data: tr }; }
++    if (!this.pool) return this.missingConnError();
++    try {
++      const res = await this.query('SELECT * FROM an_cross_company_transfers WHERE id = $1', [id]);
++      if (!res.rows.length) {
++        return {
++          success: false,
++          error: {
++            type: 'https://api.an-erp.local/errors/xcompany-not-found',
++            title: 'التحويل غير موجود',
++            status: 404,
++            detail: 'غير متاح.',
++          },
++        };
++      }
++      return { success: true, data: this.mapCrossCompanyTransferRow(res.rows[0]) };
++    } catch (err: any) {
++      return this.dbError(err);
++    }
++  }
++
++  public async saveCrossCompanyTransfer(
++    tr: CrossCompanyTransfer,
++    _k: string
++  ): Promise<StorageResult<CrossCompanyTransfer>> {
++    if (!this.pool) return this.missingConnError();
++    try {
++      await this.query(
++        `INSERT INTO an_cross_company_transfers (
++           id, group_id, source_tenant_id, target_tenant_id,
++           source_warehouse_id, target_warehouse_id, item_code,
++           item_id_source, item_id_target, quantity, unit_cost, status, notes,
++           created_at, dispatched_at, received_at,
++           source_issue_document_id, target_receive_document_id
++         ) VALUES (
++           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
++         )
++         ON CONFLICT (id) DO UPDATE SET
++           group_id = EXCLUDED.group_id,
++           source_tenant_id = EXCLUDED.source_tenant_id,
++           target_tenant_id = EXCLUDED.target_tenant_id,
++           source_warehouse_id = EXCLUDED.source_warehouse_id,
++           target_warehouse_id = EXCLUDED.target_warehouse_id,
++           item_code = EXCLUDED.item_code,
++           item_id_source = EXCLUDED.item_id_source,
++           item_id_target = EXCLUDED.item_id_target,
++           quantity = EXCLUDED.quantity,
++           unit_cost = EXCLUDED.unit_cost,
++           status = EXCLUDED.status,
++           notes = EXCLUDED.notes,
++           dispatched_at = EXCLUDED.dispatched_at,
++           received_at = EXCLUDED.received_at,
++           source_issue_document_id = EXCLUDED.source_issue_document_id,
++           target_receive_document_id = EXCLUDED.target_receive_document_id`,
++        [
++          tr.id,
++          tr.groupId,
++          tr.sourceTenantId,
++          tr.targetTenantId,
++          tr.sourceWarehouseId,
++          tr.targetWarehouseId,
++          tr.itemCode,
++          tr.itemIdSource || null,
++          tr.itemIdTarget || null,
++          tr.quantity,
++          tr.unitCost,
++          tr.status || 'REQUESTED',
++          tr.notes || null,
++          tr.createdAt || new Date().toISOString(),
++          tr.dispatchedAt || null,
++          tr.receivedAt || null,
++          tr.sourceIssueDocumentId || null,
++          tr.targetReceiveDocumentId || null,
++        ]
++      );
++      const read = await this.getCrossCompanyTransfer(tr.id);
++      if (read.success && read.data) return { success: true, data: read.data };
++      return { success: true, data: tr };
++    } catch (err: any) {
++      return this.dbError(err);
++    }
++  }
+ 
+   public async getEntityBooksState(tenantId: string): Promise<StorageResult<EntityBooksState>> {
+     return { success: true, data: { tenantId, status: 'OPEN', updatedAt: new Date().toISOString() } };
+===== END FILE: .phase_tmp/01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch =====
+
+===== FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "PG-GROUP-ITEM-PERSIST-1: real Postgres save/list/get for group master items (after PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
++  "lastChange": "PG-XCOMPANY-PERSIST-1: real Postgres save/list/get for cross-company transfers",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -419,6 +419,12 @@
+       "status": "DONE",
+       "scope": "an_group_master_items table + PostgresPrimaryAdapter list/get/saveGroupMasterItem",
+       "evidence": "src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgGroupItemPersist1.ts"
++    },
++    {
++      "id": "PG-XCOMPANY-PERSIST-1",
++      "status": "DONE",
++      "scope": "an_cross_company_transfers table + PostgresPrimaryAdapter list/get/saveCrossCompanyTransfer",
++      "evidence": "src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgXcompanyPersist1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -119,6 +119,7 @@
+   { name: 'FixTenantSuspend1', script: 'scripts/verifyFixTenantSuspend1.ts', expected: 14 },
+   { name: 'PgGroupPersist1', script: 'scripts/verifyPgGroupPersist1.ts', expected: 14 },
+   { name: 'PgGroupItemPersist1', script: 'scripts/verifyPgGroupItemPersist1.ts', expected: 14 },
++  { name: 'PgXcompanyPersist1', script: 'scripts/verifyPgXcompanyPersist1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file verifyPgXcompanyPersist1.ts
+ * PG-XCOMPANY-PERSIST-1 — cross-company transfers persist on PostgreSQL.
+ * Run: npx tsx scripts/verifyPgXcompanyPersist1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean) => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}`); }
+};
+
+const pg = fs.readFileSync('src/core/storage/adapters/PostgresPrimaryAdapter.ts', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 CREATE TABLE an_cross_company_transfers', /CREATE TABLE IF NOT EXISTS an_cross_company_transfers/.test(pg));
+check('S2 quantity and unit_cost columns', /quantity NUMERIC/.test(pg) && /unit_cost NUMERIC/.test(pg));
+check('S3 list supports optional filter', /listCrossCompanyTransfers[\s\S]{0,200}filter\?/.test(pg));
+check('S4 list queries table', /FROM an_cross_company_transfers/.test(pg));
+check('S5 get by id', /getCrossCompanyTransfer[\s\S]{0,300}WHERE id = \$1/.test(pg));
+check('S6 save INSERT ON CONFLICT', /INSERT INTO an_cross_company_transfers/.test(pg) && /ON CONFLICT \(id\) DO UPDATE/.test(pg));
+check('S7 mapCrossCompanyTransferRow', /mapCrossCompanyTransferRow/.test(pg));
+check('S8 no empty-list stub', !/listCrossCompanyTransfers\([^\)]*\)[\s\S]{0,60}return \{ success: true, data: \[\] \}/.test(pg));
+check('S9 no save echo-only stub', !/saveCrossCompanyTransfer\([^\)]*\)[\s\S]{0,80}return \{ success: true, data: tr \}/.test(pg));
+check('S10 package DONE', byId['PG-XCOMPANY-PERSIST-1']?.status === 'DONE');
+check('S11 lastChange mentions package', String(reg.lastChange || '').includes('PG-XCOMPANY-PERSIST-1'));
+check('S12 prior group-item persist DONE', byId['PG-GROUP-ITEM-PERSIST-1']?.status === 'DONE');
+check('S13 xcompany-not-found retained', /xcompany-not-found/.test(pg));
+check('S14 indexes on group and status', /idx_an_xcompany_group/.test(pg) && /idx_an_xcompany_status/.test(pg));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n0_01.part =====

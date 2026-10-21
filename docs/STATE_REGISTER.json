@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "PG-GROUP-ITEM-PERSIST-1: real Postgres save/list/get for group master items (after PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
+  "lastChange": "PG-XCOMPANY-PERSIST-1: real Postgres save/list/get for cross-company transfers (after PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -419,6 +419,12 @@
       "status": "DONE",
       "scope": "an_group_master_items table + PostgresPrimaryAdapter list/get/saveGroupMasterItem",
       "evidence": "src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgGroupItemPersist1.ts"
+    },
+    {
+      "id": "PG-XCOMPANY-PERSIST-1",
+      "status": "DONE",
+      "scope": "an_cross_company_transfers table + PostgresPrimaryAdapter list/get/saveCrossCompanyTransfer",
+      "evidence": "src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgXcompanyPersist1.ts"
     }
   ],
   "defects": [
