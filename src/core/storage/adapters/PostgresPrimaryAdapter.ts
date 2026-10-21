@@ -3700,6 +3700,17 @@ export class PostgresPrimaryAdapter implements StoragePort {
       CREATE INDEX IF NOT EXISTS idx_an_xcompany_group ON an_cross_company_transfers (group_id);
       CREATE INDEX IF NOT EXISTS idx_an_xcompany_status ON an_cross_company_transfers (status);
 
+      CREATE TABLE IF NOT EXISTS an_entity_books_state (
+        tenant_id VARCHAR(64) PRIMARY KEY REFERENCES an_tenants(id),
+        status VARCHAR(16) NOT NULL DEFAULT 'OPEN',
+        closed_period_code VARCHAR(64),
+        closed_period_id VARCHAR(64),
+        closed_at TIMESTAMPTZ,
+        closed_by VARCHAR(64),
+        reopen_reason TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
       -- Row Level Security (RLS) enforcement
       ALTER TABLE an_users ENABLE ROW LEVEL SECURITY;
       ALTER TABLE an_users FORCE ROW LEVEL SECURITY;
@@ -4275,11 +4286,78 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
-  public async getEntityBooksState(tenantId: string): Promise<StorageResult<EntityBooksState>> {
-    return { success: true, data: { tenantId, status: 'OPEN', updatedAt: new Date().toISOString() } };
+  private mapEntityBooksStateRow(row: any): EntityBooksState {
+    const ts = (v: any) => {
+      if (v === null || v === undefined) return undefined;
+      return v instanceof Date ? v.toISOString() : String(v);
+    };
+    return {
+      tenantId: row.tenant_id,
+      status: (row.status === 'CLOSED' ? 'CLOSED' : 'OPEN') as EntityBooksState['status'],
+      closedPeriodCode: row.closed_period_code || undefined,
+      closedPeriodId: row.closed_period_id || undefined,
+      closedAt: ts(row.closed_at),
+      closedBy: row.closed_by || undefined,
+      reopenReason: row.reopen_reason || undefined,
+      updatedAt: ts(row.updated_at) || new Date().toISOString(),
+    };
   }
-  public async saveEntityBooksState(state: EntityBooksState, _k: string): Promise<StorageResult<EntityBooksState>> {
-    return { success: true, data: state };
+
+  /** PG-ENTITY-CLOSE-PERSIST-1: real PostgreSQL persistence for entity books open/closed state. */
+  public async getEntityBooksState(tenantId: string): Promise<StorageResult<EntityBooksState>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query('SELECT * FROM an_entity_books_state WHERE tenant_id = $1', [tenantId]);
+      if (!res.rows.length) {
+        // Default OPEN when no row yet (matches InMemory behavior)
+        return {
+          success: true,
+          data: { tenantId, status: 'OPEN', updatedAt: new Date().toISOString() },
+        };
+      }
+      return { success: true, data: this.mapEntityBooksStateRow(res.rows[0]) };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
+  }
+
+  public async saveEntityBooksState(
+    state: EntityBooksState,
+    _k: string
+  ): Promise<StorageResult<EntityBooksState>> {
+    if (!this.pool) return this.missingConnError();
+    try {
+      const updatedAt = state.updatedAt || new Date().toISOString();
+      await this.query(
+        `INSERT INTO an_entity_books_state (
+           tenant_id, status, closed_period_code, closed_period_id,
+           closed_at, closed_by, reopen_reason, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (tenant_id) DO UPDATE SET
+           status = EXCLUDED.status,
+           closed_period_code = EXCLUDED.closed_period_code,
+           closed_period_id = EXCLUDED.closed_period_id,
+           closed_at = EXCLUDED.closed_at,
+           closed_by = EXCLUDED.closed_by,
+           reopen_reason = EXCLUDED.reopen_reason,
+           updated_at = EXCLUDED.updated_at`,
+        [
+          state.tenantId,
+          state.status || 'OPEN',
+          state.closedPeriodCode || null,
+          state.closedPeriodId || null,
+          state.closedAt || null,
+          state.closedBy || null,
+          state.reopenReason || null,
+          updatedAt,
+        ]
+      );
+      const read = await this.getEntityBooksState(state.tenantId);
+      if (read.success && read.data) return { success: true, data: read.data };
+      return { success: true, data: { ...state, updatedAt } };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
   }
 
   public async overrideSequence(

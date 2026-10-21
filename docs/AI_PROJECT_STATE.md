@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-19 — PG-XCOMPANY-PERSIST-1: real Postgres save/list/get for cross-company transfers (after PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)
+**Last update**: 2026-10-19 — PG-ENTITY-CLOSE-PERSIST-1: real Postgres get/save for entity books OPEN/CLOSED (after PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-21)
 
 ## Gates
@@ -77,6 +77,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **PG-GROUP-PERSIST-1** — DONE — an_company_groups table + PostgresPrimaryAdapter list/get/saveCompanyGroup (no more success-without-write) _(evidence: src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgGroupPersist1.ts)_
 - **PG-GROUP-ITEM-PERSIST-1** — DONE — an_group_master_items table + PostgresPrimaryAdapter list/get/saveGroupMasterItem _(evidence: src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgGroupItemPersist1.ts)_
 - **PG-XCOMPANY-PERSIST-1** — DONE — an_cross_company_transfers table + PostgresPrimaryAdapter list/get/saveCrossCompanyTransfer _(evidence: src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgXcompanyPersist1.ts)_
+- **PG-ENTITY-CLOSE-PERSIST-1** — DONE — an_entity_books_state table + PostgresPrimaryAdapter get/saveEntityBooksState (default OPEN if no row) _(evidence: src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgEntityClosePersist1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

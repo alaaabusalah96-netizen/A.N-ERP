@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "PG-XCOMPANY-PERSIST-1: real Postgres save/list/get for cross-company transfers (after PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
+  "lastChange": "PG-ENTITY-CLOSE-PERSIST-1: real Postgres get/save for entity books OPEN/CLOSED (after PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -425,6 +425,12 @@
       "status": "DONE",
       "scope": "an_cross_company_transfers table + PostgresPrimaryAdapter list/get/saveCrossCompanyTransfer",
       "evidence": "src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgXcompanyPersist1.ts"
+    },
+    {
+      "id": "PG-ENTITY-CLOSE-PERSIST-1",
+      "status": "DONE",
+      "scope": "an_entity_books_state table + PostgresPrimaryAdapter get/saveEntityBooksState (default OPEN if no row)",
+      "evidence": "src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgEntityClosePersist1.ts"
     }
   ],
   "defects": [

@@ -1,0 +1,245 @@
+# A.N ERP — PG-ENTITY-CLOSE-PERSIST-1 — حفظ حالة دفاتر الكيان في PostgreSQL
+
+> على ZIP: `A.N-ERP-main - 2026-10-21T080045.997.zip`
+>
+> **المشكلة:** `getEntityBooksState` دائمًا يعيد OPEN، و`saveEntityBooksState` يرجع نجاحًا دون SQL.
+>
+> **الإصلاح:**
+> 1. جدول `an_entity_books_state` (مفتاح `tenant_id`).
+> 2. get: قراءة الصف أو افتراضي OPEN إن لم يوجد.
+> 3. save: INSERT … ON CONFLICT ثم قراءة بعد الحفظ.
+> 4. لا يوسّع نطاق الإقفال لمسارات الترحيل كلها؛ يثبت التخزين فقط.
+
+## الخطوات
+1. PRECHECK: `grep -q getEntityBooksState src/core/storage/adapters/PostgresPrimaryAdapter.ts`
+   ALREADY_DONE: `grep -q PG-ENTITY-CLOSE-PERSIST-1 docs/STATE_REGISTER.json && grep -q an_entity_books_state src/core/storage/adapters/PostgresPrimaryAdapter.ts`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyPgEntityClosePersist1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyPgXcompanyPersist1.ts` · `npx tsx scripts/verifyAccEntityClose1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `fix(pg): persist entity books open/closed state`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+592f07fdfbd69e9ed35ea58e6571b93fd194790b79a8f48a1fe1601b8a79b07d  .phase_tmp/ORDER.txt
+ab2b057fdc3ddadaa4abd8dae987e9b61680db6dcea4d534c1eee8ae4b338fbc  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+66a6da0b9d7ec290058d8e727d3d8947df6fb331f034f95d1360812549fd1739  .phase_tmp/FINAL.txt
+4b19649086d7dc43739e22ecb8cb381c32ea426d309821831eab3bfce2146d2a  .phase_tmp/01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch
+39a85bcbaa22ed0aba3354fe659a8d6ead3d6a6b0640fe88281ad2cc36d8dcc2  .phase_tmp/02_docs__STATE_REGISTER_json.patch
+db8ae6c5f640236b2495b8a54754aced5fae1a18d170dccf29537056cc4fbfe9  .phase_tmp/03_scripts__runReconcileAuditB_ts.patch
+3f5709f1774bc66e27d9ed89ddb2aa815ce3a6285fd8090458dfa22f6b06e34b  .phase_tmp/n0_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch
+02_docs__STATE_REGISTER_json.patch
+03_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+scripts/verifyPgEntityClosePersist1.ts|n0
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+23a67819eb94dd14b8b197017559ee4f261417e3bc33546b27a72f089388b446  src/core/storage/adapters/PostgresPrimaryAdapter.ts
+8cf2c4d4c8514d75d328b1a9b50b36621539137c26992cd462c2fb10e19ba4c9  docs/STATE_REGISTER.json
+22a3f3e6cb6a474f7c15142374b7c0edd1b5ed948494641b8439600f0c5f3cd1  scripts/runReconcileAuditB.ts
+3f5709f1774bc66e27d9ed89ddb2aa815ce3a6285fd8090458dfa22f6b06e34b  scripts/verifyPgEntityClosePersist1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch =====
+--- a/src/core/storage/adapters/PostgresPrimaryAdapter.ts
++++ b/src/core/storage/adapters/PostgresPrimaryAdapter.ts
+@@ -3700,6 +3700,17 @@
+       CREATE INDEX IF NOT EXISTS idx_an_xcompany_group ON an_cross_company_transfers (group_id);
+       CREATE INDEX IF NOT EXISTS idx_an_xcompany_status ON an_cross_company_transfers (status);
+ 
++      CREATE TABLE IF NOT EXISTS an_entity_books_state (
++        tenant_id VARCHAR(64) PRIMARY KEY REFERENCES an_tenants(id),
++        status VARCHAR(16) NOT NULL DEFAULT 'OPEN',
++        closed_period_code VARCHAR(64),
++        closed_period_id VARCHAR(64),
++        closed_at TIMESTAMPTZ,
++        closed_by VARCHAR(64),
++        reopen_reason TEXT,
++        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
++      );
++
+       -- Row Level Security (RLS) enforcement
+       ALTER TABLE an_users ENABLE ROW LEVEL SECURITY;
+       ALTER TABLE an_users FORCE ROW LEVEL SECURITY;
+@@ -4275,11 +4286,78 @@
+     }
+   }
+ 
++  private mapEntityBooksStateRow(row: any): EntityBooksState {
++    const ts = (v: any) => {
++      if (v === null || v === undefined) return undefined;
++      return v instanceof Date ? v.toISOString() : String(v);
++    };
++    return {
++      tenantId: row.tenant_id,
++      status: (row.status === 'CLOSED' ? 'CLOSED' : 'OPEN') as EntityBooksState['status'],
++      closedPeriodCode: row.closed_period_code || undefined,
++      closedPeriodId: row.closed_period_id || undefined,
++      closedAt: ts(row.closed_at),
++      closedBy: row.closed_by || undefined,
++      reopenReason: row.reopen_reason || undefined,
++      updatedAt: ts(row.updated_at) || new Date().toISOString(),
++    };
++  }
++
++  /** PG-ENTITY-CLOSE-PERSIST-1: real PostgreSQL persistence for entity books open/closed state. */
+   public async getEntityBooksState(tenantId: string): Promise<StorageResult<EntityBooksState>> {
+-    return { success: true, data: { tenantId, status: 'OPEN', updatedAt: new Date().toISOString() } };
+-  }
+-  public async saveEntityBooksState(state: EntityBooksState, _k: string): Promise<StorageResult<EntityBooksState>> {
+-    return { success: true, data: state };
++    if (!this.pool) return this.missingConnError();
++    try {
++      const res = await this.query('SELECT * FROM an_entity_books_state WHERE tenant_id = $1', [tenantId]);
++      if (!res.rows.length) {
++        // Default OPEN when no row yet (matches InMemory behavior)
++        return {
++          success: true,
++          data: { tenantId, status: 'OPEN', updatedAt: new Date().toISOString() },
++        };
++      }
++      return { success: true, data: this.mapEntityBooksStateRow(res.rows[0]) };
++    } catch (err: any) {
++      return this.dbError(err);
++    }
++  }
++
++  public async saveEntityBooksState(
++    state: EntityBooksState,
++    _k: string
++  ): Promise<StorageResult<EntityBooksState>> {
++    if (!this.pool) return this.missingConnError();
++    try {
++      const updatedAt = state.updatedAt || new Date().toISOString();
++      await this.query(
++        `INSERT INTO an_entity_books_state (
++           tenant_id, status, closed_period_code, closed_period_id,
++           closed_at, closed_by, reopen_reason, updated_at
++         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
++         ON CONFLICT (tenant_id) DO UPDATE SET
++           status = EXCLUDED.status,
++           closed_period_code = EXCLUDED.closed_period_code,
++           closed_period_id = EXCLUDED.closed_period_id,
++           closed_at = EXCLUDED.closed_at,
++           closed_by = EXCLUDED.closed_by,
++           reopen_reason = EXCLUDED.reopen_reason,
++           updated_at = EXCLUDED.updated_at`,
++        [
++          state.tenantId,
++          state.status || 'OPEN',
++          state.closedPeriodCode || null,
++          state.closedPeriodId || null,
++          state.closedAt || null,
++          state.closedBy || null,
++          state.reopenReason || null,
++          updatedAt,
++        ]
++      );
++      const read = await this.getEntityBooksState(state.tenantId);
++      if (read.success && read.data) return { success: true, data: read.data };
++      return { success: true, data: { ...state, updatedAt } };
++    } catch (err: any) {
++      return this.dbError(err);
++    }
+   }
+ 
+   public async overrideSequence(
+===== END FILE: .phase_tmp/01_src__core__storage__adapters__PostgresPrimaryAdapter_ts.patch =====
+
+===== FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "PG-XCOMPANY-PERSIST-1: real Postgres save/list/get for cross-company transfers (after PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
++  "lastChange": "PG-ENTITY-CLOSE-PERSIST-1: real Postgres get/save for entity books OPEN/CLOSED",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -425,6 +425,12 @@
+       "status": "DONE",
+       "scope": "an_cross_company_transfers table + PostgresPrimaryAdapter list/get/saveCrossCompanyTransfer",
+       "evidence": "src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgXcompanyPersist1.ts"
++    },
++    {
++      "id": "PG-ENTITY-CLOSE-PERSIST-1",
++      "status": "DONE",
++      "scope": "an_entity_books_state table + PostgresPrimaryAdapter get/saveEntityBooksState (default OPEN if no row)",
++      "evidence": "src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgEntityClosePersist1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -120,6 +120,7 @@
+   { name: 'PgGroupPersist1', script: 'scripts/verifyPgGroupPersist1.ts', expected: 14 },
+   { name: 'PgGroupItemPersist1', script: 'scripts/verifyPgGroupItemPersist1.ts', expected: 14 },
+   { name: 'PgXcompanyPersist1', script: 'scripts/verifyPgXcompanyPersist1.ts', expected: 14 },
++  { name: 'PgEntityClosePersist1', script: 'scripts/verifyPgEntityClosePersist1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file verifyPgEntityClosePersist1.ts
+ * PG-ENTITY-CLOSE-PERSIST-1 — entity books OPEN/CLOSED persist on PostgreSQL.
+ * Run: npx tsx scripts/verifyPgEntityClosePersist1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean) => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}`); }
+};
+
+const pg = fs.readFileSync('src/core/storage/adapters/PostgresPrimaryAdapter.ts', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 CREATE TABLE an_entity_books_state', /CREATE TABLE IF NOT EXISTS an_entity_books_state/.test(pg));
+check('S2 tenant_id PRIMARY KEY', /an_entity_books_state[\s\S]{0,200}tenant_id VARCHAR\(64\) PRIMARY KEY/.test(pg));
+check('S3 get selects by tenant', /getEntityBooksState[\s\S]{0,350}WHERE tenant_id = \$1/.test(pg));
+check('S4 get defaults OPEN when no row', /status: 'OPEN'/.test(pg) && /no row/.test(pg));
+check('S5 save INSERT ON CONFLICT tenant_id', /INSERT INTO an_entity_books_state/.test(pg) && /ON CONFLICT \(tenant_id\) DO UPDATE/.test(pg));
+check('S6 mapEntityBooksStateRow', /mapEntityBooksStateRow/.test(pg));
+check('S7 no always-OPEN stub without query', !/getEntityBooksState\([^)]*\)[\s\S]{0,80}return \{ success: true, data: \{ tenantId, status: 'OPEN'/.test(pg));
+check('S8 no save echo-only stub', !/saveEntityBooksState\([^)]*\)[\s\S]{0,80}return \{ success: true, data: state \}/.test(pg));
+check('S9 package DONE', byId['PG-ENTITY-CLOSE-PERSIST-1']?.status === 'DONE');
+check('S10 lastChange mentions package', String(reg.lastChange || '').includes('PG-ENTITY-CLOSE-PERSIST-1'));
+check('S11 prior xcompany persist DONE', byId['PG-XCOMPANY-PERSIST-1']?.status === 'DONE');
+check('S12 closed_by / reopen_reason columns', /closed_by/.test(pg) && /reopen_reason/.test(pg));
+check('S13 CLOSED status mapping', /CLOSED/.test(pg));
+check('S14 InMemory Map still present', /entityBooksStates/.test(fs.readFileSync('src/core/storage/adapters/InMemoryAdapter.ts', 'utf8')));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n0_01.part =====
