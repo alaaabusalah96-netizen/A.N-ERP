@@ -1,0 +1,216 @@
+# A.N ERP — FIX-REPORT-ASOF-1 — ميزان المراجعة حسب تاريخ القيود المرحلة
+
+> على ZIP: `A.N-ERP-main - 2026-10-21T081351.016.zip`
+>
+> **المشكلة:** `getTrialBalance` كان يقرأ `acc.debitBalance/creditBalance` الحالية ويضع `asOfDate` في العنوان فقط.
+>
+> **الإصلاح:**
+> 1. لكل حساب: `getAccountBalanceAsOf` (قيود POSTED بتاريخ ≤ asOfDate) — موجود أصلًا في Postgres وInMemory.
+> 2. اسم المنشأة والعملة من `getTenant` بدل نص ثابت.
+> 3. تسمية الفترة: `حتى تاريخ YYYY-MM-DD`.
+> 4. **خارج النطاق:** قائمة الدخل والمركز المالي الكاملان (حزم لاحقة).
+
+## الخطوات
+1. PRECHECK: `grep -q getTrialBalance src/core/accounting/AccountingService.ts && grep -q getAccountBalanceAsOf src/core/storage/StoragePort.ts`
+   ALREADY_DONE: `grep -q FIX-REPORT-ASOF-1 docs/STATE_REGISTER.json && grep -q getAccountBalanceAsOf src/core/accounting/AccountingService.ts`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyFixReportAsof1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyPgEntityClosePersist1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `fix(accounting): trial balance as-of from posted journals`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+3aabfda4ae1e55a81ca16c4502f70e6fb41f6562bfd707d47e7af74095af9e47  .phase_tmp/ORDER.txt
+dfc553aa1c140e5647628a928e55080cc1f3bcefd226cf8b0fb1d28975d85e87  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+cb2e2cedf2e8a791cf38d126eace8293a6b2f9ba26ed89b1c2c064c9e780025a  .phase_tmp/FINAL.txt
+9c1882b6bfd957c2f0401f0dc94ec2b20e48e4481110f443a13b8dc0cda6cc0e  .phase_tmp/01_src__core__accounting__AccountingService_ts.patch
+084f0160edd3c2f1154d126a2838ae0ae21938f8875f6c2b21d54af2b389eaef  .phase_tmp/02_docs__STATE_REGISTER_json.patch
+e57255c7ec9e9738d1ec7fa531e0c7be37663c0b4498533dc1bd25f6bfa7d133  .phase_tmp/03_scripts__runReconcileAuditB_ts.patch
+e7481799812a2dfbeb2e1becf990865df5e619e98a799f97bfc73cf406c08d21  .phase_tmp/n0_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__core__accounting__AccountingService_ts.patch
+02_docs__STATE_REGISTER_json.patch
+03_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+scripts/verifyFixReportAsof1.ts|n0
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+b97ec8cf74eb65b58ea0b4572ca74bd3a2aeeb42ea98a66e381141e7076bfca8  src/core/accounting/AccountingService.ts
+cc14a31174a2c9534885e3bb5a5c7034a170c50c519266d0336eb8beb8e4f123  docs/STATE_REGISTER.json
+5b7653e06715653dbb9cd93c5156f3caacff12de5f995e2c3f402b2d2acfb58c  scripts/runReconcileAuditB.ts
+e7481799812a2dfbeb2e1becf990865df5e619e98a799f97bfc73cf406c08d21  scripts/verifyFixReportAsof1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__core__accounting__AccountingService_ts.patch =====
+--- a/src/core/accounting/AccountingService.ts
++++ b/src/core/accounting/AccountingService.ts
+@@ -890,31 +890,50 @@
+ 
+   public async getTrialBalance(tenantId: string, asOfDate?: string): Promise<TrialBalanceReport> {
+     const accounts = await this.listAccounts(tenantId);
+-    const dateStr = asOfDate || new Date().toISOString().split('T')[0];
+-
+-    const rows = accounts.map(acc => {
+-      const net = acc.nature === 'DEBIT' ? acc.debitBalance - acc.creditBalance : acc.creditBalance - acc.debitBalance;
+-      return {
+-        code: acc.code,
+-        nameAr: acc.nameAr,
+-        type: acc.type,
+-        debitBalance: acc.debitBalance,
+-        creditBalance: acc.creditBalance,
+-        netBalance: net,
+-        nature: acc.nature,
+-      };
+-    });
++    const dateStr = (asOfDate && String(asOfDate).trim()) || new Date().toISOString().split('T')[0];
++
++    // FIX-REPORT-ASOF-1: balances from posted journal lines with e.date <= asOfDate (not live account snapshot)
++    const rows = await Promise.all(
++      accounts.map(async (acc) => {
++        const balRes = await this.port.getAccountBalanceAsOf(tenantId, acc.code, dateStr);
++        const debitBalance = balRes.success && balRes.data ? Number(balRes.data.debitTotal) || 0 : 0;
++        const creditBalance = balRes.success && balRes.data ? Number(balRes.data.creditTotal) || 0 : 0;
++        const net =
++          acc.nature === 'DEBIT' ? debitBalance - creditBalance : creditBalance - debitBalance;
++        return {
++          code: acc.code,
++          nameAr: acc.nameAr,
++          type: acc.type,
++          debitBalance,
++          creditBalance,
++          netBalance: net,
++          nature: acc.nature,
++        };
++      })
++    );
+ 
+     const totalDebit = rows.reduce((sum, r) => sum + r.debitBalance, 0);
+     const totalCredit = rows.reduce((sum, r) => sum + r.creditBalance, 0);
+     const diff = Math.abs(totalDebit - totalCredit);
+ 
++    let tenantNameAr = tenantId;
++    let currency = 'SAR';
++    try {
++      const tRes = await this.port.getTenant(tenantId);
++      if (tRes.success && tRes.data) {
++        tenantNameAr = tRes.data.nameAr || tenantId;
++        currency = (tRes.data as { baseCurrency?: string }).baseCurrency || currency;
++      }
++    } catch {
++      /* keep defaults */
++    }
++
+     return {
+       tenantId,
+-      tenantNameAr: 'شركة أ.ن للحلول المتقدمة',
+-      periodNameAr: 'السنة المالية 2026',
++      tenantNameAr,
++      periodNameAr: `حتى تاريخ ${dateStr}`,
+       asOfDate: dateStr,
+-      currency: 'SAR',
++      currency,
+       rows,
+       totalDebit,
+       totalCredit,
+===== END FILE: .phase_tmp/01_src__core__accounting__AccountingService_ts.patch =====
+
+===== FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "PG-ENTITY-CLOSE-PERSIST-1: real Postgres get/save for entity books OPEN/CLOSED (after PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
++  "lastChange": "FIX-REPORT-ASOF-1: trial balance uses getAccountBalanceAsOf posted lines by date",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -431,6 +431,12 @@
+       "status": "DONE",
+       "scope": "an_entity_books_state table + PostgresPrimaryAdapter get/saveEntityBooksState (default OPEN if no row)",
+       "evidence": "src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgEntityClosePersist1.ts"
++    },
++    {
++      "id": "FIX-REPORT-ASOF-1",
++      "status": "DONE",
++      "scope": "getTrialBalance builds debit/credit from getAccountBalanceAsOf (POSTED journals date<=asOf); tenant name/currency from getTenant",
++      "evidence": "src/core/accounting/AccountingService.ts; scripts/verifyFixReportAsof1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -121,6 +121,7 @@
+   { name: 'PgGroupItemPersist1', script: 'scripts/verifyPgGroupItemPersist1.ts', expected: 14 },
+   { name: 'PgXcompanyPersist1', script: 'scripts/verifyPgXcompanyPersist1.ts', expected: 14 },
+   { name: 'PgEntityClosePersist1', script: 'scripts/verifyPgEntityClosePersist1.ts', expected: 14 },
++  { name: 'FixReportAsof1', script: 'scripts/verifyFixReportAsof1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file verifyFixReportAsof1.ts
+ * FIX-REPORT-ASOF-1 — trial balance uses as-of posted journal balances.
+ * Run: npx tsx scripts/verifyFixReportAsof1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean) => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}`); }
+};
+
+const acc = fs.readFileSync('src/core/accounting/AccountingService.ts', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+const tb = (() => {
+  const i = acc.indexOf('getTrialBalance');
+  return acc.slice(i, i + 2200);
+})();
+
+check('S1 getTrialBalance calls getAccountBalanceAsOf', /getAccountBalanceAsOf/.test(tb));
+check('S2 uses debitTotal from as-of result', /debitTotal/.test(tb));
+check('S3 uses creditTotal from as-of result', /creditTotal/.test(tb));
+check('S4 does not use acc.debitBalance for row amounts', !/debitBalance: acc\.debitBalance/.test(tb));
+check('S5 does not use acc.creditBalance for row amounts', !/creditBalance: acc\.creditBalance/.test(tb));
+check('S6 hard-coded company name removed', !/شركة أ\.ن للحلول المتقدمة/.test(tb));
+check('S7 hard-coded fiscal year 2026 label removed', !/السنة المالية 2026/.test(tb));
+check('S8 period label uses asOf date', /حتى تاريخ/.test(tb));
+check('S9 getTenant for name/currency', /getTenant\(tenantId\)/.test(tb));
+check('S10 package DONE', byId['FIX-REPORT-ASOF-1']?.status === 'DONE');
+check('S11 lastChange mentions package', String(reg.lastChange || '').includes('FIX-REPORT-ASOF-1'));
+check('S12 port still has getAccountBalanceAsOf', /getAccountBalanceAsOf/.test(fs.readFileSync('src/core/storage/StoragePort.ts', 'utf8')));
+check('S13 PG adapter sums POSTED lines by date', /e\.status = 'POSTED'/.test(fs.readFileSync('src/core/storage/adapters/PostgresPrimaryAdapter.ts', 'utf8')) && /e\.date <=/.test(fs.readFileSync('src/core/storage/adapters/PostgresPrimaryAdapter.ts', 'utf8')));
+check('S14 prior entity-close persist DONE', byId['PG-ENTITY-CLOSE-PERSIST-1']?.status === 'DONE');
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n0_01.part =====

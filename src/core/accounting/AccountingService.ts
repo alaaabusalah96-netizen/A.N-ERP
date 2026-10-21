@@ -890,31 +890,50 @@ export class AccountingService {
 
   public async getTrialBalance(tenantId: string, asOfDate?: string): Promise<TrialBalanceReport> {
     const accounts = await this.listAccounts(tenantId);
-    const dateStr = asOfDate || new Date().toISOString().split('T')[0];
+    const dateStr = (asOfDate && String(asOfDate).trim()) || new Date().toISOString().split('T')[0];
 
-    const rows = accounts.map(acc => {
-      const net = acc.nature === 'DEBIT' ? acc.debitBalance - acc.creditBalance : acc.creditBalance - acc.debitBalance;
-      return {
-        code: acc.code,
-        nameAr: acc.nameAr,
-        type: acc.type,
-        debitBalance: acc.debitBalance,
-        creditBalance: acc.creditBalance,
-        netBalance: net,
-        nature: acc.nature,
-      };
-    });
+    // FIX-REPORT-ASOF-1: balances from posted journal lines with e.date <= asOfDate (not live account snapshot)
+    const rows = await Promise.all(
+      accounts.map(async (acc) => {
+        const balRes = await this.port.getAccountBalanceAsOf(tenantId, acc.code, dateStr);
+        const debitBalance = balRes.success && balRes.data ? Number(balRes.data.debitTotal) || 0 : 0;
+        const creditBalance = balRes.success && balRes.data ? Number(balRes.data.creditTotal) || 0 : 0;
+        const net =
+          acc.nature === 'DEBIT' ? debitBalance - creditBalance : creditBalance - debitBalance;
+        return {
+          code: acc.code,
+          nameAr: acc.nameAr,
+          type: acc.type,
+          debitBalance,
+          creditBalance,
+          netBalance: net,
+          nature: acc.nature,
+        };
+      })
+    );
 
     const totalDebit = rows.reduce((sum, r) => sum + r.debitBalance, 0);
     const totalCredit = rows.reduce((sum, r) => sum + r.creditBalance, 0);
     const diff = Math.abs(totalDebit - totalCredit);
 
+    let tenantNameAr = tenantId;
+    let currency = 'SAR';
+    try {
+      const tRes = await this.port.getTenant(tenantId);
+      if (tRes.success && tRes.data) {
+        tenantNameAr = tRes.data.nameAr || tenantId;
+        currency = (tRes.data as { baseCurrency?: string }).baseCurrency || currency;
+      }
+    } catch {
+      /* keep defaults */
+    }
+
     return {
       tenantId,
-      tenantNameAr: 'شركة أ.ن للحلول المتقدمة',
-      periodNameAr: 'السنة المالية 2026',
+      tenantNameAr,
+      periodNameAr: `حتى تاريخ ${dateStr}`,
       asOfDate: dateStr,
-      currency: 'SAR',
+      currency,
       rows,
       totalDebit,
       totalCredit,
