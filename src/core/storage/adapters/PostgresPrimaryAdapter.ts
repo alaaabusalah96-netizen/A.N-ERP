@@ -3662,6 +3662,21 @@ export class PostgresPrimaryAdapter implements StoragePort {
         updated_at TIMESTAMPTZ
       );
 
+      CREATE TABLE IF NOT EXISTS an_group_master_items (
+        id VARCHAR(64) PRIMARY KEY,
+        group_id VARCHAR(64) NOT NULL,
+        item_code VARCHAR(64) NOT NULL,
+        name_ar VARCHAR(255) NOT NULL,
+        name_en VARCHAR(255),
+        category VARCHAR(128) NOT NULL DEFAULT '',
+        uom VARCHAR(32) NOT NULL DEFAULT 'EA',
+        status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ,
+        UNIQUE (group_id, item_code)
+      );
+      CREATE INDEX IF NOT EXISTS idx_an_group_master_items_group ON an_group_master_items (group_id);
+
       -- Row Level Security (RLS) enforcement
       ALTER TABLE an_users ENABLE ROW LEVEL SECURITY;
       ALTER TABLE an_users FORCE ROW LEVEL SECURITY;
@@ -4006,14 +4021,97 @@ export class PostgresPrimaryAdapter implements StoragePort {
     }
   }
 
+  private mapGroupMasterItemRow(row: any): GroupMasterItem {
+    return {
+      id: row.id,
+      groupId: row.group_id,
+      itemCode: row.item_code,
+      nameAr: row.name_ar,
+      nameEn: row.name_en || undefined,
+      category: row.category || '',
+      uom: row.uom || 'EA',
+      status: (row.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE') as GroupMasterItem['status'],
+      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+      updatedAt: row.updated_at
+        ? (row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at))
+        : undefined,
+    };
+  }
+
+  /** PG-GROUP-ITEM-PERSIST-1: real PostgreSQL persistence for group master items. */
   public async listGroupMasterItems(groupId: string): Promise<StorageResult<GroupMasterItem[]>> {
-    return { success: true, data: [] };
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        'SELECT * FROM an_group_master_items WHERE group_id = $1 ORDER BY item_code ASC',
+        [groupId]
+      );
+      return { success: true, data: res.rows.map((r: any) => this.mapGroupMasterItemRow(r)) };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
   }
+
   public async getGroupMasterItem(groupId: string, itemId: string): Promise<StorageResult<GroupMasterItem>> {
-    return { success: false, error: { type: 'https://api.an-erp.local/errors/group-item-not-found', title: 'صنف المجموعة غير موجود', status: 404, detail: 'غير متاح.' } };
+    if (!this.pool) return this.missingConnError();
+    try {
+      const res = await this.query(
+        'SELECT * FROM an_group_master_items WHERE group_id = $1 AND id = $2',
+        [groupId, itemId]
+      );
+      if (!res.rows.length) {
+        return {
+          success: false,
+          error: {
+            type: 'https://api.an-erp.local/errors/group-item-not-found',
+            title: 'صنف المجموعة غير موجود',
+            status: 404,
+            detail: 'غير متاح.',
+          },
+        };
+      }
+      return { success: true, data: this.mapGroupMasterItemRow(res.rows[0]) };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
   }
+
   public async saveGroupMasterItem(item: GroupMasterItem, _idempotencyKey: string): Promise<StorageResult<GroupMasterItem>> {
-    return { success: true, data: item };
+    if (!this.pool) return this.missingConnError();
+    try {
+      const updatedAt = item.updatedAt || new Date().toISOString();
+      await this.query(
+        `INSERT INTO an_group_master_items
+           (id, group_id, item_code, name_ar, name_en, category, uom, status, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (id) DO UPDATE SET
+           group_id = EXCLUDED.group_id,
+           item_code = EXCLUDED.item_code,
+           name_ar = EXCLUDED.name_ar,
+           name_en = EXCLUDED.name_en,
+           category = EXCLUDED.category,
+           uom = EXCLUDED.uom,
+           status = EXCLUDED.status,
+           updated_at = EXCLUDED.updated_at`,
+        [
+          item.id,
+          item.groupId,
+          item.itemCode,
+          item.nameAr,
+          item.nameEn || null,
+          item.category || '',
+          item.uom || 'EA',
+          item.status || 'ACTIVE',
+          item.createdAt || new Date().toISOString(),
+          updatedAt,
+        ]
+      );
+      const read = await this.getGroupMasterItem(item.groupId, item.id);
+      if (read.success && read.data) return { success: true, data: read.data };
+      return { success: true, data: { ...item, updatedAt } };
+    } catch (err: any) {
+      return this.dbError(err);
+    }
   }
 
   public async listCrossCompanyTransfers(): Promise<StorageResult<CrossCompanyTransfer[]>> { return { success: true, data: [] }; }
