@@ -8,7 +8,7 @@ interface LoginScreenProps {
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [tenantCode, setTenantCode] = useState('MAIN');
-  const [username, setUsername] = useState('accountant');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [selectedBranch, setSelectedBranch] = useState('main_riyadh');
   const [isLoading, setIsLoading] = useState(false);
@@ -113,25 +113,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     });
   };
 
-  const handleRolePreset = (user: string) => {
-    setUsername(user);
-    setPassword('');
-    setError(null);
-    setShow2FAPrompt(false);
-    setShowConcurrentPrompt(false);
-  };
-
-  /** DEMO-LOGIN-ROLES-1: quick-login usernames (password = INITIAL_USER_PASSWORD from env) */
-  const DEMO_ROLE_PRESETS: Array<{ username: string; titleAr: string; nameAr: string }> = [
-    { username: 'accountant', titleAr: 'محاسب عام', nameAr: 'أحمد المنصور' },
-    { username: 'approver', titleAr: 'معتمد مالي', nameAr: 'سليمان الراشد' },
-    { username: 'warehouse', titleAr: 'أمين مستودع', nameAr: 'سعد القحطاني' },
-    { username: 'whmanager', titleAr: 'مدير مستودعات', nameAr: 'نورة العتيبي' },
-    { username: 'auditor', titleAr: 'مراجع داخلي', nameAr: 'خالد الدوسري' },
-    { username: 'branch', titleAr: 'مدير فرع', nameAr: 'فاطمة الحربي' },
-    { username: 'sales', titleAr: 'مسؤول مبيعات', nameAr: 'عبدالله الشمري' },
-    { username: 'sysadmin', titleAr: 'مدير نظام', nameAr: 'ريم السهلي' },
-  ];
+  /* DEMO-LOGIN-UI-REMOVE-1: quick-login role presets removed */
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col justify-center py-12 sm:px-6 lg:px-8 selection:bg-blue-600 selection:text-white" dir="rtl">
@@ -316,7 +298,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     className="block w-full pr-10 pl-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white"
-                    placeholder="accountant / approver / warehouse"
+                    placeholder="اسم المستخدم"
                   />
                 </div>
               </div>
@@ -359,33 +341,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                     <option value="jeddah_branch">فرع المنطقة الغربية - جدة</option>
                     <option value="eastern_branch">فرع المنطقة الشرقية - الدمام</option>
                   </select>
-                </div>
-              </div>
-
-              {/* Role Presets */}
-              <div className="pt-2">
-                <label className="block text-[11px] font-semibold text-slate-500 mb-2">
-                  اختر الحساب التشغيلي للدخول السريع:
-                </label>
-                <p className="text-[10px] text-slate-400 mb-2">
-                  كلمة المرور من سر البيئة INITIAL_USER_PASSWORD — المستأجر MAIN
-                </p>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {DEMO_ROLE_PRESETS.map((p) => (
-                    <button
-                      key={p.username}
-                      type="button"
-                      onClick={() => handleRolePreset(p.username)}
-                      className={`p-2 rounded-lg border text-right transition-all text-xs ${
-                        username === p.username
-                          ? 'border-blue-600 bg-blue-50/50 text-blue-900 font-bold'
-                          : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
-                      }`}
-                    >
-                      <div className="font-semibold text-[11px]">{p.titleAr}</div>
-                      <div className="text-[10px] text-slate-500">{p.nameAr}</div>
-                    </button>
-                  ))}
                 </div>
               </div>
 

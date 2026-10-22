@@ -1,0 +1,223 @@
+# A.N ERP — DEMO-LOGIN-UI-REMOVE-1 — إزالة الدخول السريع التجريبي من الواجهة
+
+> على ZIP: `A.N-ERP-main - 2026-10-22T213840.507.zip`
+>
+> **الخطوة التالية بعد PLATFORM-ADMIN-BOOTSTRAP-1**
+>
+> ## التغيير
+> 1. حذف `DEMO_ROLE_PRESETS` وأزرار الدخول السريع (محاسب، معتمد، مستودع، …).
+> 2. حذف `handleRolePreset`.
+> 3. حقل اسم المستخدم فارغ افتراضيًا (بدل `accountant`).
+> 4. placeholder محايد: `اسم المستخدم`.
+>
+> **لا يغيّر:** منطق المصادقة، الأسرار، bootstrap، seedOnly، قاعدة البيانات.
+
+## الخطوات
+1. PRECHECK: `grep -q DEMO_ROLE_PRESETS src/components/LoginScreen.tsx`
+   ALREADY_DONE: `grep -q DEMO-LOGIN-UI-REMOVE-1 docs/STATE_REGISTER.json && ! grep -q DEMO_ROLE_PRESETS src/components/LoginScreen.tsx`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyDemoLoginUiRemove1.ts` → `Passed: 12 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyPlatformAdminBootstrap1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `ui(login): remove demo quick-login role presets`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+c8379a2adfde496c7a10d1c3067657ae5123f5b9b98266ed35ab8c706e7c1da7  .phase_tmp/ORDER.txt
+a68672930f340973985039df3857a487c96c6903ef3e50d564681477fccb64f3  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+8226c162b642f1a404144e4001b1d770bf4ec925aa0c43707e500bde4a98f073  .phase_tmp/FINAL.txt
+878299c9cf47c5bf8dc990e69e92d7cddd65f5d3e25f2c947045f23f0066c389  .phase_tmp/01_src__components__LoginScreen_tsx.patch
+f1da1216b50e12aeb47dd5cc0154404ee2a97ef8fd5d95a932444a0a57c86f7b  .phase_tmp/02_docs__STATE_REGISTER_json.patch
+0aa410ad8ac87f28f37c79b656b761f0f7f3cc84bd1b3e578c066e4b2e545462  .phase_tmp/03_scripts__runReconcileAuditB_ts.patch
+b3a8c00c24e4b22b40af50f19e1df7337c74987ce23cd1cc3d0935915c8ed8eb  .phase_tmp/n0_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__components__LoginScreen_tsx.patch
+02_docs__STATE_REGISTER_json.patch
+03_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+scripts/verifyDemoLoginUiRemove1.ts|n0
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+af999f8f61b0b56d734336a5e5f9547c3afed3f3115bb49b1ffa1949ce26329b  src/components/LoginScreen.tsx
+ba621881efbaae0170c91e5a8bee7139bbada22f58e6670dbd25a2915479f292  docs/STATE_REGISTER.json
+7e1d098b79c7dba2356a935710d1404346d2e4a896d2ebf275ff559bf93cc012  scripts/runReconcileAuditB.ts
+b3a8c00c24e4b22b40af50f19e1df7337c74987ce23cd1cc3d0935915c8ed8eb  scripts/verifyDemoLoginUiRemove1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__components__LoginScreen_tsx.patch =====
+--- a/src/components/LoginScreen.tsx
++++ b/src/components/LoginScreen.tsx
+@@ -8,7 +8,7 @@
+ 
+ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
+   const [tenantCode, setTenantCode] = useState('MAIN');
+-  const [username, setUsername] = useState('accountant');
++  const [username, setUsername] = useState('');
+   const [password, setPassword] = useState('');
+   const [selectedBranch, setSelectedBranch] = useState('main_riyadh');
+   const [isLoading, setIsLoading] = useState(false);
+@@ -113,25 +113,7 @@
+     });
+   };
+ 
+-  const handleRolePreset = (user: string) => {
+-    setUsername(user);
+-    setPassword('');
+-    setError(null);
+-    setShow2FAPrompt(false);
+-    setShowConcurrentPrompt(false);
+-  };
+-
+-  /** DEMO-LOGIN-ROLES-1: quick-login usernames (password = INITIAL_USER_PASSWORD from env) */
+-  const DEMO_ROLE_PRESETS: Array<{ username: string; titleAr: string; nameAr: string }> = [
+-    { username: 'accountant', titleAr: 'محاسب عام', nameAr: 'أحمد المنصور' },
+-    { username: 'approver', titleAr: 'معتمد مالي', nameAr: 'سليمان الراشد' },
+-    { username: 'warehouse', titleAr: 'أمين مستودع', nameAr: 'سعد القحطاني' },
+-    { username: 'whmanager', titleAr: 'مدير مستودعات', nameAr: 'نورة العتيبي' },
+-    { username: 'auditor', titleAr: 'مراجع داخلي', nameAr: 'خالد الدوسري' },
+-    { username: 'branch', titleAr: 'مدير فرع', nameAr: 'فاطمة الحربي' },
+-    { username: 'sales', titleAr: 'مسؤول مبيعات', nameAr: 'عبدالله الشمري' },
+-    { username: 'sysadmin', titleAr: 'مدير نظام', nameAr: 'ريم السهلي' },
+-  ];
++  /* DEMO-LOGIN-UI-REMOVE-1: quick-login role presets removed */
+ 
+   return (
+     <div className="min-h-screen bg-slate-100 flex flex-col justify-center py-12 sm:px-6 lg:px-8 selection:bg-blue-600 selection:text-white" dir="rtl">
+@@ -316,7 +298,7 @@
+                     value={username}
+                     onChange={(e) => setUsername(e.target.value)}
+                     className="block w-full pr-10 pl-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white"
+-                    placeholder="accountant / approver / warehouse"
++                    placeholder="اسم المستخدم"
+                   />
+                 </div>
+               </div>
+@@ -362,33 +344,6 @@
+                 </div>
+               </div>
+ 
+-              {/* Role Presets */}
+-              <div className="pt-2">
+-                <label className="block text-[11px] font-semibold text-slate-500 mb-2">
+-                  اختر الحساب التشغيلي للدخول السريع:
+-                </label>
+-                <p className="text-[10px] text-slate-400 mb-2">
+-                  كلمة المرور من سر البيئة INITIAL_USER_PASSWORD — المستأجر MAIN
+-                </p>
+-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+-                  {DEMO_ROLE_PRESETS.map((p) => (
+-                    <button
+-                      key={p.username}
+-                      type="button"
+-                      onClick={() => handleRolePreset(p.username)}
+-                      className={`p-2 rounded-lg border text-right transition-all text-xs ${
+-                        username === p.username
+-                          ? 'border-blue-600 bg-blue-50/50 text-blue-900 font-bold'
+-                          : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+-                      }`}
+-                    >
+-                      <div className="font-semibold text-[11px]">{p.titleAr}</div>
+-                      <div className="text-[10px] text-slate-500">{p.nameAr}</div>
+-                    </button>
+-                  ))}
+-                </div>
+-              </div>
+-
+               <div className="pt-2">
+                 <button
+                   id="login-submit-btn"
+===== END FILE: .phase_tmp/01_src__components__LoginScreen_tsx.patch =====
+
+===== FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "PLATFORM-ADMIN-BOOTSTRAP-1: env platform admin (super_admin), fail-closed conflicts, no demo users, guard updated (after FIX-REPORT-ASOF-1, PG-ENTITY-CLOSE-PERSIST-1, PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
++  "lastChange": "DEMO-LOGIN-UI-REMOVE-1: remove quick-login role presets from LoginScreen",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -443,6 +443,12 @@
+       "status": "DONE",
+       "scope": "bootstrapPlatformAdmin from PLATFORM_ADMIN_*; super_admin; fail-closed on legacy privileged/nonprivileged conflict; no demo users; fail-fast guard validates env platform admin",
+       "evidence": "src/core/auth/platformAdminBootstrap.ts; server.ts; scripts/verifyPlatformAdminBootstrap1.ts"
++    },
++    {
++      "id": "DEMO-LOGIN-UI-REMOVE-1",
++      "status": "DONE",
++      "scope": "LoginScreen: remove DEMO_ROLE_PRESETS buttons and default accountant username; no auth logic change",
++      "evidence": "src/components/LoginScreen.tsx; scripts/verifyDemoLoginUiRemove1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/02_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -123,6 +123,7 @@
+   { name: 'PgEntityClosePersist1', script: 'scripts/verifyPgEntityClosePersist1.ts', expected: 14 },
+   { name: 'FixReportAsof1', script: 'scripts/verifyFixReportAsof1.ts', expected: 14 },
+   { name: 'PlatformAdminBootstrap1', script: 'scripts/verifyPlatformAdminBootstrap1.ts', expected: 14 },
++  { name: 'DemoLoginUiRemove1', script: 'scripts/verifyDemoLoginUiRemove1.ts', expected: 12 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/03_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file verifyDemoLoginUiRemove1.ts
+ * DEMO-LOGIN-UI-REMOVE-1 — no quick-login role presets on LoginScreen.
+ * Run: npx tsx scripts/verifyDemoLoginUiRemove1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean) => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}`); }
+};
+
+const login = fs.readFileSync('src/components/LoginScreen.tsx', 'utf8');
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 no DEMO_ROLE_PRESETS', !/DEMO_ROLE_PRESETS/.test(login));
+check('S2 no handleRolePreset', !/handleRolePreset/.test(login));
+check('S3 no accountant default username', !/useState\('accountant'\)/.test(login));
+check('S4 username default empty', /useState\(''\)/.test(login));
+check('S5 no INITIAL_USER_PASSWORD hint on login UI', !/INITIAL_USER_PASSWORD/.test(login));
+check('S6 no quick-login operational label', !/الحساب التشغيلي للدخول السريع/.test(login));
+check('S7 placeholder not demo list', !/accountant \/ approver/.test(login));
+check('S8 login form still present', /onLoginSuccess/.test(login) || /password/.test(login));
+check('S9 package DONE', byId['DEMO-LOGIN-UI-REMOVE-1']?.status === 'DONE');
+check('S10 lastChange mentions package', String(reg.lastChange || '').includes('DEMO-LOGIN-UI-REMOVE-1'));
+check('S11 prior PLATFORM-ADMIN-BOOTSTRAP-1 DONE', byId['PLATFORM-ADMIN-BOOTSTRAP-1']?.status === 'DONE');
+check('S12 Role Presets section removed', !/\{\/\* Role Presets \*\/\}/.test(login));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n0_01.part =====
