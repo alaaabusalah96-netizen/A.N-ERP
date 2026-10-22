@@ -1,0 +1,644 @@
+# A.N ERP — PLATFORM-ADMIN-BOOTSTRAP-1 (صارم) — مدير منصة واحد من الأسرار
+
+> على ZIP: `A.N-ERP-main - 2026-10-22T184722.042.zip`
+>
+> **الجودة المستمدة من مواصفة التنفيذ الصارمة + تسليم LEAN (SUMS/ORDER/FINAL).**
+>
+> ## السلوك
+> 1. `PLATFORM_ADMIN_USERNAME` + `PLATFORM_ADMIN_PASSWORD` إلزاميان عند الإقلاع.
+> 2. وحدة `src/core/auth/platformAdminBootstrap.ts`: إنشاء حساب **`super_admin`** واحد (PLATFORM_ADMIN في المصفوفة).
+> 3. إن وُجد نفس الاسم وهو privileged → **لا تغيير** لكلمة المرور/الدور/الحالة.
+> 4. إن وُجد نفس الاسم **غير** privileged → **إيقاف الإقلاع** (لا ترقية).
+> 5. إن وُجد privileged **باسم آخر** (مثل `admin` القديم) → **إيقاف الإقلاع** (لا مدير منصة ثانٍ).
+> 6. لا مستخدمين تشغيليين افتراضيين؛ لا `SEED_FORCE_RESET` على هذا المسار.
+> 7. Fail-Fast Guard: يتحقق من مدير المنصة المضبوط في env بدل admin/accountant/approver/warehouse.
+> 8. `SEED_ADMIN_PASSWORD` و`INITIAL_USER_PASSWORD` ليسا `requireEnv` للإقلاع.
+> 9. **خارج النطاق:** LoginScreen، seedOnly.ts، حذف سجلات DB.
+>
+> ## أسرار Studio (قبل/بعد التطبيق)
+> ```
+> PLATFORM_ADMIN_USERNAME=...
+> PLATFORM_ADMIN_PASSWORD=...
+> JWT_SECRET=...
+> PII_ENCRYPTION_SECRET=...
+> RESET_USER_PASSWORD=...
+> E2E_TEST_PASSWORD=...
+> ```
+>
+> **قاعدة فيها `admin` seed قديم:** الإقلاع سيفشل عمدًا حتى لا يُنشأ privileged ثانٍ. التنظيف/الترحيل خطوة منفصلة لاحقًا (أو قاعدة فارغة للتجربة).
+
+## الخطوات
+1. PRECHECK: `grep -q initSeedUsers server.ts`
+   ALREADY_DONE: `grep -q PLATFORM-ADMIN-BOOTSTRAP-1 docs/STATE_REGISTER.json && test -f src/core/auth/platformAdminBootstrap.ts`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN (ملفات n0 + n1)
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyPlatformAdminBootstrap1.ts` → `Passed: 14 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyFixReportAsof1.ts` · `npx tsx scripts/verifySecSessionPassword.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `feat(auth): strict platform admin bootstrap from env (fail-closed)`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+ee8bfaa0939cc994c4450c11e2300e9c55bb4cc7367fd07255dae4d525a10631  .phase_tmp/ORDER.txt
+0dec92c5d2d47d64bbcbb3a7c8daf54f10c9ea5cc1dfd06baea7397b7ed97329  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+ba3ecc60f0ef177e781dd519e683d3a6b6621473e363ce33d727c95884cf96f4  .phase_tmp/FINAL.txt
+79fabb0ac187dac93f007c3dcb8f556b13eb5c1fd2b2e4733e7c08573d66464c  .phase_tmp/01_server_ts.patch
+292b800670960f1ae684cd7d4a885b9705edd97b25165b77d4ce0bf72409753d  .phase_tmp/02__env_example.patch
+7a190ccad7ca53ccfccd4b1da7815a229e3436491432dd289fee0bf78d04d095  .phase_tmp/03_docs__STATE_REGISTER_json.patch
+e76ced4ada663c8dfda83636f46285ca4dd2ec027ac3c7dd9bcb0da541775445  .phase_tmp/04_scripts__runReconcileAuditB_ts.patch
+dac690cb70460323e49f39a30b59970868cac7462272eab8fc29aa4db02ec254  .phase_tmp/n0_01.part
+0da78533b8fd0b80da6124a0fb3de5d2a2539e431a23fa21e50a866d25267bed  .phase_tmp/n1_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_server_ts.patch
+02__env_example.patch
+03_docs__STATE_REGISTER_json.patch
+04_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+src/core/auth/platformAdminBootstrap.ts|n0
+scripts/verifyPlatformAdminBootstrap1.ts|n1
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+24824a9c9054a88deb0db5179306fa861c06698f5e9fb38cc555c0e86c508bd0  server.ts
+6df31b33d34a0e3a968eb2ab6d8084aa845413d1884dc65c7d84459ea00e1529  .env.example
+16642e487434fd3349d502370f48184ab9793e8d72366778c269ed8d2be26d44  docs/STATE_REGISTER.json
+48acbd142b46230859c81de56396c340d199cdd34005ce75a7b540b4d1b928fc  scripts/runReconcileAuditB.ts
+dac690cb70460323e49f39a30b59970868cac7462272eab8fc29aa4db02ec254  src/core/auth/platformAdminBootstrap.ts
+0da78533b8fd0b80da6124a0fb3de5d2a2539e431a23fa21e50a866d25267bed  scripts/verifyPlatformAdminBootstrap1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_server_ts.patch =====
+--- a/server.ts
++++ b/server.ts
+@@ -58,6 +58,7 @@
+ import { InventoryService } from './src/core/inventory/InventoryService';
+ import { PurchasingService } from './src/core/purchasing/PurchasingService';
+ import { SEED_COMPANY_PROFILE, seedOnlyInitialBootstrap, seedKey, SEED_TENANT_ID } from './src/core/seed/seedOnly';
++import { bootstrapPlatformAdmin } from './src/core/auth/platformAdminBootstrap';
+ import { runPhase7Battery } from './src/core/inventory/Phase7Battery';
+ import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
+ import { AccountingService } from './src/core/accounting/AccountingService';
+@@ -105,13 +106,14 @@
+   return 'strict';
+ }
+ 
+-// Ensure all 6 mandatory security secrets are strictly provided at server boot
+-requireEnv('SEED_ADMIN_PASSWORD');
+-requireEnv('INITIAL_USER_PASSWORD');
++// Mandatory security secrets at server boot (PLATFORM-ADMIN-BOOTSTRAP-1)
++requireEnv('PLATFORM_ADMIN_USERNAME');
++requireEnv('PLATFORM_ADMIN_PASSWORD');
+ requireEnv('RESET_USER_PASSWORD');
+ requireEnv('E2E_TEST_PASSWORD');
+ requireEnv('JWT_SECRET');
+ requireEnv('PII_ENCRYPTION_SECRET');
++// INITIAL_USER_PASSWORD: no longer required at boot (was only for demo operational seed users).
+ 
+ const PORT = Number(process.env.PORT) || 3000;
+ 
+@@ -120,246 +122,17 @@
+ 
+ // Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing directly via StoragePort
+ async function initSeedUsers(storage: StoragePort, tenantId: string = companyProfile.id) {
+-  const seedForceReset = process.env.SEED_FORCE_RESET === 'true';
+-  const seedAdminPass = requireEnv('SEED_ADMIN_PASSWORD');
+-  const adminHash = await argon2.hash(seedAdminPass, { type: argon2.argon2id });
+-  const adminTotpSecret = generateSecret();
+-  const encryptedAdminTotp = EncryptionService.encryptPII(adminTotpSecret);
+-  const adminBackupCodes = EncryptionService.generateEmergencyBackupCodes();
+-
+-  // Check if admin user exists in storage
+-  const existingAdmin = await storage.getUserByUsername(tenantId, 'admin');
+-  if (!existingAdmin.success || !existingAdmin.data) {
+-    const adminUser: User = {
+-      id: 'USR-ADMIN',
+-      tenantId,
+-      username: 'admin',
+-      fullName: 'مدير النظام (Seed Administrator)',
+-      email: 'admin@company.sa',
+-      role: 'super_admin',
+-      roleTitleAr: 'مدير النظام الأعلى',
+-      branchName: 'المركز الرئيسي',
+-      status: 'ACTIVE',
+-      passwordHash: adminHash,
+-      twoFactorSecret: encryptedAdminTotp,
+-      twoFactorEnabled: false,
+-      backupCodes: adminBackupCodes.hashedCodes,
+-      hashedBackupCodes: adminBackupCodes.hashedCodes,
+-      encryptedPii: EncryptionService.encryptPII({ email: 'admin@company.sa', phone: '+966509876543' }),
+-      requiresPasswordChange: false,
+-      createdAt: new Date().toISOString(),
+-    };
+-
+-    await storage.saveUser(adminUser, seedKey('admin'), true);
+-
+-    console.log('[seed] admin created from environment credentials; 2FA is not enabled');
++  // PLATFORM-ADMIN-BOOTSTRAP-1: sole platform admin from env; no demo operational users; no password reset from Secrets.
++  const platformUsername = requireEnv('PLATFORM_ADMIN_USERNAME');
++  const platformPassword = requireEnv('PLATFORM_ADMIN_PASSWORD');
++  const result = await bootstrapPlatformAdmin(storage, tenantId, platformUsername, platformPassword);
++  if (!result.ok) {
++    throw new Error(`[PLATFORM-ADMIN-BOOTSTRAP-1] ${result.message}`);
++  }
++  if (result.outcome === 'created') {
++    console.log('[bootstrap] platform admin created from environment credentials; 2FA is not enabled');
+   } else {
+-    if (seedForceReset) {
+-      await storage.updateUser(existingAdmin.data.id, {
+-        passwordHash: adminHash,
+-        status: 'ACTIVE',
+-      });
+-      console.log('[seed] admin reset by SEED_FORCE_RESET');
+-    }
+-  }
+-
+-  // Standard operational users for business operation
+-  const standardPass = requireEnv('INITIAL_USER_PASSWORD');
+-  const standardHash = await argon2.hash(standardPass, { type: argon2.argon2id });
+-
+-  // DEMO-LOGIN-ROLES-1: expanded operational users (password = INITIAL_USER_PASSWORD)
+-  const defaultStandardUsers: User[] = [
+-    {
+-      id: 'USR-001',
+-      tenantId,
+-      username: 'accountant',
+-      fullName: 'أحمد المنصور',
+-      email: 'a.mansour@company.sa',
+-      role: 'accountant',
+-      roleTitleAr: 'محاسب عام',
+-      branchName: 'الفرع الرئيسي - الرياض',
+-      status: 'ACTIVE',
+-      passwordHash: standardHash,
+-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
+-      twoFactorEnabled: false,
+-      backupCodes: EncryptionService.generateEmergencyBackupCodes().hashedCodes,
+-      encryptedPii: EncryptionService.encryptPII({
+-        nationalId: '1098765432',
+-        phone: '+966509876543',
+-        email: 'a.mansour@company.sa',
+-      }),
+-      requiresPasswordChange: false,
+-      createdAt: new Date().toISOString(),
+-    },
+-    {
+-      id: 'USR-002',
+-      tenantId,
+-      username: 'approver',
+-      fullName: 'سليمان الراشد',
+-      email: 's.alrashed@company.sa',
+-      role: 'financial_approver',
+-      roleTitleAr: 'معتمد مالي',
+-      branchName: 'الفرع الرئيسي - الرياض',
+-      status: 'ACTIVE',
+-      passwordHash: standardHash,
+-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
+-      twoFactorEnabled: false,
+-      backupCodes: EncryptionService.generateEmergencyBackupCodes().hashedCodes,
+-      encryptedPii: EncryptionService.encryptPII({
+-        nationalId: '1087654321',
+-        phone: '+966508765432',
+-        email: 's.alrashed@company.sa',
+-      }),
+-      requiresPasswordChange: false,
+-      createdAt: new Date().toISOString(),
+-    },
+-    {
+-      id: 'USR-003',
+-      tenantId,
+-      username: 'warehouse',
+-      fullName: 'سعد القحطاني',
+-      email: 's.alqahtani@company.sa',
+-      role: 'warehouse_keeper',
+-      roleTitleAr: 'أمين مستودع',
+-      branchName: 'مستودع السلي - الرياض',
+-      status: 'ACTIVE',
+-      passwordHash: standardHash,
+-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
+-      twoFactorEnabled: false,
+-      backupCodes: [],
+-      encryptedPii: EncryptionService.encryptPII({
+-        nationalId: '1076543210',
+-        phone: '+966559876543',
+-        email: 's.alqahtani@company.sa',
+-      }),
+-      requiresPasswordChange: false,
+-      createdAt: new Date().toISOString(),
+-    },
+-    {
+-      id: 'USR-004',
+-      tenantId,
+-      username: 'whmanager',
+-      fullName: 'نورة العتيبي',
+-      email: 'n.otaibi@company.sa',
+-      role: 'warehouse_manager',
+-      roleTitleAr: 'مدير المستودعات',
+-      branchName: 'مستودع السلي - الرياض',
+-      status: 'ACTIVE',
+-      passwordHash: standardHash,
+-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
+-      twoFactorEnabled: false,
+-      backupCodes: [],
+-      encryptedPii: EncryptionService.encryptPII({
+-        nationalId: '1065432109',
+-        phone: '+966551112233',
+-        email: 'n.otaibi@company.sa',
+-      }),
+-      requiresPasswordChange: false,
+-      createdAt: new Date().toISOString(),
+-    },
+-    {
+-      id: 'USR-005',
+-      tenantId,
+-      username: 'auditor',
+-      fullName: 'خالد الدوسري',
+-      email: 'k.dosari@company.sa',
+-      role: 'auditor',
+-      roleTitleAr: 'مراجع داخلي',
+-      branchName: 'المركز الرئيسي',
+-      status: 'ACTIVE',
+-      passwordHash: standardHash,
+-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
+-      twoFactorEnabled: false,
+-      backupCodes: [],
+-      encryptedPii: EncryptionService.encryptPII({
+-        nationalId: '1054321098',
+-        phone: '+966552223344',
+-        email: 'k.dosari@company.sa',
+-      }),
+-      requiresPasswordChange: false,
+-      createdAt: new Date().toISOString(),
+-    },
+-    {
+-      id: 'USR-006',
+-      tenantId,
+-      username: 'branch',
+-      fullName: 'فاطمة الحربي',
+-      email: 'f.harbi@company.sa',
+-      role: 'branch_manager',
+-      roleTitleAr: 'مدير فرع',
+-      branchName: 'الفرع الرئيسي - الرياض',
+-      status: 'ACTIVE',
+-      passwordHash: standardHash,
+-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
+-      twoFactorEnabled: false,
+-      backupCodes: [],
+-      encryptedPii: EncryptionService.encryptPII({
+-        nationalId: '1043210987',
+-        phone: '+966553334455',
+-        email: 'f.harbi@company.sa',
+-      }),
+-      requiresPasswordChange: false,
+-      createdAt: new Date().toISOString(),
+-    },
+-    {
+-      id: 'USR-007',
+-      tenantId,
+-      username: 'sales',
+-      fullName: 'عبدالله الشمري',
+-      email: 'a.shamri@company.sa',
+-      role: 'sales_officer',
+-      roleTitleAr: 'مسؤول مبيعات',
+-      branchName: 'الفرع الرئيسي - الرياض',
+-      status: 'ACTIVE',
+-      passwordHash: standardHash,
+-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
+-      twoFactorEnabled: false,
+-      backupCodes: [],
+-      encryptedPii: EncryptionService.encryptPII({
+-        nationalId: '1032109876',
+-        phone: '+966554445566',
+-        email: 'a.shamri@company.sa',
+-      }),
+-      requiresPasswordChange: false,
+-      createdAt: new Date().toISOString(),
+-    },
+-    {
+-      id: 'USR-008',
+-      tenantId,
+-      username: 'sysadmin',
+-      fullName: 'ريم السهلي',
+-      email: 'r.sahli@company.sa',
+-      role: 'system_admin',
+-      roleTitleAr: 'مدير نظام داخلي',
+-      branchName: 'المركز الرئيسي',
+-      status: 'ACTIVE',
+-      passwordHash: standardHash,
+-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
+-      twoFactorEnabled: false,
+-      backupCodes: [],
+-      encryptedPii: EncryptionService.encryptPII({
+-        nationalId: '1021098765',
+-        phone: '+966555556677',
+-        email: 'r.sahli@company.sa',
+-      }),
+-      requiresPasswordChange: false,
+-      createdAt: new Date().toISOString(),
+-    },
+-  ];
+-
+-  for (const u of defaultStandardUsers) {
+-    const check = await storage.getUserByUsername(tenantId, u.username);
+-    if (!check.success || !check.data) {
+-      await storage.saveUser(u, seedKey(`user-${u.id}`), true);
+-    } else {
+-      if (seedForceReset) {
+-        await storage.updateUser(check.data.id, {
+-          passwordHash: u.passwordHash,
+-          status: 'ACTIVE',
+-        });
+-        console.log(`[seed] ${u.username} reset by SEED_FORCE_RESET`);
+-      }
+-    }
++    console.log('[bootstrap] platform admin already present; password and role left unchanged');
+   }
+ }
+ 
+@@ -6562,10 +6335,19 @@
+     if (!gUsr.success || (gUsr.data?.length ?? 0) < 1) {
+       problems.push(`an_users: ${gUsr.data?.length ?? 0}`);
+     }
+-    const needed = ['admin', 'accountant', 'approver', 'warehouse'];
+-    const missing = needed.filter((u) => !(gUsr.data ?? []).some((x) => x.username === u));
+-    if (missing.length) {
+-      problems.push(`مستخدمون مفقودون: ${missing.join(', ')}`);
++    // PLATFORM-ADMIN-BOOTSTRAP-1: require configured platform admin (super_admin / PLATFORM_ADMIN), not demo usernames.
++    const platformUsername = (process.env.PLATFORM_ADMIN_USERNAME || '').trim();
++    const platformRow = (gUsr.data ?? []).find(
++      (x) => x.username && platformUsername && x.username.toLowerCase() === platformUsername.toLowerCase()
++    );
++    if (!platformUsername) {
++      problems.push('PLATFORM_ADMIN_USERNAME غير مضبوط');
++    } else if (!platformRow) {
++      problems.push(`مدير المنصة غير موجود: ${platformUsername}`);
++    } else if (platformRow.role !== 'super_admin' && platformRow.role !== 'platform_admin') {
++      problems.push(`حساب ${platformUsername} ليس بدور منصة (role=${platformRow.role})`);
++    } else if (platformRow.status !== 'ACTIVE') {
++      problems.push(`حساب مدير المنصة غير ACTIVE: ${platformUsername}`);
+     }
+     if (problems.length) {
+       const msg = `CRITICAL [trace=${t}] بذر الإقلاع غير مكتمل: ${problems.join(' | ')}`;
+===== END FILE: .phase_tmp/01_server_ts.patch =====
+
+===== FILE: .phase_tmp/02__env_example.patch =====
+--- a/.env.example
++++ b/.env.example
+@@ -28,7 +28,10 @@
+ PII_ENCRYPTION_SECRET=""
+ 
+ # Mandatory authentication secrets (Enforced via requireEnv at server startup)
+-SEED_ADMIN_PASSWORD=""
++# PLATFORM-ADMIN-BOOTSTRAP-1 — set real values only in Secrets UI (never commit)
++PLATFORM_ADMIN_USERNAME=""
++PLATFORM_ADMIN_PASSWORD=""
++# Optional for legacy scripts/tests only (not required to boot the server):
+ INITIAL_USER_PASSWORD=""
+ RESET_USER_PASSWORD=""
+ E2E_TEST_PASSWORD=""
+@@ -42,7 +45,6 @@
+ ENABLE_TEST_AUTH_BYPASS="false"
+ TEST_AUTH_BYPASS_SECRET=""
+ 
+-# Force Seed Reset: Default false to prevent resetting existing users.
+-# Set temporarily to true only to sync seed credentials with environment variables in staging/testing.
++# SEED_FORCE_RESET: legacy flag; platform-admin bootstrap never resets passwords from Secrets.
+ SEED_FORCE_RESET="false"
+ 
+===== END FILE: .phase_tmp/02__env_example.patch =====
+
+===== FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "FIX-REPORT-ASOF-1: trial balance uses getAccountBalanceAsOf posted lines by date (after PG-ENTITY-CLOSE-PERSIST-1, PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
++  "lastChange": "PLATFORM-ADMIN-BOOTSTRAP-1: env platform admin (super_admin), fail-closed conflicts, no demo users, guard updated",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -437,6 +437,12 @@
+       "status": "DONE",
+       "scope": "getTrialBalance builds debit/credit from getAccountBalanceAsOf (POSTED journals date<=asOf); tenant name/currency from getTenant",
+       "evidence": "src/core/accounting/AccountingService.ts; scripts/verifyFixReportAsof1.ts"
++    },
++    {
++      "id": "PLATFORM-ADMIN-BOOTSTRAP-1",
++      "status": "DONE",
++      "scope": "bootstrapPlatformAdmin from PLATFORM_ADMIN_*; super_admin; fail-closed on legacy privileged/nonprivileged conflict; no demo users; fail-fast guard validates env platform admin",
++      "evidence": "src/core/auth/platformAdminBootstrap.ts; server.ts; scripts/verifyPlatformAdminBootstrap1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/03_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -122,6 +122,7 @@
+   { name: 'PgXcompanyPersist1', script: 'scripts/verifyPgXcompanyPersist1.ts', expected: 14 },
+   { name: 'PgEntityClosePersist1', script: 'scripts/verifyPgEntityClosePersist1.ts', expected: 14 },
+   { name: 'FixReportAsof1', script: 'scripts/verifyFixReportAsof1.ts', expected: 14 },
++  { name: 'PlatformAdminBootstrap1', script: 'scripts/verifyPlatformAdminBootstrap1.ts', expected: 14 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/04_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file platformAdminBootstrap.ts
+ * @description PLATFORM-ADMIN-BOOTSTRAP-1 — sole platform administrator from env credentials.
+ * Fail-closed on conflicts; never resets passwords from Secrets; never creates demo operational users.
+ */
+import crypto from 'crypto';
+import argon2 from 'argon2';
+import { StoragePort, User } from '../storage/StoragePort';
+import { isPlatformPrivilegedUser } from './UserAdminGuards';
+import { seedKey } from '../seed/seedOnly';
+
+export type PlatformAdminBootstrapOk = { ok: true; outcome: 'created' | 'already_exists' };
+export type PlatformAdminBootstrapErr = { ok: false; code: string; message: string };
+export type PlatformAdminBootstrapResult = PlatformAdminBootstrapOk | PlatformAdminBootstrapErr;
+
+const USERNAME_MAX = 64;
+
+/**
+ * Bootstrap exactly one platform-privileged account (role super_admin) from
+ * PLATFORM_ADMIN_USERNAME / PLATFORM_ADMIN_PASSWORD semantics (caller supplies values).
+ */
+export async function bootstrapPlatformAdmin(
+  storage: StoragePort,
+  tenantId: string,
+  usernameRaw: string,
+  password: string
+): Promise<PlatformAdminBootstrapResult> {
+  const username = (usernameRaw || '').trim();
+  if (!username) {
+    return {
+      ok: false,
+      code: 'platform-admin-username-empty',
+      message: 'PLATFORM_ADMIN_USERNAME فارغ أو مسافات فقط — تعذر الإقلاع.',
+    };
+  }
+  if (username.length > USERNAME_MAX) {
+    return {
+      ok: false,
+      code: 'platform-admin-username-too-long',
+      message: `PLATFORM_ADMIN_USERNAME أطول من ${USERNAME_MAX} حرفًا.`,
+    };
+  }
+  if (!password || !String(password).length) {
+    return {
+      ok: false,
+      code: 'platform-admin-password-empty',
+      message: 'PLATFORM_ADMIN_PASSWORD فارغ — تعذر الإقلاع.',
+    };
+  }
+
+  const existingByName = await storage.getUserByUsername(tenantId, username);
+  if (existingByName.success && existingByName.data) {
+    if (isPlatformPrivilegedUser(existingByName.data)) {
+      // Intended platform admin already present — do not touch password/role/status/2FA.
+      return { ok: true, outcome: 'already_exists' };
+    }
+    return {
+      ok: false,
+      code: 'platform-admin-username-conflict-nonprivileged',
+      message:
+        'اسم المستخدم موجود لحساب ليس على مستوى المنصة — لن يتم ترقيته. يلزم تنظيف/ترحيل يدوي معتمد.',
+    };
+  }
+  if (!existingByName.success) {
+    const status = existingByName.error?.status;
+    const type = existingByName.error?.type || '';
+    if (status !== 404 && !type.includes('user-not-found')) {
+      return {
+        ok: false,
+        code: 'platform-admin-lookup-failed',
+        message: 'تعذر التحقق من وجود مدير المنصة في التخزين — إقلاع متوقف.',
+      };
+    }
+  }
+
+  const listed = await storage.listUsers(tenantId);
+  if (!listed.success) {
+    return {
+      ok: false,
+      code: 'platform-admin-list-failed',
+      message: 'تعذر سرد المستخدمين للتحقق من تعارض حسابات المنصة — إقلاع متوقف.',
+    };
+  }
+  const otherPrivileged = (listed.data || []).filter((u) => isPlatformPrivilegedUser(u));
+  if (otherPrivileged.length > 0) {
+    return {
+      ok: false,
+      code: 'platform-admin-legacy-privileged-exists',
+      message:
+        'يوجد حساب بصلاحيات منصة مسبقًا باسم مختلف. لن يُنشأ مدير منصة ثانٍ. يلزم خطوة ترحيل/تنظيف معتمدة.',
+    };
+  }
+
+  let passwordHash: string;
+  try {
+    passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+  } catch {
+    return {
+      ok: false,
+      code: 'platform-admin-hash-failed',
+      message: 'تعذر تشفير كلمة مرور مدير المنصة.',
+    };
+  }
+
+  const adminUser: User = {
+    id: `USR-${crypto.randomUUID().slice(0, 8)}`,
+    tenantId,
+    username,
+    fullName: 'مدير المنصة',
+    email: 'platform-admin@invalid.local',
+    role: 'super_admin',
+    roleTitleAr: 'مدير المنصة',
+    status: 'ACTIVE',
+    passwordHash,
+    twoFactorEnabled: false,
+    requiresPasswordChange: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  const saved = await storage.saveUser(adminUser, seedKey('platform-admin'), true);
+  if (!saved.success) {
+    return {
+      ok: false,
+      code: 'platform-admin-save-failed',
+      message: 'فشل حفظ مدير المنصة — إقلاع متوقف.',
+    };
+  }
+  return { ok: true, outcome: 'created' };
+}
+===== END FILE: .phase_tmp/n0_01.part =====
+
+===== FILE: .phase_tmp/n1_01.part =====
+/**
+ * @file verifyPlatformAdminBootstrap1.ts
+ * PLATFORM-ADMIN-BOOTSTRAP-1 — strict platform admin bootstrap (static + module contract).
+ * Run: npx tsx scripts/verifyPlatformAdminBootstrap1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean) => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}`); }
+};
+
+const srv = fs.readFileSync('server.ts', 'utf8');
+const modPath = 'src/core/auth/platformAdminBootstrap.ts';
+const boot = fs.readFileSync(modPath, 'utf8');
+const envEx = fs.existsSync('.env.example') ? fs.readFileSync('.env.example', 'utf8') : '';
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+const seedFn = (() => {
+  const i = srv.indexOf('async function initSeedUsers');
+  const j = srv.indexOf('async function startServer', i);
+  return srv.slice(i, j);
+})();
+const guardSlice = (() => {
+  const i = srv.indexOf('Startup Fail-Fast Guard');
+  return srv.slice(i, i + 1800);
+})();
+
+check('S1 module exports bootstrapPlatformAdmin', /export async function bootstrapPlatformAdmin/.test(boot));
+check('S2 role super_admin (baseline privileged)', /role:\s*'super_admin'/.test(boot));
+check('S3 Argon2id hash', /argon2id/.test(boot));
+check('S4 fail-closed nonprivileged same username', /platform-admin-username-conflict-nonprivileged/.test(boot));
+check('S5 fail-closed other privileged account', /platform-admin-legacy-privileged-exists/.test(boot));
+check('S6 never resets password on exists', /already_exists/.test(boot) && !/SEED_FORCE_RESET/.test(boot));
+check('S7 no defaultStandardUsers in server', !/defaultStandardUsers/.test(srv));
+check('S8 no hard-coded seed username admin create path', !/username:\s*'admin'/.test(seedFn));
+check('S9 requireEnv PLATFORM_ADMIN_USERNAME+PASSWORD', /requireEnv\('PLATFORM_ADMIN_USERNAME'\)/.test(srv) && /requireEnv\('PLATFORM_ADMIN_PASSWORD'\)/.test(srv));
+check('S10 SEED_ADMIN and INITIAL_USER not required at boot', !/requireEnv\('SEED_ADMIN_PASSWORD'\)/.test(srv) && !/requireEnv\('INITIAL_USER_PASSWORD'\)/.test(srv));
+check('S11 fail-fast no longer requires accountant/warehouse', !/needed = \['admin', 'accountant'/.test(guardSlice) && !/accountant', 'approver', 'warehouse'/.test(guardSlice));
+check('S12 fail-fast validates PLATFORM_ADMIN_USERNAME', /PLATFORM_ADMIN_USERNAME/.test(guardSlice));
+check('S13 package DONE', byId['PLATFORM-ADMIN-BOOTSTRAP-1']?.status === 'DONE');
+check('S14 .env.example has PLATFORM_ADMIN_* placeholders only', /PLATFORM_ADMIN_USERNAME=""/.test(envEx) && /PLATFORM_ADMIN_PASSWORD=""/.test(envEx));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n1_01.part =====

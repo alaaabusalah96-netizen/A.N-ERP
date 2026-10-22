@@ -1,7 +1,7 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-19 — FIX-REPORT-ASOF-1: trial balance uses getAccountBalanceAsOf posted lines by date (after PG-ENTITY-CLOSE-PERSIST-1, PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)
-**Verdict**: **CONDITIONAL GO** (rendered 2026-10-21)
+**Last update**: 2026-10-19 — PLATFORM-ADMIN-BOOTSTRAP-1: env platform admin (super_admin), fail-closed conflicts, no demo users, guard updated (after FIX-REPORT-ASOF-1, PG-ENTITY-CLOSE-PERSIST-1, PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)
+**Verdict**: **CONDITIONAL GO** (rendered 2026-10-22)
 
 ## Gates
 _Gates were not run in this render. Run `npm test` to execute them and refresh this file._
@@ -79,6 +79,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **PG-XCOMPANY-PERSIST-1** — DONE — an_cross_company_transfers table + PostgresPrimaryAdapter list/get/saveCrossCompanyTransfer _(evidence: src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgXcompanyPersist1.ts)_
 - **PG-ENTITY-CLOSE-PERSIST-1** — DONE — an_entity_books_state table + PostgresPrimaryAdapter get/saveEntityBooksState (default OPEN if no row) _(evidence: src/core/storage/adapters/PostgresPrimaryAdapter.ts; scripts/verifyPgEntityClosePersist1.ts)_
 - **FIX-REPORT-ASOF-1** — DONE — getTrialBalance builds debit/credit from getAccountBalanceAsOf (POSTED journals date<=asOf); tenant name/currency from getTenant _(evidence: src/core/accounting/AccountingService.ts; scripts/verifyFixReportAsof1.ts)_
+- **PLATFORM-ADMIN-BOOTSTRAP-1** — DONE — bootstrapPlatformAdmin from PLATFORM_ADMIN_*; super_admin; fail-closed on legacy privileged/nonprivileged conflict; no demo users; fail-fast guard validates env platform admin _(evidence: src/core/auth/platformAdminBootstrap.ts; server.ts; scripts/verifyPlatformAdminBootstrap1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |

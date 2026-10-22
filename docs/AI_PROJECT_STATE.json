@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "FIX-REPORT-ASOF-1: trial balance uses getAccountBalanceAsOf posted lines by date (after PG-ENTITY-CLOSE-PERSIST-1, PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
+  "lastChange": "PLATFORM-ADMIN-BOOTSTRAP-1: env platform admin (super_admin), fail-closed conflicts, no demo users, guard updated (after FIX-REPORT-ASOF-1, PG-ENTITY-CLOSE-PERSIST-1, PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -437,6 +437,12 @@
       "status": "DONE",
       "scope": "getTrialBalance builds debit/credit from getAccountBalanceAsOf (POSTED journals date<=asOf); tenant name/currency from getTenant",
       "evidence": "src/core/accounting/AccountingService.ts; scripts/verifyFixReportAsof1.ts"
+    },
+    {
+      "id": "PLATFORM-ADMIN-BOOTSTRAP-1",
+      "status": "DONE",
+      "scope": "bootstrapPlatformAdmin from PLATFORM_ADMIN_*; super_admin; fail-closed on legacy privileged/nonprivileged conflict; no demo users; fail-fast guard validates env platform admin",
+      "evidence": "src/core/auth/platformAdminBootstrap.ts; server.ts; scripts/verifyPlatformAdminBootstrap1.ts"
     }
   ],
   "defects": [
@@ -607,7 +613,7 @@
     }
   },
   "policy": "Edit docs/STATE_REGISTER.json by hand. AI_CONTEXT.md and docs/AI_PROJECT_STATE.* are rendered from it by scripts/runReconcileAuditB.ts and must not be replaced by a template.",
-  "renderedAt": "2026-10-21T00:00:00Z",
+  "renderedAt": "2026-10-22T00:00:00Z",
   "authoritativeVerdict": "CONDITIONAL_GO",
   "f07": {
     "verdict": "NOT_RUN",

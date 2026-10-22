@@ -58,6 +58,7 @@ import { ExpenseService } from './src/core/modules/expenses/ExpenseService';
 import { InventoryService } from './src/core/inventory/InventoryService';
 import { PurchasingService } from './src/core/purchasing/PurchasingService';
 import { SEED_COMPANY_PROFILE, seedOnlyInitialBootstrap, seedKey, SEED_TENANT_ID } from './src/core/seed/seedOnly';
+import { bootstrapPlatformAdmin } from './src/core/auth/platformAdminBootstrap';
 import { runPhase7Battery } from './src/core/inventory/Phase7Battery';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
 import { AccountingService } from './src/core/accounting/AccountingService';
@@ -105,13 +106,14 @@ export function resolveCookieSameSite(req: Request): 'strict' | 'none' {
   return 'strict';
 }
 
-// Ensure all 6 mandatory security secrets are strictly provided at server boot
-requireEnv('SEED_ADMIN_PASSWORD');
-requireEnv('INITIAL_USER_PASSWORD');
+// Mandatory security secrets at server boot (PLATFORM-ADMIN-BOOTSTRAP-1)
+requireEnv('PLATFORM_ADMIN_USERNAME');
+requireEnv('PLATFORM_ADMIN_PASSWORD');
 requireEnv('RESET_USER_PASSWORD');
 requireEnv('E2E_TEST_PASSWORD');
 requireEnv('JWT_SECRET');
 requireEnv('PII_ENCRYPTION_SECRET');
+// INITIAL_USER_PASSWORD: no longer required at boot (was only for demo operational seed users).
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -120,246 +122,17 @@ const companyProfile: TenantCompany = SEED_COMPANY_PROFILE;
 
 // Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing directly via StoragePort
 async function initSeedUsers(storage: StoragePort, tenantId: string = companyProfile.id) {
-  const seedForceReset = process.env.SEED_FORCE_RESET === 'true';
-  const seedAdminPass = requireEnv('SEED_ADMIN_PASSWORD');
-  const adminHash = await argon2.hash(seedAdminPass, { type: argon2.argon2id });
-  const adminTotpSecret = generateSecret();
-  const encryptedAdminTotp = EncryptionService.encryptPII(adminTotpSecret);
-  const adminBackupCodes = EncryptionService.generateEmergencyBackupCodes();
-
-  // Check if admin user exists in storage
-  const existingAdmin = await storage.getUserByUsername(tenantId, 'admin');
-  if (!existingAdmin.success || !existingAdmin.data) {
-    const adminUser: User = {
-      id: 'USR-ADMIN',
-      tenantId,
-      username: 'admin',
-      fullName: 'مدير النظام (Seed Administrator)',
-      email: 'admin@company.sa',
-      role: 'super_admin',
-      roleTitleAr: 'مدير النظام الأعلى',
-      branchName: 'المركز الرئيسي',
-      status: 'ACTIVE',
-      passwordHash: adminHash,
-      twoFactorSecret: encryptedAdminTotp,
-      twoFactorEnabled: false,
-      backupCodes: adminBackupCodes.hashedCodes,
-      hashedBackupCodes: adminBackupCodes.hashedCodes,
-      encryptedPii: EncryptionService.encryptPII({ email: 'admin@company.sa', phone: '+966509876543' }),
-      requiresPasswordChange: false,
-      createdAt: new Date().toISOString(),
-    };
-
-    await storage.saveUser(adminUser, seedKey('admin'), true);
-
-    console.log('[seed] admin created from environment credentials; 2FA is not enabled');
-  } else {
-    if (seedForceReset) {
-      await storage.updateUser(existingAdmin.data.id, {
-        passwordHash: adminHash,
-        status: 'ACTIVE',
-      });
-      console.log('[seed] admin reset by SEED_FORCE_RESET');
-    }
+  // PLATFORM-ADMIN-BOOTSTRAP-1: sole platform admin from env; no demo operational users; no password reset from Secrets.
+  const platformUsername = requireEnv('PLATFORM_ADMIN_USERNAME');
+  const platformPassword = requireEnv('PLATFORM_ADMIN_PASSWORD');
+  const result = await bootstrapPlatformAdmin(storage, tenantId, platformUsername, platformPassword);
+  if (!result.ok) {
+    throw new Error(`[PLATFORM-ADMIN-BOOTSTRAP-1] ${result.message}`);
   }
-
-  // Standard operational users for business operation
-  const standardPass = requireEnv('INITIAL_USER_PASSWORD');
-  const standardHash = await argon2.hash(standardPass, { type: argon2.argon2id });
-
-  // DEMO-LOGIN-ROLES-1: expanded operational users (password = INITIAL_USER_PASSWORD)
-  const defaultStandardUsers: User[] = [
-    {
-      id: 'USR-001',
-      tenantId,
-      username: 'accountant',
-      fullName: 'أحمد المنصور',
-      email: 'a.mansour@company.sa',
-      role: 'accountant',
-      roleTitleAr: 'محاسب عام',
-      branchName: 'الفرع الرئيسي - الرياض',
-      status: 'ACTIVE',
-      passwordHash: standardHash,
-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
-      twoFactorEnabled: false,
-      backupCodes: EncryptionService.generateEmergencyBackupCodes().hashedCodes,
-      encryptedPii: EncryptionService.encryptPII({
-        nationalId: '1098765432',
-        phone: '+966509876543',
-        email: 'a.mansour@company.sa',
-      }),
-      requiresPasswordChange: false,
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: 'USR-002',
-      tenantId,
-      username: 'approver',
-      fullName: 'سليمان الراشد',
-      email: 's.alrashed@company.sa',
-      role: 'financial_approver',
-      roleTitleAr: 'معتمد مالي',
-      branchName: 'الفرع الرئيسي - الرياض',
-      status: 'ACTIVE',
-      passwordHash: standardHash,
-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
-      twoFactorEnabled: false,
-      backupCodes: EncryptionService.generateEmergencyBackupCodes().hashedCodes,
-      encryptedPii: EncryptionService.encryptPII({
-        nationalId: '1087654321',
-        phone: '+966508765432',
-        email: 's.alrashed@company.sa',
-      }),
-      requiresPasswordChange: false,
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: 'USR-003',
-      tenantId,
-      username: 'warehouse',
-      fullName: 'سعد القحطاني',
-      email: 's.alqahtani@company.sa',
-      role: 'warehouse_keeper',
-      roleTitleAr: 'أمين مستودع',
-      branchName: 'مستودع السلي - الرياض',
-      status: 'ACTIVE',
-      passwordHash: standardHash,
-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
-      twoFactorEnabled: false,
-      backupCodes: [],
-      encryptedPii: EncryptionService.encryptPII({
-        nationalId: '1076543210',
-        phone: '+966559876543',
-        email: 's.alqahtani@company.sa',
-      }),
-      requiresPasswordChange: false,
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: 'USR-004',
-      tenantId,
-      username: 'whmanager',
-      fullName: 'نورة العتيبي',
-      email: 'n.otaibi@company.sa',
-      role: 'warehouse_manager',
-      roleTitleAr: 'مدير المستودعات',
-      branchName: 'مستودع السلي - الرياض',
-      status: 'ACTIVE',
-      passwordHash: standardHash,
-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
-      twoFactorEnabled: false,
-      backupCodes: [],
-      encryptedPii: EncryptionService.encryptPII({
-        nationalId: '1065432109',
-        phone: '+966551112233',
-        email: 'n.otaibi@company.sa',
-      }),
-      requiresPasswordChange: false,
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: 'USR-005',
-      tenantId,
-      username: 'auditor',
-      fullName: 'خالد الدوسري',
-      email: 'k.dosari@company.sa',
-      role: 'auditor',
-      roleTitleAr: 'مراجع داخلي',
-      branchName: 'المركز الرئيسي',
-      status: 'ACTIVE',
-      passwordHash: standardHash,
-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
-      twoFactorEnabled: false,
-      backupCodes: [],
-      encryptedPii: EncryptionService.encryptPII({
-        nationalId: '1054321098',
-        phone: '+966552223344',
-        email: 'k.dosari@company.sa',
-      }),
-      requiresPasswordChange: false,
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: 'USR-006',
-      tenantId,
-      username: 'branch',
-      fullName: 'فاطمة الحربي',
-      email: 'f.harbi@company.sa',
-      role: 'branch_manager',
-      roleTitleAr: 'مدير فرع',
-      branchName: 'الفرع الرئيسي - الرياض',
-      status: 'ACTIVE',
-      passwordHash: standardHash,
-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
-      twoFactorEnabled: false,
-      backupCodes: [],
-      encryptedPii: EncryptionService.encryptPII({
-        nationalId: '1043210987',
-        phone: '+966553334455',
-        email: 'f.harbi@company.sa',
-      }),
-      requiresPasswordChange: false,
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: 'USR-007',
-      tenantId,
-      username: 'sales',
-      fullName: 'عبدالله الشمري',
-      email: 'a.shamri@company.sa',
-      role: 'sales_officer',
-      roleTitleAr: 'مسؤول مبيعات',
-      branchName: 'الفرع الرئيسي - الرياض',
-      status: 'ACTIVE',
-      passwordHash: standardHash,
-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
-      twoFactorEnabled: false,
-      backupCodes: [],
-      encryptedPii: EncryptionService.encryptPII({
-        nationalId: '1032109876',
-        phone: '+966554445566',
-        email: 'a.shamri@company.sa',
-      }),
-      requiresPasswordChange: false,
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: 'USR-008',
-      tenantId,
-      username: 'sysadmin',
-      fullName: 'ريم السهلي',
-      email: 'r.sahli@company.sa',
-      role: 'system_admin',
-      roleTitleAr: 'مدير نظام داخلي',
-      branchName: 'المركز الرئيسي',
-      status: 'ACTIVE',
-      passwordHash: standardHash,
-      twoFactorSecret: EncryptionService.encryptPII(generateSecret()),
-      twoFactorEnabled: false,
-      backupCodes: [],
-      encryptedPii: EncryptionService.encryptPII({
-        nationalId: '1021098765',
-        phone: '+966555556677',
-        email: 'r.sahli@company.sa',
-      }),
-      requiresPasswordChange: false,
-      createdAt: new Date().toISOString(),
-    },
-  ];
-
-  for (const u of defaultStandardUsers) {
-    const check = await storage.getUserByUsername(tenantId, u.username);
-    if (!check.success || !check.data) {
-      await storage.saveUser(u, seedKey(`user-${u.id}`), true);
-    } else {
-      if (seedForceReset) {
-        await storage.updateUser(check.data.id, {
-          passwordHash: u.passwordHash,
-          status: 'ACTIVE',
-        });
-        console.log(`[seed] ${u.username} reset by SEED_FORCE_RESET`);
-      }
-    }
+  if (result.outcome === 'created') {
+    console.log('[bootstrap] platform admin created from environment credentials; 2FA is not enabled');
+  } else {
+    console.log('[bootstrap] platform admin already present; password and role left unchanged');
   }
 }
 
@@ -6562,10 +6335,19 @@ app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), as
     if (!gUsr.success || (gUsr.data?.length ?? 0) < 1) {
       problems.push(`an_users: ${gUsr.data?.length ?? 0}`);
     }
-    const needed = ['admin', 'accountant', 'approver', 'warehouse'];
-    const missing = needed.filter((u) => !(gUsr.data ?? []).some((x) => x.username === u));
-    if (missing.length) {
-      problems.push(`مستخدمون مفقودون: ${missing.join(', ')}`);
+    // PLATFORM-ADMIN-BOOTSTRAP-1: require configured platform admin (super_admin / PLATFORM_ADMIN), not demo usernames.
+    const platformUsername = (process.env.PLATFORM_ADMIN_USERNAME || '').trim();
+    const platformRow = (gUsr.data ?? []).find(
+      (x) => x.username && platformUsername && x.username.toLowerCase() === platformUsername.toLowerCase()
+    );
+    if (!platformUsername) {
+      problems.push('PLATFORM_ADMIN_USERNAME غير مضبوط');
+    } else if (!platformRow) {
+      problems.push(`مدير المنصة غير موجود: ${platformUsername}`);
+    } else if (platformRow.role !== 'super_admin' && platformRow.role !== 'platform_admin') {
+      problems.push(`حساب ${platformUsername} ليس بدور منصة (role=${platformRow.role})`);
+    } else if (platformRow.status !== 'ACTIVE') {
+      problems.push(`حساب مدير المنصة غير ACTIVE: ${platformUsername}`);
     }
     if (problems.length) {
       const msg = `CRITICAL [trace=${t}] بذر الإقلاع غير مكتمل: ${problems.join(' | ')}`;
