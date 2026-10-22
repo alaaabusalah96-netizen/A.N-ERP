@@ -58,7 +58,7 @@ import { ExpenseService } from './src/core/modules/expenses/ExpenseService';
 import { InventoryService } from './src/core/inventory/InventoryService';
 import { PurchasingService } from './src/core/purchasing/PurchasingService';
 import { SEED_COMPANY_PROFILE, seedOnlyInitialBootstrap, seedKey, SEED_TENANT_ID } from './src/core/seed/seedOnly';
-import { bootstrapPlatformAdmin } from './src/core/auth/platformAdminBootstrap';
+import { bootstrapPlatformAdmin, migratePlatformAdminLegacy } from './src/core/auth/platformAdminBootstrap';
 import { runPhase7Battery } from './src/core/inventory/Phase7Battery';
 import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
 import { AccountingService } from './src/core/accounting/AccountingService';
@@ -122,17 +122,36 @@ const companyProfile: TenantCompany = SEED_COMPANY_PROFILE;
 
 // Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing directly via StoragePort
 async function initSeedUsers(storage: StoragePort, tenantId: string = companyProfile.id) {
-  // PLATFORM-ADMIN-BOOTSTRAP-1: sole platform admin from env; no demo operational users; no password reset from Secrets.
+  // PLATFORM-ADMIN-BOOTSTRAP-1 + optional PLATFORM-ADMIN-MIGRATE-LEGACY-1
   const platformUsername = requireEnv('PLATFORM_ADMIN_USERNAME');
   const platformPassword = requireEnv('PLATFORM_ADMIN_PASSWORD');
-  const result = await bootstrapPlatformAdmin(storage, tenantId, platformUsername, platformPassword);
+  const migrateLegacy =
+    process.env.PLATFORM_ADMIN_MIGRATE_LEGACY === '1' ||
+    process.env.PLATFORM_ADMIN_MIGRATE_LEGACY === 'true';
+
+  const result = migrateLegacy
+    ? await migratePlatformAdminLegacy(storage, tenantId, platformUsername, platformPassword)
+    : await bootstrapPlatformAdmin(storage, tenantId, platformUsername, platformPassword);
+
   if (!result.ok) {
-    throw new Error(`[PLATFORM-ADMIN-BOOTSTRAP-1] ${result.message}`);
+    throw new Error(`[PLATFORM-ADMIN] ${result.message}`);
   }
-  if (result.outcome === 'created') {
+  if (result.outcome === 'created' || result.outcome === 'migrated_created') {
     console.log('[bootstrap] platform admin created from environment credentials; 2FA is not enabled');
+  } else if (result.outcome === 'migrated_synced') {
+    console.log(
+      '[bootstrap] platform admin password synced from Secrets (migrate); deactivate others if any'
+    );
   } else {
     console.log('[bootstrap] platform admin already present; password and role left unchanged');
+  }
+  if (result.ok && result.deactivated && result.deactivated.length) {
+    console.log(`[bootstrap] deactivated legacy platform accounts: ${result.deactivated.join(', ')}`);
+  }
+  if (migrateLegacy) {
+    console.log(
+      '[bootstrap] PLATFORM_ADMIN_MIGRATE_LEGACY was enabled — set it back to 0/false after successful login'
+    );
   }
 }
 

@@ -4,7 +4,7 @@
     "version": "7.2.0"
   },
   "lastUpdated": "2026-10-19",
-  "lastChange": "DEMO-LOGIN-UI-REMOVE-1: remove quick-login role presets from LoginScreen (after PLATFORM-ADMIN-BOOTSTRAP-1, FIX-REPORT-ASOF-1, PG-ENTITY-CLOSE-PERSIST-1, PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
+  "lastChange": "PLATFORM-ADMIN-MIGRATE-LEGACY-1: opt-in deactivate other platform users + sync/create env admin (after DEMO-LOGIN-UI-REMOVE-1, PLATFORM-ADMIN-BOOTSTRAP-1, FIX-REPORT-ASOF-1, PG-ENTITY-CLOSE-PERSIST-1, PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
   "packages": [
     {
       "id": "PH0-7.6",
@@ -449,6 +449,12 @@
       "status": "DONE",
       "scope": "LoginScreen: remove DEMO_ROLE_PRESETS buttons and default accountant username; no auth logic change",
       "evidence": "src/components/LoginScreen.tsx; scripts/verifyDemoLoginUiRemove1.ts"
+    },
+    {
+      "id": "PLATFORM-ADMIN-MIGRATE-LEGACY-1",
+      "status": "DONE",
+      "scope": "When PLATFORM_ADMIN_MIGRATE_LEGACY=1: deactivate other privileged users; create or password-sync PLATFORM_ADMIN_* as super_admin",
+      "evidence": "src/core/auth/platformAdminBootstrap.ts; server.ts; scripts/verifyPlatformAdminMigrateLegacy1.ts"
     }
   ],
   "defects": [

@@ -1,0 +1,376 @@
+# A.N ERP — PLATFORM-ADMIN-MIGRATE-LEGACY-1 — ترحيل أدمن المنصة من الأسرار
+
+> على ZIP: `A.N-ERP-main - 2026-10-22T214813.821.zip`
+>
+> **تفعيل صريح فقط** عبر:
+> ```
+> PLATFORM_ADMIN_MIGRATE_LEGACY=1
+> PLATFORM_ADMIN_USERNAME=alaaabusalah@gmail.com
+> PLATFORM_ADMIN_PASSWORD=...
+> ```
+>
+> ## ماذا يفعل عند العلم = 1
+> 1. يعطّل (`INACTIVE`) كل حساب **منصة** آخر على المستأجر (مثل `admin` القديم).
+> 2. إن وُجد اسم `PLATFORM_ADMIN_USERNAME`: يضبط كلمة المرور من السر + `super_admin` + `ACTIVE`.
+> 3. إن لم يوجد: ينشئ الحساب من الأسرار.
+> 4. بدون العلم: يبقى سلوك Bootstrap الصارم (بدون إعادة ضبط كلمة المرور).
+>
+> ## بعد نجاح الدخول (مهم)
+> أعد السر إلى:
+> ```
+> PLATFORM_ADMIN_MIGRATE_LEGACY=0
+> ```
+> حتى لا تُعاد مزامنة كلمة المرور من Secrets في كل إقلاع.
+
+## الخطوات
+1. PRECHECK: `grep -q bootstrapPlatformAdmin src/core/auth/platformAdminBootstrap.ts`
+   ALREADY_DONE: `grep -q PLATFORM-ADMIN-MIGRATE-LEGACY-1 docs/STATE_REGISTER.json && grep -q migratePlatformAdminLegacy src/core/auth/platformAdminBootstrap.ts`
+2. tsc count قبل
+3. اكتب `.phase_tmp`
+4. SUMS ثم JOIN
+5. APPLY ORDER.txt
+6. FINAL.txt
+7. `rm -rf .phase_tmp`
+8. مرة واحدة: `npx tsc --noEmit` ثم `npm run build` — إذا بقيت على Wait for tsc أكثر من دقيقتين: لا تعد تشغيل tsc في حلقة؛ نفّذ مرة واحدة فقط ثم أكمل 9–12. لا تتوقف صامتًا على انتظار tsc.
+9. `npx tsx scripts/verifyPlatformAdminMigrateLegacy1.ts` → `Passed: 12 | Failed: 0`
+10. انحدار: `npx tsx scripts/verifyPlatformAdminBootstrap1.ts` · `npx tsx scripts/verifyDemoLoginUiRemove1.ts`
+11. PG_NOT_REQUIRED
+12. `npx tsx scripts/runReconcileAuditB.ts --docs-only`
+13. commit: `feat(auth): opt-in legacy platform admin migration from Secrets`
+
+## التقرير (كتلة نص واحدة)
+4/5/6/8/9/10/12 + Passed.
+
+===== FILE: .phase_tmp/SUMS.txt =====
+7788174f64982a833bb75a75b8fda1a60590d858b78576d0735c01e42a5fe486  .phase_tmp/ORDER.txt
+949c59df3f9d59ce43ecb0dc1334a826a7acd09e54727e3c22ecfdb82d4fbe78  .phase_tmp/JOIN.txt
+9b58af1fd77b498b94ed28354b7d189a9c813b8cbfbce1de4c1efff63d4ea243  .phase_tmp/PATCH_JOIN.txt
+f116176ad47326c5f4172c62bce9189f6efcebd78ee57fedcdc74d96200869c7  .phase_tmp/FINAL.txt
+9b08ebba359a5f2334faab949ed78d13e7f460b1a698915fd65ccd16fc8d7129  .phase_tmp/01_src__core__auth__platformAdminBootstrap_ts.patch
+33ef8f6bc8dbbd74b99a1e5e4ab4e2bf694f686d24ed2d78392620552ed3843b  .phase_tmp/02_server_ts.patch
+e4c22a2ed14228cbd0c9661133c90ffd38a3848b62f91e79ab057e7dd6f27b8b  .phase_tmp/03__env_example.patch
+52fa5f59c7bd653a1429de9c0ad6ff63019e292f7205e778c836a003761cf744  .phase_tmp/04_docs__STATE_REGISTER_json.patch
+c6d88f0d3a423cc98999a72e69528438c97c6fc74dd03a4471236abb08316f5b  .phase_tmp/05_scripts__runReconcileAuditB_ts.patch
+266f0b638af90d573f32ded4da2bf06d7b91a962a447aeef8487ed4fec01c1ce  .phase_tmp/n0_01.part
+===== END FILE: .phase_tmp/SUMS.txt =====
+
+===== FILE: .phase_tmp/ORDER.txt =====
+01_src__core__auth__platformAdminBootstrap_ts.patch
+02_server_ts.patch
+03__env_example.patch
+04_docs__STATE_REGISTER_json.patch
+05_scripts__runReconcileAuditB_ts.patch
+===== END FILE: .phase_tmp/ORDER.txt =====
+
+===== FILE: .phase_tmp/JOIN.txt =====
+scripts/verifyPlatformAdminMigrateLegacy1.ts|n0
+===== END FILE: .phase_tmp/JOIN.txt =====
+
+===== FILE: .phase_tmp/PATCH_JOIN.txt =====
+# No multi-part patch join.
+===== END FILE: .phase_tmp/PATCH_JOIN.txt =====
+
+===== FILE: .phase_tmp/FINAL.txt =====
+91ec8f2d31b504ad1afbabbd307d4031d1e5aa60624cbd9fd1a9714ee15a8613  src/core/auth/platformAdminBootstrap.ts
+fa62a8c840cd63a4168ed8060ced415e1c2be0eeb9a9556a61596f996ea8842b  server.ts
+a4fc2d151f29f51b9ad2474b719b80cb72affe33be6bf1ae1e634085466ae35c  .env.example
+103ea04d3f8fbe14391ab32535b8463c10768ee14c80d4545c7449f15e5ae158  docs/STATE_REGISTER.json
+5e0c203a2e75854c52414bd692809abf2a556d781a66b68503cf97c5c354f68d  scripts/runReconcileAuditB.ts
+266f0b638af90d573f32ded4da2bf06d7b91a962a447aeef8487ed4fec01c1ce  scripts/verifyPlatformAdminMigrateLegacy1.ts
+===== END FILE: .phase_tmp/FINAL.txt =====
+
+===== FILE: .phase_tmp/01_src__core__auth__platformAdminBootstrap_ts.patch =====
+--- a/src/core/auth/platformAdminBootstrap.ts
++++ b/src/core/auth/platformAdminBootstrap.ts
+@@ -9,7 +9,11 @@
+ import { isPlatformPrivilegedUser } from './UserAdminGuards';
+ import { seedKey } from '../seed/seedOnly';
+ 
+-export type PlatformAdminBootstrapOk = { ok: true; outcome: 'created' | 'already_exists' };
++export type PlatformAdminBootstrapOk = {
++  ok: true;
++  outcome: 'created' | 'already_exists' | 'migrated_synced' | 'migrated_created';
++  deactivated?: string[];
++};
+ export type PlatformAdminBootstrapErr = { ok: false; code: string; message: string };
+ export type PlatformAdminBootstrapResult = PlatformAdminBootstrapOk | PlatformAdminBootstrapErr;
+ 
+@@ -127,3 +131,131 @@
+   }
+   return { ok: true, outcome: 'created' };
+ }
++
++
++/**
++ * PLATFORM-ADMIN-MIGRATE-LEGACY-1 — explicit one-shot migration (opt-in via env flag).
++ * - Deactivates other platform-privileged accounts on the tenant.
++ * - Creates PLATFORM_ADMIN_USERNAME as super_admin, or syncs password if it already exists.
++ * - Must only run when PLATFORM_ADMIN_MIGRATE_LEGACY=1 (caller enforces).
++ */
++export async function migratePlatformAdminLegacy(
++  storage: StoragePort,
++  tenantId: string,
++  usernameRaw: string,
++  password: string
++): Promise<PlatformAdminBootstrapResult> {
++  const username = (usernameRaw || '').trim();
++  if (!username) {
++    return {
++      ok: false,
++      code: 'platform-admin-username-empty',
++      message: 'PLATFORM_ADMIN_USERNAME فارغ أو مسافات فقط — تعذر الترحيل.',
++    };
++  }
++  if (username.length > USERNAME_MAX) {
++    return {
++      ok: false,
++      code: 'platform-admin-username-too-long',
++      message: `PLATFORM_ADMIN_USERNAME أطول من ${USERNAME_MAX} حرفًا.`,
++    };
++  }
++  if (!password || !String(password).length) {
++    return {
++      ok: false,
++      code: 'platform-admin-password-empty',
++      message: 'PLATFORM_ADMIN_PASSWORD فارغ — تعذر الترحيل.',
++    };
++  }
++
++  const listed = await storage.listUsers(tenantId);
++  if (!listed.success) {
++    return {
++      ok: false,
++      code: 'platform-admin-list-failed',
++      message: 'تعذر سرد المستخدمين أثناء الترحيل — إقلاع متوقف.',
++    };
++  }
++
++  const deactivated: string[] = [];
++  for (const u of listed.data || []) {
++    if (!u?.id || !u.username) continue;
++    if (u.username.toLowerCase() === username.toLowerCase()) continue;
++    if (!isPlatformPrivilegedUser(u)) continue;
++    if (u.status === 'INACTIVE') continue;
++    const upd = await storage.updateUser(u.id, { status: 'INACTIVE' });
++    if (!upd.success) {
++      return {
++        ok: false,
++        code: 'platform-admin-deactivate-failed',
++        message: `تعذر تعطيل حساب المنصة القديم: ${u.username}`,
++      };
++    }
++    deactivated.push(u.username);
++  }
++
++  let passwordHash: string;
++  try {
++    passwordHash = await argon2.hash(password, { type: argon2.argon2id });
++  } catch {
++    return {
++      ok: false,
++      code: 'platform-admin-hash-failed',
++      message: 'تعذر تشفير كلمة مرور مدير المنصة.',
++    };
++  }
++
++  const existingByName = await storage.getUserByUsername(tenantId, username);
++  if (existingByName.success && existingByName.data) {
++    const upd = await storage.updateUser(existingByName.data.id, {
++      passwordHash,
++      role: 'super_admin',
++      roleTitleAr: 'مدير المنصة',
++      status: 'ACTIVE',
++      fullName: existingByName.data.fullName || 'مدير المنصة',
++    });
++    if (!upd.success) {
++      return {
++        ok: false,
++        code: 'platform-admin-sync-failed',
++        message: 'تعذر مزامنة حساب مدير المنصة من الأسرار.',
++      };
++    }
++    return { ok: true, outcome: 'migrated_synced', deactivated };
++  }
++  if (!existingByName.success) {
++    const status = existingByName.error?.status;
++    const type = existingByName.error?.type || '';
++    if (status !== 404 && !type.includes('user-not-found')) {
++      return {
++        ok: false,
++        code: 'platform-admin-lookup-failed',
++        message: 'تعذر التحقق من وجود مدير المنصة في التخزين — ترحيل متوقف.',
++      };
++    }
++  }
++
++  const adminUser: User = {
++    id: `USR-${crypto.randomUUID().slice(0, 8)}`,
++    tenantId,
++    username,
++    fullName: 'مدير المنصة',
++    email: 'platform-admin@invalid.local',
++    role: 'super_admin',
++    roleTitleAr: 'مدير المنصة',
++    status: 'ACTIVE',
++    passwordHash,
++    twoFactorEnabled: false,
++    requiresPasswordChange: false,
++    createdAt: new Date().toISOString(),
++  };
++  const saved = await storage.saveUser(adminUser, seedKey('platform-admin-migrate'), true);
++  if (!saved.success) {
++    return {
++      ok: false,
++      code: 'platform-admin-save-failed',
++      message: 'فشل إنشاء مدير المنصة بعد الترحيل — إقلاع متوقف.',
++    };
++  }
++  return { ok: true, outcome: 'migrated_created', deactivated };
++}
+===== END FILE: .phase_tmp/01_src__core__auth__platformAdminBootstrap_ts.patch =====
+
+===== FILE: .phase_tmp/02_server_ts.patch =====
+--- a/server.ts
++++ b/server.ts
+@@ -58,7 +58,7 @@
+ import { InventoryService } from './src/core/inventory/InventoryService';
+ import { PurchasingService } from './src/core/purchasing/PurchasingService';
+ import { SEED_COMPANY_PROFILE, seedOnlyInitialBootstrap, seedKey, SEED_TENANT_ID } from './src/core/seed/seedOnly';
+-import { bootstrapPlatformAdmin } from './src/core/auth/platformAdminBootstrap';
++import { bootstrapPlatformAdmin, migratePlatformAdminLegacy } from './src/core/auth/platformAdminBootstrap';
+ import { runPhase7Battery } from './src/core/inventory/Phase7Battery';
+ import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
+ import { AccountingService } from './src/core/accounting/AccountingService';
+@@ -122,17 +122,36 @@
+ 
+ // Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing directly via StoragePort
+ async function initSeedUsers(storage: StoragePort, tenantId: string = companyProfile.id) {
+-  // PLATFORM-ADMIN-BOOTSTRAP-1: sole platform admin from env; no demo operational users; no password reset from Secrets.
++  // PLATFORM-ADMIN-BOOTSTRAP-1 + optional PLATFORM-ADMIN-MIGRATE-LEGACY-1
+   const platformUsername = requireEnv('PLATFORM_ADMIN_USERNAME');
+   const platformPassword = requireEnv('PLATFORM_ADMIN_PASSWORD');
+-  const result = await bootstrapPlatformAdmin(storage, tenantId, platformUsername, platformPassword);
++  const migrateLegacy =
++    process.env.PLATFORM_ADMIN_MIGRATE_LEGACY === '1' ||
++    process.env.PLATFORM_ADMIN_MIGRATE_LEGACY === 'true';
++
++  const result = migrateLegacy
++    ? await migratePlatformAdminLegacy(storage, tenantId, platformUsername, platformPassword)
++    : await bootstrapPlatformAdmin(storage, tenantId, platformUsername, platformPassword);
++
+   if (!result.ok) {
+-    throw new Error(`[PLATFORM-ADMIN-BOOTSTRAP-1] ${result.message}`);
++    throw new Error(`[PLATFORM-ADMIN] ${result.message}`);
+   }
+-  if (result.outcome === 'created') {
++  if (result.outcome === 'created' || result.outcome === 'migrated_created') {
+     console.log('[bootstrap] platform admin created from environment credentials; 2FA is not enabled');
++  } else if (result.outcome === 'migrated_synced') {
++    console.log(
++      '[bootstrap] platform admin password synced from Secrets (migrate); deactivate others if any'
++    );
+   } else {
+     console.log('[bootstrap] platform admin already present; password and role left unchanged');
++  }
++  if (result.ok && result.deactivated && result.deactivated.length) {
++    console.log(`[bootstrap] deactivated legacy platform accounts: ${result.deactivated.join(', ')}`);
++  }
++  if (migrateLegacy) {
++    console.log(
++      '[bootstrap] PLATFORM_ADMIN_MIGRATE_LEGACY was enabled — set it back to 0/false after successful login'
++    );
+   }
+ }
+ 
+===== END FILE: .phase_tmp/02_server_ts.patch =====
+
+===== FILE: .phase_tmp/03__env_example.patch =====
+--- a/.env.example
++++ b/.env.example
+@@ -31,6 +31,8 @@
+ # PLATFORM-ADMIN-BOOTSTRAP-1 — set real values only in Secrets UI (never commit)
+ PLATFORM_ADMIN_USERNAME=""
+ PLATFORM_ADMIN_PASSWORD=""
++# One-shot legacy migration: deactivate other platform accounts + sync/create env admin. Set 0 after login.
++PLATFORM_ADMIN_MIGRATE_LEGACY="0"
+ # Optional for legacy scripts/tests only (not required to boot the server):
+ INITIAL_USER_PASSWORD=""
+ RESET_USER_PASSWORD=""
+===== END FILE: .phase_tmp/03__env_example.patch =====
+
+===== FILE: .phase_tmp/04_docs__STATE_REGISTER_json.patch =====
+--- a/docs/STATE_REGISTER.json
++++ b/docs/STATE_REGISTER.json
+@@ -4,7 +4,7 @@
+     "version": "7.2.0"
+   },
+   "lastUpdated": "2026-10-19",
+-  "lastChange": "DEMO-LOGIN-UI-REMOVE-1: remove quick-login role presets from LoginScreen (after PLATFORM-ADMIN-BOOTSTRAP-1, FIX-REPORT-ASOF-1, PG-ENTITY-CLOSE-PERSIST-1, PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)",
++  "lastChange": "PLATFORM-ADMIN-MIGRATE-LEGACY-1: opt-in deactivate other platform users + sync/create env admin",
+   "packages": [
+     {
+       "id": "PH0-7.6",
+@@ -449,6 +449,12 @@
+       "status": "DONE",
+       "scope": "LoginScreen: remove DEMO_ROLE_PRESETS buttons and default accountant username; no auth logic change",
+       "evidence": "src/components/LoginScreen.tsx; scripts/verifyDemoLoginUiRemove1.ts"
++    },
++    {
++      "id": "PLATFORM-ADMIN-MIGRATE-LEGACY-1",
++      "status": "DONE",
++      "scope": "When PLATFORM_ADMIN_MIGRATE_LEGACY=1: deactivate other privileged users; create or password-sync PLATFORM_ADMIN_* as super_admin",
++      "evidence": "src/core/auth/platformAdminBootstrap.ts; server.ts; scripts/verifyPlatformAdminMigrateLegacy1.ts"
+     }
+   ],
+   "defects": [
+===== END FILE: .phase_tmp/04_docs__STATE_REGISTER_json.patch =====
+
+===== FILE: .phase_tmp/05_scripts__runReconcileAuditB_ts.patch =====
+--- a/scripts/runReconcileAuditB.ts
++++ b/scripts/runReconcileAuditB.ts
+@@ -124,6 +124,7 @@
+   { name: 'FixReportAsof1', script: 'scripts/verifyFixReportAsof1.ts', expected: 14 },
+   { name: 'PlatformAdminBootstrap1', script: 'scripts/verifyPlatformAdminBootstrap1.ts', expected: 14 },
+   { name: 'DemoLoginUiRemove1', script: 'scripts/verifyDemoLoginUiRemove1.ts', expected: 12 },
++  { name: 'PlatformAdminMigrateLegacy1', script: 'scripts/verifyPlatformAdminMigrateLegacy1.ts', expected: 12 },
+   { name: 'P9Validation', script: 'scripts/verifyP9Validation.ts' },
+ ];
+ // AUDIT-UNIFY-1: the financial / integrity gates and the two guards that protect the audit itself are CRITICAL too (a regression there is NO_GO)
+===== END FILE: .phase_tmp/05_scripts__runReconcileAuditB_ts.patch =====
+
+===== FILE: .phase_tmp/n0_01.part =====
+/**
+ * @file verifyPlatformAdminMigrateLegacy1.ts
+ * PLATFORM-ADMIN-MIGRATE-LEGACY-1 — opt-in legacy platform-admin migration.
+ * Run: npx tsx scripts/verifyPlatformAdminMigrateLegacy1.ts
+ */
+import fs from 'fs';
+
+let pass = 0, fail = 0;
+const check = (label: string, ok: boolean) => {
+  if (ok) { pass++; console.log(`[PASS] ${label}`); }
+  else { fail++; console.log(`[FAIL] ${label}`); }
+};
+
+const boot = fs.readFileSync('src/core/auth/platformAdminBootstrap.ts', 'utf8');
+const srv = fs.readFileSync('server.ts', 'utf8');
+const envEx = fs.existsSync('.env.example') ? fs.readFileSync('.env.example', 'utf8') : '';
+const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
+const byId = Object.fromEntries((reg.packages || []).map((p: any) => [p.id, p]));
+
+check('S1 migratePlatformAdminLegacy exported', /export async function migratePlatformAdminLegacy/.test(boot));
+check('S2 deactivates other privileged to INACTIVE', /status: 'INACTIVE'/.test(boot) && /deactivated/.test(boot));
+check('S3 syncs password hash on existing username', /migrated_synced/.test(boot));
+check('S4 creates when missing', /migrated_created/.test(boot));
+check('S5 server gates on PLATFORM_ADMIN_MIGRATE_LEGACY', /PLATFORM_ADMIN_MIGRATE_LEGACY/.test(srv));
+check('S6 migrate only when flag 1/true', /MIGRATE_LEGACY === '1'/.test(srv) || /MIGRATE_LEGACY === "1"/.test(srv));
+check('S7 default path still bootstrapPlatformAdmin', /bootstrapPlatformAdmin\(/.test(srv));
+check('S8 reminds to disable flag after login', /set it back to 0/.test(srv));
+check('S9 package DONE', byId['PLATFORM-ADMIN-MIGRATE-LEGACY-1']?.status === 'DONE');
+check('S10 lastChange mentions package', String(reg.lastChange || '').includes('PLATFORM-ADMIN-MIGRATE-LEGACY-1'));
+check('S11 .env.example documents flag', /PLATFORM_ADMIN_MIGRATE_LEGACY/.test(envEx));
+check('S12 bootstrap still fail-closed without flag', /platform-admin-legacy-privileged-exists/.test(boot));
+
+console.log(`\nPassed: ${pass} | Failed: ${fail}`);
+process.exit(fail ? 1 : 0);
+===== END FILE: .phase_tmp/n0_01.part =====

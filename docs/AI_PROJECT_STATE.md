@@ -1,6 +1,6 @@
 # A.N ERP — PROJECT STATE (v7.2.0)
 
-**Last update**: 2026-10-19 — DEMO-LOGIN-UI-REMOVE-1: remove quick-login role presets from LoginScreen (after PLATFORM-ADMIN-BOOTSTRAP-1, FIX-REPORT-ASOF-1, PG-ENTITY-CLOSE-PERSIST-1, PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)
+**Last update**: 2026-10-19 — PLATFORM-ADMIN-MIGRATE-LEGACY-1: opt-in deactivate other platform users + sync/create env admin (after DEMO-LOGIN-UI-REMOVE-1, PLATFORM-ADMIN-BOOTSTRAP-1, FIX-REPORT-ASOF-1, PG-ENTITY-CLOSE-PERSIST-1, PG-XCOMPANY-PERSIST-1, PG-GROUP-ITEM-PERSIST-1, PG-GROUP-PERSIST-1, FIX-TENANT-SUSPEND-1, FIX-SESSION-REVOKE-1, UI-PLATFORM-HUB-1, UI-2FA-SETUP-1)
 **Verdict**: **CONDITIONAL GO** (rendered 2026-10-22)
 
 ## Gates
@@ -81,6 +81,7 @@ _Gates were not run in this render. Run `npm test` to execute them and refresh t
 - **FIX-REPORT-ASOF-1** — DONE — getTrialBalance builds debit/credit from getAccountBalanceAsOf (POSTED journals date<=asOf); tenant name/currency from getTenant _(evidence: src/core/accounting/AccountingService.ts; scripts/verifyFixReportAsof1.ts)_
 - **PLATFORM-ADMIN-BOOTSTRAP-1** — DONE — bootstrapPlatformAdmin from PLATFORM_ADMIN_*; super_admin; fail-closed on legacy privileged/nonprivileged conflict; no demo users; fail-fast guard validates env platform admin _(evidence: src/core/auth/platformAdminBootstrap.ts; server.ts; scripts/verifyPlatformAdminBootstrap1.ts)_
 - **DEMO-LOGIN-UI-REMOVE-1** — DONE — LoginScreen: remove DEMO_ROLE_PRESETS buttons and default accountant username; no auth logic change _(evidence: src/components/LoginScreen.tsx; scripts/verifyDemoLoginUiRemove1.ts)_
+- **PLATFORM-ADMIN-MIGRATE-LEGACY-1** — DONE — When PLATFORM_ADMIN_MIGRATE_LEGACY=1: deactivate other privileged users; create or password-sync PLATFORM_ADMIN_* as super_admin _(evidence: src/core/auth/platformAdminBootstrap.ts; server.ts; scripts/verifyPlatformAdminMigrateLegacy1.ts)_
 
 ## Defect register
 | ID | Severity | Status | What | Evidence |
