@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <!-- Rounded container background with gradient -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#022c22" />
+      <stop offset="50%" stop-color="#064e3b" />
+      <stop offset="100%" stop-color="#111827" />
+    </linearGradient>
+    <linearGradient id="glowGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0.2" />
+    </linearGradient>
+    <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#6366f1" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <drop-shadow dx="0" dy="6" stdDeviation="6" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+  
+  <rect width="192" height="192" rx="44" fill="url(#bgGradient)"/>
+  
+  <!-- Outer flowing circle -->
+  <circle cx="96" cy="96" r="64" fill="none" stroke="url(#glowGradient)" stroke-width="2" stroke-dasharray="10 5" opacity="0.6"/>
+
+  <!-- Inner glowing circle representing cash safe and secure KEMIT ERP -->
+  <g filter="url(#shadow)">
+    <!-- Dial / Safe Circle -->
+    <circle cx="96" cy="96" r="48" fill="#1e293b" stroke="url(#accentGradient)" stroke-width="4"/>
+    
+    <!-- Safe Lock Details -->
+    <circle cx="96" cy="96" r="32" fill="none" stroke="#334155" stroke-width="3"/>
+    
+    <!-- Glowing Safe Handle Center -->
+    <circle cx="96" cy="96" r="14" fill="url(#accentGradient)"/>
+    
+    <!-- Flow Arrows / Financial Arrows -->
+    <path d="M 96,68 A 28,28 0 0,1 124,96 L 132,96 L 122,106 L 112,96 L 120,96 A 24,24 0 0,0 96,72 Z" fill="#34d399"/>
+    <path d="M 96,124 A 28,28 0 0,1 68,96 L 60,96 L 70,86 L 80,96 L 72,96 A 24,24 0 0,0 96,120 Z" fill="#6366f1"/>
+    
+    <!-- Dollar / Currency Abstract flow lines inside -->
+    <path d="M 93,90 C 93,88 95,87 97,87 C 99,87 100.5,88 100.5,89.5 C 100.5,91 99,92.5 96,93 C 93.5,93.5 91.5,94.5 91.5,96.5 C 91.5,98.5 93.5,100 96.5,100 C 99.5,100 101.5,98.5 101.5,96.5" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="96.5" y1="84" x2="96.5" y2="103" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,6 +1,0 @@
-[PASS] issue 9 of 5 with rejectNegative -> ok:false, status 422, nothing written | ok=false status=422 writes=0
-[PASS] issue 50 @ locked average 15 (caller said 10) -> unitCostUsed 15, total 750 | unit=15 total=750
-[PASS] no options: keeps the provided cost (10) and does not reject (legacy recordStockMovement path) | ok=true unit=10 newQty=-4
-[PASS] receipt 10 @ 20 on balance 5 @ 15 -> ok, newQty 15, cost 20 kept | ok=true newQty=15
-
-Passed: 4 | Failed: 0

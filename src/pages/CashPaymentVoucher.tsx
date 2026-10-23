@@ -1,0 +1,1953 @@
+import React, { useState, useEffect } from 'react';
+import { CustodyDB } from '../db';
+import { useScreenListeners } from '../firebase';
+import { translations, Language, Theme, Transaction, CashVoucher, Company, Station } from '../types';
+import { getArabicTafqeet, getEnglishTafqeet } from '../utils/tafqeet';
+import { 
+  FileCheck, 
+  FileText, 
+  Search, 
+  CreditCard, 
+  Calendar, 
+  CheckCircle2, 
+  ListFilter, 
+  Printer, 
+  User, 
+  X, 
+  Check, 
+  SlidersHorizontal, 
+  Building2, 
+  MapPin, 
+  Coins, 
+  ChevronDown, 
+  AlertTriangle,
+  History,
+  Archive,
+  ClipboardList,
+  Edit2
+} from 'lucide-react';
+
+interface CashPaymentVoucherProps {
+  language: Language;
+  theme: Theme;
+  onNavigate: (tab: string) => void;
+  selectedTx: Transaction | null;
+  setSelectedTx: (tx: Transaction | null) => void;
+}
+
+// ============================================================================
+// DYNAMIC SVG BARCODE GENERATOR
+// ============================================================================
+function SVGBarcode({ value }: { value: string }) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) & 0xffffffff;
+  }
+  
+  const stripeWidths = [];
+  const totalStripes = 40;
+  let currentSeed = Math.abs(hash || 98765);
+  
+  for (let i = 0; i < totalStripes; i++) {
+    currentSeed = (currentSeed * 1103515245 + 12345) & 0x7fffffff;
+    stripeWidths.push((currentSeed % 3) + 1); // width 1 to 3
+  }
+
+  let xPos = 0;
+  return (
+    <div className="flex flex-col items-center select-none print:block">
+      <svg width="130" height="36" viewBox="0 0 130 36" className="text-black">
+        <g fill="black">
+          {stripeWidths.map((w, idx) => {
+            const isBlack = idx % 2 === 0;
+            const element = isBlack ? <rect key={idx} x={xPos} y="0" width={w} height="36" /> : null;
+            xPos += w + (idx % 4 === 0 ? 1 : 0);
+            return element;
+          })}
+        </g>
+      </svg>
+      <span className="text-[9px] font-mono font-black tracking-widest mt-0.5 text-black">{value}</span>
+    </div>
+  );
+}
+
+// ============================================================================
+// DYNAMIC SVG QR CODE GENERATOR
+// ============================================================================
+function SVGQRCode({ value }: { value: string }) {
+  const size = 21;
+  const matrix: boolean[][] = Array(size).fill(null).map(() => Array(size).fill(false));
+  
+  const drawLocator = (r: number, c: number) => {
+    for (let i = 0; i < 7; i++) {
+      for (let j = 0; j < 7; j++) {
+        const isOuter = i === 0 || i === 6 || j === 0 || j === 6;
+        const isCenter = i >= 2 && i <= 4 && j >= 2 && j <= 4;
+        matrix[r + i][c + j] = isOuter || isCenter;
+      }
+    }
+  };
+  
+  drawLocator(0, 0);
+  drawLocator(0, size - 7);
+  drawLocator(size - 7, 0);
+  
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) & 0xffffffff;
+  }
+  let seed = Math.abs(hash || 54321);
+  
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const inTopLeft = r < 8 && c < 8;
+      const inTopRight = r < 8 && c >= size - 8;
+      const inBottomLeft = r >= size - 8 && c < 8;
+      
+      if (!inTopLeft && !inTopRight && !inBottomLeft) {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        matrix[r][c] = (seed % 2) === 0;
+      }
+    }
+  }
+
+  const cellSize = 3.5;
+  const pixels: React.ReactNode[] = [];
+  
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (matrix[r][c]) {
+        pixels.push(
+          <rect 
+            key={`${r}-${c}`} 
+            x={c * cellSize} 
+            y={r * cellSize} 
+            width={cellSize} 
+            height={cellSize} 
+            fill="black" 
+          />
+        );
+      }
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-center select-none print:block">
+      <svg 
+        width="75" 
+        height="75" 
+        viewBox={`0 0 ${size * cellSize} ${size * cellSize}`} 
+        className="bg-white p-1 border border-black shadow-none"
+      >
+        <g>{pixels}</g>
+      </svg>
+      <span className="text-[7px] font-mono font-bold mt-0.5 text-black">KEMIT ERP VERIFIED</span>
+    </div>
+  );
+}
+
+// Localized strings specifically for Sprint 6 Cash Voucher
+const localLabels = {
+  ar: {
+    title: 'سند صرف نقدية موحد (Cash Voucher)',
+    subTitle: 'تجميع عدة مصروفات معتمدة أو معلقة وإصدار سند مالي واحد مدعوم بـ QR و Barcode للتسوية والطباعة الاحترافية.',
+    tabCreate: 'إنشاء سند صرف جديد',
+    tabHistory: 'أرشيف وسجل السندات',
+    voucherDetailsTitle: 'بيانات سند الصرف الموحد',
+    expensesSelectorTitle: 'اختر المصروفات لتضمينها بالسند المالي الموحد',
+    recipientNameLabel: 'اسم المستلم والمستفيد من الصرف *',
+    recipientPlaceholder: 'مثال: أحمد محمد علي - أمين خزينة الموقع',
+    receivedByLabel: 'مستلم النقدية الفعلي (إن وجد)',
+    approvedByLabel: 'المدير المعتمد للصرف',
+    autoGenerated: 'توليد تلقائي',
+    totalSelectedExpenses: 'إجمالي المصروفات المحددة',
+    tafqeetAr: 'التفقيط باللغة العربية',
+    tafqeetEn: 'التفقيط باللغة الإنجليزية',
+    successCreated: 'تم إنشاء سند الصرف الموحد بنجاح!',
+    warningDifferentStations: '⚠️ تنبيه: المصاريف المحددة تنتمي لمحطات أو شركات مختلفة. سيتم إصدار السند المالي باسم المحطة الرئيسية.',
+    noPending: 'لا توجد مصروفات معلقة للتجميع حالياً.',
+    viewPrint: 'عرض ومعاينة السند للطباعة',
+    voucherNoLabel: 'رقم السند المالي',
+    voucherDateLabel: 'تاريخ السند',
+    amountLabel: 'القيمة الإجمالية',
+    recipientLabel: 'اسم المستفيد',
+    stationLabel: 'المحطة المختصة',
+    companyLabel: 'الشركة المالكة',
+    printVoucherBtn: 'طباعة السند المالي الموحد',
+    emptySelected: 'يرجى تحديد مصروف واحد على الأقل لتوليد السند المالي الموحد.',
+    reqFields: 'يرجى إدخال رقم السند المالي واسم المستلم.',
+    voucherNoPlaceholder: 'مثال: CPV-2026-09882',
+    searchVouchers: 'البحث في أرشيف السندات المالية...',
+    noVouchers: 'لا توجد سندات مالية مسجلة بالأرشيف بعد.',
+    expensesCount: 'عدد البنود المشمولة',
+    confirmDelete: 'هل أنت متأكد من حذف هذا السند المالي؟ سيعاد تعيين المصروفات المشمولة لحالتها السابقة.',
+    successDeleted: 'تم حذف السند المالي وإعادة تعيين الحركات.',
+    draft: 'مسودة',
+    approved: 'معتمد ومكتمل',
+    pendingApproval: 'بانتظار الاعتماد المالي',
+    egp: 'جنيه مصري',
+    currencyWordsAr: 'جنيه مصري لا غير',
+    unifiedHeading: 'سند صرف نقدية موحد ومُعتمد',
+    recipientSign: 'توقيع المستلم والمسؤولين أدناه لتوثيق دورة الصرف النقدية.',
+    accName: 'المحاسب المالي',
+    audName: 'المراجع الداخلي',
+    mgrName: 'المدير المسئول',
+    treasName: 'أمين الخزينة',
+    recipSignName: 'توقيع المستلم الفعلي',
+    gmName: 'مدير عام القطاع',
+    dateLabel: 'التاريخ',
+    stationLabel2: 'الموقع/المزرعة',
+    compLabel2: 'الشركة المستفيدة',
+    departmentLabel: 'الإدارة المختصة',
+    finDep: 'الإدارة المالية الحسابات',
+    itemTableDirect: 'التوجيه الحسابي',
+    itemTableAttach: 'المرفقات',
+    itemTableDesc: 'البيـــــــــــــــــان والتحليـــــــل المالي الموحد',
+    itemTablePounds: 'جنيه',
+    itemTablePiastres: 'قرش',
+    previewTitle: 'معاينة وطباعة سند صرف النقدية الموحد'
+  },
+  en: {
+    title: 'Unified Cash Voucher Builder',
+    subTitle: 'Consolidate multiple pending/rejected expenses into a single formal voucher equipped with barcode, QR, and printable layout.',
+    tabCreate: 'Create New Cash Voucher',
+    tabHistory: 'Cash Vouchers Archive',
+    voucherDetailsTitle: 'Unified Voucher Parameters',
+    expensesSelectorTitle: 'Select Expenses to Consolidate into the Unified Voucher',
+    recipientNameLabel: 'Recipient/Payee Full Name *',
+    recipientPlaceholder: 'e.g., Ahmed Mohamed Ali - Site Treasurer',
+    receivedByLabel: 'Actual Cash Recipient (Optional)',
+    approvedByLabel: 'Authorized Approver Name',
+    autoGenerated: 'Auto Generated',
+    totalSelectedExpenses: 'Consolidated Value',
+    tafqeetAr: 'Amount in Arabic Words',
+    tafqeetEn: 'Amount in English Words',
+    successCreated: 'Unified Cash Voucher created successfully!',
+    warningDifferentStations: '⚠️ Warning: Selected expenses are from different companies/stations. The voucher will be registered under the primary location.',
+    noPending: 'No pending expenses available for consolidation.',
+    viewPrint: 'Preview & Print Voucher',
+    voucherNoLabel: 'Voucher Number',
+    voucherDateLabel: 'Voucher Date',
+    amountLabel: 'Total Amount',
+    recipientLabel: 'Recipient Name',
+    stationLabel: 'Target Station',
+    companyLabel: 'Target Company',
+    printVoucherBtn: 'Print Unified Voucher',
+    emptySelected: 'Please select at least one expense to generate the unified voucher.',
+    reqFields: 'Please input both a Voucher Number and the Recipient Full Name.',
+    voucherNoPlaceholder: 'e.g. CPV-2026-09882',
+    searchVouchers: 'Search archive of unified vouchers...',
+    noVouchers: 'No consolidated vouchers found in the archive.',
+    expensesCount: 'No. of bundled items',
+    confirmDelete: 'Are you sure you want to delete this voucher? Grouped expenses will be restored to their previous states.',
+    successDeleted: 'Voucher deleted and bundled transactions reverted.',
+    draft: 'Draft',
+    approved: 'Approved & Completed',
+    pendingApproval: 'Awaiting Financial Approval',
+    egp: 'EGP',
+    currencyWordsAr: 'Egyptian Pounds Only',
+    unifiedHeading: 'Unified & Certified Cash Payment Voucher',
+    recipientSign: 'Authorized signatures below confirm financial disbursement cycle completion.',
+    accName: 'Accountant',
+    audName: 'Internal Auditor',
+    mgrName: 'Responsible Manager',
+    treasName: 'Treasurer',
+    recipSignName: 'Disbursement Recipient',
+    gmName: 'General Manager of Division',
+    dateLabel: 'Voucher Date',
+    stationLabel2: 'Site/Farm Location',
+    compLabel2: 'Beneficiary Company',
+    departmentLabel: 'Assigned Department',
+    finDep: 'Finance & Accounts Division',
+    itemTableDirect: 'Account Code',
+    itemTableAttach: 'Annexes',
+    itemTableDesc: 'Statement & Analytical Breakdown of Expenditures',
+    itemTablePounds: 'Pounds',
+    itemTablePiastres: 'Piastres',
+    previewTitle: 'Preview & Print Unified Cash Payment Voucher'
+  }
+};
+
+export default function CashPaymentVoucher({
+  language,
+  theme,
+  onNavigate,
+  selectedTx,
+  setSelectedTx
+}: CashPaymentVoucherProps) {
+  useScreenListeners(['CashVouchers', 'Expenses', 'transactions']);
+
+  const t = translations[language];
+  const l = localLabels[language];
+  const isRtl = language === 'ar';
+
+  const user = CustodyDB.getActiveUser();
+  const canEditOrDelete = user?.role === 'SystemAdmin' || user?.role === 'Admin' || user?.role === 'StationAdmin';
+
+  // Core collections for lookups
+  const companies = CustodyDB.getCompanies();
+  const stations = CustodyDB.getStationsForUser(user);
+
+  // Main UI Tabs
+  const [activeTab, setActiveTab] = useState<'create' | 'history'>('create');
+
+  // State arrays
+  const [pendingTransactions, setPendingTransactions] = useState<Transaction[]>([]);
+  const [vouchersList, setVouchersList] = useState<CashVoucher[]>([]);
+  const [selectedTxIds, setSelectedTxIds] = useState<string[]>([]);
+
+  // Search & Filtering of available expenses (pending table inside voucher builder)
+  const [showFilters, setShowFilters] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [companyFilter, setCompanyFilter] = useState('All');
+  const [stationFilter, setStationFilter] = useState('All');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [amountMin, setAmountMin] = useState('');
+  const [amountMax, setAmountMax] = useState('');
+
+  // Past Vouchers List search state
+  const [voucherSearch, setVoucherSearch] = useState('');
+  const [vouchersLimit, setVouchersLimit] = useState(15);
+
+  // Main Voucher Parameters Form state
+  const [voucherNo, setVoucherNo] = useState('');
+  const [voucherDate, setVoucherDate] = useState(new Date().toISOString().split('T')[0]);
+  const [recipientName, setRecipientName] = useState('');
+  const [receivedBy, setReceivedBy] = useState('');
+  const [approvedBy, setApprovedBy] = useState(user?.full_name || '');
+
+  // Print/Preview Dialog active state
+  const [previewVoucher, setPreviewVoucher] = useState<CashVoucher | null>(null);
+
+  // Edit Voucher Modal state
+  const [editingVoucher, setEditingVoucher] = useState<CashVoucher | null>(null);
+  const [editVoucherNo, setEditVoucherNo] = useState('');
+  const [editVoucherDate, setEditVoucherDate] = useState('');
+  const [editRecipientName, setEditRecipientName] = useState('');
+  const [editReceivedBy, setEditReceivedBy] = useState('');
+  const [editApprovedBy, setEditApprovedBy] = useState('');
+
+  // Status and Toast alerts
+  const [toastMessage, setToastMessage] = useState('');
+  const [validationError, setValidationError] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Load and refresh initial datasets
+  const loadData = () => {
+    // We display only 'Pending' expenses for potential consolidation (Rejected ones are locked and cannot be sent again)
+    const expenses = CustodyDB.getScopedTransactions().filter(
+      tx => tx.status === 'Pending'
+    );
+    setPendingTransactions(expenses);
+
+    let pastVouchers = CustodyDB.getCashVouchers();
+    const targetCompanyId = CustodyDB.getSelectedCompanyId();
+    pastVouchers = pastVouchers.filter(v => v.company_id === targetCompanyId);
+
+    if (user?.role === 'RegionalManager') {
+      const stationsList = CustodyDB.getStations();
+      const regionStations = stationsList.filter(s => s.region_id === user.region_id && s.company_id === targetCompanyId);
+      const regionStationIds = regionStations.map(s => s.id);
+      pastVouchers = pastVouchers.filter(v => regionStationIds.includes(v.station_id));
+    } else if (user?.role === 'StationAdmin') {
+      const userStationId = user.station_id || 'stn-1-1-1';
+      pastVouchers = pastVouchers.filter(v => v.station_id === userStationId);
+    }
+    setVouchersList(pastVouchers);
+  };
+
+  useEffect(() => {
+    loadData();
+
+    // Live update when Firebase/Firestore database updates
+    window.addEventListener('custody_db_updated', loadData);
+    return () => {
+      window.removeEventListener('custody_db_updated', loadData);
+    };
+  }, []);
+
+  const activeCompanyId = companyFilter !== 'All' ? companyFilter : (user?.company_id || CustodyDB.getSelectedCompanyId() || '');
+  const [isManualVoucherNo, setIsManualVoucherNo] = useState(false);
+
+  // Pre-fill parameters when a single expense is passed from parent (Backward compatibility)
+  useEffect(() => {
+    if (selectedTx) {
+      // Add to selected array if not already present
+      setSelectedTxIds(prev => prev.includes(selectedTx.id) ? prev : [...prev, selectedTx.id]);
+      
+      // Select appropriate company and station
+      setCompanyFilter(selectedTx.company_id);
+      setStationFilter(selectedTx.station_id);
+
+      // Pre-fill recipient name if notes or user is present
+      setRecipientName(selectedTx.notes || (isRtl ? 'أمين خزينة الموقع' : 'Site Treasurer'));
+    }
+  }, [selectedTx]);
+
+  // Synchronize Voucher number with the selected company's sequence or existing voucher number
+  useEffect(() => {
+    const targetCompanyId = activeCompanyId;
+    const selectedTxs = pendingTransactions.filter(tx => selectedTxIds.includes(tx.id));
+    const existingVoucherNo = selectedTxs.find(tx => tx.voucher_no)?.voucher_no;
+
+    if (existingVoucherNo) {
+      setVoucherNo(existingVoucherNo);
+      setIsManualVoucherNo(false);
+    } else {
+      const needsManual = CustodyDB.needsManualFirstVoucherNo(targetCompanyId);
+      setIsManualVoucherNo(needsManual);
+      if (needsManual) {
+        setVoucherNo('');
+      } else {
+        const nextNo = CustodyDB.getNextAutoVoucherNo(targetCompanyId);
+        setVoucherNo(nextNo);
+      }
+    }
+  }, [activeCompanyId, vouchersList, selectedTxIds, pendingTransactions]);
+
+  // Utility to auto-generate a fresh, unique voucher number
+  const handleAutoGenerateNo = () => {
+    const targetCompanyId = activeCompanyId;
+    const needsManual = CustodyDB.needsManualFirstVoucherNo(targetCompanyId);
+    if (needsManual) {
+      setValidationError(isRtl ? 'يجب إدخال أول رقم يدوي لهذه الشركة لبدء التسلسل' : 'You must enter the first number manually for this company to start the sequence');
+    } else {
+      const nextNo = CustodyDB.getNextAutoVoucherNo(targetCompanyId);
+      setVoucherNo(nextNo);
+      setValidationError('');
+    }
+  };
+
+  // Toast Helper
+  const triggerToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(''), 4500);
+  };
+
+  // Helper: Reset Table Search Filters
+  const handleResetFilters = () => {
+    setSearchTerm('');
+    setCompanyFilter('All');
+    setStationFilter('All');
+    setDateFrom('');
+    setDateTo('');
+    setAmountMin('');
+    setAmountMax('');
+  };
+
+  // Filter transaction list logic
+  const filteredExpenses = pendingTransactions.filter(tx => {
+    // Text search matches sequence number, description, notes, or amount
+    const matchesSearch = 
+      searchTerm.trim() === '' ||
+      (tx.transaction_no || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (tx.description || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (tx.notes && tx.notes.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      String(tx.amount || '').includes(searchTerm);
+
+    // Company Filter
+    const matchesCompany = 
+      companyFilter === 'All' || 
+      tx.company_id === companyFilter;
+
+    // Station Filter
+    const matchesStation = 
+      stationFilter === 'All' || 
+      tx.station_id === stationFilter;
+
+    // Date Range
+    let matchesDate = true;
+    if (dateFrom) matchesDate = matchesDate && tx.date >= dateFrom;
+    if (dateTo) matchesDate = matchesDate && tx.date <= dateTo;
+
+    // Amount Range
+    let matchesAmount = true;
+    if (amountMin) {
+      const min = parseFloat(amountMin);
+      if (!isNaN(min)) matchesAmount = matchesAmount && tx.amount >= min;
+    }
+    if (amountMax) {
+      const max = parseFloat(amountMax);
+      if (!isNaN(max)) matchesAmount = matchesAmount && tx.amount <= max;
+    }
+
+    return matchesSearch && matchesCompany && matchesStation && matchesDate && matchesAmount;
+  });
+
+  // Toggle multi-select checkbox for an expense
+  const handleToggleTx = (id: string) => {
+    setSelectedTxIds(prev => 
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  // Toggle select-all for filtered expenses in the builder
+  const handleSelectAllFiltered = () => {
+    const filteredIds = filteredExpenses.map(tx => tx.id);
+    const allAreSelected = filteredIds.every(id => selectedTxIds.includes(id));
+
+    if (allAreSelected) {
+      // Deselect all filtered items
+      setSelectedTxIds(prev => prev.filter(id => !filteredIds.includes(id)));
+    } else {
+      // Merge filtered IDs with existing selections
+      setSelectedTxIds(prev => Array.from(new Set([...prev, ...filteredIds])));
+    }
+  };
+
+  // Calculate totals of selected items
+  const selectedExpensesFullObjects = pendingTransactions.filter(tx => selectedTxIds.includes(tx.id));
+  const selectedTotalAmount = selectedExpensesFullObjects.reduce((sum, x) => sum + x.amount, 0);
+
+  // Check if selected items are from different stations/companies
+  const distinctStations: string[] = Array.from(new Set(selectedExpensesFullObjects.map(x => x.station_id || 'All')));
+  const distinctCompanies: string[] = Array.from(new Set(selectedExpensesFullObjects.map(x => x.company_id || 'All')));
+  const hasMixedStations = distinctStations.length > 1 || distinctCompanies.length > 1;
+
+  // Derive final company/station to anchor the cash voucher
+  const primaryStationId = distinctStations[0] || 'All';
+  const primaryCompanyId = distinctCompanies[0] || 'All';
+
+  // Save Voucher handler
+  const handleCreateVoucher = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (selectedTxIds.length === 0) {
+      setValidationError(l.emptySelected);
+      return;
+    }
+
+    if (!voucherNo.trim() || !recipientName.trim()) {
+      setValidationError(l.reqFields);
+      return;
+    }
+
+    setIsSubmitting(true);
+    let finalVoucherNo = '';
+    const selectedTxs = pendingTransactions.filter(tx => selectedTxIds.includes(tx.id));
+    const existingVoucherNo = selectedTxs.find(tx => tx.voucher_no)?.voucher_no;
+
+    try {
+      if (existingVoucherNo) {
+        finalVoucherNo = existingVoucherNo;
+      } else if (isManualVoucherNo) {
+        const manualVal = parseInt(voucherNo.trim(), 10);
+        if (isNaN(manualVal) || manualVal <= 0) {
+          setValidationError(isRtl ? 'يجب أن يكون رقم السند عدداً صحيحاً موجباً.' : 'Voucher number must be a positive integer.');
+          setIsSubmitting(false);
+          return;
+        }
+        // Initialize sequence with user's starting number
+        const val = await CustodyDB.initializeOrIncrementSequence(primaryCompanyId, manualVal);
+        finalVoucherNo = String(val);
+      } else {
+        // Increment and get sequence concurrency-safely
+        const val = await CustodyDB.initializeOrIncrementSequence(primaryCompanyId);
+        finalVoucherNo = String(val);
+      }
+
+      const existingVoucher = CustodyDB.getCashVouchers().find(v => v.voucher_no === finalVoucherNo);
+      const voucherId = existingVoucher ? existingVoucher.id : `voucher-${Date.now()}`;
+
+      // Prepare CashVoucher entity
+      const newVoucher: CashVoucher = {
+        id: voucherId,
+        voucher_no: finalVoucherNo,
+        date: voucherDate,
+        station_id: primaryStationId,
+        company_id: primaryCompanyId,
+        amount: selectedTotalAmount,
+        amount_in_words: {
+          ar: getArabicTafqeet(selectedTotalAmount),
+          en: getEnglishTafqeet(selectedTotalAmount)
+        },
+        recipient_name: recipientName.trim(),
+        received_by: receivedBy.trim() || undefined,
+        approved_by: approvedBy.trim() || undefined,
+        status: 'Approved', // Marks the voucher as compiled and approved for final bookkeeping
+        expense_ids: selectedTxIds,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      // Save to Database with real async outcome verification
+      const saveRes = await CustodyDB.saveCashVoucher(newVoucher);
+      if (!saveRes.success) {
+        setValidationError(
+          isRtl 
+            ? `⚠️ فشل حفظ سند الصرف في السحابة: ${saveRes.error || 'خطأ غير معروف'}`
+            : `⚠️ Failed to save cash voucher to cloud: ${saveRes.error || 'Unknown cloud error'}`
+        );
+        return;
+      }
+
+      // Update status of all bundled expenses in database to Under Settlement
+      for (const id of selectedTxIds) {
+        const res = await CustodyDB.updateTransaction(id, {
+          status: 'Under Settlement',
+          voucher_no: finalVoucherNo,
+          voucher_date: voucherDate,
+          transaction_no: finalVoucherNo // Make transaction number match voucher number
+        });
+        if (!res.success) {
+          console.error('Error settling item', id, res.errors);
+        }
+      }
+
+      // Save workflow history & logs
+      CustodyDB.addLog(
+        user?.id || 'system',
+        user?.full_name || 'System',
+        isRtl ? 'إنشاء سند صرف موحد' : 'Created Unified Cash Voucher',
+        isRtl 
+          ? `تم إنشاء السند رقم ${finalVoucherNo} وتجميع عدد (${selectedTxIds.length}) مصروفات بمبلغ إجمالي ${selectedTotalAmount.toLocaleString()} جنيه.` 
+          : `Created Unified Cash Voucher ${finalVoucherNo} bundling (${selectedTxIds.length}) expenses with total amount ${selectedTotalAmount.toLocaleString()} EGP.`
+      );
+
+      // Audit logs entry
+      CustodyDB.addAuditLog({
+        id: `audit-${Date.now()}`,
+        user_id: user?.id || 'system',
+        user_name: user?.full_name || 'System',
+        user_role: user?.role || 'Guest',
+        action_type: 'CREATE_CASH_VOUCHER',
+        description: `Created Cash Voucher No: ${finalVoucherNo} | Total: ${selectedTotalAmount} EGP | Bundled items: ${selectedTxIds.length}`,
+        timestamp: new Date().toISOString(),
+        ip_address: '127.0.0.1',
+        details: {
+          voucher_no: finalVoucherNo,
+          total_amount: selectedTotalAmount,
+          expense_count: selectedTxIds.length
+        }
+      });
+
+      triggerToast(`${l.successCreated} | #${finalVoucherNo}`);
+      
+      // Auto clear states
+      setVoucherNo('');
+      setRecipientName('');
+      setReceivedBy('');
+      setSelectedTxIds([]);
+      setValidationError('');
+      setSelectedTx(null); // Clear parent pre-select
+
+      // Reload lists
+      loadData();
+
+      // Auto-open print preview modal for immediate print workflow!
+      setPreviewVoucher(newVoucher);
+    } catch (err: any) {
+      setValidationError(isRtl ? `فشل في إنشاء السند: ${err.message || err}` : `Failed to create voucher: ${err.message || err}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Delete Voucher handler
+  const handleDeleteVoucher = async (id: string) => {
+    const vc = vouchersList.find(v => v.id === id);
+    if (!vc) return;
+
+    setIsSubmitting(true);
+    try {
+      // Reset status of all bundled expenses back to Pending
+      for (const txId of vc.expense_ids) {
+        const res = await CustodyDB.updateTransaction(txId, {
+          status: 'Pending',
+          voucher_no: undefined,
+          voucher_date: undefined
+        });
+        if (!res.success) {
+          console.error('Error resetting item', txId, res.errors);
+        }
+      }
+
+      // Delete voucher
+      const delRes = await CustodyDB.deleteCashVoucher(id);
+      if (!delRes.success) {
+        triggerToast(
+          isRtl 
+            ? `⚠️ فشل حذف السند من السحابة: ${delRes.error || 'خطأ'}`
+            : `⚠️ Failed to delete cash voucher from cloud: ${delRes.error || 'Error'}`
+        );
+        return;
+      }
+
+      // Save logs
+      CustodyDB.addLog(
+        user?.id || 'system',
+        user?.full_name || 'System',
+        isRtl ? 'حذف سند صرف موحد' : 'Deleted Unified Cash Voucher',
+        isRtl 
+          ? `تم حذف السند رقم ${vc.voucher_no} وإرجاع الحركات المشمولة للحالة المعلقة.` 
+          : `Deleted Cash Voucher ${vc.voucher_no} and reverted bundled transactions back to Pending.`
+      );
+
+      triggerToast(l.successDeleted);
+      loadData();
+    } finally {
+      setIsSubmitting(false);
+      setDeletingId(null);
+    }
+  };
+
+  const handleStartEdit = (vc: CashVoucher) => {
+    setEditingVoucher(vc);
+    setEditVoucherNo(vc.voucher_no);
+    setEditVoucherDate(vc.date);
+    setEditRecipientName(vc.recipient_name);
+    setEditReceivedBy(vc.received_by || '');
+    setEditApprovedBy(vc.approved_by || '');
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingVoucher) return;
+
+    if (!editVoucherNo.trim() || !editRecipientName.trim()) {
+      setValidationError(l.reqFields);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const updatedVoucher: CashVoucher = {
+        ...editingVoucher,
+        voucher_no: editVoucherNo.trim(),
+        date: editVoucherDate,
+        recipient_name: editRecipientName.trim(),
+        received_by: editReceivedBy.trim() || undefined,
+        approved_by: editApprovedBy.trim() || undefined,
+        updated_at: new Date().toISOString()
+      };
+
+      const saveRes = await CustodyDB.saveCashVoucher(updatedVoucher);
+      if (!saveRes.success) {
+        setValidationError(
+          isRtl 
+            ? `⚠️ فشل تحديث سند الصرف في السحابة: ${saveRes.error || 'خطأ غير معروف'}`
+            : `⚠️ Failed to update cash voucher in cloud: ${saveRes.error || 'Unknown cloud error'}`
+        );
+        return;
+      }
+
+      // Update bundled expenses' metadata
+      if (editingVoucher.expense_ids && editingVoucher.expense_ids.length > 0) {
+        for (const txId of editingVoucher.expense_ids) {
+          const res = await CustodyDB.updateTransaction(txId, {
+            voucher_no: editVoucherNo.trim(),
+            voucher_date: editVoucherDate
+          });
+          if (!res.success) {
+            console.error('Error updating item metadata', txId, res.errors);
+          }
+        }
+      }
+
+      CustodyDB.addLog(
+        user?.id || 'system',
+        user?.full_name || 'System',
+        isRtl ? 'تعديل سند صرف موحد' : 'Modified Unified Cash Voucher',
+        isRtl 
+          ? `تم تعديل بيانات السند رقم ${editVoucherNo.trim()} (المستلم: ${editRecipientName.trim()}).` 
+          : `Modified Cash Voucher ${editVoucherNo.trim()} details (Recipient: ${editRecipientName.trim()}).`
+      );
+
+      CustodyDB.addAuditLog({
+        id: `audit-${Date.now()}`,
+        user_id: user?.id || 'system',
+        user_name: user?.full_name || 'System',
+        user_role: user?.role || 'Guest',
+        action_type: 'UPDATE_CASH_VOUCHER',
+        description: `Modified Cash Voucher No: ${editVoucherNo.trim()} details.`,
+        timestamp: new Date().toISOString(),
+        ip_address: '127.0.0.1',
+        details: {
+          voucher_id: editingVoucher.id,
+          voucher_no: editVoucherNo.trim(),
+          recipient: editRecipientName.trim()
+        }
+      });
+
+      triggerToast(isRtl ? 'تم تحديث السند المالي بنجاح!' : 'Voucher updated successfully!');
+      setEditingVoucher(null);
+      loadData();
+    } catch (err: any) {
+      setValidationError(isRtl ? `خطأ أثناء الحفظ: ${err.message || err}` : `Save error: ${err.message || err}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Filter vouchers list for the Archive/History tab
+  const filteredVouchers = vouchersList.filter(vc => {
+    return (
+      voucherSearch.trim() === '' ||
+      (vc.voucher_no || '').toLowerCase().includes(voucherSearch.toLowerCase()) ||
+      (vc.recipient_name || '').toLowerCase().includes(voucherSearch.toLowerCase()) ||
+      (vc.approved_by && vc.approved_by.toLowerCase().includes(voucherSearch.toLowerCase()))
+    );
+  });
+
+  return (
+    <div className="space-y-6 max-w-7xl mx-auto">
+      {/* Page Heading & Header */}
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-xl font-black tracking-tight md:text-2xl flex items-center gap-2">
+            <FileCheck className="text-emerald-500 animate-pulse" />
+            <span>{l.title}</span>
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            {l.subTitle}
+          </p>
+        </div>
+
+        {/* Tab Controls */}
+        <div className="flex rounded-xl p-1 bg-slate-100 dark:bg-slate-800 self-start md:self-auto shadow-sm border border-slate-200/50 dark:border-slate-700/50">
+          <button
+            onClick={() => setActiveTab('create')}
+            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+              activeTab === 'create'
+                ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+            }`}
+          >
+            <ClipboardList size={14} />
+            <span>{l.tabCreate}</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('history')}
+            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+              activeTab === 'history'
+                ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+            }`}
+          >
+            <Archive size={14} />
+            <span>{l.tabHistory}</span>
+            {vouchersList.length > 0 && (
+              <span className="font-mono bg-emerald-500 text-white px-1.5 py-0.2 text-[9px] rounded-full font-black">
+                {vouchersList.length}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Success Notification Banner */}
+      {toastMessage && (
+        <div className="p-4 rounded-xl bg-emerald-500/15 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 text-xs md:text-sm font-bold animate-fade-in flex items-center gap-3 shadow-sm">
+          <Check className="text-emerald-500 shrink-0 h-5 w-5" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* =====================================================================
+          TAB 1: CREATE VOUCHER (MULTI EXPENSE BUNDLER)
+          ===================================================================== */}
+      {activeTab === 'create' && (
+        <div className="grid gap-6 grid-cols-1 lg:grid-cols-12 items-start">
+          
+          {/* LEFT PANEL: Multi-Select Expenses Table (lg:col-span-8) */}
+          <div className="lg:col-span-8 space-y-4">
+            
+            {/* Header with quick count */}
+            <div className={`p-4 rounded-2xl border ${
+              theme === 'dark' ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-slate-200 shadow-sm'
+            }`}>
+              <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Coins className="text-amber-500" size={18} />
+                  <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200">
+                    {l.expensesSelectorTitle}
+                  </h3>
+                </div>
+
+                {/* Filter Trigger Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowFilters(!showFilters)}
+                  className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-colors ${
+                    showFilters 
+                      ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600' 
+                      : theme === 'dark' 
+                        ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' 
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <SlidersHorizontal size={12} />
+                  <span>{isRtl ? 'تصفية وبحث متقدم' : 'Advanced Search'}</span>
+                  <ChevronDown size={12} className={`transition-transform duration-200 ${showFilters ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
+
+              {/* Text Search Input (Fast search always visible) */}
+              <div className="relative mb-3">
+                <Search className={`absolute top-3 text-slate-400 h-4 w-4 ${isRtl ? 'right-3' : 'left-3'}`} />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder={t.searchPlaceholder}
+                  className={`w-full text-xs py-2 rounded-xl border focus:outline-none focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500 ${
+                    isRtl ? 'pr-9 pl-3' : 'pl-9 pr-3'
+                  } ${
+                    theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-200'
+                  }`}
+                />
+              </div>
+
+              {/* Advanced Expandable Filter Blocks */}
+              {showFilters && (
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 animate-slide-down">
+                  {/* Company Filter */}
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">{isRtl ? 'الشركة' : 'Company'}</label>
+                    <select
+                      value={companyFilter}
+                      onChange={(e) => setCompanyFilter(e.target.value)}
+                      className={`w-full text-xs p-2 rounded-xl border focus:outline-none ${
+                        theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-200'
+                      }`}
+                    >
+                      <option value="All">{isRtl ? 'كل الشركات' : 'All Companies'}</option>
+                      {companies.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Station Filter */}
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">{isRtl ? 'المحطة / المزرعة' : 'Station / Location'}</label>
+                    <select
+                      value={stationFilter}
+                      onChange={(e) => setStationFilter(e.target.value)}
+                      className={`w-full text-xs p-2 rounded-xl border focus:outline-none ${
+                        theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-200'
+                      }`}
+                    >
+                      <option value="All">{isRtl ? 'كل المحطات' : 'All Stations'}</option>
+                      {stations.map(s => (
+                        <option key={s.id} value={s.id}>{s.station_name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Date Range */}
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">{isRtl ? 'من تاريخ' : 'Date From'}</label>
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                      className={`w-full text-xs p-1.5 rounded-xl border font-mono focus:outline-none ${
+                        theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-200'
+                      }`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">{isRtl ? 'إلى تاريخ' : 'Date To'}</label>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => setDateTo(e.target.value)}
+                      className={`w-full text-xs p-1.5 rounded-xl border font-mono focus:outline-none ${
+                        theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-200'
+                      }`}
+                    />
+                  </div>
+
+                  {/* Amount Range */}
+                  <div>
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">{isRtl ? 'الحد الأدنى' : 'Min Amount'}</label>
+                    <input
+                      type="number"
+                      placeholder="0.00"
+                      value={amountMin}
+                      onChange={(e) => setAmountMin(e.target.value)}
+                      className={`w-full text-xs p-2 rounded-xl border font-mono focus:outline-none ${
+                        theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-200'
+                      }`}
+                    />
+                  </div>
+
+                  {/* Clear Filters Button */}
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      onClick={handleResetFilters}
+                      className="w-full py-2 text-xs font-bold text-rose-500 hover:text-rose-600 bg-rose-500/5 hover:bg-rose-500/10 rounded-xl transition-colors border border-dashed border-rose-500/25"
+                    >
+                      {isRtl ? 'إعادة تعيين الفلاتر' : 'Reset Filters'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Mixed Stations Warning Banner */}
+            {hasMixedStations && (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-800 dark:text-amber-400 text-xs font-bold flex items-start gap-2.5 animate-fade-in">
+                <AlertTriangle className="shrink-0 text-amber-500 mt-0.5" size={15} />
+                <span>{l.warningDifferentStations}</span>
+              </div>
+            )}
+
+            {/* Pending Expenses Table */}
+            <div className={`rounded-2xl border overflow-hidden ${
+              theme === 'dark' ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-slate-200 shadow-sm'
+            }`}>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse min-w-[700px]">
+                  <thead>
+                    <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-medium bg-slate-50/50 dark:bg-slate-800/25">
+                      <th className="py-3 px-4 w-12 text-center">
+                        <button
+                          type="button"
+                          onClick={handleSelectAllFiltered}
+                          className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500"
+                        >
+                          {filteredExpenses.length > 0 && filteredExpenses.every(tx => selectedTxIds.includes(tx.id)) ? (
+                            <CheckCircle2 className="h-4.5 w-4.5 text-emerald-500 fill-emerald-500/10" />
+                          ) : (
+                            <div className="h-4 w-4 rounded border border-slate-300 dark:border-slate-600" />
+                          )}
+                        </button>
+                      </th>
+                      <th className="py-3 px-4 font-bold text-slate-500">{t.transactionNo}</th>
+                      <th className="py-3 px-4 font-bold text-slate-500">{isRtl ? 'الموقع والمستفيد' : 'Location & Source'}</th>
+                      <th className="py-3 px-4 font-bold text-slate-500">{t.date}</th>
+                      <th className="py-3 px-4 font-bold text-slate-500">{t.description}</th>
+                      <th className="py-3 px-4 font-bold text-slate-500 text-right">{t.amount}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {filteredExpenses.map(tx => {
+                      const isSelected = selectedTxIds.includes(tx.id);
+                      const txCompany = companies.find(c => c.id === tx.company_id);
+                      const txStation = stations.find(s => s.id === tx.station_id);
+
+                      return (
+                        <tr
+                          key={tx.id}
+                          onClick={() => handleToggleTx(tx.id)}
+                          className={`cursor-pointer transition-all duration-100 ${
+                            isSelected 
+                              ? 'bg-emerald-500/5 dark:bg-emerald-500/10 font-bold' 
+                              : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                          }`}
+                        >
+                          <td className="py-3.5 px-4 text-center" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleTx(tx.id)}
+                              className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+                            >
+                              {isSelected ? (
+                                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                              ) : (
+                                <div className="h-4 w-4 rounded border border-slate-300 dark:border-slate-600" />
+                              )}
+                            </button>
+                          </td>
+                          <td className="py-3.5 px-4 font-mono font-black text-slate-800 dark:text-slate-200">
+                            {tx.transaction_no}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="flex flex-col gap-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                              <span className="font-extrabold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                                <Building2 size={11} className="text-slate-400" />
+                                <span>{txCompany?.name || tx.company_id || '---'}</span>
+                              </span>
+                              <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                                <MapPin size={11} className="text-slate-400" />
+                                <span>{txStation?.station_name || tx.station_id || '---'}</span>
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4 font-mono text-slate-500 dark:text-slate-400">{tx.date}</td>
+                          <td className="py-3.5 px-4">
+                            <div className="font-medium text-slate-800 dark:text-slate-200 max-w-xs md:max-w-md truncate" title={tx.description}>
+                              {tx.description}
+                            </div>
+                            {tx.notes && (
+                              <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5 font-mono">
+                                <span className="px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 font-bold scale-90">NOTE</span>
+                                <span className="truncate max-w-xs">{tx.notes}</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono font-extrabold text-slate-900 dark:text-slate-50">
+                            {tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      );
+                    })}
+
+                    {filteredExpenses.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="py-12 text-center text-slate-400">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <ClipboardList className="h-8 w-8 text-slate-300 stroke-1" />
+                            <p className="text-xs">{l.noPending}</p>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT PANEL: Form Details (lg:col-span-4) */}
+          <div className="lg:col-span-4 space-y-4">
+            <div className={`p-5 rounded-2xl border ${
+              theme === 'dark' ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-slate-200 shadow-sm'
+            }`}>
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-4 border-b pb-2 border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                <FileText size={15} className="text-emerald-500" />
+                <span>{l.voucherDetailsTitle}</span>
+              </h3>
+
+              {/* LIVE SELECTION STATS BOX */}
+              <div className={`p-4 rounded-xl text-xs mb-4 space-y-2 border transition-all ${
+                selectedTxIds.length > 0
+                  ? 'bg-emerald-500/5 border-emerald-500/20'
+                  : 'bg-slate-50 border-slate-200/50 dark:bg-slate-800/40 dark:border-slate-700/50'
+              }`}>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400 font-extrabold">{isRtl ? 'المصروفات المختارة:' : 'Bundled Expenses:'}</span>
+                  <span className="font-mono font-black text-slate-800 dark:text-slate-200 text-sm">
+                    {selectedTxIds.length}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center border-t border-slate-200/40 dark:border-slate-700/40 pt-2">
+                  <span className="text-slate-400 font-extrabold">{l.totalSelectedExpenses}:</span>
+                  <span className="font-mono font-black text-base text-emerald-600 dark:text-emerald-400">
+                    {selectedTotalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })} <span className="text-xs font-bold">EGP</span>
+                  </span>
+                </div>
+
+                {selectedTotalAmount > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-slate-200/40 dark:border-slate-700/40 text-[10px] text-slate-400 font-bold leading-relaxed">
+                    <div>
+                      <span className="block text-slate-500 text-[9px] mb-0.5">{l.tafqeetAr}:</span>
+                      <span className="text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded block">{getArabicTafqeet(selectedTotalAmount)}</span>
+                    </div>
+                    <div>
+                      <span className="block text-slate-500 text-[9px] mb-0.5">{l.tafqeetEn}:</span>
+                      <span className="text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded block font-mono">{getEnglishTafqeet(selectedTotalAmount)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* VALIDATION ERROR ALERTS */}
+              {validationError && (
+                <div className="p-3 mb-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs font-bold flex items-start gap-2 animate-fade-in">
+                  <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+                  <span>{validationError}</span>
+                </div>
+              )}
+
+              {/* PARAMETERS INPUT FORM */}
+              <form onSubmit={handleCreateVoucher} className="space-y-4">
+                {/* Voucher Number Row with Auto-Gen button */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5 flex justify-between items-center">
+                    <span>{l.voucherNoLabel} *</span>
+                    <div className="flex gap-2">
+                      {isManualVoucherNo && (
+                        <button
+                          type="button"
+                          onClick={handleAutoGenerateNo}
+                          className="text-[10px] font-black text-emerald-500 hover:text-emerald-600 cursor-pointer"
+                        >
+                          [{l.autoGenerated}]
+                        </button>
+                      )}
+                      {!isManualVoucherNo && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (window.confirm(isRtl ? 'هل أنت متأكد من تصفير عداد الترقيم لهذه الشركة؟ السند القادم سيتطلب إدخال الرقم يدوياً لبدء تسلسل جديد.' : 'Are you sure you want to reset the numbering counter for this company? The next voucher will require manual number input to start a new sequence.')) {
+                              await CustodyDB.resetCompanySequence(primaryCompanyId);
+                              // Refresh
+                              loadData();
+                              triggerToast(isRtl ? 'تم تصفير عداد الترقيم بنجاح! يرجى إدخال الرقم يدوياً للمستند القادم.' : 'Numbering counter reset successfully! Please enter the first number manually.');
+                            }
+                          }}
+                          className="text-[10px] font-black text-rose-500 hover:text-rose-600 cursor-pointer"
+                        >
+                          [{isRtl ? 'تصفير عداد الترقيم' : 'Reset numbering counter'}]
+                        </button>
+                      )}
+                    </div>
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      required
+                      disabled={!isManualVoucherNo}
+                      value={voucherNo}
+                      onChange={(e) => {
+                        if (isManualVoucherNo) {
+                          setVoucherNo(e.target.value.replace(/\D/g, ''));
+                          setValidationError('');
+                        }
+                      }}
+                      placeholder={isManualVoucherNo ? (isRtl ? 'أدخل أول رقم سند يدوياً (مثال: 1001)' : 'Enter first voucher number (e.g. 1001)') : (isRtl ? 'سيتم توليده تلقائياً' : 'Will be auto-generated')}
+                      className={`w-full px-3 py-2 text-xs font-bold rounded-xl border focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
+                        theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200'
+                      } ${!isManualVoucherNo ? 'opacity-75 bg-slate-100 dark:bg-slate-900/50 cursor-not-allowed' : ''}`}
+                    />
+                  </div>
+                </div>
+
+                {/* Voucher Date */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">{l.voucherDateLabel} *</label>
+                  <input
+                    type="date"
+                    required
+                    value={voucherDate}
+                    onChange={(e) => setVoucherDate(e.target.value)}
+                    className={`w-full px-3 py-2 text-xs font-bold font-mono rounded-xl border focus:outline-none ${
+                      theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200'
+                    }`}
+                  />
+                </div>
+
+                {/* Recipient Full Name */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">{l.recipientNameLabel}</label>
+                  <input
+                    type="text"
+                    required
+                    value={recipientName}
+                    onChange={(e) => setRecipientName(e.target.value)}
+                    placeholder={l.recipientPlaceholder}
+                    className={`w-full px-3 py-2 text-xs font-semibold rounded-xl border focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
+                      theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200'
+                    }`}
+                  />
+                </div>
+
+                {/* Received By */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">{l.receivedByLabel}</label>
+                  <input
+                    type="text"
+                    value={receivedBy}
+                    onChange={(e) => setReceivedBy(e.target.value)}
+                    placeholder={isRtl ? 'أدخل اسم مستلم النقدية' : 'Disbursement recipient'}
+                    className={`w-full px-3 py-2 text-xs font-medium rounded-xl border focus:outline-none ${
+                      theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200'
+                    }`}
+                  />
+                </div>
+
+                {/* Approved By */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">{l.approvedByLabel}</label>
+                  <input
+                    type="text"
+                    value={approvedBy}
+                    onChange={(e) => setApprovedBy(e.target.value)}
+                    className={`w-full px-3 py-2 text-xs font-bold rounded-xl border focus:outline-none ${
+                      theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200'
+                    }`}
+                  />
+                </div>
+
+                {/* SUBMIT BUTTON */}
+                <button
+                  type="submit"
+                  disabled={selectedTxIds.length === 0 || isSubmitting}
+                  className={`w-full py-3 rounded-xl font-black text-xs transition-all shadow-md flex items-center justify-center gap-2 ${
+                    selectedTxIds.length > 0 && !isSubmitting
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer hover:shadow-emerald-600/10 hover:shadow-lg'
+                      : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                  }`}
+                >
+                  <FileCheck size={16} />
+                  <span>{isSubmitting ? (isRtl ? 'جاري الحفظ...' : 'Saving...') : (isRtl ? 'حفظ السند وتوليد كشف الصرف' : 'Confirm & Save Cash Voucher')}</span>
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          TAB 2: VOUCHERS HISTORY / ARCHIVES
+          ===================================================================== */}
+      {activeTab === 'history' && (
+        <div className="space-y-4">
+          {/* Quick search inside compiled vouchers */}
+          <div className={`p-4 rounded-2xl border ${
+            theme === 'dark' ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-slate-200 shadow-sm'
+          }`}>
+            <div className="relative">
+              <Search className={`absolute top-3 text-slate-400 h-4 w-4 ${isRtl ? 'right-3' : 'left-3'}`} />
+              <input
+                type="text"
+                value={voucherSearch}
+                onChange={(e) => setVoucherSearch(e.target.value)}
+                placeholder={l.searchVouchers}
+                className={`w-full text-xs py-2 rounded-xl border focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
+                  isRtl ? 'pr-9 pl-3' : 'pl-9 pr-3'
+                } ${
+                  theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-200'
+                }`}
+              />
+            </div>
+          </div>
+
+          {/* Vouchers Archive Table */}
+          <div className={`rounded-2xl border overflow-hidden ${
+            theme === 'dark' ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-slate-200 shadow-sm'
+          }`}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse min-w-[800px]">
+                <thead>
+                  <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-medium bg-slate-50/50 dark:bg-slate-800/25">
+                    <th className="py-3 px-4 font-bold text-slate-500">{l.voucherNoLabel}</th>
+                    <th className="py-3 px-4 font-bold text-slate-500">{l.voucherDateLabel}</th>
+                    <th className="py-3 px-4 font-bold text-slate-500">{l.recipientLabel}</th>
+                    <th className="py-3 px-4 font-bold text-slate-500">{l.expensesCount}</th>
+                    <th className="py-3 px-4 font-bold text-slate-500 text-right">{l.amountLabel}</th>
+                    <th className="py-3 px-4 font-bold text-slate-500 text-center">{t.actions}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {filteredVouchers.slice(0, vouchersLimit).map(vc => {
+                    const vcCompany = companies.find(c => c.id === vc.company_id);
+                    const vcStation = stations.find(s => s.id === vc.station_id);
+
+                    return (
+                      <tr key={vc.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                        {/* Barcode/Sequence number preview */}
+                        <td className="py-4 px-4">
+                          <div className="flex items-center gap-1.5">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                            <span className="font-mono font-black text-slate-800 dark:text-slate-100 text-[13px]">
+                              {vc.voucher_no}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Date */}
+                        <td className="py-4 px-4 font-mono text-slate-500 dark:text-slate-400">{vc.date}</td>
+
+                        {/* Recipient / Site Info */}
+                        <td className="py-4 px-4">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-bold text-slate-800 dark:text-slate-200">{vc.recipient_name}</span>
+                            <span className="text-[10px] text-slate-400 flex items-center gap-1 font-mono">
+                              <Building2 size={10} />
+                              <span>{vcCompany?.name || vc.company_id} | {vcStation?.station_name || vc.station_id}</span>
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Count of grouped items */}
+                        <td className="py-4 px-4 text-slate-500 dark:text-slate-400">
+                          <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 font-mono font-bold text-[11px] text-slate-700 dark:text-slate-300">
+                            {vc.expense_ids?.length || 0} {isRtl ? 'حركة' : 'items'}
+                          </span>
+                        </td>
+
+                        {/* Grand Total amount */}
+                        <td className="py-4 px-4 text-right font-mono font-black text-slate-900 dark:text-slate-50 text-[13px]">
+                          {vc.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} <span className="text-[10px] font-normal">{l.egp}</span>
+                        </td>
+
+                        {/* Print action or deletion */}
+                        <td className="py-4 px-4 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            {/* Review and Print action trigger */}
+                            <button
+                              onClick={() => setPreviewVoucher(vc)}
+                              className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 text-emerald-600 hover:text-white font-bold text-[11px] flex items-center gap-1 transition-all"
+                            >
+                              <Printer size={13} />
+                              <span>{l.viewPrint}</span>
+                            </button>
+
+                            {/* Edit Action (SystemAdmin, Admin, StationAdmin) */}
+                            {canEditOrDelete && (
+                              <button
+                                onClick={() => handleStartEdit(vc)}
+                                className="p-1.5 rounded hover:bg-indigo-50 dark:hover:bg-indigo-500/10 text-indigo-500 hover:text-indigo-600 transition-colors"
+                                title={isRtl ? 'تعديل السند المالي' : 'Edit Voucher'}
+                              >
+                                <Edit2 size={13} />
+                              </button>
+                            )}
+
+                            {/* Delete/Rollback (System admin, admin, or Station manager) */}
+                            {canEditOrDelete && (
+                              <button
+                                onClick={() => setDeletingId(vc.id)}
+                                className="p-1.5 rounded hover:bg-rose-50 dark:hover:bg-rose-500/10 text-slate-400 hover:text-rose-500 transition-colors"
+                                title={isRtl ? 'حذف السند وإرجاع المصاريف' : 'Delete Voucher & Revert Items'}
+                              >
+                                <X size={15} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {filteredVouchers.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="py-12 text-center text-slate-400">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <Archive className="h-8 w-8 text-slate-300 stroke-1" />
+                          <p className="text-xs">{l.noVouchers}</p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {filteredVouchers.length > vouchersLimit && (
+              <div className="flex justify-center p-3 border-t border-slate-100 dark:border-slate-800/30">
+                <button
+                  onClick={() => setVouchersLimit(prev => prev + 15)}
+                  className="px-4 py-1.5 text-xs font-bold bg-emerald-500/10 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-lg transition-all flex items-center gap-1.5 shadow-sm"
+                >
+                  <span>{isRtl ? 'عرض المزيد من السندات' : 'Load More Vouchers'}</span>
+                  <span className="text-[10px] opacity-75">({filteredVouchers.length - vouchersLimit} {isRtl ? 'متبقي' : 'remaining'})</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL: CONFIRM VOUCHER DELETE & ROLLBACK
+          ===================================================================== */}
+      {deletingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm p-4">
+          <div className={`w-full max-w-sm p-5 rounded-2xl border shadow-xl ${
+            theme === 'dark' ? 'bg-[#1e293b] border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'
+          }`}>
+            <div className="flex items-center gap-3 text-rose-500 mb-3">
+              <AlertTriangle className="h-6 w-6 shrink-0 animate-bounce" />
+              <h3 className="font-bold text-sm md:text-base">{isRtl ? 'حذف السند المالي الموحد' : 'Delete Consolidated Voucher'}</h3>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mb-4">
+              {l.confirmDelete}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setDeletingId(null)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                  theme === 'dark' ? 'text-slate-300' : 'text-slate-600'
+                }`}
+              >
+                {isRtl ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button
+                onClick={() => handleDeleteVoucher(deletingId)}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-rose-500 hover:bg-rose-600 text-white shadow-sm"
+              >
+                {isRtl ? 'تأكيد الحذف والإرجاع' : 'Confirm Delete & Rollback'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL: STATE OF THE ART UNIFIED CASH VOUCHER PRINT PREVIEW
+          ===================================================================== */}
+      {previewVoucher && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 overflow-y-auto">
+          {/* Print Style injection rules (pushed to background when printed) */}
+          <style>{`
+            @media print {
+              body, html {
+                background-color: white !important;
+                color: black !important;
+                font-family: 'Inter', system-ui, sans-serif !important;
+              }
+              /* Hide all web scaffolding and container frame */
+              header, aside, footer, #app-header, #app-sidebar, #sidebar-mobile-backdrop,
+              #toggle-sidebar-mobile, #btn-toggle-theme, #btn-logout, .fixed, button,
+              #print-preview-modal-card, #voucher-sheet-printable button, .absolute, .shadow-2xl,
+              .bg-black\\/65, #btn-back-to-home-global, #role-switcher-btn, .print-btn-panel {
+                display: none !important;
+                visibility: hidden !important;
+              }
+              /* Stretch printable sheet cleanly to full width, zero out margins */
+              #voucher-sheet-printable {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                margin: 0 !important;
+                padding: 10mm !important;
+                border: none !important;
+                box-shadow: none !important;
+                visibility: visible !important;
+                background: white !important;
+                color: black !important;
+              }
+              #voucher-sheet-printable * {
+                visibility: visible !important;
+                color: black !important;
+                color-scheme: light !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+            }
+          `}</style>
+
+          {/* Modal Container */}
+          <div 
+            id="print-preview-modal-card"
+            className={`w-full max-w-4xl rounded-2xl border shadow-2xl overflow-hidden flex flex-col my-6 max-h-[92vh] ${
+              theme === 'dark' ? 'bg-[#1e293b] border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'
+            }`}
+          >
+            {/* Header (Hidden on printed paper) */}
+            <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-2">
+                <Printer className="text-emerald-500 h-5 w-5 animate-pulse" />
+                <h3 className="font-extrabold text-sm md:text-base">
+                  {l.previewTitle}
+                </h3>
+              </div>
+              <button 
+                onClick={() => setPreviewVoucher(null)}
+                className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Scrollable Preview Canvas with gray backdrop */}
+            <div className="flex-1 p-6 overflow-auto bg-slate-100/60 dark:bg-slate-950/40">
+              
+              {/* Floating control bar above voucher */}
+              <div className="mb-4 flex justify-between items-center print-btn-panel">
+                <span className="text-xs font-bold text-slate-400">
+                  {isRtl ? '⚠️ اضغط على زر طباعة لتشغيل الطباعة بالهوامش الافتراضية.' : '⚠️ Click print to trigger clean system document rendering.'}
+                </span>
+                <button
+                  onClick={() => window.print()}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-md shadow-emerald-600/15 hover:shadow-lg transition-all"
+                >
+                  <Printer size={15} />
+                  <span>{l.printVoucherBtn}</span>
+                </button>
+              </div>
+
+              {/* A4 PRINT CONTAINER */}
+              <div
+                id="voucher-sheet-printable"
+                className="w-[210mm] min-h-[297mm] mx-auto p-9 border-[3px] border-black bg-white text-black text-xs font-bold leading-relaxed shadow-xl relative print:shadow-none print:border-black print:rounded-none print:w-full print:min-h-0 print:p-2"
+                dir="rtl"
+                style={{
+                  backgroundImage: (CustodyDB.getConfig().use_custom_template && CustodyDB.getConfig().custom_template_image) ? `url(${CustodyDB.getConfig().custom_template_image})` : undefined,
+                  backgroundSize: '100% 100%',
+                  backgroundRepeat: 'no-repeat',
+                }}
+              >
+                {/* 1. Header Information Row (Corporate branding, logo, metadata) */}
+                <div className="flex justify-between items-center border-b-2 border-black pb-4 mb-4 gap-4">
+                  
+                  {/* Right Side: Logo & Location meta */}
+                  {!CustodyDB.getConfig().use_custom_template ? (
+                    <div className="flex items-center gap-3">
+                      <div className="border-[2.5px] border-black rounded-[50%/50%] px-3 py-1.5 flex flex-col items-center justify-center leading-none bg-white shrink-0 shadow-sm h-[52px] w-[90px]">
+                        <span className="text-[20px] font-black leading-none text-black">كوكي</span>
+                        <span className="text-[9px] font-bold font-mono tracking-wider mt-0.5 leading-none text-black">Koki</span>
+                      </div>
+
+                      <div className="text-right space-y-0.5">
+                        <h1 className="text-[13px] font-black text-black">شركة / القاهرة الجديدة للدواجن</h1>
+                        <p className="text-[11px] text-neutral-800 font-bold">
+                          {l.stationLabel2}: <span className="font-black text-black">{(stations.find(s => s.id === previewVoucher.station_id))?.station_name || previewVoucher.station_id || 'موقع عام'}</span>
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-right space-y-0.5">
+                      <h1 className="text-[13px] font-black text-emerald-600">{CustodyDB.getConfig().company_name}</h1>
+                      <p className="text-[11px] text-neutral-800 font-bold">
+                        {l.stationLabel2}: <span className="font-black text-black">{(stations.find(s => s.id === previewVoucher.station_id))?.station_name || previewVoucher.station_id || 'موقع عام'}</span>
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Center: Main voucher heading */}
+                  <div className="text-center">
+                    <h2 className="text-[14px] font-black border-[2.5px] border-black px-4 py-2 bg-neutral-100 text-black shadow-sm">
+                      {l.unifiedHeading}
+                    </h2>
+                  </div>
+
+                  {/* Left Side: SVG Barcode & QR Code Displayer */}
+                  <div className="flex items-center gap-4 shrink-0">
+                    <SVGBarcode value={previewVoucher.voucher_no} />
+                    <SVGQRCode value={`VOUCHER:${previewVoucher.voucher_no}|DATE:${previewVoucher.date}|SUM:${previewVoucher.amount} EGP|BY:${previewVoucher.recipient_name}`} />
+                  </div>
+                </div>
+
+                {/* 2. Dispersal Info Rows (Date, recipient, company, target division) */}
+                <div className="grid grid-cols-2 border border-black p-3.5 rounded-lg mb-4 text-xs font-bold text-black gap-4">
+                  <div className="space-y-2">
+                    <div>
+                      <span className="text-neutral-500 font-bold">{l.dateLabel}: </span>
+                      <span className="font-mono text-black font-black text-[13px]">{previewVoucher.date}</span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-500 font-bold">{l.recipientLabel}: </span>
+                      <span className="text-black font-black text-[13px]">{previewVoucher.recipient_name}</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2 text-left self-end">
+                    <div>
+                      <span className="text-neutral-500 font-bold">{l.compLabel2}: </span>
+                      <span className="text-black font-black">{(companies.find(c => c.id === previewVoucher.company_id))?.name || previewVoucher.company_id || 'مجموعة القاهرة للدواجن'}</span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-500 font-bold">{l.departmentLabel}: </span>
+                      <span className="text-black font-black">{l.finDep}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Detailed expenses multi-row table */}
+                <div className="border border-black rounded-lg overflow-x-auto mb-5">
+                  <table className="w-full text-center border-collapse text-xs font-bold text-black">
+                    <thead>
+                      <tr className="bg-neutral-100 border-b border-black text-black font-black text-[11px]">
+                        <th className="border-l border-black py-2 w-[5%]">م</th>
+                        <th className="border-l border-black py-2 w-[15%]">{l.itemTableDirect}</th>
+                        <th className="border-l border-black py-2 w-[10%]">{l.itemTableAttach}</th>
+                        <th className="border-l border-black py-2 w-[50%]">{l.itemTableDesc}</th>
+                        <th className="py-2 w-[20%] border-b border-black" colSpan={2}>{l.amountLabel}</th>
+                      </tr>
+                      <tr className="bg-neutral-50 border-b-2 border-black text-[10px] text-black font-black">
+                        <th className="border-l border-black py-1" colSpan={4}>&nbsp;</th>
+                        <th className="border-l border-black py-1 w-[13%]">{l.itemTablePounds}</th>
+                        <th className="py-1 w-[7%]">{l.itemTablePiastres}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-300">
+                      {(() => {
+                        // Load full child expense items
+                        const bundledExpenses = CustodyDB.getTransactions().filter(tx => 
+                          previewVoucher.expense_ids.includes(tx.id)
+                        );
+
+                        // Fill at least 10 rows for beautiful formal paper look
+                        const totalRowsTarget = 10;
+                        const emptyRowsNeeded = Math.max(1, totalRowsTarget - bundledExpenses.length);
+
+                        return (
+                          <>
+                            {bundledExpenses.map((tx, idx) => {
+                              const pounds = Math.floor(tx.amount);
+                              const piastres = Math.round((tx.amount % 1) * 100);
+
+                              return (
+                                <tr key={tx.id} className="h-8.5 text-black">
+                                  {/* Index */}
+                                  <td className="border-l border-black text-center font-mono">{idx + 1}</td>
+                                  
+                                  {/* Account direct assignment (Using category code or general) */}
+                                  <td className="border-l border-black px-1.5 text-[10px] text-center font-mono">
+                                    {tx.category_id ? tx.category_id.slice(0, 10).toUpperCase() : 'مصروفات عامة'}
+                                  </td>
+
+                                  {/* Attachments marker */}
+                                  <td className="border-l border-black text-center text-[10px]">
+                                    {tx.notes && (tx.notes.includes('فاتورة') || tx.notes.includes('مرفق')) ? 'مرفق' : '-'}
+                                  </td>
+
+                                  {/* Explanation description */}
+                                  <td className="border-l border-black px-3 text-right font-black text-black leading-relaxed text-[11px]">
+                                    <div className="flex justify-between items-center gap-2">
+                                      <span>{tx.description}</span>
+                                      <span className="text-[9px] text-neutral-400 font-mono">({tx.transaction_no})</span>
+                                    </div>
+                                  </td>
+
+                                  {/* Amount pounds */}
+                                  <td className="border-l border-black font-mono text-[11px] font-black text-center">
+                                    {pounds.toLocaleString('en-US')}
+                                  </td>
+
+                                  {/* Amount piastres */}
+                                  <td className="font-mono text-[10px] font-black text-center">
+                                    {piastres === 0 ? '00' : piastres}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+
+                            {/* Empty dotted spacers to preserve alignment */}
+                            {Array.from({ length: emptyRowsNeeded }).map((_, idx) => (
+                              <tr key={idx} className="h-6.5 text-neutral-300">
+                                <td className="border-l border-black">&nbsp;</td>
+                                <td className="border-l border-black">&nbsp;</td>
+                                <td className="border-l border-black">&nbsp;</td>
+                                <td className="border-l border-black">&nbsp;</td>
+                                <td className="border-l border-black">&nbsp;</td>
+                                <td>&nbsp;</td>
+                              </tr>
+                            ))}
+                          </>
+                        );
+                      })()}
+
+                      {/* GRAND TOTAL SUMMARY ROW */}
+                      <tr className="h-9.5 bg-neutral-100 font-black border-t-[2.5px] border-black text-black text-[11px]">
+                        <td className="border-l border-black" colSpan={3}>&nbsp;</td>
+                        <td className="border-l border-black px-3 text-right text-black font-black leading-relaxed">
+                          <div className="space-y-1 py-1">
+                            <div>
+                              <span className="text-neutral-500 font-bold">{l.tafqeetAr}: </span>
+                              <span className="text-black font-black">{previewVoucher.amount_in_words?.ar || getArabicTafqeet(previewVoucher.amount)}</span>
+                            </div>
+                            <div className="border-t border-neutral-300 pt-0.5">
+                              <span className="text-neutral-500 font-bold">{l.tafqeetEn}: </span>
+                              <span className="text-black font-black font-mono text-[9px]">{previewVoucher.amount_in_words?.en || getEnglishTafqeet(previewVoucher.amount)}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="border-l border-black font-mono text-xs text-black font-black text-center">
+                          {Math.floor(previewVoucher.amount).toLocaleString('en-US')}
+                        </td>
+                        <td className="font-mono text-[11px] text-black font-black text-center">
+                          {Math.round((previewVoucher.amount % 1) * 100) === 0 ? '00' : Math.round((previewVoucher.amount % 1) * 100)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 4. Signature columns section with six formal approvals */}
+                <div className="mt-6 border-t border-black pt-4">
+                  <p className="text-[10px] text-neutral-500 text-center mb-6 leading-none italic font-bold">
+                    * {l.recipientSign}
+                  </p>
+                  
+                  <div className="grid grid-cols-3 gap-y-12 gap-x-6 text-center text-[10px] font-black text-black">
+                    {/* Column 1: Accountant & Authorized Site Manager */}
+                    <div className="space-y-8">
+                      <div>
+                        <p className="text-black font-black mb-1">{l.accName}</p>
+                        <div className="text-neutral-300 font-mono text-[10px] select-none tracking-tighter">................................................</div>
+                      </div>
+                      <div>
+                        <p className="text-black font-black mb-1">{l.mgrName}</p>
+                        <div className="text-neutral-300 font-mono text-[10px] select-none tracking-tighter">................................................</div>
+                      </div>
+                    </div>
+
+                    {/* Column 2: Internal Auditor & Treasurer/Cashier */}
+                    <div className="space-y-8">
+                      <div>
+                        <p className="text-black font-black mb-1">{l.audName}</p>
+                        <div className="text-neutral-300 font-mono text-[10px] select-none tracking-tighter">................................................</div>
+                      </div>
+                      <div>
+                        <p className="text-black font-black mb-1">{l.treasName}</p>
+                        <div className="text-neutral-300 font-mono text-[10px] select-none tracking-tighter">................................................</div>
+                      </div>
+                    </div>
+
+                    {/* Column 3: Discharged Recipient & Division GM */}
+                    <div className="space-y-8">
+                      <div>
+                        <p className="text-black font-black mb-1">{l.recipSignName}</p>
+                        <div className="text-neutral-500 font-black text-[11px] mt-1 bg-neutral-100 px-1.5 py-0.5 rounded inline-block">
+                          {previewVoucher.recipient_name}
+                        </div>
+                        <div className="text-neutral-300 font-mono text-[10px] select-none tracking-tighter mt-1">................................................</div>
+                      </div>
+                      <div>
+                        <p className="text-black font-black mb-1">{l.gmName}</p>
+                        <div className="text-neutral-300 font-mono text-[10px] select-none tracking-tighter">................................................</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Print trigger bottom action panel (hidden on actual printed paper) */}
+            <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 shrink-0 flex justify-end gap-2 bg-slate-50 dark:bg-slate-800/20 print-btn-panel">
+              <button
+                onClick={() => setPreviewVoucher(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                {isRtl ? 'إغلاق المعاينة' : 'Close Preview'}
+              </button>
+              <button
+                onClick={() => window.print()}
+                className="px-5 py-2 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1.5 shadow-md shadow-emerald-600/10"
+              >
+                <Printer size={14} />
+                <span>{l.printVoucherBtn}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL: EDIT VOUCHER DETAILS
+          ===================================================================== */}
+      {editingVoucher && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm p-4">
+          <div className={`w-full max-w-md p-6 rounded-2xl border shadow-xl ${
+            theme === 'dark' ? 'bg-[#1e293b] border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-800'
+          }`}>
+            <div className="flex items-center gap-3 text-indigo-500 mb-4 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <Edit2 className="h-5 w-5 animate-pulse" />
+              <h3 className="font-black text-sm md:text-base">
+                {isRtl ? 'تعديل بيانات السند المالي' : 'Edit Cash Payment Voucher Details'}
+              </h3>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-4">
+              {validationError && (
+                <div className="text-[11px] font-bold text-rose-500 bg-rose-500/10 p-2.5 rounded-xl border border-rose-500/20">
+                  {validationError}
+                </div>
+              )}
+
+              {/* Voucher Number */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">
+                  {l.voucherNoLabel} *
+                </label>
+                <input
+                  type="text"
+                  required
+                  disabled
+                  value={editVoucherNo}
+                  className={`w-full px-3 py-2 text-xs font-bold rounded-xl border focus:outline-none focus:ring-1 focus:ring-indigo-50 opacity-75 bg-slate-100 dark:bg-slate-900/50 cursor-not-allowed ${
+                    theme === 'dark' ? 'border-slate-700 text-slate-400' : 'border-slate-200 text-slate-500'
+                  }`}
+                />
+              </div>
+
+              {/* Voucher Date */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">
+                  {l.voucherDateLabel} *
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={editVoucherDate}
+                  onChange={(e) => setEditVoucherDate(e.target.value)}
+                  className={`w-full px-3 py-2 text-xs font-bold font-mono rounded-xl border focus:outline-none focus:ring-1 focus:ring-indigo-50 ${
+                    theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200'
+                  }`}
+                />
+              </div>
+
+              {/* Recipient Name */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">
+                  {isRtl ? 'اسم المستفيد' : 'Recipient Full Name'} *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editRecipientName}
+                  onChange={(e) => {
+                    setEditRecipientName(e.target.value);
+                    setValidationError('');
+                  }}
+                  className={`w-full px-3 py-2 text-xs font-semibold rounded-xl border focus:outline-none focus:ring-1 focus:ring-indigo-50 ${
+                    theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200'
+                  }`}
+                />
+              </div>
+
+              {/* Received By */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">
+                  {l.receivedByLabel}
+                </label>
+                <input
+                  type="text"
+                  value={editReceivedBy}
+                  onChange={(e) => setEditReceivedBy(e.target.value)}
+                  className={`w-full px-3 py-2 text-xs font-medium rounded-xl border focus:outline-none focus:ring-1 focus:ring-indigo-50 ${
+                    theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200'
+                  }`}
+                />
+              </div>
+
+              {/* Approved By */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 uppercase mb-1.5">
+                  {l.approvedByLabel}
+                </label>
+                <input
+                  type="text"
+                  value={editApprovedBy}
+                  onChange={(e) => setEditApprovedBy(e.target.value)}
+                  className={`w-full px-3 py-2 text-xs font-bold rounded-xl border focus:outline-none focus:ring-1 focus:ring-indigo-50 ${
+                    theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200'
+                  }`}
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingVoucher(null);
+                    setValidationError('');
+                  }}
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                    theme === 'dark' ? 'text-slate-300' : 'text-slate-600'
+                  }`}
+                >
+                  {isRtl ? 'إلغاء' : 'Cancel'}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/10 ${
+                    isSubmitting ? 'opacity-75 cursor-not-allowed' : 'cursor-pointer'
+                  }`}
+                >
+                  {isSubmitting ? (isRtl ? 'جاري الحفظ...' : 'Saving...') : (isRtl ? 'حفظ التعديلات' : 'Save Changes')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}

@@ -1,507 +1,880 @@
-import React, { useState, useEffect } from 'react';
-import { Header } from './components/Header';
-import { Sidebar, ActiveSection } from './components/Sidebar';
-import { OperationalWorkspace } from './components/OperationalWorkspace';
-import { TransactionModal } from './components/TransactionModal';
-import { PrintVoucherModal } from './components/PrintVoucherModal';
-import { LoginScreen } from './components/LoginScreen';
-import { ForcePasswordChangeScreen } from './components/ForcePasswordChangeScreen';
-import { UserProfileView } from './components/UserProfileView';
-import { CompanySettingsView } from './components/CompanySettingsView';
-import { CompanyWizardView } from './components/CompanyWizardView';
-import { PlatformHubView } from './components/PlatformHubView';
-import { GovernanceView } from './components/GovernanceView';
-import { InvConfigView } from './components/InvConfigView';
-import { OrgGroupsView } from './components/OrgGroupsView';
-import { XcompanyView } from './components/XcompanyView';
-import { GroupReportsView } from './components/GroupReportsView';
-import { LedgerDepthView } from './components/LedgerDepthView';
-import { UsersAndSodView } from './components/UsersAndSodView';
-import { CustomFieldsView } from './components/CustomFieldsView';
-import { AuditTrailView } from './components/AuditTrailView';
-import { AccountingWorkspaceView } from './components/AccountingWorkspaceView';
-import { CashCustodyWorkspaceView } from './components/CashCustodyWorkspaceView';
-import { ExpensesWorkspaceView } from './components/ExpensesWorkspaceView';
-import { InventoryWorkspaceView } from './components/InventoryWorkspaceView';
-import { PurchasingWorkspaceView } from './components/PurchasingWorkspaceView';
-import { OperationalTransaction, UserProfile, UserRole } from './types/erp';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
+import { CustodyDB, ModulesModule } from './db';
+import { AppUser, Language, Theme, Transaction } from './types';
+import { auth } from './firebase';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import Layout from './components/Layout';
+import { Download, X, Smartphone, ArrowDown, Sparkles, ShieldAlert } from 'lucide-react';
+
+// Lazy Loaded Pages for Role-Based Code Splitting
+const Login = lazy(() => import('./pages/Login'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const NewExpense = lazy(() => import('./pages/NewExpense'));
+const PendingTransactions = lazy(() => import('./pages/PendingTransactions'));
+const CashPaymentVoucher = lazy(() => import('./pages/CashPaymentVoucher'));
+const UnderSettlement = lazy(() => import('./pages/UnderSettlement'));
+const CashReconciliation = lazy(() => import('./pages/CashReconciliation'));
+const Custody = lazy(() => import('./pages/Custody'));
+const Reports = lazy(() => import('./pages/Reports'));
+const Search = lazy(() => import('./pages/Search'));
+const Settings = lazy(() => import('./pages/Settings'));
+const RegionalDashboard = lazy(() => import('./pages/RegionalDashboard'));
+const Stations = lazy(() => import('./pages/Stations'));
+const StationDetails = lazy(() => import('./pages/StationDetails'));
+const AuditLogView = lazy(() => import('./pages/AuditLog'));
+const SuperAdmin = lazy(() => import('./pages/SuperAdmin'));
+const CompanyAdminDashboard = lazy(() => import('./pages/CompanyAdminDashboard'));
+const RegionAdminDashboard = lazy(() => import('./pages/RegionAdminDashboard'));
+const Inventory = lazy(() => import('./pages/Inventory'));
+const Purchasing = lazy(() => import('./pages/Purchasing'));
+const Accounting = lazy(() => import('./pages/Accounting'));
+const SalesAR = lazy(() => import('./pages/SalesAR'));
+const POS = lazy(() => import('./pages/POS'));
+const CRM = lazy(() => import('./pages/CRM'));
+const FixedAssets = lazy(() => import('./pages/FixedAssets'));
+const FleetManagement = lazy(() => import('./pages/FleetManagement'));
+const HRPayroll = lazy(() => import('./pages/HRPayroll'));
+const Contracting = lazy(() => import('./pages/Contracting'));
+const RestaurantMenu = lazy(() => import('./pages/RestaurantMenu'));
+const RestaurantOrders = lazy(() => import('./pages/RestaurantOrders'));
+const FirstRunSetup = lazy(() => import('./pages/FirstRunSetup'));
+import ApprovalInbox from './components/ApprovalInbox';
+import ChangePasswordRequired from './components/ChangePasswordRequired';
 
 export default function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentUser, setCurrentUser] = useState<any>(null);
-  const [calendar, setCalendar] = useState<any>(null);
-  const [activeSection, setActiveSection] = useState<ActiveSection>('overview');
-  const [transactions, setTransactions] = useState<OperationalTransaction[]>([]);
-  const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [selectedTxForPrint, setSelectedTxForPrint] = useState<OperationalTransaction | null>(null);
-  const [notification, setNotification] = useState<string | null>(null);
-  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  // Try to load any existing active session, or default to null
+  const [activeUser, setActiveUser] = useState<AppUser | null>(() => {
+    return CustodyDB.getActiveUser();
+  });
 
-  const showNotification = (msg: string) => {
-    setNotification(msg);
-    setTimeout(() => {
-      setNotification(null);
-    }, 4500);
-  };
+  const [hasPlatformOwner, setHasPlatformOwner] = useState<boolean | null>(null);
 
-  // Session is carried by HttpOnly cookies (credentials: 'include'); no token is held in JS state or storage.
-  // tokenOverride is accepted for call-site compatibility and ignored.
-  const getAuthHeaders = (extraHeaders?: Record<string, string>, _tokenOverride?: string) => {
-    return { ...(extraHeaders || {}) } as Record<string, string>;
-  };
-
-  // Check auth session via HttpOnly cookie on initial mount
   useEffect(() => {
-    checkCurrentAuth();
-    fetchDualCalendar();
-  }, []);
-
-  const checkCurrentAuth = async () => {
-    try {
-      const res = await fetch('/api/auth/me', { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        if ((data.authenticated || data.success) && data.user) {
-          const mustChange =
-            !!data.requiresPasswordChange ||
-            !!data.user?.requiresPasswordChange;
-          setCurrentUser({ ...data.user, requiresPasswordChange: mustChange });
-          setIsLoggedIn(true);
-          if (!mustChange) {
-            fetchTransactions();
+    if (!activeUser) {
+      let isMounted = true;
+      fetch('/api/auth/platform-status')
+        .then((res) => {
+          if (!res.ok) throw new Error('Status endpoint returned non-200');
+          return res.json();
+        })
+        .then((data) => {
+          if (isMounted) {
+            setHasPlatformOwner(data?.hasPlatformOwner ?? true);
           }
-        }
-      }
-    } catch {
-      // not authenticated yet
+        })
+        .catch((err) => {
+          console.warn('Failed to check platform status, defaulting to Login screen:', err);
+          if (isMounted) {
+            setHasPlatformOwner(true);
+          }
+        });
+      return () => { isMounted = false; };
     }
-  };
+  }, [activeUser]);
 
-  const fetchDualCalendar = async () => {
+  const [currentTab, setCurrentTab] = useState<string>(() => {
     try {
-      const res = await fetch('/api/calendar', { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.data) {
-          setCalendar(data.data);
-        } else if (data.calendar) {
-          setCalendar(data.calendar);
-        }
-      }
-    } catch {
-      // fallback
-    }
-  };
-
-  function mapJournalStatusToArabic(status: string): OperationalTransaction['status'] {
-    switch (status) {
-      case 'PENDING_APPROVAL':
-        return 'بانتظار الاعتماد';
-      case 'APPROVED':
-      case 'POSTED':
-        return 'معتمد';
-      case 'REVERSED':
-        return 'مرفوض';
-      case 'DRAFT':
-      default:
-        return 'مسودة'; // قيمة افتراضية آمنة لأي حالة غير متوقعة مستقبلًا
-    }
-  }
-
-  const fetchTransactions = async (overrideToken?: string) => {
-    setIsLoadingTransactions(true);
-    try {
-      const res = await fetch('/api/transactions', {
-        headers: getAuthHeaders(undefined, overrideToken),
-        credentials: 'include',
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.data)) {
-          const mapped: OperationalTransaction[] = data.data.map((entry: any) => ({
-            id: entry.id,
-            code: entry.code ?? '—',
-            date: entry.date ?? '',
-            type: entry.type ?? 'قيد',
-            description: entry.description ?? '',
-            amount: typeof entry.totalAmount === 'number' ? entry.totalAmount : 0,
-            currency: entry.currency ?? 'ر.س',
-            party: entry.party ?? '—',
-            initiator: entry.createdBy ?? '—',
-            status: mapJournalStatusToArabic(entry.status),
-          }));
-          setTransactions(mapped);
+      const stored = localStorage.getItem('custody_active_user');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed) {
+          const storedTab = localStorage.getItem('custody_active_tab');
+          if (storedTab) return storedTab;
+          if (parsed.role === 'SystemAdmin' && !parsed.impersonator) return 'super-admin';
+          if (parsed.role === 'Admin') return 'dashboard';
+          if (parsed.role === 'RegionalManager') return 'region-admin';
+          if (parsed.role === 'StationAdmin') return 'reconciliation';
+          return 'dashboard';
         }
       }
     } catch {
       // ignore
-    } finally {
-      setIsLoadingTransactions(false);
+    }
+    return 'dashboard';
+  });
+  const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
+  const [language, setLanguage] = useState<Language>('ar');
+  const [theme, setTheme] = useState<Theme>('light');
+
+  // Shared state: transaction pre-selected for voucher settlement
+  const [selectedPendingTx, setSelectedPendingTx] = useState<Transaction | null>(null);
+
+  const [dbVersion, setDbVersion] = useState(0);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'general' | 'users' | 'workflows'>('general');
+  const [settingsInitialCenterTab, setSettingsInitialCenterTab] = useState<'users' | 'org_structure' | 'modules' | 'companies'>('users');
+  const [settingsSelectedCompanyId, setSettingsSelectedCompanyId] = useState<string>('');
+
+  // PWA Install Prompt State
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isIOS, setIsIOS] = useState(false);
+  const [showPwaBanner, setShowPwaBanner] = useState(false);
+
+  useEffect(() => {
+    // Detect iOS devices
+    const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+    setIsIOS(isApple);
+
+    // Only show banner if not in standalone and hasn't dismissed it in this session
+    const isDismissed = sessionStorage.getItem('pwa_banner_dismissed') === 'true';
+    if (!isStandalone && !isDismissed) {
+      // For iOS, show it because we cannot capture beforeinstallprompt
+      if (isApple) {
+        setShowPwaBanner(true);
+      }
+    }
+
+    const handleBeforeInstall = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      if (!isDismissed && !isStandalone) {
+        setShowPwaBanner(true);
+      }
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+    };
+  }, []);
+
+  const handlePwaInstall = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log('PWA installation outcome:', outcome);
+      if (outcome === 'accepted') {
+        setShowPwaBanner(false);
+      }
+      setDeferredPrompt(null);
+    } else if (isIOS) {
+      alert(
+        language === 'ar'
+          ? 'لتثبيت التطبيق على جهاز iPhone/iPad:\n1. اضغط على زر "مشاركة" (Share) في أسفل المتصفح.\n2. اختر "إضافة إلى الشاشة الرئيسية" (Add to Home Screen).\n3. اضغط "إضافة" (Add) في الزاوية العلوية.'
+          : 'To install on iPhone/iPad:\n1. Tap the "Share" button at the bottom of Safari.\n2. Scroll down and tap "Add to Home Screen".\n3. Tap "Add" in the top-right corner.'
+      );
     }
   };
 
-  const handleLoginSuccess = (loginData: any) => {
-    const user = loginData?.user ?? null;
-    const mustChange =
-      !!loginData?.requiresPasswordChange ||
-      !!user?.requiresPasswordChange;
-    const nextUser = user
-      ? { ...user, requiresPasswordChange: mustChange }
-      : user;
-    setCurrentUser(nextUser);
-    setIsLoggedIn(true);
-    if (loginData?.calendar) {
-      setCalendar(loginData.calendar);
+  const dismissPwaBanner = () => {
+    sessionStorage.setItem('pwa_banner_dismissed', 'true');
+    setShowPwaBanner(false);
+  };
+
+  // Redirect non-admin users if needed
+  useEffect(() => {
+    if (activeUser) {
+      const isAdminOrSystemAdmin = activeUser.role === 'Admin' || activeUser.role === 'SystemAdmin';
+      // No redirect needed as reports is default
     }
-    if (mustChange) {
-      showNotification('يجب تغيير كلمة المرور قبل استخدام النظام.');
+  }, [activeUser, currentTab]);
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setDbVersion(prev => prev + 1);
+      
+      // Update local user state in case permission configurations or roles change
+      const currentActive = CustodyDB.getActiveUser();
+      if (currentActive) {
+        setActiveUser(prev => {
+          if (!prev || prev.id !== currentActive.id || prev.role !== currentActive.role || JSON.stringify(prev.permissions) !== JSON.stringify(currentActive.permissions) || JSON.stringify(prev.impersonator) !== JSON.stringify(currentActive.impersonator)) {
+            return currentActive;
+          }
+          return prev;
+        });
+      }
+    };
+    window.addEventListener('custody_db_updated', handleUpdate);
+    return () => {
+      window.removeEventListener('custody_db_updated', handleUpdate);
+    };
+  }, []);
+
+  // Listen to cross-module navigate_tab CustomEvent
+  useEffect(() => {
+    const handleNavigateTab = (e: any) => {
+      const detail = e?.detail;
+      if (!detail) return;
+      const targetTab = detail.tab || 'dashboard';
+
+      if (detail.selectedCompanyId) {
+        CustodyDB.setSelectedCompanyId(detail.selectedCompanyId);
+        setSettingsSelectedCompanyId(detail.selectedCompanyId);
+      }
+
+      if (targetTab === 'settings') {
+        if (detail.settingsTab === 'permissions' || detail.settingsTab === 'users' || detail.settingsTab === 'access_control') {
+          setSettingsInitialTab('users');
+        } else if (detail.settingsTab === 'workflows') {
+          setSettingsInitialTab('workflows');
+        } else if (detail.settingsTab === 'general') {
+          setSettingsInitialTab('general');
+        }
+
+        if (detail.centerTab) {
+          setSettingsInitialCenterTab(detail.centerTab);
+        } else if (detail.settingsTab === 'companies') {
+          setSettingsInitialTab('users');
+          setSettingsInitialCenterTab('companies');
+        } else if (detail.settingsTab === 'org_structure') {
+          setSettingsInitialTab('users');
+          setSettingsInitialCenterTab('org_structure');
+        } else if (detail.settingsTab === 'modules') {
+          setSettingsInitialTab('users');
+          setSettingsInitialCenterTab('modules');
+        }
+      }
+
+      setCurrentTab(targetTab);
+    };
+
+    window.addEventListener('navigate_tab', handleNavigateTab);
+    return () => {
+      window.removeEventListener('navigate_tab', handleNavigateTab);
+    };
+  }, []);
+
+  // Monitor Firebase auth state to ensure session validity and multi-tenancy sync
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    try {
+      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        try {
+          const stored = localStorage.getItem('custody_active_user');
+          let currentLocalUser: AppUser | null = null;
+          try {
+            currentLocalUser = stored ? JSON.parse(stored) : null;
+          } catch (e) {
+            currentLocalUser = null;
+          }
+
+          if (firebaseUser) {
+            // If we are currently impersonating and the impersonator matches the signed-in Firebase user, keep it as-is!
+            const isImpersonatingAndValid = currentLocalUser && currentLocalUser.impersonator && 
+              currentLocalUser.impersonator.email?.toLowerCase().trim() === firebaseUser.email?.toLowerCase().trim();
+            if (isImpersonatingAndValid) {
+              // Do nothing, let the user stay in support impersonation session
+              return;
+            }
+
+            if (!currentLocalUser || currentLocalUser.email?.toLowerCase().trim() !== firebaseUser.email?.toLowerCase().trim()) {
+              const users = CustodyDB.getUsers();
+              const matchedUser = users.find(u => u.email?.toLowerCase().trim() === firebaseUser.email?.toLowerCase().trim());
+              if (matchedUser) {
+                // Synchronize ID if needed to enforce rules
+                if (matchedUser.id !== firebaseUser.uid) {
+                  matchedUser.id = firebaseUser.uid;
+                  try {
+                    await CustodyDB.saveUsers(users.map(u => (u.email?.toLowerCase().trim() === firebaseUser.email?.toLowerCase().trim()) ? { ...u, id: firebaseUser.uid } : u));
+                  } catch (e) {
+                    console.warn('Deferred UID sync save:', e);
+                  }
+                }
+                CustodyDB.setActiveUser(matchedUser);
+                setActiveUser(matchedUser);
+              }
+            }
+          } else {
+            // Firebase says signed out - clear session immediately to prevent local hijacking
+            // ONLY if online. If we are offline, preserve the local cached session for full offline operations!
+            // Also, do NOT clear the session if the active user is currently in an impersonation session
+            // Note: If user was never logged into Firebase yet (e.g. initial page visit), do not blank the page
+            if (typeof navigator !== 'undefined' && navigator.onLine) {
+              if (currentLocalUser && !currentLocalUser.impersonator) {
+                // Keep session if it was logged in locally via server session
+                const hasLocalSession = !!localStorage.getItem('custody_active_user');
+                if (!hasLocalSession) {
+                  CustodyDB.setActiveUser(null);
+                  setActiveUser(null);
+                }
+              }
+            }
+          }
+        } catch (authSyncErr) {
+          console.warn('Non-fatal auth state sync warning:', authSyncErr);
+        }
+      }, (authError) => {
+        console.warn('Firebase onAuthStateChanged notice (offline/unconfigured fallback):', authError);
+      });
+    } catch (e) {
+      console.warn('Could not initialize onAuthStateChanged listener:', e);
+    }
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
+  // Apply theme classes to standard document element
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
     } else {
-      showNotification(`مرحباً بك ${user?.fullName ?? ''}، تم تسجيل الدخول بنجاح.`);
-      fetchTransactions();
+      root.classList.remove('dark');
     }
-  };
+  }, [theme]);
 
-  const handlePasswordForceChanged = () => {
-    setCurrentUser((prev: any) =>
-      prev ? { ...prev, requiresPasswordChange: false } : prev
-    );
-    showNotification('تم تغيير كلمة المرور بنجاح. يمكنك استخدام النظام الآن.');
-    fetchTransactions();
+  const handleLoginSuccess = (user: AppUser) => {
+    const enriched: AppUser = {
+      ...user,
+      permissions: CustodyDB.enrichUserPermissions(user.role, user.permissions)
+    };
+    setActiveUser(enriched);
+
+    // Always set the correct home tab synchronously BEFORE first paint of renderPage().
+    let homeTab = 'reconciliation';
+    if (enriched.role === 'SystemAdmin') {
+      homeTab = 'super-admin';
+    } else if (enriched.role === 'Admin') {
+      homeTab = 'company-admin';
+    } else if (enriched.role === 'RegionalManager') {
+      homeTab = 'region-admin';
+    }
+    setCurrentTab(homeTab);
+
+    // Persist preferred tab so hard refresh / close-reopen does not land on a wrong operational screen.
+    try {
+      localStorage.setItem('custody_last_home_tab', homeTab);
+    } catch {
+      // ignore
+    }
   };
 
   const handleLogout = async () => {
+    // 1. Instant optimistic local reset: UI transitions immediately with zero lag or delay
+    CustodyDB.setActiveUser(null);
+    setActiveUser(null);
+    setSelectedPendingTx(null);
+
     try {
-      await fetch('/api/auth/logout', {
+      localStorage.removeItem('custody_active_user');
+      localStorage.removeItem('custody_active_tab');
+      localStorage.removeItem('custody_last_home_tab');
+      sessionStorage.clear();
+    } catch {
+      // ignore storage access errors
+    }
+
+    // 2. Non-blocking resilient backend session revocation & Firebase signOut in background
+    const bgTasks = [
+      fetch('/api/auth/logout', {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-      });
+        keepalive: true
+      }).catch(err => {
+        console.warn('Logout session revocation warning:', err);
+      }),
+      signOut(auth).catch(err => {
+        console.warn('Firebase signOut warning:', err);
+      })
+    ];
+
+    try {
+      await Promise.race([
+        Promise.allSettled(bgTasks),
+        new Promise(resolve => setTimeout(resolve, 600))
+      ]);
     } catch {
       // ignore
     }
-    setIsLoggedIn(false);
-    setCurrentUser(null);
-    setActiveSection('overview');
   };
 
-  const handleSaveTransaction = async (
-    newTx: OperationalTransaction,
-    lines: Array<{
-      id: string;
-      accountCode: string;
-      accountName?: string;
-      costCenter?: string;
-      debit: number;
-      credit: number;
-      note?: string;
-    }> = [],
-  ) => {
-    try {
-      // UI-OPS-1: real endpoint is POST /api/transactions/post (not POST /api/transactions)
-      const idempotencyKey = `tx-${newTx.id}-${Date.now()}`;
-      const entry = {
-        id: newTx.id,
-        code: newTx.code,
-        date: newTx.date,
-        type: newTx.type || 'JOURNAL',
-        description: newTx.description,
-        party: newTx.party,
-        totalAmount: newTx.amount,
-        status: 'PENDING_APPROVAL',
-        createdBy: currentUser?.id || currentUser?.username || 'USR',
-        lines: (lines || []).map((l) => ({
-          id: l.id,
-          accountCode: l.accountCode,
-          costCenter: l.costCenter,
-          debit: Number(l.debit) || 0,
-          credit: Number(l.credit) || 0,
-          description: l.note || newTx.description || '',
-        })),
-      };
-      const res = await fetch('/api/transactions/post', {
-        method: 'POST',
-        headers: getAuthHeaders({
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idempotencyKey,
-        }),
-        credentials: 'include',
-        body: JSON.stringify({ entry, idempotencyKey }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        const saved = data.data || entry;
-        const mapped: OperationalTransaction = {
-          id: saved.id || newTx.id,
-          code: saved.code || newTx.code,
-          date: saved.date || newTx.date,
-          type: saved.type || newTx.type,
-          description: saved.description || newTx.description,
-          amount: typeof saved.totalAmount === 'number' ? saved.totalAmount : newTx.amount,
-          currency: newTx.currency || 'ر.س',
-          party: newTx.party,
-          status: mapJournalStatusToArabic(saved.status || 'POSTED'),
-          initiator: newTx.initiator,
-        };
-        setTransactions((prev) => [mapped, ...prev]);
-        showNotification(`تم حفظ وترحيل المستند (${mapped.code}) بنجاح.`);
-        fetchTransactions();
-      } else {
-        showNotification(data.detail || data.title || 'تعذر حفظ المستند');
+  const handleSelectTxForSettle = (tx: Transaction) => {
+    setSelectedPendingTx(tx);
+  };
+
+  const renderAccessDenied = () => {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] p-6 text-center space-y-4">
+        <div className="p-4 bg-rose-500/10 text-rose-500 rounded-2xl border border-rose-500/20">
+          <ShieldAlert className="h-10 w-10" />
+        </div>
+        <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100 font-sans tracking-tight">
+          {isRtl ? 'غير مصرح بالوصول' : 'Access Denied'}
+        </h2>
+        <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md leading-relaxed font-semibold">
+          {isRtl 
+            ? 'عذراً، تم تقييد هذا الحساب (Company Admin / SaaS Super Admin) من الوصول المباشر لهذه الشاشة للحفاظ على حوكمة فصل المهام وحماية سلامة العهد والقيود المالية.' 
+            : 'Access restricted: This role (Company Admin / SaaS Super Admin) is restricted from directly accessing this screen to maintain segregation of duties and financial integrity.'}
+        </p>
+        <button 
+          onClick={() => setCurrentTab(
+            activeUser?.role === 'SystemAdmin'
+              ? 'super-admin'
+              : activeUser?.role === 'Admin'
+                ? 'company-admin'
+                : activeUser?.role === 'RegionalManager'
+                  ? 'region-admin'
+                  : 'reconciliation'
+          )} 
+          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+        >
+          {isRtl ? 'العودة للصفحة الرئيسية' : 'Return to Home'}
+        </button>
+      </div>
+    );
+  };
+
+  // Main Page Router Dispatcher
+  const renderPage = () => {
+    // Platform SystemAdmin must never be blocked from SaaS/platform screens by company module flags.
+    // Also never block pure platform tabs even if company modules map is incomplete.
+    const platformTabs = new Set([
+      'super-admin',
+      'audit-log',
+      'settings',
+      'search',
+    ]);
+
+    const isSystemAdminUser =
+      activeUser?.role === 'SystemAdmin' && !activeUser?.impersonator;
+
+    if (
+      activeUser?.company_id &&
+      !platformTabs.has(currentTab) &&
+      !isSystemAdminUser &&
+      !ModulesModule.isScreenEnabledForCompany(activeUser.company_id, currentTab)
+    ) {
+      return renderAccessDenied();
+    }
+
+    // If a pure SystemAdmin somehow lands on an operational tab, auto-redirect home instead of Access Denied.
+    if (isSystemAdminUser) {
+      const operationalTabs = new Set([
+        'dashboard',
+        'reconciliation',
+        'new-expense',
+        'pending',
+        'voucher',
+        'under-settlement',
+        'inventory',
+        'purchasing',
+        'accounting',
+        'sales_ar',
+        'pos',
+        'crm',
+        'fixed_assets',
+        'fleet',
+        'hr_payroll',
+        'stations',
+        'station-details',
+        'region-admin',
+        'company-admin',
+        'approvals',
+        'reports',
+      ]);
+      if (operationalTabs.has(currentTab)) {
+        // Force SaaS home; do not show Access Denied first.
+        if (currentTab !== 'super-admin') {
+          setTimeout(() => setCurrentTab('super-admin'), 0);
+        }
+        // Fall through to super-admin case below after state update; meanwhile render super-admin shell safely.
       }
-    } catch {
-      showNotification('فشل الاتصال بالخادم أثناء حفظ المستند');
+    }
+
+    switch (currentTab) {
+      case 'dashboard':
+        if (activeUser?.role !== 'Admin' && activeUser?.role !== 'SystemAdmin') {
+          return (
+            <CashReconciliation
+              language={language}
+              theme={theme}
+              onNavigate={setCurrentTab}
+              onSelectTransactionForSettle={handleSelectTxForSettle}
+            />
+          );
+        }
+        return (
+          <Dashboard 
+            language={language} 
+            theme={theme} 
+            onNavigate={setCurrentTab} 
+            onSelectTransactionForSettle={handleSelectTxForSettle}
+          />
+        );
+      case 'stations':
+        return (
+          <Stations
+            language={language}
+            theme={theme}
+            setCurrentTab={setCurrentTab}
+            setSelectedStationId={setSelectedStationId}
+          />
+        );
+      case 'station-details':
+        return (
+          <StationDetails
+            stationId={selectedStationId || 'stn-1-1-1'}
+            language={language}
+            theme={theme}
+            onBack={() => setCurrentTab('stations')}
+          />
+        );
+      case 'new-expense':
+        if ((activeUser?.role === 'Admin' || activeUser?.role === 'SystemAdmin') && !activeUser?.impersonator) {
+          return renderAccessDenied();
+        }
+        return (
+          <NewExpense 
+            language={language} 
+            theme={theme} 
+            onNavigate={setCurrentTab} 
+          />
+        );
+      case 'pending':
+        return (
+          <PendingTransactions
+            language={language}
+            theme={theme}
+            onNavigate={setCurrentTab}
+            onSelectTransactionForSettle={handleSelectTxForSettle}
+          />
+        );
+      case 'voucher':
+        if ((activeUser?.role === 'Admin' || activeUser?.role === 'SystemAdmin') && !activeUser?.impersonator) {
+          return renderAccessDenied();
+        }
+        return (
+          <CashPaymentVoucher
+            language={language}
+            theme={theme}
+            onNavigate={setCurrentTab}
+            selectedTx={selectedPendingTx}
+            setSelectedTx={setSelectedPendingTx}
+          />
+        );
+      case 'settled':
+        return (
+          <UnderSettlement 
+            language={language} 
+            theme={theme} 
+            onNavigate={setCurrentTab} 
+          />
+        );
+      case 'reconciliation':
+        if (activeUser?.role === 'SystemAdmin' && !activeUser?.impersonator) {
+          return renderAccessDenied();
+        }
+        return (
+          <CashReconciliation 
+            language={language} 
+            theme={theme} 
+            onNavigate={setCurrentTab}
+            onSelectTransactionForSettle={handleSelectTxForSettle}
+          />
+        );
+      case 'custody':
+        if (activeUser?.role === 'SystemAdmin' && !activeUser?.impersonator) {
+          return renderAccessDenied();
+        }
+        return (
+          <Custody 
+            language={language} 
+            theme={theme} 
+            onNavigate={setCurrentTab}
+          />
+        );
+      case 'approvals':
+        return (
+          <ApprovalInbox
+            activeUser={activeUser}
+            isRtl={language === 'ar'}
+            theme={theme}
+          />
+        );
+      case 'reports':
+        return (
+          <Reports 
+            language={language} 
+            theme={theme} 
+          />
+        );
+      case 'search':
+        return (
+          <Search
+            language={language}
+            theme={theme}
+            onNavigate={setCurrentTab}
+            onSelectTransactionForSettle={handleSelectTxForSettle}
+          />
+        );
+      case 'settings':
+        return (
+          <Settings 
+            language={language} 
+            theme={theme}
+            initialTab={settingsInitialTab}
+            initialCenterTab={settingsInitialCenterTab}
+            initialSelectedCompanyId={settingsSelectedCompanyId}
+            onNavigate={setCurrentTab}
+          />
+        );
+      case 'audit-log':
+        return (
+          <AuditLogView
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'inventory':
+        return (
+          <Inventory
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'purchasing':
+        return (
+          <Purchasing
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'accounting':
+        return (
+          <Accounting
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'sales_ar':
+        return (
+          <SalesAR
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'pos':
+        return (
+          <POS
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'crm':
+        return (
+          <CRM
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'fixed_assets':
+        return (
+          <FixedAssets
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'fleet':
+        return (
+          <FleetManagement
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'hr_payroll':
+        return (
+          <HRPayroll
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'contracting':
+        return (
+          <Contracting
+            activeUser={activeUser!}
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'restaurant-menu':
+        return (
+          <RestaurantMenu
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'restaurant-orders':
+        return (
+          <RestaurantOrders
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'super-admin':
+        return (
+          <SuperAdmin
+            language={language}
+            theme={theme}
+            onNavigate={setCurrentTab}
+          />
+        );
+      case 'company-admin':
+        if (activeUser?.role !== 'Admin' && activeUser?.role !== 'SystemAdmin') {
+          return renderAccessDenied();
+        }
+        return (
+          <CompanyAdminDashboard
+            activeUser={activeUser!}
+            language={language}
+            theme={theme}
+          />
+        );
+      case 'region-admin':
+        if (activeUser?.role !== 'RegionalManager' && activeUser?.role !== 'SystemAdmin') {
+          return renderAccessDenied();
+        }
+        return (
+          <RegionAdminDashboard
+            activeUser={activeUser!}
+            language={language}
+            theme={theme}
+          />
+        );
+      default:
+        if (activeUser?.role !== 'Admin' && activeUser?.role !== 'SystemAdmin') {
+          return (
+            <CashReconciliation
+              language={language}
+              theme={theme}
+              onNavigate={setCurrentTab}
+              onSelectTransactionForSettle={handleSelectTxForSettle}
+            />
+          );
+        }
+        return (
+          <Dashboard 
+            language={language} 
+            theme={theme} 
+            onNavigate={setCurrentTab} 
+            onSelectTransactionForSettle={handleSelectTxForSettle}
+          />
+        );
     }
   };
 
-  const handleApproveTransaction = async (id: string) => {
-    try {
-      const idemKey = `appr-${id}-${Date.now()}`;
-      const res = await fetch(`/api/transactions/${id}/approve`, {
-        method: 'POST',
-        headers: getAuthHeaders({
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idemKey,
-        }),
-        credentials: 'include',
-        body: JSON.stringify({ idempotencyKey: idemKey }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setTransactions(transactions.map((tx) => (tx.id === id ? { ...tx, status: 'معتمد' } : tx)));
-        showNotification('تم اعتماد المستند رسمياً بنجاح وتجهيزه للترحيل.');
-      } else {
-        // SoD rejection or other RFC7807 error
-        showNotification(data.detail || data.title || 'فشل اعتماد المستند بسبب تعارض الصلاحيات');
-      }
-    } catch {
-      showNotification('تعذر استكمال الاعتماد');
-    }
+  const isRtl = language === 'ar';
+
+  const renderPwaBanner = () => {
+    if (!showPwaBanner) return null;
+    return (
+      <div 
+        dir={isRtl ? 'rtl' : 'ltr'}
+        className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-[420px] z-[9999] bg-gradient-to-r from-slate-900/95 to-slate-950/95 border border-emerald-500/30 text-white rounded-2xl p-4 shadow-2xl shadow-emerald-950/30 flex items-start gap-3.5 backdrop-blur-md animate-bounce-subtle"
+      >
+        <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 shrink-0 border border-emerald-500/20">
+          <Smartphone size={20} className="animate-pulse" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <h4 className="text-xs font-black text-slate-100 uppercase tracking-wider">
+              {isRtl ? 'تثبيت تطبيق KEMIT ERP' : 'Install KEMIT ERP App'}
+            </h4>
+            <Sparkles size={12} className="text-amber-400" />
+          </div>
+          <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
+            {isRtl 
+              ? 'ثبت التطبيق الآن على جهازك للوصول المباشر السريع بنقرة واحدة وتجربة تصفح مذهلة وفائقة السرعة!'
+              : 'Install the app on your device for instant one-tap access and a lightning-fast experience!'}
+          </p>
+          <div className="flex items-center gap-2 mt-3">
+            <button
+              onClick={handlePwaInstall}
+              className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-emerald-900/20 active:scale-95 cursor-pointer"
+            >
+              <Download size={12} />
+              <span>{isRtl ? 'تثبيت الآن' : 'Install Now'}</span>
+            </button>
+            <button
+              onClick={dismissPwaBanner}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition-all cursor-pointer"
+            >
+              {isRtl ? 'ليس الآن' : 'Not Now'}
+            </button>
+          </div>
+        </div>
+        <button 
+          onClick={dismissPwaBanner}
+          className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800/50 transition-all shrink-0 cursor-pointer"
+        >
+          <X size={14} />
+        </button>
+      </div>
+    );
   };
 
-  const handlePostTransaction = async (id: string) => {
-    try {
-      const idemKey = `post-${id}-${Date.now()}`;
-      const res = await fetch(`/api/transactions/${id}/post`, {
-        method: 'POST',
-        headers: getAuthHeaders({
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idemKey,
-        }),
-        credentials: 'include',
-        body: JSON.stringify({ idempotencyKey: idemKey }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        showNotification('تم ترحيل السند إلى دفاتر الأستاذ العام وتحديث الأرصدة بدقة.');
-      } else {
-        showNotification(data.detail || 'تعذر ترحيل السند');
-      }
-    } catch {
-      showNotification('فشل الاتصال أثناء الترحيل');
+  if (!activeUser) {
+    if (hasPlatformOwner === null) {
+      return (
+        <div className="flex items-center justify-center min-h-screen bg-slate-50 dark:bg-slate-900">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
+        </div>
+      );
     }
-  };
 
-  if (!isLoggedIn) {
-    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <Suspense fallback={
+        <div className="flex items-center justify-center min-h-screen bg-slate-50 dark:bg-slate-900">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
+        </div>
+      }>
+        {hasPlatformOwner === false ? (
+          <FirstRunSetup
+            language={language}
+            setLanguage={setLanguage}
+            theme={theme}
+            onLoginSuccess={handleLoginSuccess}
+          />
+        ) : (
+          <Login
+            language={language}
+            setLanguage={setLanguage}
+            theme={theme}
+            onLoginSuccess={handleLoginSuccess}
+          />
+        )}
+        {renderPwaBanner()}
+      </Suspense>
+    );
   }
 
-  if (currentUser?.requiresPasswordChange) {
+  if (activeUser.must_change_password) {
     return (
-      <ForcePasswordChangeScreen
-        userName={currentUser?.fullName || currentUser?.username}
-        onChanged={handlePasswordForceChanged}
+      <ChangePasswordRequired
+        activeUser={activeUser}
+        language={language}
+        onPasswordChanged={(updatedUser) => {
+          setActiveUser(updatedUser);
+        }}
         onLogout={handleLogout}
       />
     );
   }
 
-  const pendingApprovalsCount = transactions.filter((t) => t.status === 'بانتظار الاعتماد').length;
-
-  const userProfile: UserProfile = {
-    id: currentUser?.id || 'USR-1',
-    name: currentUser?.fullName || 'أحمد المنصور',
-    role: (currentUser?.role as UserRole) || 'accountant',
-    roleTitleAr: currentUser?.roleTitleAr || 'محاسب عام',
-    branchName: currentUser?.branchName || 'الفرع الرئيسي - الرياض',
-    avatarInitials: currentUser?.fullName ? currentUser.fullName.slice(0, 2) : 'أم',
-  };
-
-  const handleSelectSection = (section: ActiveSection) => {
-    setActiveSection(section);
-    setIsMobileNavOpen(false); // إغلاق فوري = استبدال كامل، لا تراكم
-    window.scrollTo({ top: 0, behavior: 'smooth' }); // بعد القفل، رجّع لأعلى منطقة العرض حتى لا تفضل وسط شاشة فاضية
-  };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-blue-600 selection:text-white" dir="rtl">
-      {/* Enterprise Header */}
-      <Header
-        currentUser={userProfile}
-        onRoleChange={(role) => {
-          // Handled via user management in Phase 1
-          showNotification(`تم التوجيه، الدور الحالي: ${userProfile.roleTitleAr}`);
-        }}
-        pendingApprovalsCount={pendingApprovalsCount}
-        onLogout={handleLogout}
-        onToggleMobileNav={() => setIsMobileNavOpen((v) => !v)}
-      />
-
-      {/* Main Workspace Layout */}
-      <div className="flex-1 max-w-7xl w-full mx-auto flex flex-col md:flex-row">
-        {/* Sidebar Navigation */}
-        <Sidebar
-          activeSection={activeSection}
-          onSelectSection={handleSelectSection}
-          pendingApprovalsCount={pendingApprovalsCount}
-          isOpenOnMobile={isMobileNavOpen}
-          onCloseMobile={() => setIsMobileNavOpen(false)}
-        />
-
-        {/* Dynamic Section View */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 min-w-0">
-          {notification && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 text-blue-900 text-xs font-bold rounded-xl flex items-center justify-between shadow-2xs">
-              <span>{notification}</span>
-              <button
-                onClick={() => setNotification(null)}
-                className="text-blue-500 hover:text-blue-700 text-xs font-bold mr-2"
-              >
-                إغلاق
-              </button>
-            </div>
-          )}
-
-          {/* Section Router */}
-          {activeSection === 'profile' && (
-            <UserProfileView
-              user={currentUser}
-              calendar={calendar}
-              onNotification={showNotification}
-              onLogout={handleLogout}
-            />
-          )}
-
-          {activeSection === 'company' && (
-            <CompanySettingsView onNotification={showNotification} />
-          )}
-
-          {activeSection === 'platform_hub' && (
-            <PlatformHubView onNotification={showNotification} />
-          )}
-
-          {activeSection === 'company_wizard' && (
-            <PlatformHubView onNotification={showNotification} initialTab="companies" />
-          )}
-
-          {activeSection === 'governance' && (
-            <GovernanceView onNotification={showNotification} />
-          )}
-
-          {activeSection === 'inv_config' && (
-            <InvConfigView onNotification={showNotification} />
-          )}
-
-          {activeSection === 'org_groups' && (
-            <PlatformHubView onNotification={showNotification} initialTab="groups" />
-          )}
-
-          {activeSection === 'xcompany' && (
-            <XcompanyView onNotification={showNotification} />
-          )}
-
-          {activeSection === 'group_reports' && (
-            <GroupReportsView onNotification={showNotification} />
-          )}
-
-          {activeSection === 'ledger_depth' && (
-            <LedgerDepthView onNotification={showNotification} />
-          )}
-
-          {activeSection === 'users_sod' && (
-            <UsersAndSodView onNotification={showNotification} />
-          )}
-
-          {activeSection === 'custom_fields' && (
-            <CustomFieldsView onNotification={showNotification} />
-          )}
-
-          {activeSection === 'audit_trail' && (
-            <AuditTrailView onNotification={showNotification} />
-          )}
-
-          {activeSection === 'accounting' && (
-            <AccountingWorkspaceView
-              currentUser={userProfile}
-              initialTab="coa"
-              onNotification={showNotification}
-            />
-          )}
-
-          {activeSection === 'custody' && (
-            <CashCustodyWorkspaceView
-              currentUser={userProfile}
-              onNotification={showNotification}
-            />
-          )}
-
-          {activeSection === 'expenses' && (
-            <ExpensesWorkspaceView
-              currentUser={userProfile}
-              onNotification={showNotification}
-            />
-          )}
-
-          {activeSection === 'inventory' && (
-            <InventoryWorkspaceView
-              currentUser={userProfile}
-              onNotification={showNotification}
-            />
-          )}
-
-          {activeSection === 'purchasing' && (
-            <PurchasingWorkspaceView
-              currentUser={currentUser}
-              onNotification={showNotification}
-            />
-          )}
-          {activeSection === 'reports' && (
-            <AccountingWorkspaceView
-              currentUser={userProfile}
-              initialTab="statements"
-              onNotification={showNotification}
-            />
-          )}
-
-          {(activeSection === 'overview' || activeSection === 'approvals') && (
-            <OperationalWorkspace
-              currentUser={userProfile}
-              activeSection={activeSection}
-              transactions={transactions}
-              isLoadingTransactions={isLoadingTransactions}
-              onOpenCreateModal={() => setIsCreateModalOpen(true)}
-              onOpenPrintModal={(tx) => setSelectedTxForPrint(tx)}
-              onApproveTransaction={handleApproveTransaction}
-              onPostTransaction={handlePostTransaction}
-            />
-          )}
-        </main>
-      </div>
-
-      {/* Create Transaction Modal */}
-      <TransactionModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        onSave={handleSaveTransaction}
-        userName={userProfile.name}
-      />
-
-      {/* Official Voucher Print Modal */}
-      <PrintVoucherModal
-        isOpen={!!selectedTxForPrint}
-        onClose={() => setSelectedTxForPrint(null)}
-        transaction={selectedTxForPrint}
-      />
-    </div>
+    <Layout
+      currentTab={currentTab}
+      setCurrentTab={setCurrentTab}
+      language={language}
+      setLanguage={setLanguage}
+      theme={theme}
+      setTheme={setTheme}
+      activeUser={activeUser}
+      onLogout={handleLogout}
+    >
+      <Suspense fallback={
+        <div className="flex flex-col items-center justify-center min-h-[400px] p-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600 dark:border-emerald-400"></div>
+          <span className="text-xs text-slate-500 dark:text-slate-400 mt-3 font-medium">
+            {isRtl ? 'جاري التحميل...' : 'Loading module...'}
+          </span>
+        </div>
+      }>
+        {renderPage()}
+      </Suspense>
+      {renderPwaBanner()}
+    </Layout>
   );
 }

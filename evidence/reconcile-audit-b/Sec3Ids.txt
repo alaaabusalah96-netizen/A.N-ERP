@@ -1,9 +1,0 @@
-[PASS] S1 unique index tenant_id+code on journal entries
-[PASS] S2 reverse entry id not Date.now()
-[PASS] S3 reverse entry id derives from original entryId
-[PASS] S4 reverse code includes entryId for uniqueness
-[PASS] S5 production guard AN_REQUIRE_DATABASE or NODE_ENV=production
-[PASS] S6 guard calls process.exit(1) when missing DATABASE_URL
-[PASS] S7 InMemory still allowed when not production and no AN_REQUIRE_DATABASE
-
-Passed: 7 | Failed: 0

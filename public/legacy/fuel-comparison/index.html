@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>تطبيق علاء صلاح – مقارنة السولار + قراءة الريسيتات ✅</title>
+
+<!-- ═══ PWA: تثبيت الصفحة كتطبيق مستقل على الشاشة الرئيسية — إضافة فقط، بدون أي تعديل في منطق أو تصميم الصفحة ═══ -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="مقارنة السولار">
+<meta name="theme-color" content="#2563eb">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232563eb'/%3E%3Ctext x='50' y='64' font-size='46' text-anchor='middle' fill='white' font-family='Arial'%3E⛽%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232563eb'/%3E%3Ctext x='50' y='64' font-size='46' text-anchor='middle' fill='white' font-family='Arial'%3E⛽%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22%D8%AA%D8%B7%D8%A8%D9%8A%D9%82%20%D9%85%D9%82%D8%A7%D8%B1%D9%86%D8%A9%20%D8%A7%D9%84%D8%B3%D9%88%D9%84%D8%A7%D8%B1%22%2C%22short_name%22%3A%22%D9%85%D9%82%D8%A7%D8%B1%D9%86%D8%A9%20%D8%A7%D9%84%D8%B3%D9%88%D9%84%D8%A7%D8%B1%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23f0f4ff%22%2C%22theme_color%22%3A%22%232563eb%22%2C%22dir%22%3A%22rtl%22%2C%22lang%22%3A%22ar%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg%2520xmlns%253D%2527http%253A%252F%252Fwww.w3.org%252F2000%252Fsvg%2527%2520viewBox%253D%25270%25200%2520100%2520100%2527%253E%253Crect%2520width%253D%2527100%2527%2520height%253D%2527100%2527%2520rx%253D%252720%2527%2520fill%253D%2527%253E%25232563eb%2527%252F%253E%253Ctext%2520x%253D%252750%2527%2520y%253D%252764%2527%2520font-size%253D%252746%2527%2520text-anchor%253D%2527middle%2527%2520fill%253D%2527white%2527%2520font-family%253D%2527Arial%2527%253E%25E2%259B%25BD%253C%252Ftext%253E%253C%252Fsvg%253E%22%2C%22sizes%22%3A%22any%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
+<!-- ═══ نهاية إضافات PWA ═══ -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* STYLE_PLACEHOLDER */
+</style>
+</head>
+<body>
+
+<!-- HEADER (shared) -->
+<div class="header">
+  <div class="header-logo">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 100" width="80" height="36" style="flex-shrink:0">
+      <defs>
+        <linearGradient id="truckBody" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#f8fafc"/>
+          <stop offset="50%" stop-color="#e2e8f0"/>
+          <stop offset="100%" stop-color="#cbd5e1"/>
+        </linearGradient>
+        <linearGradient id="cabTop" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#f1f5f9"/>
+          <stop offset="100%" stop-color="#e2e8f0"/>
+        </linearGradient>
+        <linearGradient id="bedFloor" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#cbd5e1"/>
+          <stop offset="100%" stop-color="#94a3b8"/>
+        </linearGradient>
+        <linearGradient id="pumpGrad2" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#e2e8f0"/>
+          <stop offset="100%" stop-color="#f8fafc"/>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="80" width="220" height="20" fill="#334155"/>
+      <rect x="0" y="80" width="220" height="2" fill="#64748b"/>
+      <rect x="5"  y="85" width="20" height="2" rx="1" fill="#94a3b8" opacity=".4"/>
+      <rect x="35" y="85" width="20" height="2" rx="1" fill="#94a3b8" opacity=".4"/>
+      <rect x="65" y="85" width="20" height="2" rx="1" fill="#94a3b8" opacity=".4"/>
+      <rect x="162" y="36" width="4" height="44" fill="#94a3b8"/>
+      <rect x="184" y="36" width="4" height="44" fill="#94a3b8"/>
+      <rect x="150" y="22" width="46" height="16" rx="3" fill="#dc2626"/>
+      <rect x="150" y="22" width="46" height="5"  rx="3" fill="#b91c1c"/>
+      <text x="173" y="33" font-family="Arial Black,Arial" font-size="8" font-weight="900" fill="white" text-anchor="middle" letter-spacing="1.5">TOTAL</text>
+      <rect x="152" y="37" width="42" height="2" rx="1" fill="#fef9c3" opacity=".55"/>
+      <rect x="166" y="42" width="20" height="38" rx="3" fill="url(#pumpGrad2)"/>
+      <rect x="166" y="42" width="20" height="7"  rx="3" fill="#dc2626"/>
+      <rect x="169" y="52" width="14" height="10" rx="2" fill="#0f172a"/>
+      <rect x="170" y="53" width="12" height="8"  rx="1" fill="#1d4ed8"/>
+      <text x="176" y="59" font-family="Arial" font-size="4.5" fill="#bfdbfe" text-anchor="middle" font-weight="700">00.00</text>
+      <rect x="169" y="65" width="5" height="3" rx="1" fill="#dc2626"/>
+      <rect x="177" y="65" width="5" height="3" rx="1" fill="#16a34a"/>
+      <rect x="183" y="55" width="3" height="11" rx="1" fill="#64748b"/>
+      <path d="M186 59 L193 57 L194 61 L187 63 Z" fill="#374151"/>
+      <path d="M186 64 Q180 72 165 73 Q150 74 135 73" stroke="#374151" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+      <ellipse cx="76" cy="81" rx="65" ry="4" fill="#00000025"/>
+      <rect x="14" y="52" width="68" height="28" rx="2" fill="url(#bedFloor)"/>
+      <rect x="14" y="48" width="68" height="6"  rx="2" fill="#e2e8f0"/>
+      <rect x="78" y="48" width="5"  height="32" rx="1" fill="#cbd5e1"/>
+      <rect x="14" y="50" width="5"  height="28" rx="1" fill="#d1d5db"/>
+      <line x1="25" y1="52" x2="25" y2="80" stroke="#94a3b8" stroke-width=".7"/>
+      <line x1="36" y1="52" x2="36" y2="80" stroke="#94a3b8" stroke-width=".7"/>
+      <line x1="47" y1="52" x2="47" y2="80" stroke="#94a3b8" stroke-width=".7"/>
+      <line x1="58" y1="52" x2="58" y2="80" stroke="#94a3b8" stroke-width=".7"/>
+      <line x1="69" y1="52" x2="69" y2="80" stroke="#94a3b8" stroke-width=".7"/>
+      <rect x="14" y="52" width="5" height="7" rx="1" fill="#fca5a5"/>
+      <rect x="14" y="60" width="5" height="6" rx="1" fill="#dc2626"/>
+      <rect x="80" y="52" width="58" height="28" rx="3" fill="url(#truckBody)"/>
+      <path d="M86 52 Q90 32 102 30 L126 30 Q136 30 138 52 Z" fill="url(#cabTop)"/>
+      <path d="M92 52 Q95 36 104 34 L122 34 Q130 34 133 52 Z" fill="white" opacity=".4"/>
+      <rect x="80" y="63" width="58" height="5" fill="#2563eb" opacity=".65"/>
+      <path d="M128 52 Q132 36 126 32 L118 32 Q128 34 130 52 Z" fill="#bfdbfe" opacity=".9" stroke="#94a3b8" stroke-width=".5"/>
+      <path d="M88 52 Q88 34 96 32 L88 33 Q83 36 85 52 Z" fill="#bfdbfe" opacity=".8" stroke="#94a3b8" stroke-width=".5"/>
+      <rect x="92"  y="34" width="16" height="16" rx="2" fill="#bfdbfe" opacity=".88" stroke="#94a3b8" stroke-width=".5"/>
+      <rect x="110" y="34" width="16" height="16" rx="2" fill="#bfdbfe" opacity=".88" stroke="#94a3b8" stroke-width=".5"/>
+      <line x1="109" y1="52" x2="109" y2="80" stroke="#94a3b8" stroke-width=".9"/>
+      <rect x="116" y="64" width="9" height="2.5" rx="1.5" fill="#94a3b8"/>
+      <rect x="133" y="52" width="10" height="14" rx="2" fill="#e2e8f0"/>
+      <rect x="134" y="58" width="8"  height="8"  rx="1" fill="#cbd5e1"/>
+      <rect x="135" y="59" width="6"  height="1.5" rx=".5" fill="#94a3b8"/>
+      <rect x="135" y="62" width="6"  height="1.5" rx=".5" fill="#94a3b8"/>
+      <rect x="135" y="65" width="6"  height="1.5" rx=".5" fill="#94a3b8"/>
+      <rect x="133" y="52" width="9"  height="6"  rx="2" fill="#fef08a" stroke="#d97706" stroke-width=".6"/>
+      <rect x="134" y="53" width="7"  height="4"  rx="1" fill="#fde047"/>
+      <rect x="132" y="72" width="10" height="5"  rx="2" fill="#94a3b8"/>
+      <rect x="136" y="47" width="6"  height="4"  rx="1" fill="#e2e8f0" stroke="#94a3b8" stroke-width=".5"/>
+      <rect x="138" y="44" width="1.5" height="4" rx=".5" fill="#94a3b8"/>
+      <rect x="135" y="72" width="5" height="3" rx="1" fill="#f59e0b" stroke="#d97706" stroke-width=".7"/>
+      <circle cx="137.5" cy="73.5" r="1" fill="#d97706"/>
+      <circle cx="118" cy="80" r="11" fill="#1e293b"/>
+      <circle cx="118" cy="80" r="8"  fill="#334155"/>
+      <circle cx="118" cy="80" r="4.5" fill="#64748b"/>
+      <circle cx="118" cy="80" r="2"  fill="#94a3b8"/>
+      <circle cx="118" cy="73.5" r="1.2" fill="#94a3b8"/>
+      <circle cx="118" cy="86.5" r="1.2" fill="#94a3b8"/>
+      <circle cx="111.5" cy="80" r="1.2" fill="#94a3b8"/>
+      <circle cx="124.5" cy="80" r="1.2" fill="#94a3b8"/>
+      <circle cx="38"  cy="80" r="11" fill="#1e293b"/>
+      <circle cx="38"  cy="80" r="8"  fill="#334155"/>
+      <circle cx="38"  cy="80" r="4.5" fill="#64748b"/>
+      <circle cx="38"  cy="80" r="2"  fill="#94a3b8"/>
+      <circle cx="38"  cy="73.5" r="1.2" fill="#94a3b8"/>
+      <circle cx="38"  cy="86.5" r="1.2" fill="#94a3b8"/>
+      <circle cx="31.5" cy="80" r="1.2" fill="#94a3b8"/>
+      <circle cx="44.5" cy="80" r="1.2" fill="#94a3b8"/>
+      <circle cx="160" cy="72" r="1.8" fill="#fbbf24" opacity=".9"/>
+      <circle cx="154" cy="73" r="1.4" fill="#fbbf24" opacity=".75"/>
+      <circle cx="147" cy="73" r="1.1" fill="#fbbf24" opacity=".6"/>
+    </svg>
+    <span class="logo-text"><span class="logo-alaa">تطبيق علاء</span> <span class="logo-salah">صلاح</span></span>
+  </div>
+  <h1>مراجعة <span>توتال الدورية</span></h1>
+  <p class="sub">
+    <span class="vs-text">شيتنا <span class="vs-word">vs</span> شيت توتال</span>
+    &nbsp;|&nbsp;
+    <span class="badge-version">✅ v4.5</span>
+  </p>
+</div>
+
+<!-- TABS NAV -->
+<div class="app-tabs">
+  <button class="tab-btn active" id="tab-compare-btn" onclick="switchTab('compare')">
+    <span class="tab-icon">📊</span> مقارنة الملفات
+  </button>
+  <button class="tab-btn" id="tab-receipt-btn" onclick="switchTab('receipt')">
+    <span class="tab-icon">🧾</span> قراءة ريسيت توتال
+  </button>
+  <button class="tab-btn" id="tab-sabla-btn" onclick="switchTab('sabla')">
+    <span class="tab-icon">🚛</span> مقارنة سيارات السبلة
+  </button>
+</div>
+
+<!-- TAB 1: COMPARE -->
+<div class="tab-content active" id="tab-compare">
+<!-- UPLOAD CARD -->
+<div class="card">
+  <div class="card-title">رفع الملفات</div>
+
+  <div class="two-panels">
+
+    <!-- ── توتال ── -->
+    <div class="panel">
+      <div class="panel-head"><span>📄</span> ملفات توتال <span class="pcnt" id="cntTotal">0</span></div>
+      <label class="panel-drop" id="pdTotal">
+        <input type="file" id="fTotal" accept=".xlsx,.xls" multiple onchange="panelPick('total',this.files)">
+        <div class="pd-box">
+          <span class="pd-icon">⬆️</span>
+          <span class="pd-txt">اضغط لإضافة ملفات</span>
+          <span class="pd-sub">يمكن إضافة عدد غير محدود</span>
+        </div>
+      </label>
+      <div class="panel-list" id="lstTotal"></div>
+    </div>
+
+    <!-- ── السيارات ── -->
+    <div class="panel">
+      <div class="panel-head"><span>🚗</span> شيتات السيارات <span class="pcnt" id="cntOur">0</span></div>
+      <label class="panel-drop" id="pdOur">
+        <input type="file" id="fOur" accept=".xlsx,.xls" multiple onchange="panelPick('our',this.files)">
+        <div class="pd-box">
+          <span class="pd-icon">⬆️</span>
+          <span class="pd-txt">اضغط لإضافة ملفات</span>
+          <span class="pd-sub">يمكن إضافة عدد غير محدود</span>
+        </div>
+      </label>
+      <div class="panel-list" id="lstOur"></div>
+    </div>
+
+  </div>
+
+  <!-- hidden inputs to keep FILES.f1..fN intact (used by runCompare) -->
+  <div id="hiddenInputs" style="display:none"></div>
+
+  <div class="divider"></div>
+
+  <div class="card-title" style="margin-bottom:14px">تحديد الفترة الزمنية</div>
+  <div class="row" style="gap:16px">
+    <label class="lbl">📅 من:</label>
+    <input type="date" id="dFrom">
+    <label class="lbl" style="min-width:40px;text-align:center">إلى:</label>
+    <input type="date" id="dTo">
+  </div>
+
+  <button class="btn-main" id="cmpBtn" onclick="runCompare()" disabled>
+    <span>▶</span> قارن دلوقتي
+  </button>
+</div>
+
+<div id="errBox" class="err hidden"></div>
+<div id="infoBox" class="info hidden"></div>
+
+<!-- RESULTS -->
+<div id="resSection" class="hidden">
+  <div class="res-header">
+    <h2>📊 نتائج المقارنة</h2>
+    <button class="btn-export" onclick="exportAll()">💾 حفظ كإكسيل – كل العربيات</button>
+  </div>
+  <div class="sum-cards" id="sumCards"></div>
+  <div id="carRes"></div>
+</div>
+
+
+</div><!-- /tab-compare -->
+
+<!-- TAB 2: RECEIPT READER -->
+<div class="tab-content" id="tab-receipt">
+
+  <!-- API KEY CARD -->
+  <div class="receipt-card" id="apiKeyCard">
+    <div class="card-title">🔑 إعداد Gemini API Keys</div>
+
+    <!-- Add key row -->
+    <div class="api-key-row" id="apiAddRow">
+      <input type="password" id="apiKeyInput" class="api-key-input"
+        placeholder="AIzaSy... أضف مفتاح Gemini API"
+        onkeydown="if(event.key==='Enter') addApiKey()">
+      <button class="btn-main" style="margin:0;padding:10px 14px;font-size:13px" onclick="toggleNewKeyVisible()" title="إظهار/إخفاء">👁</button>
+      <button class="btn-main" style="margin:0;padding:10px 18px;font-size:13px;background:linear-gradient(135deg,#16a34a,#15803d)" onclick="addApiKey()">➕ أضف</button>
+    </div>
+
+    <!-- Keys list -->
+    <div id="apiKeysList" style="margin-bottom:12px"></div>
+
+    <!-- Active key indicator -->
+    <div id="apiActiveIndicator" style="display:none;font-size:12px;font-weight:700;color:var(--success);background:var(--success-lt);border:1px solid rgba(22,163,74,.2);border-radius:8px;padding:8px 14px;margin-bottom:10px"></div>
+
+    <!-- Hide button -->
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button id="hideApiSectionBtn" class="btn-main" style="margin:0;padding:8px 18px;font-size:12px;background:linear-gradient(135deg,#64748b,#475569)" onclick="hideApiSection()">🙈 إخفاء القسم</button>
+      <div style="font-size:12px;color:var(--text3);line-height:1.7;flex:1">
+        💡 المفاتيح بتتحفظ داخل التطبيق — هتلاقيها على
+        <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--primary)">Google AI Studio</a> مجاناً
+      </div>
+    </div>
+  </div>
+
+  <!-- Restore API section button (shown when hidden) -->
+  <div id="apiRestoreRow" style="display:none;max-width:780px;margin:0 auto 12px;text-align:left">
+    <button class="btn-main" style="margin:0;padding:8px 18px;font-size:12px;background:linear-gradient(135deg,#64748b,#475569)" onclick="showApiSection()">🔑 إظهار إعداد API</button>
+  </div>
+
+  <!-- RATES FILE CARD -->
+  <div class="receipt-card">
+    <div class="card-title">📂 ملف شيت المعدلات</div>
+    <div class="rates-file-row">
+      <label class="rates-file-btn" id="ratesFileBtn">
+        <input type="file" id="ratesFileInput" accept=".xlsx,.xls" onchange="loadRatesFile(this.files[0])">
+        <span id="ratesFileName">📁 اختار ملف شيت المعدلات (.xlsx)</span>
+      </label>
+    </div>
+    <div id="sheetSelectWrap" style="display:none">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">اختار شيت السيارة:</div>
+      <select class="sheet-select" id="sheetSelect" onchange="onSheetSelect()">
+        <option value="">-- اختار شيت --</option>
+      </select>
+    </div>
+    <div id="ratesStatus"></div>
+  </div>
+
+  <!-- RECEIPT UPLOAD CARD -->
+  <div class="receipt-card">
+    <div class="card-title">🧾 رفع صور ريسيتات توتال</div>
+
+    <label class="receipt-drop" id="receiptDrop">
+      <input type="file" id="receiptInput" accept="image/*" multiple onchange="addReceiptImages(this.files)">
+      <div class="drop-icon">📸</div>
+      <div class="drop-txt">اضغط أو اسحب صور الريسيتات هنا</div>
+      <div class="drop-sub">يمكن رفع أكثر من صورة في وقت واحد — JPG / PNG / WebP</div>
+    </label>
+
+    <div class="multi-upload-list" id="receiptList"></div>
+
+    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
+      <button class="btn-main" id="parseAllBtn" onclick="parseAllReceipts()"
+        style="flex:1;margin:0;padding:12px 20px;font-size:14px" disabled>
+        <span>🤖</span> قرّاية الكل بالذكاء الاصطناعي
+      </button>
+      <button class="btn-main" id="saveAllBtn" onclick="saveAllToSheet()"
+        style="flex:1;margin:0;padding:12px 20px;font-size:14px;background:linear-gradient(135deg,#16a34a,#15803d);box-shadow:0 4px 20px rgba(22,163,74,.35)" disabled>
+        <span>💾</span> حفظ الكل في الشيت
+      </button>
+    </div>
+  </div>
+
+  <!-- RESULTS AREA -->
+  <div id="receiptResults"></div>
+
+</div><!-- /tab-receipt -->
+
+<!-- TAB 3: SABLA COMPARE -->
+<div class="tab-content" id="tab-sabla">
+
+<div class="wrap" id="tab-sabla-wrap-container">
+  <h1>مقارنة أرقام سيارات ومقطورات سبلة المتعهد بسيوني</h1>
+  <div class="subtitle">ارفع أي عدد من شيتات الإكسل، والأداة هتدور على الأرقام وتقارنها وتديك أكبر قيمة لكل رقم</div>
+
+  <div class="card">
+    <label>ارفع شيتات الإكسل (رقم مقطورة/جرار - عرض - طول) - تقدر ترفع عدد غير محدود:</label>
+    <label class="sabla-drop" id="sablaDrop">
+      <input type="file" id="sablaFilesInput" accept=".xlsx,.xls" multiple>
+      <div class="drop-icon">📁</div>
+      <div class="drop-txt">اضغط هنا أو اسحب شيتات الإكسل</div>
+      <div class="drop-sub">تقدر تختار أكتر من ملف .xlsx / .xls مرة واحدة</div>
+    </label>
+    <div class="hint">كل ما ترفع ملفات جديدة، هتتضاف على اللي قبلها. مفيش داتا محفوظة جوه الأداة - لازم ترفع الشيتات في كل مرة تفتحها.</div>
+    <div style="margin-top:10px;">
+      <button class="secondary" id="sablaClearFilesBtn">مسح كل الملفات</button>
+    </div>
+    <div class="sheets-info" id="sheetsInfo" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
+    <label>اكتب أرقام العربيات و/أو المقطورات (رقم في كل سطر، أو مفصولة بفاصلة أو مسافة):</label>
+    <textarea id="input" placeholder="مثال:
+3879
+2461
+9256
+7512"></textarea>
+    <div class="hint">تقدر تكتب أرقام مقطورات أو أرقام جرارات مع بعض، الأداة هتدور على كل رقم في كل الشيتات اللي رفعتها وتطلعلك أكبر عرض وأكبر طول ليه.</div>
+
+    <div id="sablaTypedPreview" class="sabla-typed-preview" style="display:none;"></div>
+
+    <div class="sabla-picker-wrap" id="sablaPickerWrap" style="margin-top:12px;">
+      <button type="button" class="sabla-picker-toggle" id="sablaPickerToggle">
+        <span id="sablaPickerToggleLabel">📋 اختر من الأرقام الموجودة في الشيتات (0 مختار)</span>
+        <span id="sablaPickerToggleArrow">▾</span>
+      </button>
+      <div class="sabla-picker-panel" id="sablaPickerPanel" style="display:none;">
+        <input type="text" class="sabla-picker-search" id="sablaPickerSearch" placeholder="دور برقم عربية أو مقطورة...">
+        <div class="sabla-picker-actions">
+          <button type="button" class="secondary" id="sablaPickerSelectAll">تحديد الكل الظاهر</button>
+          <button type="button" class="secondary" id="sablaPickerClearAll">إلغاء كل التحديد</button>
+        </div>
+        <div class="sabla-picker-list" id="sablaPickerList"></div>
+      </div>
+    </div>
+
+    <div>
+      <button id="compareBtn">قارن</button>
+      <button class="secondary" id="clearBtn">مسح</button>
+    </div>
+  </div>
+
+  <div class="card" id="resultsCard" style="display:none;">
+    <div id="summary" class="summary"></div>
+    <div style="overflow-x:auto;">
+      <table id="resultsTable">
+        <thead>
+          <tr>
+            <th>الرقم</th>
+            <th>أكبر عرض</th>
+            <th>أكبر طول</th>
+          </tr>
+        </thead>
+        <tbody id="resultsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>استخراج شيت مجمّع بكل العربيات من كل الشيتات، بالتعديلات اللي عملتها:</label>
+    <div class="hint">الزرار ده بيجمع كل أرقام المقطورات والجرارات من كل الشيتات اللي رفعتها في شيت واحد مرتب، وبيحط القيم اللي أنت عدلتها بدل القيم الأصلية لأي رقم عدلته.</div>
+    <div>
+      <button id="sablaExportBtn">تعديل واستخراج</button>
+    </div>
+  </div>
+
+  <div class="card" id="sablaReportCard" style="display:none;"></div>
+</div>
+
+</div><!-- /tab-sabla -->
+
+
+<div class="sbar" id="sbar">
+  <span>📂</span> اختار الملفات وابدأ المقارنة
+</div>
+
+<script>
+/* SCRIPT_PLACEHOLDER */
+</script>
+</body>
+</html>

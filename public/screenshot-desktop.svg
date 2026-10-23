@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+  <!-- Background -->
+  <rect width="1920" height="1080" fill="#0b0f19" />
+  
+  <!-- Subtle Grid Pattern in background -->
+  <defs>
+    <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#1e293b" stroke-width="0.5" opacity="0.4" />
+    </pattern>
+    <linearGradient id="primary-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <linearGradient id="card-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#grid)" />
+
+  <!-- Top Navigation Bar -->
+  <rect x="0" y="0" width="1920" height="80" fill="#0f172a" stroke="#1e293b" stroke-width="1" />
+  
+  <!-- Logo/Brand -->
+  <circle cx="70" cy="40" r="22" fill="url(#primary-grad)" />
+  <path d="M 62 48 L 70 32 L 78 48 Z" fill="#ffffff" />
+  <text x="110" y="48" font-family="'Inter', sans-serif" font-size="24" font-weight="700" fill="#ffffff" letter-spacing="1">KEMIT ERP</text>
+  <text x="270" y="47" font-family="'Inter', sans-serif" font-size="14" font-weight="500" fill="#475569">|</text>
+  <text x="290" y="47" font-family="'Inter', sans-serif" font-size="14" font-weight="500" fill="#10b981">Al-Futtaim Trading Co. ERP</text>
+
+  <!-- User profile / status on right -->
+  <rect x="1650" y="20" width="220" height="40" rx="20" fill="#1e293b" />
+  <circle cx="1675" cy="40" r="12" fill="#10b981" />
+  <text x="1700" y="45" font-family="'Inter', sans-serif" font-size="14" font-weight="600" fill="#ffffff">Enterprise Station</text>
+  <circle cx="1840" cy="40" r="5" fill="#10b981" />
+
+  <!-- Main Content Layout (Sidebar + Grid Content) -->
+  
+  <!-- Left Sidebar Mock -->
+  <rect x="40" y="120" width="280" height="920" rx="16" fill="url(#card-grad)" stroke="#1e293b" stroke-width="1" />
+  
+  <!-- Sidebar Menu Items -->
+  <rect x="60" y="150" width="240" height="50" rx="10" fill="#1e293b" stroke="#10b981" stroke-width="1" />
+  <text x="90" y="181" font-family="'Inter', sans-serif" font-size="16" font-weight="600" fill="#10b981">Dashboard</text>
+  <circle cx="75" cy="175" r="4" fill="#10b981" />
+  
+  <text x="90" y="246" font-family="'Inter', sans-serif" font-size="16" font-weight="500" fill="#94a3b8">Reconciliation</text>
+  <text x="90" y="306" font-family="'Inter', sans-serif" font-size="16" font-weight="500" fill="#94a3b8">Vault Cash Management</text>
+  <text x="90" y="366" font-family="'Inter', sans-serif" font-size="16" font-weight="500" fill="#94a3b8">Transactions Log</text>
+  <text x="90" y="426" font-family="'Inter', sans-serif" font-size="16" font-weight="500" fill="#94a3b8">Financial Reports</text>
+  <text x="90" y="486" font-family="'Inter', sans-serif" font-size="16" font-weight="500" fill="#94a3b8">System Audit</text>
+
+  <!-- Main Content Dashboard -->
+  <text x="360" y="160" font-family="'Inter', sans-serif" font-size="32" font-weight="800" fill="#ffffff">Enterprise Custody Overview</text>
+  <text x="360" y="195" font-family="'Inter', sans-serif" font-size="16" font-weight="400" fill="#64748b">Real-time custody tracking, cash settlement &amp; modern vault reconciliation.</text>
+
+  <!-- Stats Grid (4 Cards) -->
+  <!-- Card 1 -->
+  <rect x="360" y="230" width="350" height="150" rx="16" fill="url(#card-grad)" stroke="#1e293b" stroke-width="1" />
+  <text x="390" y="275" font-family="'Inter', sans-serif" font-size="15" font-weight="600" fill="#64748b" text-transform="uppercase">Reconciliation Score</text>
+  <text x="390" y="335" font-family="'Inter', sans-serif" font-size="44" font-weight="800" fill="#10b981">100% MATCH</text>
+  
+  <!-- Card 2 -->
+  <rect x="740" y="230" width="350" height="150" rx="16" fill="url(#card-grad)" stroke="#1e293b" stroke-width="1" />
+  <text x="770" y="275" font-family="'Inter', sans-serif" font-size="15" font-weight="600" fill="#64748b" text-transform="uppercase">Active Vault Custody</text>
+  <text x="770" y="335" font-family="'Inter', sans-serif" font-size="44" font-weight="800" fill="#ffffff">AED 2,450,000</text>
+
+  <!-- Card 3 -->
+  <rect x="1120" y="230" width="350" height="150" rx="16" fill="url(#card-grad)" stroke="#1e293b" stroke-width="1" />
+  <text x="1150" y="275" font-family="'Inter', sans-serif" font-size="15" font-weight="600" fill="#64748b" text-transform="uppercase">Pending Settlement</text>
+  <text x="1150" y="335" font-family="'Inter', sans-serif" font-size="44" font-weight="800" fill="#f59e0b">AED 185,500</text>
+
+  <!-- Card 4 -->
+  <rect x="1500" y="230" width="380" height="150" rx="16" fill="url(#card-grad)" stroke="#1e293b" stroke-width="1" />
+  <text x="1530" y="275" font-family="'Inter', sans-serif" font-size="15" font-weight="600" fill="#64748b" text-transform="uppercase">Security Status</text>
+  <text x="1530" y="335" font-family="'Inter', sans-serif" font-size="44" font-weight="800" fill="#3b82f6">SECURED</text>
+
+  <!-- Big Visual Graph Card -->
+  <rect x="360" y="410" width="1520" height="630" rx="20" fill="url(#card-grad)" stroke="#1e293b" stroke-width="1" />
+  
+  <text x="400" y="465" font-family="'Inter', sans-serif" font-size="22" font-weight="700" fill="#ffffff">Weekly Cash Flow &amp; Reconciliation Audit</text>
+  <text x="400" y="495" font-family="'Inter', sans-serif" font-size="14" font-weight="500" fill="#475569">Comparison between system registry records and physically reconciled bank/vault drops.</text>
+  
+  <!-- Graph Mock Paths -->
+  <!-- Grid lines -->
+  <line x1="400" y1="560" x2="1820" y2="560" stroke="#1e293b" stroke-width="1" />
+  <line x1="400" y1="680" x2="1820" y2="680" stroke="#1e293b" stroke-width="1" />
+  <line x1="400" y1="800" x2="1820" y2="800" stroke="#1e293b" stroke-width="1" />
+  <line x1="400" y1="920" x2="1820" y2="920" stroke="#1e293b" stroke-width="1" />
+  
+  <!-- Y axis values -->
+  <text x="1830" y="565" font-family="'JetBrains Mono', monospace" font-size="12" fill="#475569">3.0M AED</text>
+  <text x="1830" y="685" font-family="'JetBrains Mono', monospace" font-size="12" fill="#475569">2.0M AED</text>
+  <text x="1830" y="805" font-family="'JetBrains Mono', monospace" font-size="12" fill="#475569">1.0M AED</text>
+  <text x="1830" y="925" font-family="'JetBrains Mono', monospace" font-size="12" fill="#475569">0.0M AED</text>
+
+  <!-- Green Filled Area and Line -->
+  <path d="M 400 920 Q 600 700 800 650 T 1200 600 T 1600 550 T 1820 530 L 1820 920 L 400 920 Z" fill="#10b981" opacity="0.1" />
+  <path d="M 400 920 Q 600 700 800 650 T 1200 600 T 1600 550 T 1820 530" fill="none" stroke="#10b981" stroke-width="4" stroke-linecap="round" />
+  
+  <!-- Blue Filled Area and Line -->
+  <path d="M 400 920 Q 600 750 800 690 T 1200 620 T 1600 590 T 1820 540 L 1820 920 L 400 920 Z" fill="#3b82f6" opacity="0.05" />
+  <path d="M 400 920 Q 600 750 800 690 T 1200 620 T 1600 590 T 1820 540" fill="none" stroke="#3b82f6" stroke-dasharray="8 4" stroke-width="3" stroke-linecap="round" />
+
+  <!-- Graph dots -->
+  <circle cx="800" cy="650" r="6" fill="#10b981" stroke="#0b0f19" stroke-width="2" />
+  <circle cx="1200" cy="600" r="6" fill="#10b981" stroke="#0b0f19" stroke-width="2" />
+  <circle cx="1600" cy="550" r="6" fill="#10b981" stroke="#0b0f19" stroke-width="2" />
+
+  <!-- Legend -->
+  <rect x="400" y="970" width="20" height="10" rx="3" fill="#10b981" />
+  <text x="430" y="980" font-family="'Inter', sans-serif" font-size="14" font-weight="600" fill="#94a3b8">System Cash Custody Record</text>
+  
+  <rect x="670" y="970" width="20" height="10" rx="3" fill="#3b82f6" />
+  <text x="700" y="980" font-family="'Inter', sans-serif" font-size="14" font-weight="600" fill="#94a3b8">Physical Vault Count Reconciled</text>
+</svg>

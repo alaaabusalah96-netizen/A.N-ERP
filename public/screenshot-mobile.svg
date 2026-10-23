@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1920" width="1080" height="1920">
+  <!-- Background -->
+  <rect width="1080" height="1920" fill="#0b0f19" />
+  
+  <!-- Subtle Grid Pattern in background -->
+  <defs>
+    <pattern id="grid-mobile" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#1e293b" stroke-width="0.5" opacity="0.4" />
+    </pattern>
+    <linearGradient id="primary-grad-mob" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <linearGradient id="card-grad-mob" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+  </defs>
+  <rect width="1080" height="1920" fill="url(#grid-mobile)" />
+
+  <!-- Top Status/Header Bar -->
+  <rect x="0" y="0" width="1080" height="120" fill="#0f172a" stroke="#1e293b" stroke-width="1" />
+  <circle cx="80" cy="60" r="24" fill="url(#primary-grad-mob)" />
+  <path d="M 72 68 L 80 52 L 88 68 Z" fill="#ffffff" />
+  <text x="130" y="70" font-family="'Inter', sans-serif" font-size="28" font-weight="800" fill="#ffffff" letter-spacing="1">KEMIT ERP</text>
+  <text x="900" y="70" font-family="'Inter', sans-serif" font-size="24" font-weight="600" fill="#10b981">ERP</text>
+
+  <!-- Mobile Title -->
+  <text x="50" y="210" font-family="'Inter', sans-serif" font-size="38" font-weight="800" fill="#ffffff">KEMIT ERP Dashboard</text>
+  <text x="50" y="260" font-family="'Inter', sans-serif" font-size="20" font-weight="400" fill="#64748b">Al-Futtaim Trading Co. Station 12</text>
+
+  <!-- Card 1: Reconciliation Status -->
+  <rect x="50" y="300" width="980" height="220" rx="24" fill="url(#card-grad-mob)" stroke="#1e293b" stroke-width="2" />
+  <text x="100" y="360" font-family="'Inter', sans-serif" font-size="20" font-weight="600" fill="#64748b" text-transform="uppercase">Reconciliation Audit</text>
+  <text x="100" y="440" font-family="'Inter', sans-serif" font-size="64" font-weight="900" fill="#10b981">100% MATCHED</text>
+  <text x="100" y="485" font-family="'Inter', sans-serif" font-size="18" font-weight="500" fill="#94a3b8">Active shift registry matches physical vault count perfectly.</text>
+
+  <!-- Card 2: Vault Cash -->
+  <rect x="50" y="550" width="980" height="240" rx="24" fill="url(#card-grad-mob)" stroke="#1e293b" stroke-width="1" />
+  <text x="100" y="610" font-family="'Inter', sans-serif" font-size="20" font-weight="600" fill="#64748b" text-transform="uppercase">Active Vault Balance</text>
+  <text x="100" y="700" font-family="'Inter', sans-serif" font-size="54" font-weight="800" fill="#ffffff">AED 2,450,000</text>
+  <!-- Progress Bar -->
+  <rect x="100" y="730" width="780" height="12" rx="6" fill="#1e293b" />
+  <rect x="100" y="730" width="550" height="12" rx="6" fill="#10b981" />
+  <text x="900" y="742" font-family="'JetBrains Mono', monospace" font-size="18" font-weight="600" fill="#10b981">70%</text>
+
+  <!-- Card 3: Pending & Security -->
+  <rect x="50" y="820" width="465" height="200" rx="24" fill="url(#card-grad-mob)" stroke="#1e293b" stroke-width="1" />
+  <text x="90" y="880" font-family="'Inter', sans-serif" font-size="18" font-weight="600" fill="#64748b" text-transform="uppercase">Pending</text>
+  <text x="90" y="950" font-family="'Inter', sans-serif" font-size="32" font-weight="800" fill="#f59e0b">AED 185,500</text>
+
+  <rect x="565" y="820" width="465" height="200" rx="24" fill="url(#card-grad-mob)" stroke="#1e293b" stroke-width="1" />
+  <text x="605" y="880" font-family="'Inter', sans-serif" font-size="18" font-weight="600" fill="#64748b" text-transform="uppercase">Security</text>
+  <text x="605" y="950" font-family="'Inter', sans-serif" font-size="32" font-weight="800" fill="#3b82f6">SECURED</text>
+
+  <!-- Recent Transactions List -->
+  <text x="50" y="1080" font-family="'Inter', sans-serif" font-size="28" font-weight="800" fill="#ffffff">Recent Settlements</text>
+  
+  <!-- Transaction 1 -->
+  <rect x="50" y="1120" width="980" height="130" rx="20" fill="url(#card-grad-mob)" stroke="#1e293b" stroke-width="1" />
+  <circle cx="110" cy="1185" r="28" fill="#10b981" opacity="0.1" />
+  <path d="M 102 1193 L 110 1177 L 118 1193 Z" fill="#10b981" />
+  <text x="170" y="1180" font-family="'Inter', sans-serif" font-size="22" font-weight="700" fill="#ffffff">Retail Bank Drop #83</text>
+  <text x="170" y="1212" font-family="'Inter', sans-serif" font-size="16" font-weight="500" fill="#475569">Today, 02:45 PM • Cash drop matched</text>
+  <text x="800" y="1195" font-family="'JetBrains Mono', monospace" font-size="24" font-weight="700" fill="#10b981">+AED 85,000</text>
+
+  <!-- Transaction 2 -->
+  <rect x="50" y="1270" width="980" height="130" rx="20" fill="url(#card-grad-mob)" stroke="#1e293b" stroke-width="1" />
+  <circle cx="110" cy="1335" r="28" fill="#10b981" opacity="0.1" />
+  <path d="M 102 1343 L 110 1327 L 118 1343 Z" fill="#10b981" />
+  <text x="170" y="1330" font-family="'Inter', sans-serif" font-size="22" font-weight="700" fill="#ffffff">Showroom Float Reconciled</text>
+  <text x="170" y="1362" font-family="'Inter', sans-serif" font-size="16" font-weight="500" fill="#475569">Today, 11:30 AM • Shift verified</text>
+  <text x="800" y="1345" font-family="'JetBrains Mono', monospace" font-size="24" font-weight="700" fill="#10b981">+AED 42,000</text>
+
+  <!-- Transaction 3 -->
+  <rect x="50" y="1420" width="980" height="130" rx="20" fill="url(#card-grad-mob)" stroke="#1e293b" stroke-width="1" />
+  <circle cx="110" cy="1485" r="28" fill="#ef4444" opacity="0.1" />
+  <path d="M 102 1477 L 118 1477 L 110 1493 Z" fill="#ef4444" />
+  <text x="170" y="1480" font-family="'Inter', sans-serif" font-size="22" font-weight="700" fill="#ffffff">Armored Carrier Transfer</text>
+  <text x="170" y="1512" font-family="'Inter', sans-serif" font-size="16" font-weight="500" fill="#475569">Yesterday • Cash-in-transit pickup</text>
+  <text x="800" y="1495" font-family="'JetBrains Mono', monospace" font-size="24" font-weight="700" fill="#ef4444">-AED 250,000</text>
+
+  <!-- Mobile Navigation Bar Mock -->
+  <rect x="0" y="1800" width="1080" height="120" fill="#0f172a" stroke="#1e293b" stroke-width="1" />
+  <circle cx="216" cy="1860" r="8" fill="#10b981" />
+  <text x="216" y="1890" font-family="'Inter', sans-serif" font-size="14" font-weight="600" fill="#10b981" text-anchor="middle">Overview</text>
+  
+  <circle cx="540" cy="1860" r="6" fill="#475569" />
+  <text x="540" y="1890" font-family="'Inter', sans-serif" font-size="14" font-weight="500" fill="#94a3b8" text-anchor="middle">Settle</text>
+  
+  <circle cx="864" cy="1860" r="6" fill="#475569" />
+  <text x="864" y="1890" font-family="'Inter', sans-serif" font-size="14" font-weight="500" fill="#94a3b8" text-anchor="middle">Reports</text>
+</svg>

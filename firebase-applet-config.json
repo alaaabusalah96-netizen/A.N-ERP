@@ -1,0 +1,12 @@
+{
+  "projectId": "custodyflow",
+  "appId": "",
+  "apiKey": "",
+  "authDomain": "custodyflow.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-custodyflow-b2f42bf6-7a6a-43a4-9986-3d46405d5ebe",
+  "storageBucket": "custodyflow.firebasestorage.app",
+  "messagingSenderId": "",
+  "measurementId": "",
+  "recaptchaSiteKey": "",
+  "_note": "In production or strict security environments, Firebase configuration is exclusively loaded from environment variables (FIREBASE_API_KEY, VITE_FIREBASE_API_KEY, FIREBASE_PROJECT_ID). Do not store production secrets in this file."
+}

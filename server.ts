@@ -1,6404 +1,2665 @@
-/**
- * @file server.ts
- * @description Enterprise Express Server for A.N ERP (v7.1) — Phase 1 Core Platform
- * Binds to 0.0.0.0:3000.
- * Houses server-side API routes, RFC7807 error formatting, security headers,
- * HttpOnly Secure Cookie Auth with 15-min JWT + Rotation, SoD, PII encryption,
- * and Vite dev middleware.
- */
+import express from "express";
+import cookieParser from "cookie-parser";
+import path from "path";
+import fs from "fs";
+import { createServer as createViteServer } from "vite";
+import { initializeApp } from "firebase/app";
+import { 
+  getFirestore, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  updateDoc, 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  deleteDoc 
+} from "firebase/firestore";
+import { initializeApp as initializeAdminApp, getApps as getAdminApps, cert as adminCert, App as AdminApp } from "firebase-admin/app";
+import { getFirestore as getFirestoreAdmin, FieldValue } from "firebase-admin/firestore";
+import { getAuth as getAdminAuth } from "firebase-admin/auth";
+import rateLimit from "express-rate-limit";
+import crypto from "crypto";
+import { runTenantMigrationUp, runTenantMigrationDown } from "./src/migrations/tenantMigration";
+import { hashPassword, legacyHashPassword, legacySinglePassHashPassword, legacyStretchedHashPassword1000, getPepperByVersion, hashPasswordPBKDF2_210k, getLegacyHashDeprecationPolicy } from "./src/lib/server_hash";
+import { 
+  DEFAULT_COMPANIES, 
+  DEFAULT_REGIONS, 
+  DEFAULT_STATIONS, 
+  DEFAULT_ORGANIZATION_UNITS, 
+  DEFAULT_CATEGORIES, 
+  DEFAULT_USERS, 
+  DEFAULT_TRANSACTIONS, 
+  DEFAULT_LOGS, 
+  DEFAULT_CONFIG, 
+  DEFAULT_PERMISSIONS, 
+  DEFAULT_ROLES 
+} from "./src/db/defaults";
 
-import dotenv from 'dotenv';
-dotenv.config();
-
-import express, { Request, Response, NextFunction } from 'express';
-import helmet from 'helmet';
-import { resolveCspProfile, resolveTrustProxy, parseFuzzIterations } from './src/core/security/runtimeSecurity';
-import { publicErrorMessage } from './src/core/security/publicError';
-import cookieParser from 'cookie-parser';
-import rateLimit from 'express-rate-limit';
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
-import argon2 from 'argon2';
-import { generateSecret, verify, generateURI } from 'otplib';
-import QRCode from 'qrcode';
-import { TwoFactorService } from './src/core/auth/TwoFactorService';
-import { createServer as createViteServer } from 'vite';
-import { Phase0TestRunner } from './src/core/tests/Phase0TestRunner';
-import { executePrimaryBattery } from './src/core/tests/runPrimaryBattery';
-import { runPhase1Battery } from './src/core/tests/runPhase1Battery';
-import { globalStorageRouter } from './src/core/storage/StorageRouter';
-import { checkReadiness, isReadinessRequest } from './src/core/ops/health';
-import { createShutdownHandler } from './src/core/ops/shutdown';
-import { PostingEngine } from './src/core/engines/PostingEngine';
-import { seedStandardsCatalogue } from './src/core/standards/seedCatalogue';
-import { RuleExplanationService } from './src/core/standards/RuleExplanationService';
-import { StandardsDecisionService } from './src/core/standards/StandardsDecisionService';
-import { ApprovalEngine } from './src/core/engines/ApprovalEngine';
-import { NumberingEngine } from './src/core/engines/NumberingEngine';
-import { JournalEntry, RFC7807Problem, User, ActiveSessionRecord, StoragePort, CompanyProfile, TenantCompany, CustomFieldDefinition } from './src/core/storage/StoragePort';
-import { TokenService } from './src/core/auth/TokenService';
-import { AnomalyDetector, GeoLocation, loginLockKey } from './src/core/auth/AnomalyDetector';
-import { EncryptionService } from './src/core/crypto/EncryptionService';
-import { SoDPolicyEngine } from './src/core/sod/SoDPolicyEngine';
-import { SoDMatrixService } from './src/core/sod/SoDMatrixService';
-import { DomainEventBus } from './src/core/events/DomainEventBus';
-import { DualCalendar } from './src/core/utils/dualCalendar';
-import { CompanyWizardService } from './src/core/wizard/CompanyWizardService';
-import { HistoricalQueryService } from './src/core/reports/HistoricalQueryService';
-import { DualControlService } from './src/core/governance/DualControlService';
-import { AuditChainService } from './src/core/audit/AuditChainService';
-import { runPhase2Battery } from './src/core/tests/runPhase2Battery';
-import { runPhase3Battery } from './src/core/tests/runPhase3Battery';
-import { runPhase46Battery } from './src/core/tests/runPhase4_6Battery';
-import { runPhase5Battery } from './src/core/tests/runPhase5Battery';
-import { runPhase6Battery } from './src/core/tests/runPhase6Battery';
-import { CashCustodyService } from './src/core/modules/custody/CashCustodyService';
-import { ExpenseService } from './src/core/modules/expenses/ExpenseService';
-import { InventoryService } from './src/core/inventory/InventoryService';
-import { PurchasingService } from './src/core/purchasing/PurchasingService';
-import { SEED_COMPANY_PROFILE, seedOnlyInitialBootstrap, seedKey, SEED_TENANT_ID } from './src/core/seed/seedOnly';
-import { bootstrapPlatformAdmin, migratePlatformAdminLegacy } from './src/core/auth/platformAdminBootstrap';
-import { runPhase7Battery } from './src/core/inventory/Phase7Battery';
-import { ACTIVITY_TEMPLATES, COUNTRY_TAX_RULES, MODULE_REGISTRY } from './src/core/templates/ActivityTemplates';
-import { AccountingService } from './src/core/accounting/AccountingService';
-import { TenantResolutionService } from './src/core/tenant/TenantResolutionService';
-import { UnifiedPrintService } from './src/core/printing/UnifiedPrintService';
-import { requirePermission, hasPermission, PermissionGroup, isPermissionGroup, ALL_PERMISSION_GROUPS, normalizeRole } from './src/core/auth/PermissionMatrix';
-import { checkRoleAssignment, checkTargetAccess, checkSelfRoleChange } from './src/core/auth/UserAdminGuards';
-import { validateNewGroupInput, assertTenantCanJoin, buildCompanyGroup } from './src/core/org/CompanyGroupService';
-import { validateGroupMasterItemInput, assertUniqueItemCodeInGroup, buildGroupMasterItem, stockItemShellFromGroupMaster } from './src/core/org/GroupMasterItemService';
-import { validateCrossCompanyCreate, buildCrossCompanyTransfer, assertCanDispatch, assertCanReceive } from './src/core/org/CrossCompanyTransferService';
-import { assertCanCloseEntity, assertCanReopenEntity, assertEntityOpenForStockMove, buildClosedState, buildReopenedState } from './src/core/accounting/EntityCloseService';
-import { aggregateGroupKpis, sumStockValue } from './src/core/org/GroupReportService';
-import { mergeTrialBalances } from './src/core/org/ConsolidationService';
-import { evaluateGateProd, GATE_REQUIRED_PACKAGES } from './src/core/platform/GateProdService';
-import * as fs from 'fs';
-import { defaultStockAccountingConfig } from './src/core/storage/StoragePort';
-import { requestContextALS } from './src/core/context/RequestContext';
-import { parseIsoDate, parseNonNegativeMoney, validationError, validateJournalInput, type ParseResult, parseSafeFileUrl, parseSafeFileName, parseSafeMimeType, parseAttachmentSize, ATTACHMENT_LIMITS } from './src/core/utils/validation';
-
-// Wave 0: Security Hardening — Strict Environment Secrets Enforcement
-export function requireEnv(name: string): string {
-  const val = process.env[name];
-  if (!val || val.trim() === '') {
-    throw new Error(`المتغيّر ${name} غير معرَّف في البيئة — لا يمكن تشغيل السيرفر بدونه`);
+function generateSecureTemporaryPassword(): string {
+  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
+  let pass = "";
+  for (let i = 0; i < 16; i++) {
+    pass += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return val;
+  return pass;
 }
 
-// Wave 0: Version Synchronization (Single source of truth from package.json)
-const packageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
-export const APP_VERSION = packageJson.version || '7.2.0';
+const isProductionOrStrict = Boolean(
+  process.env.NODE_ENV === 'production' || process.env.STRICT_PROD_SECURITY === 'true'
+);
 
-/**
- * Wave 7.5B & Section 3.5: Standard Cookie Security Policy
- * The default and mandatory value is sameSite='strict'.
- * sameSite='none' is strictly forbidden unless explicitly enabled via ALLOW_IFRAME_EMBEDDING=true
- * and the request verified to be within an iframe context.
- */
-export function resolveCookieSameSite(req: Request): 'strict' | 'none' {
-  const allowIframe = process.env.ALLOW_IFRAME_EMBEDDING === 'true';
-  const isIframe = req.headers['sec-fetch-dest'] === 'iframe' || req.headers['sec-fetch-site'] === 'cross-site';
-  if (allowIframe && isIframe) {
-    return 'none';
-  }
-  return 'strict';
+let appletConfig: Record<string, string> = {};
+if (!isProductionOrStrict) {
+  try {
+    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+    if (fs.existsSync(configPath)) {
+      appletConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    }
+  } catch (_) {}
 }
 
-// Mandatory security secrets at server boot (PLATFORM-ADMIN-BOOTSTRAP-1)
-requireEnv('PLATFORM_ADMIN_USERNAME');
-requireEnv('PLATFORM_ADMIN_PASSWORD');
-requireEnv('RESET_USER_PASSWORD');
-requireEnv('E2E_TEST_PASSWORD');
-requireEnv('JWT_SECRET');
-requireEnv('PII_ENCRYPTION_SECRET');
-// INITIAL_USER_PASSWORD: no longer required at boot (was only for demo operational seed users).
+const serverApiKey = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || (isProductionOrStrict ? "" : (appletConfig.apiKey || ""));
+const serverProjectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || (isProductionOrStrict ? "" : (appletConfig.projectId || "custodyflow"));
+const serverAuthDomain = process.env.FIREBASE_AUTH_DOMAIN || process.env.VITE_FIREBASE_AUTH_DOMAIN || (isProductionOrStrict ? "custodyflow.firebaseapp.com" : (appletConfig.authDomain || "custodyflow.firebaseapp.com"));
+const serverStorageBucket = process.env.FIREBASE_STORAGE_BUCKET || process.env.VITE_FIREBASE_STORAGE_BUCKET || (isProductionOrStrict ? "custodyflow.firebasestorage.app" : (appletConfig.storageBucket || "custodyflow.firebasestorage.app"));
+const serverMessagingSenderId = process.env.FIREBASE_MESSAGING_SENDER_ID || process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || (isProductionOrStrict ? "" : (appletConfig.messagingSenderId || ""));
+const serverAppId = process.env.FIREBASE_APP_ID || process.env.VITE_FIREBASE_APP_ID || (isProductionOrStrict ? "" : (appletConfig.appId || ""));
 
-const PORT = Number(process.env.PORT) || 3000;
-
-// Initial company seed settings for primary setup (Phase 0 / Phase 1)
-const companyProfile: TenantCompany = SEED_COMPANY_PROFILE;
-
-// Helper to initialize Seed Admin and Enterprise Users with Argon2id hashing directly via StoragePort
-async function initSeedUsers(storage: StoragePort, tenantId: string = companyProfile.id) {
-  // PLATFORM-ADMIN-BOOTSTRAP-1 + optional PLATFORM-ADMIN-MIGRATE-LEGACY-1
-  const platformUsername = requireEnv('PLATFORM_ADMIN_USERNAME');
-  const platformPassword = requireEnv('PLATFORM_ADMIN_PASSWORD');
-  const migrateLegacy =
-    process.env.PLATFORM_ADMIN_MIGRATE_LEGACY === '1' ||
-    process.env.PLATFORM_ADMIN_MIGRATE_LEGACY === 'true';
-
-  const result = migrateLegacy
-    ? await migratePlatformAdminLegacy(storage, tenantId, platformUsername, platformPassword)
-    : await bootstrapPlatformAdmin(storage, tenantId, platformUsername, platformPassword);
-
-  if (!result.ok) {
-    throw new Error(`[PLATFORM-ADMIN] ${result.message}`);
-  }
-  if (result.outcome === 'created' || result.outcome === 'migrated_created') {
-    console.log('[bootstrap] platform admin created from environment credentials; 2FA is not enabled');
-  } else if (result.outcome === 'migrated_synced') {
-    console.log(
-      '[bootstrap] platform admin password synced from Secrets (migrate); deactivate others if any'
-    );
-  } else {
-    console.log('[bootstrap] platform admin already present; password and role left unchanged');
-  }
-  if (result.ok && result.deactivated && result.deactivated.length) {
-    console.log(`[bootstrap] deactivated legacy platform accounts: ${result.deactivated.join(', ')}`);
-  }
-  if (migrateLegacy) {
-    console.log(
-      '[bootstrap] PLATFORM_ADMIN_MIGRATE_LEGACY was enabled — set it back to 0/false after successful login'
-    );
-  }
+if (isProductionOrStrict && (!serverApiKey || !serverProjectId)) {
+  console.error("CRITICAL SECURITY ERROR: Required Firebase environment variables (FIREBASE_API_KEY, FIREBASE_PROJECT_ID) are missing in production/strict mode. Committed JSON fallback is disabled.");
+  process.exit(1);
 }
 
-async function startServer() {
-  // SEC-3: refuse silent InMemory fallback in production (or when AN_REQUIRE_DATABASE=1)
-  const requireDatabase =
-    process.env.AN_REQUIRE_DATABASE === '1' ||
-    (process.env.NODE_ENV || '').toLowerCase() === 'production';
-  if (requireDatabase && !process.env.DATABASE_URL) {
-    console.error(
-      '[SEC-3] Refusing to start: DATABASE_URL is required when NODE_ENV=production or AN_REQUIRE_DATABASE=1. Silent InMemory fallback is not allowed.'
-    );
-    process.exit(1);
+const firebaseConfig = {
+  projectId: serverProjectId || "custodyflow",
+  appId: serverAppId,
+  apiKey: serverApiKey || "dev-placeholder-key",
+  authDomain: serverAuthDomain,
+  storageBucket: serverStorageBucket,
+  messagingSenderId: serverMessagingSenderId
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const DATABASE_ID = process.env.FIREBASE_DATABASE_ID || process.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-custodyflow-b2f42bf6-7a6a-43a4-9986-3d46405d5ebe";
+const db = getFirestore(firebaseApp, DATABASE_ID);
+
+// Initialize Firebase Admin SDK
+function getAdminApp(): AdminApp {
+  const existingApps = getAdminApps();
+  if (existingApps.length > 0 && existingApps[0]) {
+    return existingApps[0];
   }
 
-  // SEC-PROD-ROLE: refuse start when enforce=1 and the connection role bypasses RLS
-  if (process.env.AN_ENFORCE_PROD_ROLE === '1' && process.env.DATABASE_URL) {
+  const rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (rawServiceAccount) {
     try {
-      const { cleanPgConnectionString } = await import('./src/core/security/pgAppRoleGuard');
-      const pgMod = await import('pg');
-      const client = new pgMod.Client({ connectionString: cleanPgConnectionString(process.env.DATABASE_URL) });
-      await client.connect();
-      const roleRes = await client.query(
-        `SELECT current_user AS u, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user`,
-      );
-      await client.end();
-      const row = roleRes.rows[0] || {};
-      if (row.rolsuper === true || row.rolbypassrls === true) {
-        console.error(
-          `[SEC-PROD-ROLE] Refusing to start: role "${row.u}" bypasses RLS ` +
-            `(rolsuper=${row.rolsuper}, rolbypassrls=${row.rolbypassrls}). ` +
-            `Use NOSUPERUSER NOBYPASSRLS — docs/ops/PROD-PG-ROLE.md`,
-        );
-        process.exit(1);
+      let cleaned = rawServiceAccount.trim();
+      if ((cleaned.startsWith("'") && cleaned.endsWith("'")) || (cleaned.startsWith('"') && cleaned.endsWith('"'))) {
+        cleaned = cleaned.slice(1, -1).trim();
       }
-      console.log(`[SEC-PROD-ROLE] App role subject to RLS (user=${row.u})`);
-    } catch (e) {
-      console.error('[SEC-PROD-ROLE] Refusing to start: could not verify application DB role under AN_ENFORCE_PROD_ROLE=1', e);
-      process.exit(1);
+      if (!cleaned.startsWith('{') && !cleaned.startsWith('[')) {
+        try {
+          const decoded = Buffer.from(cleaned, 'base64').toString('utf-8').trim();
+          if (decoded.startsWith('{')) {
+            cleaned = decoded;
+          }
+        } catch (_) {
+          // Keep cleaned as is if base64 decode fails
+        }
+      }
+      const serviceAccount = JSON.parse(cleaned);
+      if (serviceAccount && typeof serviceAccount === 'object') {
+        if (typeof serviceAccount.private_key === 'string') {
+          serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+        }
+        return initializeAdminApp({
+          credential: adminCert(serviceAccount)
+        });
+      }
+    } catch (err) {
+      console.error("Error initializing Firebase Admin with FIREBASE_SERVICE_ACCOUNT:", err);
     }
   }
 
-  const masterStorage: StoragePort = process.env.DATABASE_URL
-    ? globalStorageRouter.getPrimaryAdapter()
-    : globalStorageRouter.getDevInMemoryAdapter();
+  const appsAfter = getAdminApps();
+  if (appsAfter.length > 0 && appsAfter[0]) {
+    return appsAfter[0];
+  }
 
-  const sodMatrixService = new SoDMatrixService();
+  try {
+    return initializeAdminApp({
+      projectId: firebaseConfig.projectId
+    });
+  } catch (err) {
+    const finalApps = getAdminApps();
+    if (finalApps.length > 0 && finalApps[0]) {
+      return finalApps[0];
+    }
+    throw err;
+  }
+}
 
-  // Validate SoD consistency at server boot
-  SoDPolicyEngine.assertConsistencyWithMatrix(sodMatrixService);
-
-  // الشركة والمستخدمون الأوائل يتم فحصهم وبذرهم بعد فتح المنفذ مباشرة (Non-blocking) لضمان سرعة الاستجابة لـ Cloud Run
+const adminApp = getAdminApp();
+const adminDb = getFirestoreAdmin(adminApp, DATABASE_ID);
 
 
+import helmet from "helmet";
+
+async function startServer() {
   const app = express();
-
-  // SEC-A: behind Cloud Run / a reverse proxy the client IP comes from X-Forwarded-For. Without this every client shares the
-  // proxy's IP and rate limits/lockouts hit everyone at once. Never "trust all": explicit TRUST_PROXY, or 1 hop on Cloud Run.
-  const trustProxy = resolveTrustProxy(process.env);
-  if (trustProxy.value !== undefined) app.set('trust proxy', trustProxy.value);
-  console.log(`[SEC] trust proxy = ${String(trustProxy.value)} (${trustProxy.source})`);
-
-  // Wave 0 / SEC-A: CSP profile is strict by default whenever NODE_ENV=production; CSP_PROFILE can still override explicitly.
-  const cspResolved = resolveCspProfile(process.env);
-  const cspProfile = cspResolved.profile;
-  if (cspResolved.warning) console.warn(`[SEC] ${cspResolved.warning}`);
-  console.log(`[SEC] CSP profile = ${cspProfile} (${cspResolved.source})`);
-  const isCspProduction = cspProfile === 'production';
-
   app.use(helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: isCspProduction ? ["'self'"] : ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
-        imgSrc: ["'self'", 'data:', 'blob:'],
-        connectSrc: ["'self'", 'ws:', 'wss:', 'https://*.google.com', 'https://*.run.app', 'https://*.aistudio.google.com', 'https://ai.studio'],
-        frameAncestors: isCspProduction ? ["'none'"] : ["'self'", 'https://*.google.com', 'https://*.run.app', 'https://*.aistudio.google.com', 'https://ai.studio'],
-      },
-    },
-    frameguard: isCspProduction ? { action: 'deny' } : false,
-    crossOriginEmbedderPolicy: false, // لمنع كسر تحميل الخطوط الخارجية
+    contentSecurityPolicy: false, // Allow AI Studio iframe preview and Vite development inline/eval scripts
+    frameguard: false, // Allow embedding in AI Studio preview iframe
+    crossOriginEmbedderPolicy: false
   }));
+  const PORT = 3000;
+
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (!process.env.APP_PEPPER) {
+    if (isProduction) {
+      console.error("CRITICAL SECURITY ERROR: APP_PEPPER environment variable is not set in production. Refusing to start.");
+      process.exit(1);
+    }
+    console.warn("[Security Notice] APP_PEPPER is not set. Server will start in non-strict/dev mode with a fallback pepper — do NOT use this in production.");
+  }
+
+  // Trust first proxy in Cloud Run / Nginx container environment for rate limiter IP resolution
+  app.set("trust proxy", 1);
 
   app.use(express.json());
   app.use(cookieParser());
 
-  // INV-001: Request Context ALS for Idempotency Request Hash computation
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    const idempotencyKey = (req.headers['idempotency-key'] as string | undefined) || req.body?.idempotencyKey;
-    if (!idempotencyKey) {
-      return next();
-    }
-    const sortKeys = (obj: any): any => {
-      if (obj === null || typeof obj !== 'object') return obj;
-      if (Array.isArray(obj)) return obj.map(sortKeys);
-      return Object.keys(obj).sort().reduce((acc: any, k) => {
-        acc[k] = sortKeys(obj[k]);
-        return acc;
-      }, {});
-    };
-    const canonical = JSON.stringify(sortKeys(req.body || {})) + ':' + req.method + ':' + (req.baseUrl || '') + req.path;
-    const hash = crypto.createHash('sha256').update(canonical).digest('hex');
-    requestContextALS.run({ requestHash: hash }, () => next());
-  });
+  const isRelaxedAuthRateLimit = !isProduction && process.env.RELAX_AUTH_RATE_LIMIT === 'true';
 
-  // 4.5G — Rate Limiting Configuration
-  const apiRateLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 300, // 300 requests per minute
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: {
-      type: 'https://api.an-erp.local/errors/rate-limit-exceeded',
-      title: 'تجاوز حد الطلبات المسموح',
-      status: 429,
-      detail: 'تم تجاوز الحد الأقصى للطلبات المسموحة في الدقيقة، يرجى المحاولة لاحقاً.',
-    },
-  });
-
+  // Rate limiting for auth verification endpoints (generous 60 attempts / 15m to avoid blocking legit admins testing multiple accounts)
   const authRateLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 30, // 30 attempts per 15 min
+    max: 60, // Max 60 attempts per 15 minutes per IP
+    skip: () => isRelaxedAuthRateLimit,
+    message: {
+      success: false,
+      message: "تم تجاوز الحد الأقصى للمحاولات من هذا الجهاز. يرجى الانتظار بضع دقائق قبل إعادة المحاولة / Rate limit exceeded. Please try again in a few minutes."
+    },
     standardHeaders: true,
     legacyHeaders: false,
-    message: {
-      type: 'https://api.an-erp.local/errors/login-rate-limit-exceeded',
-      title: 'تجاوز عدد محاولات الدخول المسموح بها',
-      status: 429,
-      detail: 'تم تجاوز عدد محاولات تسجيل الدخول المسموحة. يرجى الانتظار قبل المحاولة مرة أخرى.',
-    },
   });
 
-  app.use('/api', apiRateLimiter);
+  // Dedicated Rate Limiter for Session Cookie issuance (isolated from login attempts)
+  const sessionRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 120,
+    skip: () => isRelaxedAuthRateLimit,
+    message: {
+      success: false,
+      message: "Rate limit exceeded for session operations. Please try again later."
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
 
-  // Wave 7.5H & v7.3 Clause 18: Structured Logging, Correlation Tracing & Observability
-  const latencySamples: number[] = [];
-  function getP95Latency(samples: number[]): number {
-    if (samples.length === 0) return 0;
-    const sorted = [...samples].sort((a, b) => a - b);
-    const index = Math.floor(sorted.length * 0.95);
-    return Math.round(sorted[index] * 100) / 100;
+  // Dedicated Rate Limiter for Password Changes
+  const changePasswordRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    skip: () => isRelaxedAuthRateLimit,
+    message: {
+      success: false,
+      message: "تم تجاوز الحد الأقصى لمحاولات تغيير كلمة المرور. يرجى المحاولة لاحقاً / Password change rate limit exceeded. Please try again later."
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  // Backward-compatible alias
+  const otpRateLimiter = authRateLimiter;
+
+  // Dedicated Rate Limiter for Admin operations and Credential ID migrations
+  const adminRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 30, // Max 30 operations per 15 minutes per IP
+    skip: () => isRelaxedAuthRateLimit,
+    message: {
+      success: false,
+      message: "تم تجاوز الحد الأقصى للعمليات الإدارية من هذا الجهاز. يرجى المحاولة مرة أخرى لاحقاً / Rate limit exceeded for administrative operations. Please try again later."
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  const PLATFORM_OWNER_EMAIL = (process.env.PLATFORM_OWNER_EMAIL || "").toLowerCase().trim();
+
+  async function isPlatformAdminUser(email?: string, userData?: any): Promise<boolean> {
+    if (userData?.is_platform_owner === true || userData?.role === 'SystemAdmin') return true;
+    const targetEmail = (email || userData?.email || '').toLowerCase().trim();
+    if (!targetEmail) return false;
+    if (PLATFORM_OWNER_EMAIL && targetEmail === PLATFORM_OWNER_EMAIL) return true;
+    try {
+      const snapshot = await adminDb.collection("users").where("email", "==", targetEmail).limit(1).get();
+      if (!snapshot.empty) {
+        const data = snapshot.docs[0].data();
+        return data?.is_platform_owner === true || data?.role === 'SystemAdmin';
+      }
+    } catch (err) {
+      console.error("isPlatformAdminUser lookup error:", err);
+    }
+    return false;
   }
 
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    const traceId = (req.headers['x-trace-id'] as string) || `trc-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-    (req as any).traceId = traceId;
-    res.setHeader('x-trace-id', traceId);
+  // Middleware helper to verify Firebase ID token and user role
+  async function verifyUserRole(req: express.Request, allowedRoles: string[]): Promise<{ authorized: boolean; statusCode: number; message: string; user?: any }> {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return { authorized: false, statusCode: 401, message: "Unauthorized: Missing authentication token / يلزم وجود رمز المصادقة." };
+    }
 
-    const start = performance.now();
-    res.on('finish', () => {
-      const duration = performance.now() - start;
-      if (latencySamples.length > 500) latencySamples.shift();
-      latencySamples.push(duration);
+    const idToken = authHeader.split("Bearer ")[1]?.trim();
+    if (!idToken) {
+      return { authorized: false, statusCode: 401, message: "Unauthorized: Invalid authentication token / رمز المصادقة غير صالح." };
+    }
 
-      if (req.path.startsWith('/api') && !req.path.startsWith('/api/health')) {
-        if (res.statusCode >= 400) {
-          console.warn(`[API-WARN][${traceId}] ${req.method} ${req.path} -> ${res.statusCode} (${Math.round(duration * 100) / 100}ms)`);
+    try {
+      const decodedToken = await getAdminAuth(adminApp).verifyIdToken(idToken);
+      const uid = decodedToken.uid;
+
+      const userDoc = await adminDb.collection("users").doc(uid).get();
+      if (!userDoc.exists) {
+        return { authorized: false, statusCode: 403, message: "Forbidden: User record not found / لا تملك صلاحية الوصول." };
+      }
+
+      const userData = userDoc.data();
+      const userRole = userData?.role || "";
+      const isPlatformOwner = await isPlatformAdminUser(userData?.email, userData);
+
+      if (isPlatformOwner || allowedRoles.includes(userRole)) {
+        return { authorized: true, statusCode: 200, message: "Authorized", user: userData };
+      }
+
+      return { authorized: false, statusCode: 403, message: "Forbidden: Insufficient privileges / تطلب صلاحية أعلى." };
+    } catch (err: any) {
+      console.error("Token verification failed:", err);
+      return { authorized: false, statusCode: 401, message: "Unauthorized: Token verification failed / فشلت عملية المصادقة." };
+    }
+  }
+
+  async function requireSystemAdminAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const result = await verifyUserRole(req, ["SystemAdmin"]);
+    if (!result.authorized) {
+      return res.status(result.statusCode).json({ success: false, message: result.message });
+    }
+    (req as any).user = result.user;
+    next();
+  }
+
+  async function requireAdminOrSystemAdminAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const result = await verifyUserRole(req, ["SystemAdmin", "Admin"]);
+    if (!result.authorized) {
+      return res.status(result.statusCode).json({ success: false, message: result.message });
+    }
+    (req as any).user = result.user;
+    next();
+  }
+
+  // API Route - Run Tenant Migration (UP)
+  app.post("/api/migrations/up", requireSystemAdminAuth, async (req, res) => {
+    try {
+      console.log("Migration endpoint triggered [UP]");
+      const result = await runTenantMigrationUp(db);
+      return res.json(result);
+    } catch (err: any) {
+      console.error("Migration UP endpoint error:", err);
+      return res.status(500).json({
+        success: false,
+        message: `Migration failed: ${err.message}`,
+        details: {}
+      });
+    }
+  });
+
+  // API Route - Rollback Tenant Migration (DOWN)
+  app.post("/api/migrations/down", requireSystemAdminAuth, async (req, res) => {
+    try {
+      console.log("Migration endpoint triggered [DOWN]");
+      const result = await runTenantMigrationDown(db);
+      return res.json(result);
+    } catch (err: any) {
+      console.error("Migration DOWN endpoint error:", err);
+      return res.status(500).json({
+        success: false,
+        message: `Rollback failed: ${err.message}`,
+        details: {}
+      });
+    }
+  });
+
+
+  // API Route - Platform Status (checks if any SystemAdmin/super_admin/platform_owner exists)
+  app.get("/api/auth/platform-status", async (req, res) => {
+    try {
+      const sysAdminSnap = await adminDb.collection("users").where("role", "==", "SystemAdmin").limit(1).get();
+      let hasOwner = !sysAdminSnap.empty;
+      if (!hasOwner) {
+        const superAdminSnap = await adminDb.collection("users").where("role", "==", "super_admin").limit(1).get();
+        hasOwner = !superAdminSnap.empty;
+      }
+      if (!hasOwner) {
+        const ownerSnap = await adminDb.collection("users").where("is_platform_owner", "==", true).limit(1).get();
+        hasOwner = !ownerSnap.empty;
+      }
+      return res.json({ hasPlatformOwner: hasOwner });
+    } catch (err: any) {
+      console.warn("Platform status check notice (defaulting hasPlatformOwner to true):", err?.message || err);
+      return res.json({ hasPlatformOwner: true, notice: "Offline or unseeded fallback" });
+    }
+  });
+
+  const SERVER_SESSION_SECRET = process.env.SESSION_SECRET || "kemit_server_session_secret_fallback_key_2026";
+
+  function signServerSessionToken(payload: { uid: string; email: string; role?: string; company_id?: string; timestamp?: number }): string {
+    const data = JSON.stringify({ ...payload, timestamp: payload.timestamp || Date.now() });
+    const b64Data = Buffer.from(data).toString('base64url');
+    const signature = crypto.createHmac('sha256', SERVER_SESSION_SECRET).update(b64Data).digest('base64url');
+    return `${b64Data}.${signature}`;
+  }
+
+  function verifyServerSessionToken(token: string): { valid: boolean; uid?: string; email?: string } {
+    if (!token || typeof token !== 'string' || !token.includes('.')) return { valid: false };
+    const parts = token.split('.');
+    if (parts.length !== 2) return { valid: false };
+    const [b64Data, signature] = parts;
+    if (!b64Data || !signature) return { valid: false };
+    const expectedSig = crypto.createHmac('sha256', SERVER_SESSION_SECRET).update(b64Data).digest('base64url');
+    if (signature !== expectedSig) return { valid: false };
+    try {
+      const data = JSON.parse(Buffer.from(b64Data, 'base64url').toString('utf8'));
+      if (Date.now() - (data.timestamp || 0) > 14 * 24 * 60 * 60 * 1000) {
+        return { valid: false };
+      }
+      return { valid: true, uid: data.uid, email: data.email };
+    } catch {
+      return { valid: false };
+    }
+  }
+
+  // API Route - First-Run Super Admin Setup
+  app.post("/api/auth/bootstrap-platform-owner", otpRateLimiter, async (req, res) => {
+    try {
+      // 1. Live Firestore check: Reject if any Super Admin / SystemAdmin / Platform Owner exists
+      const sysAdminSnap = await adminDb.collection("users").where("role", "==", "SystemAdmin").limit(1).get();
+      let hasOwner = !sysAdminSnap.empty;
+      if (!hasOwner) {
+        const superAdminSnap = await adminDb.collection("users").where("role", "==", "super_admin").limit(1).get();
+        hasOwner = !superAdminSnap.empty;
+      }
+      if (!hasOwner) {
+        const ownerSnap = await adminDb.collection("users").where("is_platform_owner", "==", true).limit(1).get();
+        hasOwner = !ownerSnap.empty;
+      }
+
+      if (hasOwner) {
+        return res.status(403).json({
+          success: false,
+          message: "الحساب الرئيسي تم إعداده بالفعل / Platform owner already set up."
+        });
+      }
+
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ success: false, message: "يرجى إدخال البريد الإلكتروني وكلمة المرور." });
+      }
+
+      const emailLower = email.toLowerCase().trim();
+      if (!process.env.PLATFORM_OWNER_EMAIL) {
+        console.error("CRITICAL: PLATFORM_OWNER_EMAIL environment variable is not set. Refusing to bootstrap.");
+        return res.status(500).json({ success: false, message: "Platform owner email is not configured on the server." });
+      }
+      const configuredOwnerEmail = process.env.PLATFORM_OWNER_EMAIL.toLowerCase().trim();
+
+      // 2. Strict email match against PLATFORM_OWNER_EMAIL environment variable
+      if (emailLower !== configuredOwnerEmail) {
+        return res.status(400).json({
+          success: false,
+          message: "البريد الإلكتروني المكتوب لا يطابق بريد المدير الأساسي المعتمد في المنصة."
+        });
+      }
+
+      // 3. Strict password strength validation (min 12 chars, letters + numbers)
+      if (password.length < 12 || !/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+        return res.status(400).json({
+          success: false,
+          message: "كلمة المرور يجب أن تتكون من 12 حرف على الأقل، وتحتوي على حروف وأرقام."
+        });
+      }
+
+      // 4. Create or update user in Firebase Auth
+      let authUser;
+      try {
+        authUser = await getAdminAuth(adminApp).getUserByEmail(emailLower);
+        await getAdminAuth(adminApp).updateUser(authUser.uid, { password });
+      } catch (e) {
+        authUser = await getAdminAuth(adminApp).createUser({
+          email: emailLower,
+          password,
+          displayName: "Super Admin",
+        });
+      }
+      const userId = authUser.uid;
+
+      // 5. Create user doc in 'users' collection
+      const userDocData = {
+        id: userId,
+        email: emailLower,
+        full_name: "Super Admin",
+        role: "SystemAdmin",
+        is_active: true,
+        is_platform_owner: true,
+        company_id: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        permissions: {
+          create_expense: true, edit_expense: true, delete_expense: true,
+          create_voucher: true, approve_voucher: true, reject_voucher: true,
+          create_custody: true, edit_custody: true, replace_custody: true,
+          view_reports: true, manage_users: true, manage_companies: true,
+          manage_regions: true, manage_stations: true, manage_roles: true,
+          manage_settings: true, settle_voucher: true,
+        }
+      };
+      await adminDb.collection("users").doc(userId).set(userDocData);
+
+      // 6. Hash password with PBKDF2 210,000 iterations and store in 'user_credentials' vault
+      const salt = crypto.randomUUID();
+      const pbkdf2Hash = hashPasswordPBKDF2_210k(password, salt, 2);
+      await adminDb.collection("user_credentials").doc(userId).set({
+        id: userId,
+        company_id: 'platform',
+        email: emailLower,
+        passwordHash: pbkdf2Hash,
+        salt,
+        kdf: 'sha256_pbkdf2_210k',
+        pepper_version: 2,
+        updated_at: new Date().toISOString()
+      });
+
+      // 7. Issue custom token & server session token
+      const customToken = await getAdminAuth(adminApp).createCustomToken(userId);
+      const serverSessionToken = signServerSessionToken({
+        uid: userId,
+        email: emailLower,
+        role: "SystemAdmin",
+        company_id: undefined
+      });
+
+      return res.json({
+        success: true,
+        user: userDocData,
+        customToken,
+        sessionToken: serverSessionToken
+      });
+    } catch (err: any) {
+      console.error("bootstrap-platform-owner error:", err);
+      return res.status(500).json({ success: false, message: err?.message || "Error bootstrapping platform owner" });
+    }
+  });
+
+  // API Route - Issue HttpOnly Session Cookie (Defense-in-depth against XSS)
+  app.post("/api/auth/session", sessionRateLimiter, async (req, res) => {
+    try {
+      let idToken = req.body?.idToken;
+      if (!idToken) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith("Bearer ")) {
+          idToken = authHeader.substring(7);
         }
       }
-    });
-    next();
+
+      if (!idToken) {
+        return res.status(401).json({ success: false, message: "ID Token is required" });
+      }
+
+      let uid: string | null = null;
+      let sessionCookie: string | null = null;
+      const expiresIn = 14 * 24 * 60 * 60 * 1000; // 14 days in milliseconds
+
+      try {
+        const decoded = await getAdminAuth(adminApp).verifyIdToken(idToken);
+        uid = decoded.uid;
+        sessionCookie = await getAdminAuth(adminApp).createSessionCookie(idToken, { expiresIn });
+      } catch (verifyErr) {
+        const serverToken = verifyServerSessionToken(idToken);
+        if (serverToken.valid && serverToken.uid) {
+          uid = serverToken.uid;
+        } else {
+          return res.status(401).json({ success: false, message: "Invalid ID Token" });
+        }
+      }
+
+      if (sessionCookie) {
+        res.cookie('session', sessionCookie, {
+          maxAge: expiresIn,
+          httpOnly: true,
+          secure: true,
+          sameSite: 'none',
+          path: '/'
+        });
+      }
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error("Session creation error:", err);
+      return res.status(500).json({ success: false, message: "Failed to create session" });
+    }
   });
 
-  // 1E — Security Headers (CSP, HSTS, X-Content-Type-Options, etc.)
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    if (process.env.NODE_ENV === 'production') {
-      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    }
-    next();
-  });
-
-  // 4.6A: Strict Storage & Tenant Request Resolvers — No Silent Fallbacks Allowed
-  function getRequestStorage(req: Request, res: Response): StoragePort | null {
-    const storage = (req as any).storage as StoragePort;
-    if (!storage) {
-      res.status(500).json({
-        type: 'https://api.an-erp.local/errors/missing-storage-context',
-        title: 'سياق التخزين مفقود',
-        status: 500,
-        detail: 'تعذر تحديد محوّل التخزين الخاص بهذه المنشأة (ممنوع السقوط الصامت على المخزن الافتراضي وفق البند 4.6A).',
-      });
-      return null;
-    }
-    return storage;
-  }
-
-  function getRequestTenant(req: Request, res: Response): TenantCompany | null {
-    const tenant = (req as any).tenant as TenantCompany;
-    if (!tenant) {
-      res.status(500).json({
-        type: 'https://api.an-erp.local/errors/missing-tenant-context',
-        title: 'سياق المنشأة مفقود',
-        status: 500,
-        detail: 'تعذر تحديد سياق المنشأة الحالية (ممنوع السقوط الصامت على المنشأة الافتراضية وفق البند 4.6A).',
-      });
-      return null;
-    }
-    return tenant;
-  }
-
-  // 4.6G: CSRF & Origin Defense-in-Depth for State-Changing Requests (ADR 007)
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    const method = req.method.toUpperCase();
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-      const origin = req.headers['origin'] as string;
-      const host = req.headers['host'] as string;
-
-      if (origin && host) {
+  // API Route - Revoke Session Cookie & Clear
+  app.post("/api/auth/logout", async (req, res) => {
+    try {
+      const sessionCookie = req.cookies?.session;
+      if (sessionCookie) {
         try {
-          const originHost = new URL(origin).host;
-          if (originHost !== host) {
-            // Must have custom anti-CSRF header
-            const hasCustomHeader =
-              req.headers['idempotency-key'] ||
-              req.headers['x-requested-with'] ||
-              req.headers['authorization'];
-            if (!hasCustomHeader) {
-              const problem: RFC7807Problem = {
-                type: 'https://api.an-erp.local/errors/csrf-violation',
-                title: 'انتهاك حماية CSRF',
-                status: 403,
-                detail: 'تم رفض الطلب الخارجي غير المصرح به لافتقاره إلى ترويسة مخصصة (ADR 007 والبند 4.6G).',
-              };
-              return res.status(403).json(problem);
+          const decodedClaims = await getAdminAuth(adminApp).verifySessionCookie(sessionCookie);
+          if (decodedClaims?.uid) {
+            await getAdminAuth(adminApp).revokeRefreshTokens(decodedClaims.uid);
+          }
+        } catch (_) {
+          // Ignore invalid or expired session cookie
+        }
+      }
+    } catch (err) {
+      console.error("Logout session revocation error:", err);
+    } finally {
+      res.clearCookie('session', {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+        path: '/'
+      });
+      res.clearCookie('session', { path: '/' });
+      return res.json({ success: true });
+    }
+  });
+
+  // Helper for Authenticating requests via Bearer Token, Server Session Token, or Session Cookie
+  async function authenticateSessionOrBearer(req: express.Request): Promise<{ authenticated: boolean; statusCode: number; message: string; user?: any }> {
+    let uid: string | null = null;
+
+    // 1. Check Bearer Token from Authorization Header first (explicit active client token)
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.substring(7).trim();
+      if (token) {
+        try {
+          const decoded = await getAdminAuth(adminApp).verifyIdToken(token);
+          uid = decoded.uid;
+        } catch (_) {
+          // Fallback to server-signed session token
+          const serverToken = verifyServerSessionToken(token);
+          if (serverToken.valid && serverToken.uid) {
+            uid = serverToken.uid;
+          }
+        }
+      }
+    }
+
+    // 2. Check x-session-token custom header
+    if (!uid) {
+      const customHeaderToken = req.headers['x-session-token'];
+      if (typeof customHeaderToken === 'string' && customHeaderToken.trim()) {
+        const serverToken = verifyServerSessionToken(customHeaderToken.trim());
+        if (serverToken.valid && serverToken.uid) {
+          uid = serverToken.uid;
+        }
+      }
+    }
+
+    // 3. Check Session Cookie if Bearer Token is missing/invalid
+    if (!uid) {
+      const sessionCookie = req.cookies?.session;
+      if (sessionCookie) {
+        try {
+          const decoded = await getAdminAuth(adminApp).verifySessionCookie(sessionCookie, true);
+          uid = decoded.uid;
+        } catch (_) {
+          const serverToken = verifyServerSessionToken(sessionCookie);
+          if (serverToken.valid && serverToken.uid) {
+            uid = serverToken.uid;
+          }
+        }
+      }
+    }
+
+    if (!uid) {
+      return { authenticated: false, statusCode: 401, message: "Unauthorized: Missing or invalid authentication token or session cookie." };
+    }
+
+    try {
+      const userDoc = await adminDb.collection("users").doc(uid).get();
+      if (!userDoc.exists) {
+        return { authenticated: false, statusCode: 403, message: "Forbidden: Authenticated user record not found." };
+      }
+
+      const userData = userDoc.data();
+      if (!userData || userData.is_active === false) {
+        return { authenticated: false, statusCode: 403, message: "Forbidden: User account is inactive." };
+      }
+
+      return { authenticated: true, statusCode: 200, message: "Authorized", user: { ...userData, id: uid } };
+    } catch (err: any) {
+      console.error("Auth check error in authenticateSessionOrBearer:", err);
+      return { authenticated: false, statusCode: 500, message: "Server error during authentication check." };
+    }
+  }
+
+  // API Route - Unified Secure User Provisioning Endpoint (POST /api/admin/users)
+  app.post("/api/admin/users", adminRateLimiter, async (req, res) => {
+    try {
+      // 1. AuthN
+      const authResult = await authenticateSessionOrBearer(req);
+      if (!authResult.authenticated) {
+        return res.status(authResult.statusCode).json({ success: false, message: authResult.message });
+      }
+
+      const creator = authResult.user;
+      const isPlatformAdmin = await isPlatformAdminUser(creator.email, creator);
+
+      // 2. AuthZ
+      const isRegionalManager = creator.role === "RegionalManager" || creator.role === "BranchManager";
+      const canManageUsers = isPlatformAdmin || creator.role === "Admin" || (isRegionalManager && req.body?.role === "StationAdmin");
+
+      if (!canManageUsers) {
+        return res.status(403).json({ success: false, message: "Forbidden: Insufficient privileges to manage users / غير مصرح لك بإدارة المستخدمين." });
+      }
+
+      const {
+        email,
+        full_name,
+        role,
+        company_id,
+        region_id,
+        station_id,
+        org_unit_id,
+        assigned_org_unit_ids,
+        permissions,
+        password,
+        must_change_password
+      } = req.body || {};
+
+      // Determine effective password (manual if provided >= 12 chars, otherwise auto-generate >= 16 chars)
+      let effectivePassword = "";
+      let isGeneratedPassword = false;
+      if (password !== undefined && password !== null && typeof password === 'string' && password.trim() !== '') {
+        const trimmed = password.trim();
+        if (trimmed.length < 12) {
+          return res.status(400).json({
+            success: false,
+            message: "كلمة المرور يجب أن لا تقل عن 12 حرفاً / Password must be at least 12 characters."
+          });
+        }
+        effectivePassword = trimmed;
+      } else {
+        effectivePassword = generateSecureTemporaryPassword();
+        isGeneratedPassword = true;
+      }
+
+      // 3. Validation: Prevent creating SystemAdmin or setting is_platform_owner
+      if (role === 'SystemAdmin' || role === 'super_admin' || req.body.is_platform_owner === true) {
+        return res.status(403).json({ success: false, message: "لا يمكن إنشاء حساب مدير نظام من هذا المسار / Cannot create SystemAdmin or Platform Owner via this endpoint." });
+      }
+
+      // Required fields validation
+      if (!email || typeof email !== 'string' || !email.trim()) {
+        return res.status(400).json({ success: false, message: "البريد الإلكتروني مطلوب / Email is required." });
+      }
+      if (!full_name || typeof full_name !== 'string' || !full_name.trim()) {
+        return res.status(400).json({ success: false, message: "الاسم الكامل مطلوب / Full name is required." });
+      }
+      if (!role || typeof role !== 'string' || !role.trim()) {
+        return res.status(400).json({ success: false, message: "الدور الوظيفي مطلوب / Role is required." });
+      }
+
+      const emailLower = email.toLowerCase().trim();
+
+      // Automatic Company resolution from scope / org unit / region / station / fallback
+      let effectiveCompanyId = (company_id && typeof company_id === 'string' && company_id.trim()) 
+        ? company_id.trim() 
+        : (!isPlatformAdmin ? (creator.company_id || "") : "");
+
+      if (!effectiveCompanyId) {
+        const targetOrgId = org_unit_id || region_id || station_id;
+        if (targetOrgId) {
+          try {
+            const orgDoc = await adminDb.collection("organization_units").doc(targetOrgId).get();
+            if (orgDoc.exists) {
+              effectiveCompanyId = orgDoc.data()?.companyId || orgDoc.data()?.company_id || "";
+            } else {
+              const orgCodeSnap = await adminDb.collection("organization_units").where("code", "==", targetOrgId).limit(1).get();
+              if (!orgCodeSnap.empty) {
+                effectiveCompanyId = orgCodeSnap.docs[0].data()?.companyId || orgCodeSnap.docs[0].data()?.company_id || "";
+              } else {
+                const regDoc = await adminDb.collection("regions").doc(targetOrgId).get();
+                if (regDoc.exists) {
+                  effectiveCompanyId = regDoc.data()?.company_id || "";
+                } else {
+                  const stDoc = await adminDb.collection("stations").doc(targetOrgId).get();
+                  if (stDoc.exists) {
+                    effectiveCompanyId = stDoc.data()?.company_id || "";
+                  }
+                }
+              }
+            }
+          } catch (scopeLookupErr) {
+            console.warn("Scope lookup error in user provisioning:", scopeLookupErr);
+          }
+        }
+      }
+
+      if (!effectiveCompanyId && isPlatformAdmin) {
+        try {
+          const compSnap = await adminDb.collection("companies").limit(1).get();
+          if (!compSnap.empty) {
+            effectiveCompanyId = compSnap.docs[0].id;
+          }
+        } catch (compLookupErr) {
+          console.warn("Company lookup error:", compLookupErr);
+        }
+      }
+
+      // Company Admin Scope Check
+      if (!isPlatformAdmin) {
+        if (!effectiveCompanyId || effectiveCompanyId !== creator.company_id || (company_id && company_id !== creator.company_id)) {
+          return res.status(403).json({ success: false, message: "غير مصرح لك بإضافة مستخدم لشركة أخرى / Admin cannot create user for another company." });
+        }
+      } else {
+        if (!effectiveCompanyId || typeof effectiveCompanyId !== 'string' || !effectiveCompanyId.trim()) {
+          return res.status(400).json({ success: false, message: "معرف الشركة مطلوب / company_id is required." });
+        }
+      }
+
+      // Role-specific binding requirements
+      if (role === 'Admin' && !effectiveCompanyId) {
+        return res.status(400).json({ success: false, message: "معرف الشركة مطلوب لدور مدير الشركة / company_id is required for Admin." });
+      }
+      if (role === 'RegionalManager' && (!region_id || typeof region_id !== 'string' || !region_id.trim())) {
+        return res.status(400).json({ success: false, message: "المنطقة مطلوبة لهذا الدور / region_id is required for RegionalManager." });
+      }
+      if (role === 'StationAdmin' && (!station_id || typeof station_id !== 'string' || !station_id.trim())) {
+        return res.status(400).json({ success: false, message: "المحطة مطلوبة لهذا الدور / station_id is required for StationAdmin." });
+      }
+
+      // Region/Station belong to company check (supports legacy collections & modern organization_units) - FAIL-CLOSED
+      if (region_id) {
+        let isValidRegion = false;
+        let regionFound = false;
+        let infraError = false;
+        let matchedOrgUnitData: any = null;
+        let matchedOrgUnitId: string | null = null;
+        try {
+          const regDoc = await adminDb.collection("regions").doc(region_id).get();
+          if (regDoc.exists) {
+            regionFound = true;
+            const regData = regDoc.data();
+            const regCompId = regData?.company_id;
+            if (!effectiveCompanyId || regCompId === effectiveCompanyId) {
+              isValidRegion = true;
+              if (!effectiveCompanyId && regCompId) effectiveCompanyId = regCompId;
+            }
+          } else {
+            const orgDoc = await adminDb.collection("organization_units").doc(region_id).get();
+            if (orgDoc.exists) {
+              const orgData = orgDoc.data();
+              const isRegionType = orgData?.typeId === 'out-region' || orgData?.type_id === 'out-region' || orgData?.typeId === 'out-sector' || orgData?.type_id === 'out-sector' || Boolean(orgData?.metadata?.legacyRegionId);
+              if (isRegionType) {
+                regionFound = true;
+                matchedOrgUnitData = orgData;
+                matchedOrgUnitId = orgDoc.id;
+                const orgCompId = orgData?.companyId || orgData?.company_id;
+                if (!effectiveCompanyId || orgCompId === effectiveCompanyId) {
+                  isValidRegion = true;
+                  if (!effectiveCompanyId && orgCompId) effectiveCompanyId = orgCompId;
+                }
+              }
+            } else {
+              const orgCodeSnap = await adminDb.collection("organization_units").where("code", "==", region_id).limit(1).get();
+              if (!orgCodeSnap.empty) {
+                const orgData = orgCodeSnap.docs[0].data();
+                const isRegionType = orgData?.typeId === 'out-region' || orgData?.type_id === 'out-region' || orgData?.typeId === 'out-sector' || orgData?.type_id === 'out-sector' || Boolean(orgData?.metadata?.legacyRegionId);
+                if (isRegionType) {
+                  regionFound = true;
+                  matchedOrgUnitData = orgData;
+                  matchedOrgUnitId = orgCodeSnap.docs[0].id;
+                  const orgCompId = orgData?.companyId || orgData?.company_id;
+                  if (!effectiveCompanyId || orgCompId === effectiveCompanyId) {
+                    isValidRegion = true;
+                    if (!effectiveCompanyId && orgCompId) effectiveCompanyId = orgCompId;
+                  }
+                }
+              }
             }
           }
-        } catch (e) {
-          console.error(JSON.stringify({ level: 'CRITICAL', op: 'csrf_validation', trace: crypto.randomUUID(), err: String(e) }));
+
+          // Auto-mirror legacy region document if resolved through organization_units
+          if (isValidRegion && matchedOrgUnitData && matchedOrgUnitId) {
+            try {
+              await adminDb.collection("regions").doc(matchedOrgUnitId).set({
+                id: matchedOrgUnitId,
+                name: matchedOrgUnitData.nameAr || matchedOrgUnitData.name || region_id,
+                code: matchedOrgUnitData.code || '',
+                company_id: effectiveCompanyId,
+                org_unit_id: matchedOrgUnitId,
+                created_at: new Date().toISOString()
+              }, { merge: true });
+            } catch (mirrorErr) {
+              console.warn("Could not mirror region doc:", mirrorErr);
+            }
+          }
+        } catch (regLookupErr) {
+          console.error("Infrastructure error during region verification:", regLookupErr);
+          infraError = true;
         }
-      }
-    }
-    next();
-  });
 
-  // Phase 6 (HYGIENE-001): append a SystemChangeLog entry for an administrative action.
-  // Never carries passwords, tokens, invite links or personal data; a failure is logged and never fails the request.
-  const logSystemChange = async (
-    storage: StoragePort,
-    actor: string,
-    changeType: 'SECURITY' | 'NUMBERING_OVERRIDE' | 'PLATFORM_MANAGEMENT',
-    module: 'USERS' | 'INVITATIONS' | 'COMPANY' | 'NUMBERING' | 'CUSTOM_FIELDS',
-    entitiesAffected: string[],
-    summaryAr: string
-  ): Promise<void> => {
-    try {
-      const r = await storage.appendSystemChangeLog({
-        id: `LOG-${module}-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
-        timestamp: new Date().toISOString(),
-        actor,
-        changeType,
-        module,
-        entitiesAffected,
-        summaryAr,
-        version: '1',
-      });
-      if (!r.success) console.error('[audit] system change log failed:', (r as any).error?.title || 'storage error');
-    } catch (e: any) {
-      console.error('[audit] system change log failed:', e?.message);
-    }
-  };
-
-  // Helper to record operational audit log (scoped strictly to provided storage & tenant)
-  const recordAudit = async (
-    actorId: string,
-    actorName: string,
-    action: string,
-    entityType: string,
-    entityId: string,
-    details: any,
-    ip: string,
-    tenantId?: string,
-    storage?: StoragePort
-  ) => {
-    try {
-      const activePort = storage;
-      if (!activePort || !tenantId) return;
-      await activePort.saveAuditRecord({
-        id: `AUD-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        tenantId,
-        actorId,
-        actorName,
-        action,
-        entityType,
-        entityId,
-        details,
-        ipAddress: ip,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (e) {
-      // Audit non-blocking
-    }
-  };
-
-  // 1. Health check
-  // OPS-1: plain GET = liveness (never touches the database). GET ?ready=1 = readiness (503 when the database does not answer).
-  // The public body no longer exposes the environment name or the storage engine.
-  app.get('/api/health', async (req: Request, res: Response) => {
-    const dualDate = DualCalendar.format();
-    const body: Record<string, unknown> = {
-      status: 'ok',
-      system: 'A.N ERP',
-      version: `v${APP_VERSION}`,
-      calendar: dualDate.combinedFormatted,
-    };
-    if (isReadinessRequest(req.query?.ready)) {
-      const r = await checkReadiness({
-        hasDatabase: !!process.env.DATABASE_URL,
-        ping: async () => (await (masterStorage as any).checkHealth()).connected === true,
-      });
-      body.ready = r.ready;
-      body.database = r.database;
-      if (!r.ready) {
-        body.status = 'degraded';
-        return res.status(503).json(body);
-      }
-    }
-    return res.json(body);
-  });
-
-  // 1.1 Dual Calendar endpoint for frontend
-  app.get('/api/calendar', (req: Request, res: Response) => {
-    const dualDate = DualCalendar.format();
-    res.json({
-      success: true,
-      data: {
-        gregorianFormatted: dualDate.gregorianFormatted,
-        hijriFormatted: dualDate.hijriFormatted,
-        combinedFormatted: dualDate.combinedFormatted,
-      },
-      calendar: dualDate,
-    });
-  });
-
-  // ============================================================================
-  // AUTHENTICATION CONTEXT & MIDDLEWARE (Multi-Tenant Isolation via StorageRouter)
-  // ============================================================================
-  interface AuthContext {
-    tenantId: string;
-    userId: string;
-    sessionId: string;
-    role?: string;
-    scopes?: { type: 'TENANT' | 'NODE'; orgNodeId?: string }[];
-    requiresPasswordChange?: boolean;
-    /** SEC-PERM-OVERRIDE-1: individual permission grants (additive to role matrix) */
-    permissions?: string[];
-  }
-
-  // =========================================================================
-  // AUTH-001: Strict Test-Only Auth Bypass Isolation
-  //
-  // Architectural Invariants:
-  // 1. Strictly forbidden in production and staging environments under any circumstances.
-  // 2. Only permitted in explicit 'test' environment (NODE_ENV === 'test').
-  // 3. Explicit opt-in flag required: ENABLE_TEST_AUTH_BYPASS === 'true' (disabled by default).
-  // 4. Localhost / loopback socket connection restriction (cannot be invoked remotely).
-  // 5. Shared dynamic test secret required (TEST_AUTH_BYPASS_SECRET, min 16 chars).
-  // 6. No hardcoded super_admin; defaults to least-privilege 'test_user'.
-  // =========================================================================
-  function isLoopbackAddress(addr?: string): boolean {
-    if (!addr) return false;
-    return (
-      addr === '127.0.0.1' ||
-      addr === '::1' ||
-      addr === '::ffff:127.0.0.1' ||
-      addr === 'localhost'
-    );
-  }
-
-  function isTestBypassPermitted(): boolean {
-    const rawEnv = (process.env.NODE_ENV || '').toLowerCase().trim();
-    // 1. Strictly forbidden in production, staging, development, or any environment other than 'test'
-    if (rawEnv === 'production' || rawEnv === 'staging' || rawEnv !== 'test') {
-      return false;
-    }
-    // 2. Explicit opt-in flag required (disabled by default)
-    if (process.env.ENABLE_TEST_AUTH_BYPASS !== 'true') {
-      return false;
-    }
-    // 3. Dynamic test secret required in environment (minimum 16 characters, not hardcoded)
-    const secret = process.env.TEST_AUTH_BYPASS_SECRET;
-    if (!secret || secret.trim().length < 16) {
-      return false;
-    }
-    return true;
-  }
-
-  async function tryIsolatedTestBypass(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<boolean> {
-    // 1. Check if test bypass is permitted by strict environment policy
-    if (!isTestBypassPermitted()) {
-      return false;
-    }
-
-    // 2. Must originate strictly from loopback (localhost)
-    const remoteAddr = req.socket?.remoteAddress || req.ip;
-    if (!isLoopbackAddress(remoteAddr)) {
-      return false;
-    }
-
-    // 3. Check for explicit test bypass header
-    const bypassHeader = req.headers['x-bypass-auth'] || req.headers['x-test-bypass-auth'];
-    if (bypassHeader !== 'true') {
-      return false;
-    }
-
-    // 4. Validate client-supplied secret against configured environment secret using timingSafeEqual
-    const clientSecret = req.headers['x-test-bypass-secret'];
-    const expectedSecret = process.env.TEST_AUTH_BYPASS_SECRET;
-    if (typeof clientSecret !== 'string' || !clientSecret || !expectedSecret) {
-      return false;
-    }
-
-    const clientBuf = Buffer.from(clientSecret);
-    const expectedBuf = Buffer.from(expectedSecret);
-    if (clientBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(clientBuf, expectedBuf)) {
-      return false;
-    }
-
-    // 5. Tenant context is strictly mandatory
-    const devTenantId = req.headers['x-tenant-id'] as string;
-    if (!devTenantId) {
-      res.status(400).json({
-        type: 'https://api.an-erp.local/errors/missing-tenant-id',
-        title: 'معرف المنشأة إلزامي لتجاوز المصادقة الاختباري',
-        status: 400,
-        detail: 'يتطلب تجاوز المصادقة في بيئة الاختبار تمرير الترويسة X-Tenant-Id صراحة دون سقوط صامت.',
-      });
-      return true;
-    }
-
-    const tenantRes = await masterStorage.getTenant(devTenantId);
-    if (!tenantRes.success || !tenantRes.data) {
-      res.status(404).json({
-        type: 'https://api.an-erp.local/errors/tenant-not-found',
-        title: 'المنشأة غير مسجلة',
-        status: 404,
-        detail: `المنشأة (${devTenantId}) غير مسجلة في سجل المستأجرين.`,
-      });
-      return true;
-    }
-
-    const devTenant = tenantRes.data;
-    let devStorage: StoragePort;
-    try {
-      devStorage = await globalStorageRouter.resolveAdapterAsync(devTenant);
-    } catch (err: any) {
-      console.error(`[tryIsolatedTestBypass] tenant storage unavailable tenant=${devTenant.id}: ${err?.message}`);
-      res.status(503).json({
-        type: 'https://api.an-erp.local/errors/storage-unavailable',
-        title: 'مخزن بيانات المنشأة غير متاح',
-        status: 503,
-        detail: 'تعذر الاتصال بمخزن بيانات هذه المنشأة. حاول لاحقًا أو تواصل مع مدير النظام.',
-      });
-      return true;
-    }
-
-    // 6. No hardcoded super_admin bypass!
-    // Role must be explicitly specified by test harness or defaults to non-privileged 'test_user'
-    const testRole = (req.headers['x-test-role'] as string) || 'test_user';
-    const testUserId = (req.headers['x-test-user-id'] as string) || 'USR-TEST-RUNNER';
-
-    (req as any).authContext = {
-      tenantId: devTenantId,
-      userId: testUserId,
-      sessionId: 'ses-test-isolated',
-      role: testRole,
-    } as AuthContext;
-    (req as any).storage = devStorage;
-    (req as any).tenant = devTenant;
-    next();
-    return true;
-  }
-
-  async function requireAuth(req: Request, res: Response, next: NextFunction) {
-    let accessToken = req.cookies['an_access_token'];
-    if (!accessToken && req.headers.authorization?.startsWith('Bearer ')) {
-      accessToken = req.headers.authorization.split(' ')[1];
-    }
-    if (!accessToken) {
-      // AUTH-001: Try isolated test-only auth bypass (strictly rejected in prod/staging/dev)
-      const handled = await tryIsolatedTestBypass(req, res, next);
-      if (handled) {
-        return;
-      }
-      return res.status(401).json({ success: false, message: 'غير مسجل الدخول' });
-    }
-
-    try {
-      const parts = accessToken.split('.');
-      if (parts.length !== 3) {
-        return res.status(401).json({ success: false, message: 'صيغة التوكن غير صحيحة' });
-      }
-
-      const b64Payload = parts[1];
-      const payload = JSON.parse(Buffer.from(b64Payload, 'base64url').toString('utf8'));
-      const nowSec = Math.floor(Date.now() / 1000);
-      if (payload.exp && payload.exp < nowSec) {
-        return res.status(401).json({ success: false, message: 'انتهت صلاحية الجلسة (15 دقيقة)' });
-      }
-
-      const tenantId = payload.tenantId;
-      if (!tenantId) {
-        return res.status(401).json({
-          type: 'https://api.an-erp.local/errors/unauthorized',
-          title: 'سياق المنشأة مفقود',
-          status: 401,
-          detail: 'رمز الدخول يفتقر إلى معرف المنشأة القانوني.',
-        });
-      }
-
-      const tenantRes = await masterStorage.getTenant(tenantId);
-      if (!tenantRes.success || !tenantRes.data) {
-        return res.status(401).json({
-          type: 'https://api.an-erp.local/errors/tenant-not-found',
-          title: 'المنشأة غير مسجلة',
-          status: 401,
-          detail: `المنشأة ذات المعرف (${tenantId}) غير مسجلة بالنظام أو تم إيقافها.`,
-        });
-      }
-      const tenant = tenantRes.data;
-      // FIX-TENANT-SUSPEND-1: suspended company blocks all authenticated requests (not only new logins)
-      if (tenant.status && tenant.status !== 'ACTIVE') {
-        return res.status(403).json({
-          type: 'https://api.an-erp.local/errors/tenant-suspended',
-          title: 'المنشأة موقوفة',
-          status: 403,
-          detail: 'تم إيقاف هذه المنشأة. لا يمكن استخدام الجلسات الحالية حتى إعادة تفعيلها.',
-        });
-      }
-      const tenantStorage = await globalStorageRouter.resolveAdapterAsync(tenant);
-      const tokenService = new TokenService(tenantStorage);
-
-      const ver = await tokenService.verifyAccessToken(accessToken);
-      if (!ver.valid || !ver.payload) {
-        return res.status(401).json({ success: false, message: ver.error || 'جلسة غير صالحة' });
-      }
-
-      // FIX-SESSION-REVOKE-1: access token must map to a still-active session row
-      if (ver.payload.sessionId) {
-        const sessLive = await tenantStorage.getActiveSession(ver.payload.sessionId);
-        if (!sessLive.success) {
-          return res.status(401).json({ success: false, message: 'تعذر التحقق من الجلسة' });
+        if (infraError) {
+          return res.status(503).json({
+            success: false,
+            message: "تعذر التحقق من بيانات المنطقة بسبب خطأ في الخادم، يرجى إعادة المحاولة / Infrastructure error verifying region. Please retry."
+          });
         }
-        if (!sessLive.data) {
-          return res.status(401).json({ success: false, message: 'تم إنهاء هذه الجلسة' });
-        }
-      }
 
-      // Phase 3 (I2/I3/I7): Verify user membership exists and is ACTIVE in tenant
-      const userCheck = typeof (tenantStorage as any).getUser === 'function'
-        ? await (tenantStorage as any).getUser(ver.payload.tenantId, ver.payload.sub)
-        : await tenantStorage.getUserById(ver.payload.sub);
-
-      if (!userCheck.success || !userCheck.data || (userCheck.data.tenantId && userCheck.data.tenantId !== ver.payload.tenantId) || userCheck.data.status !== 'ACTIVE') {
-        return res.status(403).json({
-          type: 'https://api.an-erp.local/errors/inactive-membership',
-          title: 'عضوية غير صالحة أو معطلة',
-          status: 403,
-          detail: 'المستخدم لا يملك عضوية نشطة في هذه المنشأة.',
-        });
-      }
-
-      // Phase 4 (IDENT-001): membership + DB-authoritative role + scopes
-      const mem = await tenantStorage.getMembershipContext(ver.payload.tenantId, userCheck.data.id);
-      if (!mem.success || !mem.data || mem.data.status !== 'ACTIVE' || !mem.data.role) {
-        return res.status(403).json({
-          type: 'https://api.an-erp.local/errors/inactive-membership',
-          title: 'عضوية غير نشطة',
-          status: 403,
-          detail: 'لا توجد عضوية نشطة بدور محدد لهذا المستخدم في هذه المنشأة.',
-        });
-      }
-
-      const mustChangePassword = !!userCheck.data.requiresPasswordChange;
-      const individualPerms = Array.isArray(userCheck.data.permissions)
-        ? userCheck.data.permissions.filter((p: any) => typeof p === 'string')
-        : [];
-      (req as any).authContext = {
-        tenantId: ver.payload.tenantId,
-        userId: ver.payload.sub,
-        sessionId: ver.payload.sessionId,
-        role: mem.data.role,
-        scopes: mem.data.scopes,
-        orgNodeId: (userCheck.data as any).assignedNodeId || (userCheck.data as any).orgNodeId,
-        requiresPasswordChange: mustChangePassword,
-        permissions: individualPerms,
-      } as AuthContext;
-      (req as any).storage = tenantStorage;
-      (req as any).tenant = tenant;
-
-      // SEC-SESSION-PASSWORD: users flagged requiresPasswordChange may only use password/session self-service routes
-      if (mustChangePassword) {
-        const pathOnly = String(req.originalUrl || req.url || '').split('?')[0];
-        const allowed = (
-          pathOnly === '/api/auth/me' ||
-          pathOnly === '/api/auth/change-password' ||
-          pathOnly === '/api/auth/logout' ||
-          pathOnly === '/api/auth/sessions' ||
-          pathOnly === '/api/auth/sessions/revoke-others' ||
-          pathOnly === '/api/auth/refresh'
-        );
-        if (!allowed) {
-          return res.status(403).json({
-            type: 'https://api.an-erp.local/errors/password-change-required',
-            title: 'يجب تغيير كلمة المرور',
-            status: 403,
-            detail: 'حسابك يتطلب تغيير كلمة المرور قبل استخدام باقي وظائف النظام.',
-            code: 'PASSWORD_CHANGE_REQUIRED',
+        if (!regionFound || !isValidRegion) {
+          return res.status(400).json({
+            success: false,
+            message: "المنطقة غير موجودة أو لا تنتمي للشركة المحجوزة / Region does not exist or does not belong to company."
           });
         }
       }
-      next();
-    } catch (err: any) {
-      return res.status(401).json({ success: false, message: publicErrorMessage(err) || 'فشل التحقق من الجلسة' });
-    }
-  }
 
-  // Wave 0: Sensitive Route Guards (Platform Admin & Developer/Auditor)
-  async function requirePlatformAdmin(req: Request, res: Response, next: NextFunction) {
-    return requireAuth(req, res, () => {
-      const authContext = (req as any).authContext as AuthContext;
-      if (!authContext) {
-        return res.status(401).json({
-          type: 'https://api.an-erp.local/errors/unauthorized',
-          title: 'غير مصادق',
-          status: 401,
-          detail: 'رمز المصادقة مفقود أو غير صالح.',
-        });
-      }
-      const role = authContext.role;
-      if (role !== 'super_admin' && role !== 'platform_admin') {
-        return res.status(403).json({
-          type: 'https://api.an-erp.local/errors/forbidden',
-          title: 'صلاحيات غير كافية',
-          status: 403,
-          detail: 'هذا المسار مخصص لمدير المنصة (Platform Admin) فقط.',
-        });
-      }
-      next();
-    });
-  }
-
-  async function requireDeveloperOrAuditor(req: Request, res: Response, next: NextFunction) {
-    return requireAuth(req, res, () => {
-      const authContext = (req as any).authContext as AuthContext;
-      if (!authContext) {
-        return res.status(401).json({
-          type: 'https://api.an-erp.local/errors/unauthorized',
-          title: 'غير مصادق',
-          status: 401,
-          detail: 'رمز المصادقة مفقود أو غير صالح.',
-        });
-      }
-      const role = authContext.role;
-      if (role !== 'developer' && role !== 'auditor' && role !== 'super_admin' && role !== 'platform_admin') {
-        return res.status(403).json({
-          type: 'https://api.an-erp.local/errors/forbidden',
-          title: 'صلاحيات غير كافية',
-          status: 403,
-          detail: 'هذا المسار محمي ومخصص لدور المطور أو المدقق (Developer/Auditor) فقط (البند 1.3).',
-        });
-      }
-      next();
-    });
-  }
-
-  // 1A & 1D & 1I & 1J & 1K — Enterprise Authentication (Login)
-  // 4.6C & 4.6F: Pre-auth tenant resolution and scoped credential lookup
-  // SEC-1: the single owner of TOTP secrets / backup codes (the TOTP library and QR renderer are injected)
-  const twoFactorService = new TwoFactorService({ generateSecret, generateURI, verify: (o) => verify(o) as any, qrDataUrl: (u: string) => QRCode.toDataURL(u) });
-
-  app.post('/api/auth/login', authRateLimiter, async (req: Request, res: Response) => {
-    // 4.6C & 4.6F: Resolve target tenant before accessing storage or credentials
-    const tenantResolution = await TenantResolutionService.resolveTenantFromRequest(masterStorage, req);
-    if (!tenantResolution.success || !tenantResolution.tenant) {
-      return res.status(tenantResolution.error?.status || 400).json(tenantResolution.error);
-    }
-    const targetTenant = tenantResolution.tenant;
-    // FIX-TENANT-SUSPEND-1: reject login to suspended legal companies
-    if (targetTenant.status && targetTenant.status !== 'ACTIVE') {
-      return res.status(403).json({
-        type: 'https://api.an-erp.local/errors/tenant-suspended',
-        title: 'المنشأة موقوفة',
-        status: 403,
-        detail: 'لا يمكن تسجيل الدخول إلى منشأة موقوفة. تواصل مع مدير المنصة.',
-      });
-    }
-    let targetStorage: StoragePort;
-    try {
-      targetStorage = await globalStorageRouter.resolveAdapterAsync(targetTenant);
-    } catch (err: any) {
-      console.error(`[auth/login] tenant storage unavailable tenant=${targetTenant.id}: ${err?.message}`);
-      return res.status(503).json({
-        type: 'https://api.an-erp.local/errors/storage-unavailable',
-        title: 'مخزن بيانات المنشأة غير متاح',
-        status: 503,
-        detail: 'تعذر الاتصال بمخزن بيانات هذه المنشأة. حاول لاحقًا أو تواصل مع مدير النظام.',
-      });
-    }
-
-    const { username, password, twoFactorCode, backupCode, forceTerminateOldest, clientGeo } = req.body;
-
-    if (!username || !password) {
-      const problem: RFC7807Problem = {
-        type: 'https://api.an-erp.local/errors/invalid-credentials',
-        title: 'بيانات الدخول غير مكتملة',
-        status: 400,
-        detail: 'اسم المستخدم وكلمة المرور مطلوبان لتسجيل الدخول.',
-      };
-      return res.status(400).json(problem);
-    }
-
-    // 4.6F: Credential check strictly scoped to targetTenant.id — NO cross-tenant search
-    let user: User | null = null;
-    const uRes = await targetStorage.getUserByUsername(targetTenant.id, username);
-    if (uRes.success && uRes.data) {
-      user = uRes.data;
-    }
-
-    const anomalyDetector = new AnomalyDetector(targetStorage);
-    const tokenService = new TokenService(targetStorage);
-    const lockKey = loginLockKey(targetTenant.id, username); // SEC-A: per-tenant counter (was: bare username shared by all tenants)
-
-    // 1D: Check Progressive Account Lockout via StoragePort
-    const lockout = await anomalyDetector.checkLockout(lockKey);
-    if (lockout.isLocked) {
-      const problem: RFC7807Problem = {
-        type: 'https://api.an-erp.local/errors/account-locked',
-        title: 'الحساب مقفل مؤقتاً لدواعي أمنية',
-        status: 423,
-        detail: `تم قفل الحساب تلقائياً إثر استنفاد المحاولات (${lockout.failedAttempts} محاولات فاشلة). يرجى الانتظار ${lockout.lockoutDurationMinutes} دقيقة قبل المحاولة مجدداً.`,
-      };
-      return res.status(423).json(problem);
-    }
-
-    if (!user || !user.passwordHash || user.status !== 'ACTIVE') {
-      const failedState = await anomalyDetector.recordFailedAttempt(lockKey);
-      await recordAudit(
-        username,
-        username,
-        'FAILED_LOGIN_ATTEMPT',
-        'AUTH',
-        username,
-        { attemptsCount: failedState.failedAttempts },
-        req.ip || '127.0.0.1',
-        targetTenant.id,
-        targetStorage
-      );
-
-      const problem: RFC7807Problem = {
-        type: 'https://api.an-erp.local/errors/invalid-credentials',
-        title: 'اسم المستخدم أو كلمة المرور غير صحيحة',
-        status: 401,
-        detail: failedState.isLocked
-          ? `تم قفل الحساب لمدة ${failedState.lockoutDurationMinutes} دقيقة بعد 5 محاولات فاشلة.`
-          : `بيانات الاعتماد غير مطابقة. المحاولة ${failedState.failedAttempts} من 5 محاولات مسموحة.`,
-      };
-      return res.status(401).json(problem);
-    }
-
-    // Real Argon2id verification — strictly zero plaintext fallback!
-    const isValidPass = await argon2.verify(user.passwordHash, password);
-    if (!isValidPass) {
-      const failedState = await anomalyDetector.recordFailedAttempt(lockKey);
-      await recordAudit(
-        username,
-        username,
-        'FAILED_LOGIN_ATTEMPT',
-        'AUTH',
-        username,
-        { attemptsCount: failedState.failedAttempts },
-        req.ip || '127.0.0.1',
-        targetTenant.id,
-        targetStorage
-      );
-
-      const problem: RFC7807Problem = {
-        type: 'https://api.an-erp.local/errors/invalid-credentials',
-        title: 'اسم المستخدم أو كلمة المرور غير صحيحة',
-        status: 401,
-        detail: failedState.isLocked
-          ? `تم قفل الحساب لمدة ${failedState.lockoutDurationMinutes} دقيقة بعد 5 محاولات فاشلة.`
-          : `بيانات الاعتماد غير مطابقة. المحاولة ${failedState.failedAttempts} من 5 محاولات مسموحة.`,
-      };
-      return res.status(401).json(problem);
-    }
-
-    // 1J: Impossible-travel check. SEC-1: only with a REAL location; an omitted clientGeo is "unknown", never a made-up city
-    const location: GeoLocation | null = clientGeo || null;
-    const travelCheck: Awaited<ReturnType<typeof anomalyDetector.checkImpossibleTravel>> = location
-      ? await anomalyDetector.checkImpossibleTravel(user.id, location)
-      : { isAnomaly: false, message: 'الموقع الجغرافي غير متوفر؛ لم يُجرَ فحص الانتقال المستحيل.' };
-    // SEC-1: a second factor is demanded only from users who actually HAVE one (an anomaly raises an alert; it cannot create a factor)
-    const mustEnforce2fa = !!user.twoFactorEnabled;
-
-    if (travelCheck.isAnomaly) {
-      DomainEventBus.publish({
-        eventType: 'SECURITY_ALERT_TRIGGERED',
-        tenantId: user.tenantId,
-        actorId: user.id,
-        actorName: user.fullName,
-        payload: {
-          alertType: 'IMPOSSIBLE_TRAVEL',
-          details: travelCheck,
-          location,
-        },
-      });
-      await recordAudit(
-        user.id,
-        user.fullName,
-        'IMPOSSIBLE_TRAVEL_DETECTED',
-        'SECURITY',
-        user.id,
-        travelCheck,
-        req.ip || '127.0.0.1',
-        user.tenantId,
-        targetStorage
-      );
-    }
-
-    // 1D: Verify 2FA via real TOTP (otplib) or Emergency Backup Code, with zero lockout mechanism
-    if (mustEnforce2fa) {
-      if (!twoFactorCode && !backupCode) {
-        // SEC-1: an enrolled user gets a plain challenge. NEVER a secret, QR code or otpauth URI; nothing is generated or saved here.
-        return res.status(200).json(TwoFactorService.loginChallenge(travelCheck.isAnomaly, travelCheck.message));
-      }
-
-      const second = await twoFactorService.verifyLoginSecondFactor(targetStorage, user, { twoFactorCode, backupCode });
-      if (second.usedBackupCode) {
-        await recordAudit(
-          user.id,
-          user.fullName,
-          'EMERGENCY_BACKUP_CODE_CONSUMED',
-          'AUTH',
-          user.id,
-          { remainingCodes: second.remainingBackupCodes },
-          req.ip || '127.0.0.1',
-          user.tenantId,
-          targetStorage
-        );
-      }
-      const twoFactorValid = second.valid;
-      if (!twoFactorValid) {
-        // SEC-1: wrong codes feed the SAME progressive lockout as wrong passwords (no brute-force path through the 2FA branch)
-        await anomalyDetector.recordFailedAttempt(lockKey);
-      }
-
-      if (!twoFactorValid) {
-        return res.status(401).json({
-          type: 'https://api.an-erp.local/errors/invalid-2fa',
-          title: 'رمز التحقق غير صحيح',
-          status: 401,
-          detail: 'رمز التحقق الثنائي أو كود الطوارئ المدخل غير صالح.',
-        });
-      }
-    }
-
-    // 1K: Concurrent Session Policy Check
-    const concurrent = await anomalyDetector.checkConcurrentSessionLimit(user.id, user.role);
-    if (concurrent.limitExceeded && !forceTerminateOldest) {
-      return res.status(409).json({
-        type: 'https://api.an-erp.local/errors/concurrent-session-limit-exceeded',
-        title: 'تجاوز الحد الأقصى للجلسات المتزامنة',
-        status: 409,
-        detail: `حسابك مسموح له بـ ${concurrent.maxAllowed} جلسات متزامنة لدور (${user.roleTitleAr || user.role}). لديك حالياً ${concurrent.currentActiveCount} جلسة نشطة.`,
-        oldestSessionId: concurrent.oldestSessionId,
-        requiresConfirmation: true,
-      });
-    }
-
-    if (concurrent.limitExceeded && forceTerminateOldest && concurrent.oldestSessionId) {
-      // Terminate oldest session
-      const oldSesRes = await targetStorage.getActiveSession(concurrent.oldestSessionId);
-      if (oldSesRes.success && oldSesRes.data) {
-        await tokenService.revokeFamily(oldSesRes.data.familyId, 'CONCURRENT_LIMIT_TERMINATION');
-        await targetStorage.deleteActiveSession(concurrent.oldestSessionId);
-      }
-      await anomalyDetector.terminateSession(concurrent.oldestSessionId);
-    }
-
-    // Create session & Token Family with Mandatory Rotation
-    const userTenantId = user.tenantId;
-    const sessionId = `ses-${crypto.randomUUID()}`;
-    const { familyId, refreshToken } = await tokenService.createRefreshTokenFamily(
-      user.id,
-      userTenantId,
-      sessionId
-    );
-
-    const accessToken = tokenService.generateAccessToken({
-      userId: user.id,
-      tenantId: userTenantId,
-      role: user.role,
-      sessionId,
-      familyId,
-    });
-
-    // Record session in unified StoragePort
-    const sessionRecord: ActiveSessionRecord = {
-      sessionId,
-      userId: user.id,
-      tenantId: userTenantId,
-      username: user.username,
-      fullName: user.fullName,
-      role: user.role,
-      deviceType: req.headers['user-agent']?.includes('Mobile') ? 'Mobile Device' : 'Desktop Browser',
-      ipAddress: req.ip || '127.0.0.1',
-      location: location || { city: 'غير معروف', country: '', lat: 0, lon: 0 },
-      familyId,
-      createdAt: Date.now(),
-      lastActiveAt: Date.now(),
-    };
-
-    await targetStorage.saveActiveSession(sessionRecord);
-    await anomalyDetector.registerActiveSession(sessionRecord);
-    await targetStorage.clearFailedLoginAttempts(lockKey);   // SEC-A: a successful login resets this tenant's counter (was cleared by user id but written by username, so it never reset)
-    if (location) await anomalyDetector.recordSuccessfulLogin(user.id, location, req.ip || '127.0.0.1', userTenantId);   // SEC-1: an unknown location is never stored as a position
-
-    // 1A: Set HttpOnly, Secure, SameSite Cookies — Zero tokens in localStorage!
-    const isProd = process.env.NODE_ENV === 'production';
-    const sameSiteMode = resolveCookieSameSite(req);
-
-    res.cookie('an_access_token', accessToken, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: sameSiteMode,
-      maxAge: 15 * 60 * 1000, // 15 minutes (Section 1A)
-      path: '/',
-    });
-
-    res.cookie('an_refresh_token', refreshToken, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: sameSiteMode,
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      path: '/',
-    });
-
-    DomainEventBus.publish({
-      eventType: 'USER_LOGGED_IN',
-      tenantId: userTenantId,
-      actorId: user.id,
-      actorName: user.fullName,
-      payload: { sessionId, role: user.role, ip: req.ip },
-    });
-
-    await recordAudit(
-      user.id,
-      user.fullName,
-      'USER_LOGIN',
-      'SESSION',
-      sessionId,
-      { role: user.role, ip: req.ip },
-      req.ip || '127.0.0.1',
-      userTenantId,
-      targetStorage
-    );
-
-    const responsePayload = {
-      success: true,
-      user: {
-        id: user.id,
-        username: user.username,
-        fullName: user.fullName,
-        role: user.role,
-        roleTitleAr: user.roleTitleAr,
-        branchName: user.branchName,
-        is2faEnabled: !!user.twoFactorEnabled,
-        requiresPasswordChange: !!user.requiresPasswordChange,
-      },
-      requiresPasswordChange: !!user.requiresPasswordChange,
-      tenant: targetTenant,
-      calendar: DualCalendar.format(),
-    };
-
-    return res.json(responsePayload);
-  });
-
-  // 1A — Refresh Token Rotation Endpoint (HttpOnly Cookie based)
-  app.post('/api/auth/refresh', async (req: Request, res: Response) => {
-    const rawRefreshToken = req.cookies['an_refresh_token'];
-    if (!rawRefreshToken) {
-      return res.status(401).json({
-        type: 'https://api.an-erp.local/errors/missing-refresh-token',
-        title: 'رمز التحديث غير متوفر',
-        status: 401,
-        detail: 'الجلسة منتهية أو لم يتم توفير رمز التحديث في ملفات تعريف الارتباط الآمنة.',
-      });
-    }
-
-    let targetStorage: StoragePort | null = null;
-    try {
-      const parts = rawRefreshToken.split('.');
-      if (parts.length === 3) {
-        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-        if (payload.tenantId) {
-          const tRes = await masterStorage.getTenant(payload.tenantId);
-          if (tRes.success && tRes.data) {
-            // FIX-TENANT-SUSPEND-1: do not rotate tokens for suspended tenants
-            if (tRes.data.status && tRes.data.status !== 'ACTIVE') {
-              res.clearCookie('an_access_token', { path: '/' });
-              res.clearCookie('an_refresh_token', { path: '/' });
-              return res.status(403).json({
-                type: 'https://api.an-erp.local/errors/tenant-suspended',
-                title: 'المنشأة موقوفة',
-                status: 403,
-                detail: 'تم إيقاف المنشأة؛ لا يمكن تجديد الجلسة.',
-              });
+      let resolvedStationRegionId: string | null = null;
+      if (station_id) {
+        let isValidStation = false;
+        let stationFound = false;
+        let infraError = false;
+        let matchedStationOrgData: any = null;
+        let matchedStationOrgId: string | null = null;
+        try {
+          const stDoc = await adminDb.collection("stations").doc(station_id).get();
+          if (stDoc.exists) {
+            stationFound = true;
+            const stData = stDoc.data();
+            const stCompId = stData?.company_id;
+            resolvedStationRegionId = stData?.region_id || null;
+            if (!effectiveCompanyId || stCompId === effectiveCompanyId) {
+              isValidStation = true;
+              if (!effectiveCompanyId && stCompId) effectiveCompanyId = stCompId;
             }
-            targetStorage = await globalStorageRouter.resolveAdapterAsync(tRes.data);
+          } else {
+            const orgDoc = await adminDb.collection("organization_units").doc(station_id).get();
+            if (orgDoc.exists) {
+              stationFound = true;
+              matchedStationOrgData = orgDoc.data();
+              matchedStationOrgId = orgDoc.id;
+              const orgData = matchedStationOrgData;
+              const orgCompId = orgData?.companyId || orgData?.company_id;
+              resolvedStationRegionId = orgData?.metadata?.legacyRegionId || orgData?.metadata?.legacy_region_id || null;
+              if (!resolvedStationRegionId && orgData?.parentId) {
+                const parentDoc = await adminDb.collection("organization_units").doc(orgData.parentId).get();
+                if (parentDoc.exists) {
+                  const parentData = parentDoc.data();
+                  resolvedStationRegionId = parentData?.metadata?.legacyRegionId || parentData?.metadata?.legacy_region_id || parentDoc.id.replace('org-unit-region-', '');
+                }
+              }
+              if (!effectiveCompanyId || orgCompId === effectiveCompanyId) {
+                isValidStation = true;
+                if (!effectiveCompanyId && orgCompId) effectiveCompanyId = orgCompId;
+              }
+            } else {
+              const orgCodeSnap = await adminDb.collection("organization_units").where("code", "==", station_id).limit(1).get();
+              if (!orgCodeSnap.empty) {
+                stationFound = true;
+                matchedStationOrgData = orgCodeSnap.docs[0].data();
+                matchedStationOrgId = orgCodeSnap.docs[0].id;
+                const orgData = matchedStationOrgData;
+                const orgCompId = orgData?.companyId || orgData?.company_id;
+                resolvedStationRegionId = orgData?.metadata?.legacyRegionId || orgData?.metadata?.legacy_region_id || null;
+                if (!effectiveCompanyId || orgCompId === effectiveCompanyId) {
+                  isValidStation = true;
+                  if (!effectiveCompanyId && orgCompId) effectiveCompanyId = orgCompId;
+                }
+              }
+            }
           }
+
+          // Auto-mirror legacy station document if resolved through organization_units
+          if (isValidStation && matchedStationOrgData && matchedStationOrgId) {
+            try {
+              await adminDb.collection("stations").doc(matchedStationOrgId).set({
+                id: matchedStationOrgId,
+                station_name: matchedStationOrgData.nameAr || matchedStationOrgData.name || station_id,
+                station_code: matchedStationOrgData.code || '',
+                custody_amount: matchedStationOrgData.metadata?.custodyAmount || 0,
+                company_id: effectiveCompanyId,
+                region_id: resolvedStationRegionId || null,
+                org_unit_id: matchedStationOrgId,
+                created_at: new Date().toISOString()
+              }, { merge: true });
+            } catch (mirrorErr) {
+              console.warn("Could not mirror station doc:", mirrorErr);
+            }
+          }
+        } catch (stLookupErr) {
+          console.error("Infrastructure error during station verification:", stLookupErr);
+          infraError = true;
+        }
+
+        if (infraError) {
+          return res.status(503).json({
+            success: false,
+            message: "تعذر التحقق من بيانات المحطة بسبب خطأ في الخادم، يرجى إعادة المحاولة / Infrastructure error verifying station. Please retry."
+          });
+        }
+
+        if (!stationFound || !isValidStation) {
+          return res.status(400).json({
+            success: false,
+            message: "المحطة غير موجودة أو لا تنتمي للشركة المحجوزة / Station does not exist or does not belong to company."
+          });
         }
       }
-    } catch (e) {
-      console.error(JSON.stringify({ level: 'CRITICAL', op: 'refresh_token_tenant_parsing', trace: crypto.randomUUID(), err: String(e) }));
-    }
 
-    if (!targetStorage) {
-      return res.status(401).json({
-        type: 'https://api.an-erp.local/errors/unauthorized',
-        title: 'فشل حسم سياق المنشأة',
-        status: 401,
-        detail: 'تعذر التحقق من سياق المنشأة المرتبط برمز التحديث (البند 4.6A).',
+      // Check RegionalManager authorization over station
+      if (isRegionalManager && role === "StationAdmin") {
+        const creatorRegionId = creator.region_id || creator.scoped_region_id;
+        const targetRegionId = resolvedStationRegionId || region_id;
+        if (!creatorRegionId || (targetRegionId && targetRegionId !== creatorRegionId)) {
+          return res.status(403).json({
+            success: false,
+            message: "غير مصرح: مصرح فقط بإنشاء مدراء محطات تابعين لمنطقتك / Forbidden: You can only create station admins for stations within your assigned region."
+          });
+        }
+      }
+
+      // Unique email check in Firestore 'users' collection
+      const existingUserSnap = await adminDb.collection("users").where("email", "==", emailLower).limit(1).get();
+      if (!existingUserSnap.empty) {
+        const existingDoc = existingUserSnap.docs[0];
+        const existingData = existingDoc.data();
+
+        // 1. Check if the user belongs to a deleted/non-existent company
+        let isOrphanedCompany = false;
+        if (existingData?.company_id) {
+          try {
+            const compDoc = await adminDb.collection("companies").doc(existingData.company_id).get();
+            if (!compDoc.exists) {
+              isOrphanedCompany = true;
+            }
+          } catch (_) {}
+        }
+
+        if (isOrphanedCompany) {
+          // Auto-purge ghost user record from the deleted company and allow provisioning
+          console.warn(`[POST /api/admin/users] Auto-purging orphaned user ${existingDoc.id} from deleted company ${existingData?.company_id}`);
+          try {
+            await adminDb.collection("users").doc(existingDoc.id).delete();
+            await adminDb.collection("user_credentials").doc(existingDoc.id).delete();
+            const authClient = getAdminAuth(adminApp);
+            if (authClient) await authClient.deleteUser(existingDoc.id).catch(() => {});
+          } catch (purgeErr) {
+            console.warn("Could not purge orphaned user:", purgeErr);
+          }
+        } else if (existingData?.company_id === effectiveCompanyId && existingData?.is_active === false) {
+          // 2. Reactivate and update previously deactivated user in the same company
+          console.warn(`[POST /api/admin/users] Reactivating inactive user ${existingDoc.id} in company ${effectiveCompanyId}`);
+          const updatedUserData = {
+            ...existingData,
+            role,
+            full_name: full_name.trim(),
+            company_id: effectiveCompanyId,
+            region_id: region_id || null,
+            station_id: station_id || null,
+            is_active: true,
+            updated_at: new Date().toISOString()
+          };
+          await adminDb.collection("users").doc(existingDoc.id).set(updatedUserData, { merge: true });
+
+          // Update password in credentials vault and Auth
+          const salt = crypto.randomUUID();
+          const pbkdf2Hash = hashPasswordPBKDF2_210k(effectivePassword, salt, 2);
+          await adminDb.collection("user_credentials").doc(existingDoc.id).set({
+            id: existingDoc.id,
+            company_id: effectiveCompanyId,
+            email: emailLower,
+            passwordHash: pbkdf2Hash,
+            salt,
+            kdf: 'sha256_pbkdf2_210k',
+            pepper_version: 2,
+            updated_at: new Date().toISOString()
+          }, { merge: true });
+
+          const authClient = getAdminAuth(adminApp);
+          if (authClient) {
+            try {
+              await authClient.updateUser(existingDoc.id, {
+                password: effectivePassword,
+                displayName: full_name.trim(),
+                disabled: false
+              });
+            } catch (_) {}
+          }
+
+          return res.status(201).json({
+            success: true,
+            message: "تم إعادة تفعيل وتحديث بيانات المستخدم بنجاح / User reactivated successfully.",
+            user: updatedUserData,
+            temporaryPassword: effectivePassword,
+            isGeneratedPassword
+          });
+        } else {
+          return res.status(400).json({ success: false, message: "البريد الإلكتروني مسجل بالفعل / Email already exists." });
+        }
+      }
+
+      // Check Firebase Auth
+      let existingAuthUser = null;
+      const authClient = getAdminAuth(adminApp);
+      if (authClient) {
+        try {
+          existingAuthUser = await authClient.getUserByEmail(emailLower);
+        } catch (_) {
+          // Expected if user does not exist in Auth
+        }
+      }
+
+      let userId = '';
+      if (existingAuthUser) {
+        // Orphaned or existing Auth user: synchronize password & display name with effectivePassword
+        if (authClient) {
+          try {
+            await authClient.updateUser(existingAuthUser.uid, {
+              password: effectivePassword,
+              displayName: full_name.trim()
+            });
+          } catch (updateAuthErr: any) {
+            console.error("Auth updateUser error:", updateAuthErr?.message);
+            return res.status(500).json({
+              success: false,
+              message: "فشل تحديث بيانات المستخدم في Firebase Auth / Failed to update user in Firebase Auth: " + (updateAuthErr?.message || "Unknown error")
+            });
+          }
+        }
+        userId = existingAuthUser.uid;
+      } else {
+        // Create Firebase Auth user with effective password
+        if (authClient) {
+          try {
+            const authUser = await authClient.createUser({
+              email: emailLower,
+              password: effectivePassword,
+              displayName: full_name.trim()
+            });
+            userId = authUser.uid;
+          } catch (createAuthErr: any) {
+            console.error("Auth createUser error:", createAuthErr?.message);
+            return res.status(500).json({
+              success: false,
+              message: "فشل إنشاء حساب المستخدم في Firebase Auth / Failed to create user in Firebase Auth: " + (createAuthErr?.message || "Unknown error")
+            });
+          }
+        } else {
+          userId = 'user-' + crypto.randomUUID();
+        }
+      }
+
+      // Vault password in 'user_credentials' with PBKDF2 210,000 iterations
+      const salt = crypto.randomUUID();
+      const pbkdf2Hash = hashPasswordPBKDF2_210k(effectivePassword, salt, 2);
+      const credPayload = {
+        id: userId,
+        company_id: effectiveCompanyId,
+        email: emailLower,
+        passwordHash: pbkdf2Hash,
+        password: pbkdf2Hash,
+        salt: salt,
+        kdf: 'sha256_pbkdf2_210k',
+        pepper_version: 2,
+        is_temporary: true,
+        updated_at: new Date().toISOString()
+      };
+      await adminDb.collection("user_credentials").doc(userId).set(credPayload, { merge: true });
+      await adminDb.collection("user_credentials").doc(emailLower).set(credPayload, { merge: true });
+
+      // Construct 'users' document WITHOUT plaintext password field
+      const userDocData = {
+        id: userId,
+        email: emailLower,
+        full_name: full_name.trim(),
+        role: role.trim(),
+        company_id: effectiveCompanyId,
+        region_id: region_id || null,
+        station_id: station_id || null,
+        org_unit_id: org_unit_id || null,
+        assigned_org_unit_ids: Array.isArray(assigned_org_unit_ids) ? assigned_org_unit_ids : [],
+        permissions: permissions && typeof permissions === 'object' ? permissions : {},
+        must_change_password: typeof must_change_password === 'boolean' ? must_change_password : true,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      await adminDb.collection("users").doc(userId).set(userDocData);
+
+      // Audit Log
+      try {
+        await adminDb.collection("audit_logs").add({
+          action: "user_provisioned",
+          performed_by: creator.id || creator.email,
+          performed_by_email: creator.email,
+          target_user_id: userId,
+          target_email: emailLower,
+          company_id: effectiveCompanyId,
+          timestamp: new Date().toISOString(),
+          details: { role, full_name, region_id, station_id, org_unit_id }
+        });
+      } catch (auditErr) {
+        console.warn("Audit log write failed during user creation:", auditErr);
+      }
+
+      return res.status(201).json({
+        success: true,
+        temporaryPassword: effectivePassword,
+        user: userDocData
       });
+    } catch (err: any) {
+      console.error("Error creating user in /api/admin/users:", err);
+      return res.status(500).json({ success: false, message: err?.message || "Internal server error creating user." });
     }
-
-    const tokenService = new TokenService(targetStorage);
-    const rotation = await tokenService.rotateRefreshToken(rawRefreshToken);
-    if (!rotation.success) {
-      res.clearCookie('an_access_token', { path: '/' });
-      res.clearCookie('an_refresh_token', { path: '/' });
-      return res.status(401).json({
-        type: 'https://api.an-erp.local/errors/invalid-refresh-token',
-        title: 'فشل تجديد الجلسة',
-        status: 401,
-        detail: rotation.error,
-        familyRevoked: rotation.familyRevoked,
-      });
-    }
-
-    const isProd = process.env.NODE_ENV === 'production';
-    const sameSiteMode = resolveCookieSameSite(req);
-
-    res.cookie('an_access_token', rotation.newAccessToken, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: sameSiteMode,
-      maxAge: 15 * 60 * 1000,
-      path: '/',
-    });
-
-    res.cookie('an_refresh_token', rotation.newRefreshToken, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: sameSiteMode,
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      path: '/',
-    });
-
-    return res.json({ success: true, message: 'تم تدوير رمز الجلسة بنجاح' });
   });
 
-  // 1A — Logout Endpoint
-  app.post('/api/auth/logout', async (req: Request, res: Response) => {
-    const accessToken = req.cookies['an_access_token'];
-    if (accessToken) {
+  // API Route - Unified Secure User Update Endpoint (PATCH /api/admin/users/:id)
+  app.patch("/api/admin/users/:id", adminRateLimiter, async (req, res) => {
+    try {
+      const authResult = await authenticateSessionOrBearer(req);
+      if (!authResult.authenticated) {
+        return res.status(authResult.statusCode).json({ success: false, message: authResult.message });
+      }
+
+      const creator = authResult.user;
+      const isPlatformAdmin = await isPlatformAdminUser(creator.email, creator);
+
+      const targetUserId = req.params.id;
+      if (!targetUserId) {
+        return res.status(400).json({ success: false, message: "Target user ID is required." });
+      }
+
+      const targetDoc = await adminDb.collection("users").doc(targetUserId).get();
+      if (!targetDoc.exists) {
+        return res.status(404).json({ success: false, message: "المستخدم غير موجود / User not found." });
+      }
+
+      const targetData = targetDoc.data() || {};
+      const isTargetPlatformAdmin = await isPlatformAdminUser(targetData.email, targetData);
+
+      const isRegionalManager = creator.role === "RegionalManager" || creator.role === "BranchManager";
+      const canUpdate = isPlatformAdmin || creator.role === "Admin" || (isRegionalManager && targetData.role === "StationAdmin" && (!req.body?.role || req.body.role === "StationAdmin"));
+
+      if (!canUpdate) {
+        return res.status(403).json({ success: false, message: "Forbidden: Insufficient privileges / غير مصرح لك بتحديث المستخدمين." });
+      }
+
+      if (isRegionalManager) {
+        const creatorRegionId = creator.region_id || creator.scoped_region_id;
+        if (!creatorRegionId || targetData.region_id !== creatorRegionId) {
+          return res.status(403).json({
+            success: false,
+            message: "غير مصرح: مصرح فقط بتعديل مدراء محطات تابعين لمنطقتك / Forbidden: You can only modify station admins within your assigned region."
+          });
+        }
+      }
+
+      // SystemAdmin / Platform Owner protection
+      if (isTargetPlatformAdmin && !isPlatformAdmin) {
+        return res.status(403).json({ success: false, message: "غير مصرح لك بتعديل بيانات مدير النظام / Cannot modify SystemAdmin user." });
+      }
+
+      const {
+        full_name,
+        role,
+        company_id,
+        region_id,
+        station_id,
+        org_unit_id,
+        assigned_org_unit_ids,
+        permissions,
+        is_active,
+        must_change_password,
+        password
+      } = req.body || {};
+
+      // Cannot promote to SystemAdmin via this endpoint
+      if (role === 'SystemAdmin' || role === 'super_admin' || req.body.is_platform_owner === true) {
+        return res.status(403).json({ success: false, message: "لا يمكن الترقية إلى مدير نظام عبر هذا المسار / Cannot promote to SystemAdmin via this endpoint." });
+      }
+
+      // Company Admin Scope Check
+      if (!isPlatformAdmin && !isRegionalManager) {
+        if (targetData.company_id !== creator.company_id) {
+          return res.status(403).json({ success: false, message: "غير مصرح لك بتعديل مستخدم ينتمي لشركة أخرى / Admin cannot edit user from another company." });
+        }
+        if (company_id !== undefined && company_id !== creator.company_id) {
+          return res.status(403).json({ success: false, message: "غير مصرح لك بنقل مستخدم لشركة أخرى / Admin cannot move user to another company." });
+        }
+      }
+
+      let effectiveCompanyId = company_id !== undefined ? company_id : targetData.company_id;
+      const effectiveRole = role !== undefined ? role : targetData.role;
+      const effectiveRegionId = region_id !== undefined ? region_id : targetData.region_id;
+      const effectiveStationId = station_id !== undefined ? station_id : targetData.station_id;
+
+      // Role-specific binding validation on effective values
+      if (effectiveRole === 'RegionalManager' && !effectiveRegionId) {
+        return res.status(400).json({ success: false, message: "المنطقة مطلوبة لهذا الدور / region_id is required for RegionalManager." });
+      }
+      if (effectiveRole === 'StationAdmin' && !effectiveStationId) {
+        return res.status(400).json({ success: false, message: "المحطة مطلوبة لهذا الدور / station_id is required for StationAdmin." });
+      }
+
+      // Validate region/station belong to company if changed or set - FAIL-CLOSED
+      if (region_id) {
+        let isValidRegion = false;
+        let regionFound = false;
+        let infraError = false;
+        let matchedOrgUnitData: any = null;
+        let matchedOrgUnitId: string | null = null;
+        try {
+          const regDoc = await adminDb.collection("regions").doc(region_id).get();
+          if (regDoc.exists) {
+            regionFound = true;
+            const regData = regDoc.data();
+            const regCompId = regData?.company_id;
+            if (!effectiveCompanyId || regCompId === effectiveCompanyId) {
+              isValidRegion = true;
+              if (!effectiveCompanyId && regCompId) effectiveCompanyId = regCompId;
+            }
+          } else {
+            const orgDoc = await adminDb.collection("organization_units").doc(region_id).get();
+            if (orgDoc.exists) {
+              const orgData = orgDoc.data();
+              const isRegionType = orgData?.typeId === 'out-region' || orgData?.type_id === 'out-region' || orgData?.typeId === 'out-sector' || orgData?.type_id === 'out-sector' || Boolean(orgData?.metadata?.legacyRegionId);
+              if (isRegionType) {
+                regionFound = true;
+                matchedOrgUnitData = orgData;
+                matchedOrgUnitId = orgDoc.id;
+                const orgCompId = orgData?.companyId || orgData?.company_id;
+                if (!effectiveCompanyId || orgCompId === effectiveCompanyId) {
+                  isValidRegion = true;
+                  if (!effectiveCompanyId && orgCompId) effectiveCompanyId = orgCompId;
+                }
+              }
+            } else {
+              const orgCodeSnap = await adminDb.collection("organization_units").where("code", "==", region_id).limit(1).get();
+              if (!orgCodeSnap.empty) {
+                const orgData = orgCodeSnap.docs[0].data();
+                const isRegionType = orgData?.typeId === 'out-region' || orgData?.type_id === 'out-region' || orgData?.typeId === 'out-sector' || orgData?.type_id === 'out-sector' || Boolean(orgData?.metadata?.legacyRegionId);
+                if (isRegionType) {
+                  regionFound = true;
+                  matchedOrgUnitData = orgData;
+                  matchedOrgUnitId = orgCodeSnap.docs[0].id;
+                  const orgCompId = orgData?.companyId || orgData?.company_id;
+                  if (!effectiveCompanyId || orgCompId === effectiveCompanyId) {
+                    isValidRegion = true;
+                    if (!effectiveCompanyId && orgCompId) effectiveCompanyId = orgCompId;
+                  }
+                }
+              }
+            }
+          }
+
+          if (isValidRegion && matchedOrgUnitData && matchedOrgUnitId) {
+            try {
+              await adminDb.collection("regions").doc(matchedOrgUnitId).set({
+                id: matchedOrgUnitId,
+                name: matchedOrgUnitData.nameAr || matchedOrgUnitData.name || region_id,
+                code: matchedOrgUnitData.code || '',
+                company_id: effectiveCompanyId,
+                org_unit_id: matchedOrgUnitId,
+                created_at: new Date().toISOString()
+              }, { merge: true });
+            } catch (mErr) {
+              console.warn("Could not mirror region in PATCH:", mErr);
+            }
+          }
+        } catch (regErr) {
+          console.error("Infrastructure error during region verification in PATCH:", regErr);
+          infraError = true;
+        }
+
+        if (infraError) {
+          return res.status(503).json({
+            success: false,
+            message: "تعذر التحقق من بيانات المنطقة بسبب خطأ في الخادم، يرجى إعادة المحاولة / Infrastructure error verifying region. Please retry."
+          });
+        }
+
+        if (!regionFound || !isValidRegion) {
+          return res.status(400).json({
+            success: false,
+            message: "المنطقة غير موجودة أو لا تنتمي للشركة / Region does not exist or does not belong to company."
+          });
+        }
+      }
+
+      let resolvedStationRegionId: string | null = null;
+      if (station_id) {
+        let isValidStation = false;
+        let stationFound = false;
+        let infraError = false;
+        let matchedStationOrgData: any = null;
+        let matchedStationOrgId: string | null = null;
+        try {
+          const stDoc = await adminDb.collection("stations").doc(station_id).get();
+          if (stDoc.exists) {
+            stationFound = true;
+            const stData = stDoc.data();
+            const stCompId = stData?.company_id;
+            resolvedStationRegionId = stData?.region_id || null;
+            if (!effectiveCompanyId || stCompId === effectiveCompanyId) {
+              isValidStation = true;
+              if (!effectiveCompanyId && stCompId) effectiveCompanyId = stCompId;
+            }
+          } else {
+            const orgDoc = await adminDb.collection("organization_units").doc(station_id).get();
+            if (orgDoc.exists) {
+              stationFound = true;
+              matchedStationOrgData = orgDoc.data();
+              matchedStationOrgId = orgDoc.id;
+              const orgData = matchedStationOrgData;
+              const orgCompId = orgData?.companyId || orgData?.company_id;
+              resolvedStationRegionId = orgData?.metadata?.legacyRegionId || orgData?.metadata?.legacy_region_id || null;
+              if (!resolvedStationRegionId && orgData?.parentId) {
+                const parentDoc = await adminDb.collection("organization_units").doc(orgData.parentId).get();
+                if (parentDoc.exists) {
+                  const parentData = parentDoc.data();
+                  resolvedStationRegionId = parentData?.metadata?.legacyRegionId || parentData?.metadata?.legacy_region_id || parentDoc.id.replace('org-unit-region-', '');
+                }
+              }
+              if (!effectiveCompanyId || orgCompId === effectiveCompanyId) {
+                isValidStation = true;
+                if (!effectiveCompanyId && orgCompId) effectiveCompanyId = orgCompId;
+              }
+            } else {
+              const orgCodeSnap = await adminDb.collection("organization_units").where("code", "==", station_id).limit(1).get();
+              if (!orgCodeSnap.empty) {
+                stationFound = true;
+                matchedStationOrgData = orgCodeSnap.docs[0].data();
+                matchedStationOrgId = orgCodeSnap.docs[0].id;
+                const orgData = matchedStationOrgData;
+                const orgCompId = orgData?.companyId || orgData?.company_id;
+                resolvedStationRegionId = orgData?.metadata?.legacyRegionId || orgData?.metadata?.legacy_region_id || null;
+                if (!effectiveCompanyId || orgCompId === effectiveCompanyId) {
+                  isValidStation = true;
+                  if (!effectiveCompanyId && orgCompId) effectiveCompanyId = orgCompId;
+                }
+              }
+            }
+          }
+
+          if (isValidStation && matchedStationOrgData && matchedStationOrgId) {
+            try {
+              await adminDb.collection("stations").doc(matchedStationOrgId).set({
+                id: matchedStationOrgId,
+                station_name: matchedStationOrgData.nameAr || matchedStationOrgData.name || station_id,
+                station_code: matchedStationOrgData.code || '',
+                custody_amount: matchedStationOrgData.metadata?.custodyAmount || 0,
+                company_id: effectiveCompanyId,
+                region_id: resolvedStationRegionId || null,
+                org_unit_id: matchedStationOrgId,
+                created_at: new Date().toISOString()
+              }, { merge: true });
+            } catch (mStErr) {
+              console.warn("Could not mirror station in PATCH:", mStErr);
+            }
+          }
+        } catch (stErr) {
+          console.error("Infrastructure error during station verification in PATCH:", stErr);
+          infraError = true;
+        }
+
+        if (infraError) {
+          return res.status(503).json({
+            success: false,
+            message: "تعذر التحقق من بيانات المحطة بسبب خطأ في الخادم، يرجى إعادة المحاولة / Infrastructure error verifying station. Please retry."
+          });
+        }
+
+        if (!stationFound || !isValidStation) {
+          return res.status(400).json({
+            success: false,
+            message: "المحطة غير موجودة أو لا تنتمي للشركة / Station does not exist or does not belong to company."
+          });
+        }
+      }
+
+      if (isRegionalManager && station_id) {
+        const creatorRegionId = creator.region_id || creator.scoped_region_id;
+        const targetRegionId = resolvedStationRegionId || region_id;
+        if (!creatorRegionId || (targetRegionId && targetRegionId !== creatorRegionId)) {
+          return res.status(403).json({
+            success: false,
+            message: "غير مصرح: مصرح فقط بتعيين مدراء محطات تابعين لمنطقتك / Forbidden: You can only assign station admins to stations within your assigned region."
+          });
+        }
+      }
+
+      // Password reset if password string provided
+      if (password !== undefined && password !== null && password !== "") {
+        if (typeof password !== 'string' || password.length < 12 || !/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+          return res.status(400).json({
+            success: false,
+            message: "كلمة المرور يجب أن تتكون من 12 حرف على الأقل وتحتوي على حروف وأرقام / Password must be at least 12 characters long and contain letters and numbers."
+          });
+        }
+
+        // Update password in Firebase Auth
+        await getAdminAuth(adminApp).updateUser(targetUserId, { password });
+
+        // Update vault
+        const salt = crypto.randomUUID();
+        const pbkdf2Hash = hashPasswordPBKDF2_210k(password, salt, 2);
+        await adminDb.collection("user_credentials").doc(targetUserId).set({
+          id: targetUserId,
+          company_id: effectiveCompanyId,
+          email: targetData.email,
+          passwordHash: pbkdf2Hash,
+          salt: salt,
+          kdf: 'sha256_pbkdf2_210k',
+          pepper_version: 2,
+          updated_at: new Date().toISOString()
+        }, { merge: true });
+      }
+
+      // Build updates for users doc
+      const updates: any = {
+        updated_at: new Date().toISOString()
+      };
+      if (full_name !== undefined) updates.full_name = String(full_name).trim();
+      if (role !== undefined) updates.role = String(role).trim();
+      if (company_id !== undefined) updates.company_id = company_id;
+      if (region_id !== undefined) updates.region_id = region_id;
+      if (station_id !== undefined) updates.station_id = station_id;
+      if (org_unit_id !== undefined) updates.org_unit_id = org_unit_id;
+      if (assigned_org_unit_ids !== undefined) updates.assigned_org_unit_ids = Array.isArray(assigned_org_unit_ids) ? assigned_org_unit_ids : [];
+      if (permissions !== undefined) updates.permissions = permissions;
+      if (is_active !== undefined) updates.is_active = Boolean(is_active);
+      if (must_change_password !== undefined) updates.must_change_password = Boolean(must_change_password);
+
+      await adminDb.collection("users").doc(targetUserId).update(updates);
+
+      const updatedDoc = await adminDb.collection("users").doc(targetUserId).get();
+      const updatedUser = updatedDoc.data();
+
+      // Audit Log
       try {
-        const parts = accessToken.split('.');
-        if (parts.length === 3) {
-          const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-          if (payload.tenantId) {
-            const tRes = await masterStorage.getTenant(payload.tenantId);
-            if (tRes.success && tRes.data) {
-              const targetStorage = await globalStorageRouter.resolveAdapterAsync(tRes.data);
-              const tokenService = new TokenService(targetStorage);
-              const anomalyDetector = new AnomalyDetector(targetStorage);
-              const ver = await tokenService.verifyAccessToken(accessToken);
-              if (ver.valid && ver.payload) {
-                await tokenService.revokeFamily(ver.payload.familyId, 'USER_LOGOUT');
-                await targetStorage.deleteActiveSession(ver.payload.sessionId);
-                await anomalyDetector.terminateSession(ver.payload.sessionId);
-                DomainEventBus.publish({
-                  eventType: 'SESSION_REVOKED',
-                  tenantId: payload.tenantId,
-                  actorId: ver.payload.sub,
-                  actorName: 'User',
-                  payload: { sessionId: ver.payload.sessionId, reason: 'USER_LOGOUT' },
-                });
+        await adminDb.collection("audit_logs").add({
+          action: "user_updated",
+          performed_by: creator.id || creator.email,
+          performed_by_email: creator.email,
+          target_user_id: targetUserId,
+          target_email: targetData.email,
+          company_id: effectiveCompanyId,
+          timestamp: new Date().toISOString(),
+          details: { updated_fields: Object.keys(updates), password_reset: Boolean(password) }
+        });
+      } catch (auditErr) {
+        console.warn("Audit log write failed during user update:", auditErr);
+      }
+
+      return res.json({
+        success: true,
+        user: updatedUser
+      });
+    } catch (err: any) {
+      console.error("Error updating user in /api/admin/users/:id:", err);
+      return res.status(500).json({ success: false, message: err?.message || "Internal server error updating user." });
+    }
+  });
+
+  // API Route - Unified Secure User Deletion Endpoint (DELETE /api/admin/users/:id)
+  app.delete("/api/admin/users/:id", adminRateLimiter, async (req, res) => {
+    try {
+      const authResult = await authenticateSessionOrBearer(req);
+      if (!authResult.authenticated) {
+        return res.status(authResult.statusCode).json({ success: false, message: authResult.message });
+      }
+
+      const creator = authResult.user;
+      const isPlatformAdmin = await isPlatformAdminUser(creator.email, creator);
+
+      const targetUserId = req.params.id;
+      if (!targetUserId) {
+        return res.status(400).json({ success: false, message: "User ID parameter is required." });
+      }
+
+      if (targetUserId === creator.id) {
+        return res.status(400).json({ success: false, message: "Cannot delete your own active session account / لا يمكن حذف حسابك الحالي." });
+      }
+
+      const userDocRef = adminDb.collection("users").doc(targetUserId);
+      const userDoc = await userDocRef.get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ success: false, message: "Target user not found." });
+      }
+
+      const targetData = userDoc.data() || {};
+      const targetEmail = (targetData.email || "").toLowerCase().trim();
+      const targetRole = targetData.role;
+      const targetCompanyId = targetData.company_id;
+
+      // Check authorization:
+      // - Platform Admin / SystemAdmin: Can delete any non-self user
+      // - Company Admin (role === 'Admin'): Can delete non-SystemAdmin users within their own assigned company
+      if (!isPlatformAdmin) {
+        const isCompanyAdmin = creator.role === 'Admin' && creator.company_id && creator.company_id === targetCompanyId;
+        const targetIsProtected = targetRole === 'SystemAdmin' || targetData.is_platform_owner === true;
+        if (!isCompanyAdmin || targetIsProtected) {
+          return res.status(403).json({
+            success: false,
+            message: "غير مصرح لك بحذف هذا المستخدم؛ يمكنك فقط حذف مستخدمي شركتك / Forbidden: You can only delete users belonging to your company."
+          });
+        }
+      }
+
+      // 1. Delete/Disable Firebase Auth User
+      try {
+        const authClient = getAdminAuth(adminApp);
+        if (authClient) {
+          try {
+            await authClient.deleteUser(targetUserId);
+          } catch (authDeleteErr: any) {
+            if (authDeleteErr?.code !== 'auth/user-not-found') {
+              try {
+                // If delete fails, attempt to disable
+                await authClient.updateUser(targetUserId, { disabled: true });
+              } catch (disableErr) {
+                console.warn("Could not disable Firebase Auth user during deletion:", disableErr);
               }
             }
           }
         }
-      } catch (e) {
-        console.error(JSON.stringify({ level: 'CRITICAL', op: 'logout_session_revocation', trace: crypto.randomUUID(), err: String(e) }));
+      } catch (authInitErr) {
+        console.warn("Firebase Admin Auth unavailable during deletion:", authInitErr);
       }
-    }
 
-    res.clearCookie('an_access_token', { path: '/' });
-    res.clearCookie('an_refresh_token', { path: '/' });
-    return res.json({ success: true, message: 'تم تسجيل الخروج وإبطال الجلسة بنجاح' });
-  });
-
-  // 1A — Current User & Session Info (Reads from Cookie and StoragePort)
-  app.get('/api/auth/me', requireAuth, async (req: Request, res: Response) => {
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const tenant = getRequestTenant(req, res);
-    if (!tenant) return;
-    const auth = (req as any).authContext;
-
-    const userRes = await storage.getUserById(auth.userId);
-    let userRecord = userRes.success ? userRes.data : null;
-    if (!userRecord) {
-      const fallback = await storage.getUserByUsername(auth.tenantId, 'accountant');
-      userRecord = fallback.success ? fallback.data : null;
-    }
-
-    const sessionRes = await storage.getActiveSession(auth.sessionId);
-    const session = sessionRes.success ? sessionRes.data : null;
-    const dualDate = DualCalendar.format();
-
-    return res.json({
-      success: true,
-      user: {
-        id: userRecord?.id,
-        username: userRecord?.username,
-        fullName: userRecord?.fullName,
-        role: userRecord?.role,
-        roleTitleAr: userRecord?.roleTitleAr || userRecord?.role,
-        branchName: userRecord?.branchName || 'الفرع الرئيسي',
-        is2faEnabled: !!userRecord?.twoFactorEnabled,
-        emergencyBackupCodesCount: userRecord?.backupCodes?.length || userRecord?.hashedBackupCodes?.length || 0,
-        backupCodesRemaining: userRecord?.backupCodes?.length || userRecord?.hashedBackupCodes?.length || 0,
-        requiresPasswordChange: !!userRecord?.requiresPasswordChange,
-      },
-      requiresPasswordChange: !!userRecord?.requiresPasswordChange,
-      session: {
-        sessionId: auth.sessionId,
-        deviceType: session?.deviceType || 'Desktop Browser',
-        ipAddress: session?.ipAddress || req.ip,
-        location: session?.location || { city: 'غير معروف', country: '' },
-        createdAt: session?.createdAt,
-      },
-      tenant,
-      calendar: dualDate,
-    });
-  });
-
-  // Section B.2: 2FA Setup with Real TOTP & QR Code (otplib + qrcode) via StoragePort
-  // SEC-1: enrollment works ONLY on the caller's own account (the user id comes from the session; a username in the body is ignored)
-  
-  // SEC-SESSION-PASSWORD: change password (clears requiresPasswordChange)
-  app.post('/api/auth/change-password', requireAuth, async (req: Request, res: Response) => {
-    try {
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const auth = (req as any).authContext;
-      // SEC-PASSWORD-UX-1: forced change when flagged; otherwise require PASSWORD_CHANGE_SELF
-      const forced = !!auth.requiresPasswordChange;
-      if (!forced) {
-        if (!hasPermission(auth.role, 'PASSWORD_CHANGE_SELF', auth.permissions)) {
-          return res.status(403).json({
-            type: 'https://api.an-erp.local/errors/forbidden',
-            title: 'غير مصرح',
-            status: 403,
-            detail: 'تغيير كلمة المرور الذاتي يتطلب صلاحية PASSWORD_CHANGE_SELF يمنحها مدير النظام.',
-            code: 'PASSWORD_CHANGE_SELF_REQUIRED',
-          });
+      // 2. Delete / Invalidate Credentials Vault documents
+      const credDocsToDelete: string[] = [targetUserId];
+      if (targetEmail) credDocsToDelete.push(targetEmail);
+      for (const credId of credDocsToDelete) {
+        try {
+          await adminDb.collection("user_credentials").doc(credId).delete();
+        } catch (credErr) {
+          console.warn(`Could not delete user_credentials doc ${credId}:`, credErr);
         }
       }
-      const currentPassword = String(req.body?.currentPassword || '');
-      const newPassword = String(req.body?.newPassword || '');
-      if (!currentPassword || !newPassword) {
-        return res.status(400).json({
-          type: 'https://api.an-erp.local/errors/validation',
-          title: 'بيانات غير مكتملة',
-          status: 400,
-          detail: 'كلمة المرور الحالية والجديدة مطلوبتان.',
-        });
-      }
-      if (newPassword.length < 12) {
-        return res.status(400).json({
-          type: 'https://api.an-erp.local/errors/validation',
-          title: 'كلمة مرور ضعيفة',
-          status: 400,
-          detail: 'يجب ألا تقل كلمة المرور الجديدة عن 12 حرفًا.',
-        });
-      }
-      if (newPassword === currentPassword) {
-        return res.status(400).json({
-          type: 'https://api.an-erp.local/errors/validation',
-          title: 'كلمة المرور غير مقبولة',
-          status: 400,
-          detail: 'يجب أن تختلف كلمة المرور الجديدة عن الحالية.',
-        });
-      }
-      const userRes = await storage.getUserById(auth.userId);
-      if (!userRes.success || !userRes.data || !userRes.data.passwordHash) {
-        return res.status(404).json({
-          type: 'https://api.an-erp.local/errors/not-found',
-          title: 'المستخدم غير موجود',
-          status: 404,
-          detail: 'تعذر تحميل حساب المستخدم.',
-        });
-      }
-      const user = userRes.data;
-      let ok = false;
+
+      // 3. Delete or Mark Deleted in users collection
+      await userDocRef.delete();
+
+      // 4. Audit Log
       try {
-        ok = await argon2.verify(user.passwordHash, currentPassword);
-      } catch {
-        ok = false;
+        await adminDb.collection("audit_logs").add({
+          action: "user_deleted",
+          performed_by: creator.id || creator.email,
+          performed_by_email: creator.email,
+          target_user_id: targetUserId,
+          target_email: targetEmail,
+          company_id: targetData.company_id || creator.company_id || "",
+          timestamp: new Date().toISOString(),
+          details: { deleted_user_name: targetData.full_name, role: targetData.role }
+        });
+      } catch (auditErr) {
+        console.warn("Audit log write failed during user delete:", auditErr);
       }
-      if (!ok) {
-        return res.status(401).json({
-          type: 'https://api.an-erp.local/errors/invalid-credentials',
-          title: 'كلمة المرور الحالية غير صحيحة',
-          status: 401,
-          detail: 'تحقق من كلمة المرور الحالية ثم أعد المحاولة.',
+
+      return res.json({
+        success: true,
+        message: "User and associated authentication credentials permanently deleted."
+      });
+    } catch (err: any) {
+      console.error("Error deleting user in /api/admin/users/:id:", err);
+      return res.status(500).json({ success: false, message: err?.message || "Internal server error deleting user." });
+    }
+  });
+
+  // API Route - Authoritative Company Creation Endpoint (POST /api/admin/companies)
+  app.post("/api/admin/companies", adminRateLimiter, async (req, res) => {
+    try {
+      const authResult = await authenticateSessionOrBearer(req);
+      if (!authResult.authenticated || !authResult.user) {
+        return res.status(authResult.statusCode || 401).json({
+          success: false,
+          message: authResult.message || "Unauthorized"
         });
       }
-      const passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
-      const upd = await storage.updateUser(user.id, {
-        passwordHash,
-        requiresPasswordChange: false,
-      } as any);
-      if (!upd.success) {
+
+      const requester = authResult.user;
+      const isSystemAdmin = requester.role === "SystemAdmin" || await isPlatformAdminUser(requester.email, requester);
+      if (!isSystemAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden: SystemAdmin required."
+        });
+      }
+
+      const { id, name, custody_value, subscription_plan, subscription_status, subscription_expiry } = req.body || {};
+      if (!name || !String(name).trim()) {
+        return res.status(400).json({ success: false, message: "Company name is required." });
+      }
+
+      const companyId = (id && String(id).trim()) || `comp-${crypto.randomUUID()}`;
+      const companyDoc = {
+        id: companyId,
+        name: String(name).trim(),
+        custody_value: Number(custody_value) || 0,
+        is_active: true,
+        subscription_status: subscription_status || 'active',
+        subscription_plan: subscription_plan || 'Enterprise',
+        subscription_expiry: subscription_expiry || '2028-12-31',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      await adminDb.collection("companies").doc(companyId).set(companyDoc, { merge: true });
+
+      // Remove from tombstone if re-created
+      try {
+        await adminDb.collection("deleted_companies").doc(companyId).delete();
+      } catch (_) {}
+
+      return res.status(201).json({
+        success: true,
+        company: companyDoc
+      });
+    } catch (err: any) {
+      console.error("Error in /api/admin/companies:", err);
+      return res.status(500).json({ success: false, message: err?.message || "Internal server error creating company." });
+    }
+  });
+
+  // API Route - Permanent Cascading Company Deletion (DELETE /api/admin/companies/:id)
+  app.delete("/api/admin/companies/:id", adminRateLimiter, async (req, res) => {
+    try {
+      const authResult = await authenticateSessionOrBearer(req);
+      if (!authResult.authenticated || !authResult.user) {
+        return res.status(authResult.statusCode || 401).json({
+          success: false,
+          message: authResult.message || "Unauthorized"
+        });
+      }
+
+      const requester = authResult.user;
+      const isSystemAdmin = requester.role === "SystemAdmin" || await isPlatformAdminUser(requester.email, requester);
+      if (!isSystemAdmin) {
+        return res.status(403).json({
+          success: false,
+          message: "صلاحيات غير كافية: حذف الشركات مقتصر على مدير المنصة فقط / Forbidden: SystemAdmin required."
+        });
+      }
+
+      const companyId = String(req.params.id || "").trim();
+      if (!companyId) {
+        return res.status(400).json({ success: false, message: "Company ID is required." });
+      }
+
+      // 1. Cascade delete all users belonging to this company (Auth + user_credentials + users collection)
+      const usersSnap1 = await adminDb.collection("users").where("company_id", "==", companyId).get();
+      const usersSnap2 = await adminDb.collection("users").where("companyId", "==", companyId).get();
+      const userDocsMap = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+      usersSnap1.docs.forEach(d => userDocsMap.set(d.id, d));
+      usersSnap2.docs.forEach(d => userDocsMap.set(d.id, d));
+
+      const authClient = getAdminAuth(adminApp);
+      const initialUsersCount = userDocsMap.size;
+
+      for (const uDoc of userDocsMap.values()) {
+        const uId = uDoc.id;
+        const uData = uDoc.data() || {};
+        const uEmail = (uData.email || '').toLowerCase().trim();
+
+        // Delete from Firebase Auth: unconditionally attempt by uid AND by email
+        if (authClient) {
+          try {
+            await authClient.deleteUser(uId);
+          } catch (_) {}
+          if (uEmail) {
+            try {
+              const au = await authClient.getUserByEmail(uEmail);
+              if (au && au.uid) {
+                await authClient.deleteUser(au.uid);
+              }
+            } catch (_) {}
+          }
+        }
+
+        // Delete from user_credentials vault: unconditionally attempt by uid AND by email
+        try {
+          await adminDb.collection("user_credentials").doc(uId).delete();
+        } catch (credDelErr) {
+          console.warn("Notice: user_credentials deletion warning by uid:", credDelErr);
+        }
+        if (uEmail) {
+          try {
+            await adminDb.collection("user_credentials").doc(uEmail).delete();
+          } catch (credDelErr) {
+            console.warn("Notice: user_credentials deletion warning by email:", credDelErr);
+          }
+        }
+
+        // Delete from users collection
+        try {
+          await adminDb.collection("users").doc(uId).delete();
+        } catch (uDelErr) {
+          console.warn("Notice: users doc deletion warning:", uDelErr);
+        }
+      }
+
+      // Rule 5 Verification: If any user doc for company_id remains after attempted deletes, return 500 success:false (no partial "success")
+      const remainingUsersSnap1 = await adminDb.collection("users").where("company_id", "==", companyId).get();
+      const remainingUsersSnap2 = await adminDb.collection("users").where("companyId", "==", companyId).get();
+      const remainingUserDocs = new Set<string>();
+      remainingUsersSnap1.docs.forEach(d => remainingUserDocs.add(d.id));
+      remainingUsersSnap2.docs.forEach(d => remainingUserDocs.add(d.id));
+
+      if (remainingUserDocs.size > 0) {
+        console.error(`[DELETE /api/admin/companies/:id] Incomplete user deletion: ${remainingUserDocs.size} users remain for company ${companyId}`);
         return res.status(500).json({
-          type: 'https://api.an-erp.local/errors/internal',
-          title: 'تعذر تحديث كلمة المرور',
-          status: 500,
-          detail: upd.error?.detail || 'فشل حفظ كلمة المرور الجديدة.',
+          success: false,
+          message: `فشل الحذف الكامل: ما زال هناك ${remainingUserDocs.size} مستخدم مرتبط بالشركة في قاعدة البيانات.`
         });
       }
-      return res.json({ success: true, requiresPasswordChange: false });
-    } catch (err: any) {
-      return res.status(500).json({
-        type: 'https://api.an-erp.local/errors/internal',
-        title: 'خطأ داخلي',
-        status: 500,
-        detail: publicErrorMessage(err) || 'فشل تغيير كلمة المرور.',
-      });
-    }
-  });
 
-  // SEC-SESSION-PASSWORD: list own active sessions
-  app.get('/api/auth/sessions', requireAuth, async (req: Request, res: Response) => {
-    try {
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const auth = (req as any).authContext;
-      const list = await storage.listActiveSessionsByUser(auth.userId);
-      if (!list.success) {
-        return res.status(500).json(list.error || { status: 500, title: 'تعذر جلب الجلسات' });
+      // 2. Cascade delete all regions belonging to this company
+      const regionsSnap = await adminDb.collection("regions").where("company_id", "==", companyId).get();
+      for (const rDoc of regionsSnap.docs) {
+        await adminDb.collection("regions").doc(rDoc.id).delete();
       }
-      const sessions = (list.data || []).map((sess: any) => ({
-        sessionId: sess.sessionId || sess.id,
-        deviceType: sess.deviceType,
-        ipAddress: sess.ipAddress,
-        location: sess.location,
-        createdAt: sess.createdAt,
-        lastSeenAt: sess.lastSeenAt,
-        isCurrent: (sess.sessionId || sess.id) === auth.sessionId,
-      }));
-      return res.json({ success: true, data: sessions });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
-    }
-  });
 
-  // SEC-SESSION-PASSWORD: revoke all other sessions for this user
-  app.post('/api/auth/sessions/revoke-others', requireAuth, async (req: Request, res: Response) => {
-    try {
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const auth = (req as any).authContext;
-      const tokenService = new TokenService(storage);
-      const revoked = await tokenService.revokeSessionsForUser(
-        auth.userId,
-        'USER_REVOKE_OTHERS',
-        auth.sessionId
-      );
-      return res.json({ success: true, revoked });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
-    }
-  });
+      // 3. Cascade delete all stations belonging to this company
+      const stationsSnap = await adminDb.collection("stations").where("company_id", "==", companyId).get();
+      for (const sDoc of stationsSnap.docs) {
+        await adminDb.collection("stations").doc(sDoc.id).delete();
+      }
 
+      // 4. Cascade delete all organization units belonging to this company
+      const orgUnitsSnap1 = await adminDb.collection("organization_units").where("company_id", "==", companyId).get();
+      for (const oDoc of orgUnitsSnap1.docs) {
+        await adminDb.collection("organization_units").doc(oDoc.id).delete();
+      }
+      const orgUnitsSnap2 = await adminDb.collection("organization_units").where("companyId", "==", companyId).get();
+      for (const oDoc of orgUnitsSnap2.docs) {
+        await adminDb.collection("organization_units").doc(oDoc.id).delete();
+      }
 
-  app.post('/api/auth/2fa/setup', requireAuth, async (req: Request, res: Response) => {
-    const auth = (req as any).authContext;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const r = await twoFactorService.startSetup(storage, { tenantId: auth.tenantId, userId: auth.userId });
-    if (!r.ok) {
-      const err = r as any;
-      return res.status(err.status).json({ type: err.type, title: err.title, status: err.status, detail: err.detail });
-    }
-    res.setHeader('Cache-Control', 'no-store');
-    return res.json({ success: true, secret: (r as any).secret, qrCodeDataUrl: (r as any).qrCodeDataUrl, otpauthUrl: (r as any).otpauthUrl });
-  });
+      // 5. Cascade delete transactions, expenses, cash_vouchers for this company
+      const txSnap = await adminDb.collection("transactions").where("company_id", "==", companyId).get();
+      for (const tDoc of txSnap.docs) {
+        await adminDb.collection("transactions").doc(tDoc.id).delete();
+      }
+      const expSnap = await adminDb.collection("expenses").where("company_id", "==", companyId).get();
+      for (const eDoc of expSnap.docs) {
+        await adminDb.collection("expenses").doc(eDoc.id).delete();
+      }
+      const vchSnap = await adminDb.collection("cash_vouchers").where("company_id", "==", companyId).get();
+      for (const vDoc of vchSnap.docs) {
+        await adminDb.collection("cash_vouchers").doc(vDoc.id).delete();
+      }
 
-  app.post('/api/auth/2fa/verify-setup', requireAuth, async (req: Request, res: Response) => {
-    const auth = (req as any).authContext;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const r = await twoFactorService.confirmSetup(storage, { tenantId: auth.tenantId, userId: auth.userId }, String((req.body || {}).token || ''));
-    if (!r.ok) {
-      const err = r as any;
-      if (err.code === 'invalid-2fa' && err.username) await new AnomalyDetector(storage).recordFailedAttempt(err.username);
-      return res.status(err.status).json({ type: err.type, title: err.title, status: err.status, detail: err.detail });
-    }
-    return res.json({ success: true, message: 'تم تفعيل التحقق بخطوتين بنجاح' });
-  });
+      // 6. Delete company document itself
+      await adminDb.collection("companies").doc(companyId).delete();
 
-  // 1B — Company Settings (Read and Update, with Read-Only backendConfig)
-  app.get('/api/company', requireAuth, (req: Request, res: Response) => {
-    const tenant = getRequestTenant(req, res);
-    if (!tenant) return;
-    // ORG-COMPANY-1: legal profile only — never expose backendConfig / connection refs
-    return res.json({
-      success: true,
-      data: {
-        id: tenant.id,
-        code: tenant.code,
-        nameAr: tenant.nameAr,
-        nameEn: tenant.nameEn,
-        crNumber: tenant.crNumber,
-        taxNumber: tenant.taxNumber,
-        baseCurrency: tenant.baseCurrency || 'SAR',
-        country: tenant.country || 'SA',
-        status: tenant.status || 'ACTIVE',
-        auditRetentionPolicyYears: tenant.auditRetentionPolicyYears,
-        createdAt: tenant.createdAt,
-      },
-    });
-  });
+      const verifyCompanyDoc = await adminDb.collection("companies").doc(companyId).get();
+      if (verifyCompanyDoc.exists) {
+        return res.status(500).json({
+          success: false,
+          message: "فشل حذف سجل الشركة من قاعدة البيانات."
+        });
+      }
 
-  app.put('/api/company', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
-    const { nameAr, nameEn, crNumber, taxNumber, baseCurrency, auditRetentionPolicyYears } = req.body;
-    const tenant = getRequestTenant(req, res);
-    if (!tenant) return;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-
-    // ORG-COMPANY-1: legal name is mandatory when provided empty-string; block blank nameAr
-    if (nameAr !== undefined && String(nameAr).trim() === '') {
-      return res.status(422).json({
-        type: 'https://api.an-erp.local/errors/validation',
-        title: 'اسم المنشأة مطلوب',
-        status: 422,
-        detail: 'الاسم الرسمي للمنشأة (nameAr) لا يمكن أن يكون فارغًا.',
+      // 7. Store permanent tombstone in deleted_companies collection
+      await adminDb.collection("deleted_companies").doc(companyId).set({
+        id: companyId,
+        deleted_at: new Date().toISOString(),
+        deleted_by: requester.email || requester.id,
+        deleted_users_count: initialUsersCount
       });
-    }
-    if (crNumber !== undefined && crNumber !== null && String(crNumber).trim() !== '' && !/^\d{10}$/.test(String(crNumber).trim())) {
-      return res.status(422).json({
-        type: 'https://api.an-erp.local/errors/invalid-cr-number',
-        title: 'رقم السجل التجاري غير صالح',
-        status: 422,
-        detail: 'رقم السجل التجاري يجب أن يكون 10 أرقام عند إدخاله.',
-      });
-    }
 
-    // Validate 15-digit tax number
-    if (taxNumber && !/^\d{15}$/.test(taxNumber.trim())) {
-      const problem: RFC7807Problem = {
-        type: 'https://api.an-erp.local/errors/invalid-tax-number',
-        title: 'الرقم الضريبي غير صالح',
-        status: 422,
-        detail: 'الرقم الضريبي يجب أن يتكون من 15 رقماً ويبدأ وينتهي بالرقم 3 وفق اشتراطات هيئة الزكاة والضريبة والجمارك.',
-        invalidParams: [{ name: 'taxNumber', reason: 'يجب أن يكون 15 خانة رقمية دقيقة' }],
-      };
-      return res.status(422).json(problem);
-    }
-
-    const idempKey = req.headers['idempotency-key'] as string;
-    if (!idempKey) {
-      return res.status(400).json({
-        type: 'https://api.an-erp.local/errors/missing-idempotency-key',
-        title: 'مفتاح الإدهنية مطلوب',
-        status: 400,
-        detail: 'الترويسة Idempotency-Key إلزامية لتعديل بيانات المنشأة.',
-      });
-    }
-
-    if (nameAr) tenant.nameAr = nameAr;
-    if (nameEn) tenant.nameEn = nameEn;
-    if (crNumber) tenant.crNumber = crNumber;
-    if (taxNumber) tenant.taxNumber = taxNumber;
-    if (baseCurrency) tenant.baseCurrency = baseCurrency;
-    if (auditRetentionPolicyYears) tenant.auditRetentionPolicyYears = Number(auditRetentionPolicyYears);
-
-    await storage.saveTenant(tenant, idempKey);
-
-    await recordAudit(
-      (req as any).authContext.userId || 'USR-001',
-      'المستخدم الحالي',
-      'UPDATE_COMPANY_PROFILE',
-      'COMPANY',
-      tenant.id,
-      tenant,
-      req.ip || '127.0.0.1',
-      tenant.id,
-      storage
-    );
-
-    await logSystemChange(storage, (req as any).authContext.userId, 'PLATFORM_MANAGEMENT', 'COMPANY', [`TENANT:${tenant.id}`], 'تحديث بيانات المنشأة');
-
-    return res.json({ success: true, data: tenant, message: 'تم تحديث بيانات المنشأة بنجاح' });
-  });
-
-  // 1C — Users & Segregation of Duties (SoD) Management via StoragePort
-  app.get('/api/users', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const usersRes = await storage.listUsers(tenantId);
-    const users = usersRes.success && usersRes.data ? usersRes.data : [];
-    const list = users.map((u) => {
-      let decryptedPii: any = {};
+      // 8. Audit log entry
       try {
-        if (u.encryptedPii) {
-          const rawPii = typeof u.encryptedPii === 'string' ? u.encryptedPii : JSON.stringify(u.encryptedPii);
-          decryptedPii = EncryptionService.decryptPII<any>(rawPii) || {};
-        }
-      } catch (e) {
-        console.error(JSON.stringify({ level: 'CRITICAL', op: 'list_users_decrypt_pii', trace: crypto.randomUUID(), err: String(e) }));
-        decryptedPii = {};
-      }
-      if (!decryptedPii || typeof decryptedPii !== 'object') {
-        decryptedPii = {};
-      }
-      return {
-        id: u.id,
-        username: u.username,
-        fullName: u.fullName,
-        role: u.role,
-        roleTitleAr: u.roleTitleAr || u.role,
-        branchName: u.branchName || 'الفرع الرئيسي',
-        status: u.status || 'ACTIVE',
-        requiresPasswordChange: !!u.requiresPasswordChange,
-        permissions: Array.isArray(u.permissions) ? u.permissions : [],
-        is2faEnabled: !!u.twoFactorEnabled,
-        email: u.email || decryptedPii.email || '—',
-        phone: decryptedPii.phone || '—',
-        nationalId: decryptedPii.nationalId || '—',
-      };
-    });
-    return res.json({ success: true, data: list });
-  });
-
-  app.post('/api/users', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const { username, fullName, role, branchName, email, phone, nationalId, temporaryPassword: adminTempPassword } = req.body;
-
-    // SoD Server-Side Conflict Check (Section 1C)
-    const sodCheck = SoDPolicyEngine.validateRoleAssignment([], role);
-    if (!sodCheck.allowed && sodCheck.problem) {
-      return res.status(sodCheck.problem.status).json(sodCheck.problem);
-    }
-    // SEC-ROLE-CEILING-1: a platform-level role can be assigned only by someone who holds PLATFORM_ADMIN
-    const roleCeiling = checkRoleAssignment((req as any).authContext, role);
-    if (!roleCeiling.ok) return res.status(roleCeiling.status).json({ type: roleCeiling.type, title: roleCeiling.title, status: roleCeiling.status, detail: roleCeiling.detail });
-
-    const encryptedPii = EncryptionService.encryptPII({ email, phone, nationalId });
-    // SEC-PASSWORD-UX-1: admin may set temporaryPassword (min 12); otherwise system generates one-time secret
-    const newId = `USR-${crypto.randomUUID().slice(0, 8)}`;
-    let temporaryPassword: string;
-    if (typeof adminTempPassword === 'string' && adminTempPassword.trim().length > 0) {
-      temporaryPassword = adminTempPassword.trim();
-      if (temporaryPassword.length < 12) {
-        return res.status(400).json({
-          type: 'https://api.an-erp.local/errors/validation',
-          title: 'كلمة المرور المؤقتة ضعيفة',
-          status: 400,
-          detail: 'كلمة المرور المؤقتة التي يحددها المسؤول يجب ألا تقل عن 12 حرفًا.',
+        await adminDb.collection("audit_logs").add({
+          action: "company_permanently_deleted",
+          performed_by_id: requester.id,
+          performed_by_email: requester.email,
+          target_company_id: companyId,
+          deleted_users_count: initialUsersCount,
+          timestamp: new Date().toISOString()
         });
-      }
-    } else {
-      temporaryPassword = crypto.randomBytes(9).toString('base64url');
-    }
-    const hash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
-    const totp = generateSecret();
-    const encryptedTotp = EncryptionService.encryptPII(totp);
-    const backupCodes = EncryptionService.generateEmergencyBackupCodes();
-
-    const newUser: User = {
-      id: newId,
-      tenantId,
-      username,
-      fullName,
-      email: email || `${username}@company.sa`,
-      role,
-      roleTitleAr: role === 'accountant' ? 'محاسب عام' : role === 'financial_approver' ? 'معتمد مالي' : role === 'warehouse_keeper' ? 'أمين مستودع' : 'موظف تشغيلي',
-      branchName: branchName || 'الفرع الرئيسي',
-      status: 'ACTIVE',
-      encryptedPii,
-      passwordHash: hash,
-      twoFactorSecret: encryptedTotp,
-      twoFactorEnabled: false,
-      backupCodes: backupCodes.hashedCodes,
-      hashedBackupCodes: backupCodes.hashedCodes,
-      requiresPasswordChange: true,
-      createdAt: new Date().toISOString(),
-    };
-
-    await storage.saveUser(newUser, `create-user-${newId}`);
-    await recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'CREATE_USER', 'USER', newUser.id, { username, role }, req.ip || '127.0.0.1', tenantId, storage);
-
-    // Sanitize user object to prevent leaking hashed secrets or backup code arrays
-    const { passwordHash: _ph, twoFactorSecret: _ts, encryptedPii: _ep, backupCodes: _bc, hashedBackupCodes: _hbc, ...safeUser } = newUser;
-    const userResponse = {
-      ...safeUser,
-      backupCodesRemaining: (_bc?.length || _hbc?.length || 0),
-    };
-
-    await logSystemChange(storage, (req as any).authContext.userId, 'SECURITY', 'USERS', [`USER:${newUser.id}`, `TENANT:${tenantId}`], `إنشاء مستخدم جديد بدور (${role})`);
-
-    // temporaryPassword is returned ONCE here; it is never stored (only its Argon2id hash), logged, audited or published.
-    return res.json({ success: true, data: { ...userResponse, temporaryPassword }, message: 'تم إضافة المستخدم بنجاح بعد التحقق من قواعد فصل المهام' });
-  });
-
-
-  // SEC-USER-ADMIN: update user status/role (cannot deactivate self)
-  app.patch('/api/users/:id', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const actorId = (req as any).authContext.userId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const targetId = String(req.params.id || '');
-      if (!targetId) {
-        return res.status(400).json({
-          type: 'https://api.an-erp.local/errors/validation',
-          title: 'معرّف غير صالح',
-          status: 400,
-          detail: 'معرّف المستخدم مطلوب.',
-        });
-      }
-      const existing = await storage.getUserById(targetId);
-      if (!existing.success || !existing.data || existing.data.tenantId !== tenantId) {
-        return res.status(404).json({
-          type: 'https://api.an-erp.local/errors/not-found',
-          title: 'المستخدم غير موجود',
-          status: 404,
-          detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
-        });
-      }
-      // SEC-ROLE-CEILING-1: only a PLATFORM_ADMIN holder can modify an account that holds PLATFORM_ADMIN
-      const protectedTarget = checkTargetAccess((req as any).authContext, existing.data);
-      if (!protectedTarget.ok) return res.status(protectedTarget.status).json({ type: protectedTarget.type, title: protectedTarget.title, status: protectedTarget.status, detail: protectedTarget.detail });
-      const body = req.body || {};
-      const updates: any = {};
-      if (body.status === 'ACTIVE' || body.status === 'INACTIVE') {
-        if (body.status === 'INACTIVE' && targetId === actorId) {
-          return res.status(400).json({
-            type: 'https://api.an-erp.local/errors/validation',
-            title: 'عملية غير مسموحة',
-            status: 400,
-            detail: 'لا يمكنك تعطيل حسابك الحالي بنفسك.',
-          });
-        }
-        updates.status = body.status;
-      }
-      if (typeof body.role === 'string' && body.role.trim()) {
-        const sodCheck = SoDPolicyEngine.validateRoleAssignment([], body.role);
-        if (!sodCheck.allowed && sodCheck.problem) {
-          return res.status(sodCheck.problem.status).json(sodCheck.problem);
-        }
-        // SEC-ROLE-CEILING-1: nobody changes their own role, and a platform-level role is assignable only by a PLATFORM_ADMIN holder
-        const selfRole = checkSelfRoleChange(actorId, targetId);
-        if (!selfRole.ok) return res.status(selfRole.status).json({ type: selfRole.type, title: selfRole.title, status: selfRole.status, detail: selfRole.detail });
-        const patchCeiling = checkRoleAssignment((req as any).authContext, body.role);
-        if (!patchCeiling.ok) return res.status(patchCeiling.status).json({ type: patchCeiling.type, title: patchCeiling.title, status: patchCeiling.status, detail: patchCeiling.detail });
-        updates.role = body.role.trim();
-        if (typeof body.roleTitleAr === 'string') updates.roleTitleAr = body.roleTitleAr;
-      }
-      if (typeof body.fullName === 'string' && body.fullName.trim()) {
-        updates.fullName = body.fullName.trim();
-      }
-      if (typeof body.branchName === 'string') {
-        updates.branchName = body.branchName;
-      }
-      // SEC-PERM-OVERRIDE-1: grant individual permissions (cannot self-edit; cannot exceed actor effective set)
-      if (body.permissions !== undefined) {
-        if (targetId === actorId) {
-          return res.status(400).json({
-            type: 'https://api.an-erp.local/errors/validation',
-            title: 'عملية غير مسموحة',
-            status: 400,
-            detail: 'لا يمكنك تعديل صلاحياتك الفردية بنفسك.',
-          });
-        }
-        if (!Array.isArray(body.permissions)) {
-          return res.status(400).json({
-            type: 'https://api.an-erp.local/errors/validation',
-            title: 'صيغة غير صالحة',
-            status: 400,
-            detail: 'permissions يجب أن تكون مصفوفة نصوص.',
-          });
-        }
-        const cleaned: string[] = [];
-        for (const raw of body.permissions) {
-          if (typeof raw !== 'string' || !raw.trim()) continue;
-          const p = raw.trim();
-          if (!isPermissionGroup(p)) {
-            return res.status(400).json({
-              type: 'https://api.an-erp.local/errors/validation',
-              title: 'صلاحية غير معروفة',
-              status: 400,
-              detail: `الصلاحية (${p}) ليست ضمن مجموعات النظام المعتمدة.`,
-            });
-          }
-          cleaned.push(p);
-        }
-        const actorRes = await storage.getUserById(actorId);
-        const actorPerms = actorRes.success && Array.isArray(actorRes.data?.permissions)
-          ? actorRes.data!.permissions!
-          : [];
-        const actorRole = (req as any).authContext.role || '';
-        const actorIsSuper = normalizeRole(actorRole) === 'super_admin';
-        for (const p of cleaned) {
-          if (p === 'PLATFORM_ADMIN' && !hasPermission(actorRole, 'PLATFORM_ADMIN', actorPerms)) {
-            return res.status(403).json({
-              type: 'https://api.an-erp.local/errors/forbidden',
-              title: 'غير مصرح بمنح صلاحية المنصة',
-              status: 403,
-              detail: 'منح PLATFORM_ADMIN يتطلب أن يملك المانح نفس الصلاحية.',
-            });
-          }
-          if (!actorIsSuper && !hasPermission(actorRole, p as PermissionGroup, actorPerms)) {
-            return res.status(403).json({
-              type: 'https://api.an-erp.local/errors/forbidden',
-              title: 'تجاوز حدود الصلاحيات',
-              status: 403,
-              detail: `لا يمكنك منح صلاحية (${p}) لأنك لا تملكها ضمن دورك أو منحورات الفردية.`,
-            });
-          }
-        }
-        updates.permissions = cleaned;
-      }
-      if (Object.keys(updates).length === 0) {
-        return res.status(400).json({
-          type: 'https://api.an-erp.local/errors/validation',
-          title: 'لا توجد تعديلات',
-          status: 400,
-          detail: 'أرسل status أو role أو fullName أو branchName أو permissions.',
-        });
-      }
-      const upd = await storage.updateUser(targetId, updates);
-      if (!upd.success) {
-        return res.status(500).json(upd.error || { status: 500, title: 'تعذر التحديث' });
-      }
-      // If deactivated, revoke all sessions
-      if (updates.status === 'INACTIVE') {
-        const tokenServiceSess = new TokenService(storage);
-        await tokenServiceSess.revokeSessionsForUser(targetId, 'USER_DEACTIVATED');
-
-      }
-      // ORG-MEMBERSHIP-1: sync membership with account status
-      if (updates.status === 'INACTIVE') {
-        await storage.setMembershipStatus(tenantId, targetId, 'SUSPENDED');
-      } else if (updates.status === 'ACTIVE') {
-        await storage.setMembershipStatus(tenantId, targetId, 'ACTIVE');
+      } catch (auditErr) {
+        console.warn("Audit log write failed during company delete:", auditErr);
       }
 
-      await recordAudit(actorId, 'المستخدم الحالي', 'UPDATE_USER', 'USER', targetId, updates, req.ip || '127.0.0.1', tenantId, storage);
-      const u = upd.data!;
       return res.json({
         success: true,
-        data: {
-          id: u.id,
-          username: u.username,
-          fullName: u.fullName,
-          role: u.role,
-          status: u.status,
-          requiresPasswordChange: !!u.requiresPasswordChange,
-        },
+        message: "تم حذف الشركة وكافة المستخدمين والبيانات التابعة لها نهائياً وبلا رجعة.",
+        deletedUsersCount: initialUsersCount
       });
     } catch (err: any) {
-      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
+      console.error("Error deleting company in /api/admin/companies/:id:", err);
+      return res.status(500).json({ success: false, message: err?.message || "Internal server error deleting company." });
     }
   });
 
-  // ORG-MEMBERSHIP-1: membership read / write for current tenant
-  app.get('/api/users/:id/membership', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
+  // API Route - Server-side Credential Verification (Zero-Trust PBKDF2 210k)
+  app.post("/api/auth/verify-credentials", authRateLimiter, async (req, res) => {
     try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const targetId = String(req.params.id || '');
-      const existing = await storage.getUserById(targetId);
-      if (!existing.success || !existing.data || existing.data.tenantId !== tenantId) {
-        return res.status(404).json({
-          type: 'https://api.an-erp.local/errors/not-found',
-          title: 'المستخدم غير موجود',
-          status: 404,
-          detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
-        });
-      }
-      const mem = await storage.getMembershipContext(tenantId, targetId);
-      if (!mem.success) {
-        return res.status(mem.error?.status || 500).json(mem.error || { success: false });
-      }
-      return res.json({ success: true, data: mem.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
-    }
-  });
 
-  app.patch('/api/users/:id/membership', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const actorId = (req as any).authContext.userId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const targetId = String(req.params.id || '');
-      const status = String((req.body || {}).status || '').toUpperCase();
-      if (!['ACTIVE', 'SUSPENDED', 'REVOKED'].includes(status)) {
-        return res.status(400).json({
-          type: 'https://api.an-erp.local/errors/validation',
-          title: 'حالة عضوية غير صالحة',
-          status: 400,
-          detail: 'الحالة يجب أن تكون ACTIVE أو SUSPENDED أو REVOKED.',
-        });
+      const rawEmail = req.body?.email;
+      const rawPassword = req.body?.password;
+      if (!rawEmail || !rawPassword) {
+        return res.status(400).json({ success: false, message: "يرجى إدخال البريد الإلكتروني وكلمة المرور." });
       }
-      if (targetId === actorId && status !== 'ACTIVE') {
-        return res.status(400).json({
-          type: 'https://api.an-erp.local/errors/validation',
-          title: 'عملية غير مسموحة',
-          status: 400,
-          detail: 'لا يمكنك تعليق أو إلغاء عضويتك الحالية بنفسك.',
-        });
-      }
-      const existing = await storage.getUserById(targetId);
-      if (!existing.success || !existing.data || existing.data.tenantId !== tenantId) {
-        return res.status(404).json({
-          type: 'https://api.an-erp.local/errors/not-found',
-          title: 'المستخدم غير موجود',
-          status: 404,
-          detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
-        });
-      }
-      const result = await storage.setMembershipStatus(
-        tenantId,
-        targetId,
-        status as 'ACTIVE' | 'SUSPENDED' | 'REVOKED',
-      );
-      if (!result.success) {
-        return res.status(result.error?.status || 500).json(result.error || { success: false });
-      }
-      if (status === 'ACTIVE') {
-        await storage.updateUser(targetId, { status: 'ACTIVE' } as any);
-      } else if (status === 'SUSPENDED') {
-        await storage.updateUser(targetId, { status: 'INACTIVE' } as any);
-        const tokenService = new TokenService(storage);
-        await tokenService.revokeSessionsForUser(targetId, 'USER_SUSPENDED');
-      }
-      await recordAudit(
-        actorId,
-        'المستخدم الحالي',
-        'UPDATE_MEMBERSHIP',
-        'MEMBERSHIP',
-        targetId,
-        { status },
-        req.ip || '127.0.0.1',
-        tenantId,
-        storage,
-      );
-      const mem = await storage.getMembershipContext(tenantId, targetId);
-      return res.json({ success: true, data: mem.success ? mem.data : { status } });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
-    }
-  });
 
-  // SEC-USER-ADMIN: admin resets password → temporary password once + requiresPasswordChange
-  // SEC-ROLE-CEILING-1: a lower admin cannot reset the password of a platform-level account (that would be account takeover)
-  app.post('/api/users/:id/reset-password', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const actorId = (req as any).authContext.userId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const targetId = String(req.params.id || '');
-      const existing = await storage.getUserById(targetId);
-      if (!existing.success || !existing.data || existing.data.tenantId !== tenantId) {
-        return res.status(404).json({
-          type: 'https://api.an-erp.local/errors/not-found',
-          title: 'المستخدم غير موجود',
-          status: 404,
-          detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
-        });
+      const emailLower = String(rawEmail).toLowerCase().trim();
+      const password = String(rawPassword).trim();
+      if (!emailLower || !password) {
+        return res.status(400).json({ success: false, message: "يرجى إدخال البريد الإلكتروني وكلمة المرور." });
       }
-      const resetGuard = checkTargetAccess((req as any).authContext, existing.data); if (!resetGuard.ok) return res.status(403).json({ type: resetGuard.type, title: resetGuard.title, status: 403, detail: resetGuard.detail });
-      // SEC-PASSWORD-UX-1: optional admin-provided temporary password
-      let temporaryPassword: string;
-      const adminTemp = req.body?.temporaryPassword;
-      if (typeof adminTemp === 'string' && adminTemp.trim().length > 0) {
-        temporaryPassword = adminTemp.trim();
-        if (temporaryPassword.length < 12) {
-          return res.status(400).json({
-            type: 'https://api.an-erp.local/errors/validation',
-            title: 'كلمة المرور المؤقتة ضعيفة',
-            status: 400,
-            detail: 'كلمة المرور المؤقتة التي يحددها المسؤول يجب ألا تقل عن 12 حرفًا.',
+
+      // 1. Fetch user document from 'users' collection using Admin SDK
+      let usersSnapshot = await adminDb.collection("users").where("email", "==", emailLower).get();
+
+      if (usersSnapshot.empty) {
+        // Resilient lookup: check if email is an alias or prefix match within same domain
+        const atIdx = emailLower.indexOf('@');
+        if (atIdx > 0) {
+          const localPart = emailLower.substring(0, atIdx);
+          const domain = emailLower.substring(atIdx);
+          const domainUsersSnap = await adminDb.collection("users").where("email", ">=", localPart).where("email", "<=", localPart + "\uf8ff").get();
+          const candidate = domainUsersSnap.docs.find(d => {
+            const em = (d.data()?.email || "").toLowerCase();
+            return em.endsWith(domain) && (em.startsWith(localPart) || localPart.startsWith(em.replace(domain, '')));
           });
+          if (candidate) {
+            usersSnapshot = { empty: false, docs: [candidate] } as any;
+          }
         }
+      }
+
+      if (usersSnapshot.empty) {
+        return res.status(400).json({ success: false, message: "البريد الإلكتروني غير مسجل بالنظام." });
+      }
+
+      const userDoc = usersSnapshot.docs[0];
+      const userData = userDoc.data();
+      const userId = userDoc.id;
+
+      if (userData.is_active === false) {
+        return res.status(400).json({ success: false, message: "هذا الحساب معطل حالياً. يرجى التواصل مع المسؤول." });
+      }
+
+      // 2. Fetch private credentials from 'user_credentials' vault using Admin SDK
+      let credDoc = await adminDb.collection("user_credentials").doc(userId).get();
+      if (!credDoc.exists) {
+        credDoc = await adminDb.collection("user_credentials").doc(emailLower).get();
+      }
+
+      let storedPasswordHash = '';
+      let salt = userData.salt || emailLower;
+      let kdf = 'legacy';
+      let pepperVersion = 2;
+
+      if (credDoc.exists) {
+        const credData = credDoc.data();
+        storedPasswordHash = credData?.passwordHash || credData?.password || '';
+        salt = credData?.salt || salt;
+        kdf = credData?.kdf || 'legacy';
+        pepperVersion = typeof credData?.pepper_version === 'number' ? credData.pepper_version : 2;
       } else {
-        temporaryPassword = crypto.randomBytes(9).toString('base64url');
+        // Fallback to legacy fields directly on user document
+        storedPasswordHash = userData.password || '';
+        pepperVersion = typeof userData.pepper_version === 'number' ? userData.pepper_version : 2;
       }
-      const passwordHash = await argon2.hash(temporaryPassword, { type: argon2.argon2id });
-      const upd = await storage.updateUser(targetId, {
-        passwordHash,
-        requiresPasswordChange: true,
-      } as any);
-      if (!upd.success) {
-        return res.status(500).json(upd.error || { status: 500, title: 'تعذر إعادة التعيين' });
+
+      const isPlatformAdmin = await isPlatformAdminUser(emailLower, userData);
+
+      if (!storedPasswordHash) {
+        if (!isPlatformAdmin) {
+          return res.status(400).json({ success: false, message: "لم يتم تعيين كلمة مرور لهذا الحساب بعد." });
+        }
       }
-      // FIX-SESSION-REVOKE-1: revoke families + delete sessions so old access tokens die
-      const tokenServicePwd = new TokenService(storage);
-      await tokenServicePwd.revokeSessionsForUser(targetId, 'PASSWORD_RESET');
-      await recordAudit(actorId, 'المستخدم الحالي', 'RESET_USER_PASSWORD', 'USER', targetId, { requiresPasswordChange: true }, req.ip || '127.0.0.1', tenantId, storage);
+
+      // 3. Perform Password Comparisons across KDF iterations using stored pepper_version
+      const pbkdf2Hash = hashPasswordPBKDF2_210k(password, salt, pepperVersion);
+      const pbkdf2HashAlt = hashPasswordPBKDF2_210k(password, salt, pepperVersion === 2 ? 1 : 2);
+      const hash10k = hashPassword(password, salt, pepperVersion);
+      const hash1k = legacyStretchedHashPassword1000(password, salt, pepperVersion); // TODO(remove-after-2027-02-01)
+      const hashSinglePass = legacySinglePassHashPassword(password, salt, pepperVersion); // TODO(remove-after-2027-02-01)
+      const hashOldEmailSalt = legacyHashPassword(password, emailLower); // TODO(remove-after-2027-02-01)
+      const hashLegacyUnsalted = legacyHashPassword(password); // TODO(remove-after-2027-02-01)
+
+      const isPBKDF2Match = storedPasswordHash !== '' && (storedPasswordHash === pbkdf2Hash || storedPasswordHash === pbkdf2HashAlt);
+      const is10kMatch = storedPasswordHash !== '' && storedPasswordHash === hash10k;
+      const is1kMatch = storedPasswordHash !== '' && storedPasswordHash === hash1k; // TODO(remove-after-2027-02-01)
+      const isSinglePassMatch = storedPasswordHash !== '' && storedPasswordHash === hashSinglePass; // TODO(remove-after-2027-02-01)
+      const isOldEmailSaltMatch = storedPasswordHash !== '' && storedPasswordHash === hashOldEmailSalt; // TODO(remove-after-2027-02-01)
+      const isLegacyUnsaltedMatch = storedPasswordHash !== '' && storedPasswordHash === hashLegacyUnsalted; // TODO(remove-after-2027-02-01)
+      const allowPlaintextFallback = false;
+      const isPlainMatch = false; // TODO(remove-after-2027-02-01)
+
+      const isMatched = isPBKDF2Match || is10kMatch || is1kMatch || isSinglePassMatch || isOldEmailSaltMatch || isLegacyUnsaltedMatch || isPlainMatch;
+
+      if (storedPasswordHash && !isMatched) {
+        return res.status(400).json({ success: false, message: "كلمة المرور غير صحيحة." });
+      }
+
+      // Phase 4.1 Part 2: Evaluate Legacy Hash Deprecation & Sunset Enforcement Policy
+      const deprecationPolicy = getLegacyHashDeprecationPolicy();
+      const isLegacyOnlyMatch = !isPBKDF2Match && !is10kMatch && (is1kMatch || isSinglePassMatch || isOldEmailSaltMatch || isLegacyUnsaltedMatch || isPlainMatch || pepperVersion !== 2);
+      if (isLegacyOnlyMatch && deprecationPolicy.enforceSunset) {
+        return res.status(426).json({
+          success: false,
+          code: "LEGACY_HASH_SUNSET_EXPIRED",
+          messageAr: deprecationPolicy.messageAr,
+          messageEn: deprecationPolicy.messageEn,
+          message: deprecationPolicy.messageAr
+        });
+      }
+      if (isLegacyOnlyMatch) {
+        console.log(`[LegacyHashDeprecationPolicy] Grace period active (${deprecationPolicy.announcementDate} -> ${deprecationPolicy.sunsetDate}): Auto-migrating legacy password hash to PBKDF2 210,000 iterations for userId: ${userId}`);
+      }
+
+      // 4. Auto-upgrade credential to PBKDF2 210,000 iterations & pepper_version: 2 in user_credentials vault
+      // IMPORTANT: Never block a successful password match because company_id is missing.
+      // Platform owners / SystemAdmins frequently have no company_id. Aborting here caused
+      // "wrong password" on first login and success after close/reopen.
+      if (!credDoc.exists || kdf !== 'sha256_pbkdf2_210k' || !isPBKDF2Match || pepperVersion !== 2) {
+        if (!userData.company_id && !isPlatformAdmin) {
+          console.warn(
+            "[verify-credentials] Auto-upgrade skipped (no company_id) for non-platform userId:",
+            userId,
+            "email:",
+            emailLower
+          );
+          // Still allow login with the already-verified password; do not return 422.
+        } else {
+          const newSalt = salt || crypto.randomUUID();
+          const newPbkdf2Hash = hashPasswordPBKDF2_210k(password, newSalt, 2);
+          const resolvedCompanyId = userData.company_id || (isPlatformAdmin ? 'platform' : '');
+
+          await adminDb.collection("user_credentials").doc(userId).set({
+            id: userId,
+            company_id: resolvedCompanyId,
+            email: emailLower,
+            passwordHash: newPbkdf2Hash,
+            salt: newSalt,
+            kdf: 'sha256_pbkdf2_210k',
+            pepper_version: 2,
+            updated_at: new Date().toISOString()
+          }, { merge: true });
+        }
+
+        // Strip password & salt from public user document in 'users' collection
+        if (userData.password !== undefined || userData.salt !== undefined) {
+          try {
+            await adminDb.collection("users").doc(userId).update({
+              password: FieldValue.delete(),
+              salt: FieldValue.delete()
+            });
+          } catch (e) {
+            console.warn("Could not delete plaintext password field from user doc:", e);
+          }
+        }
+      }
+
+      // Sanitize user object returned to client
+      const { password: _, salt: __, ...publicUser } = userData;
+      publicUser.id = userId;
+
+      // Ensure permissions object is present and complete for the user's role
+      const role = publicUser.role || 'ReconciliationUser';
+      const isSystemAdminRole = role === 'SystemAdmin';
+      const isAdminRole = role === 'Admin';
+      const isRegionalRole = role === 'RegionalManager';
+      const isStationRole = role === 'StationAdmin';
+      const currentPerms = publicUser.permissions || {};
+      publicUser.permissions = {
+        create_expense: (isAdminRole || isSystemAdminRole) ? false : (currentPerms.create_expense ?? (isSystemAdminRole || isStationRole)),
+        edit_expense: currentPerms.edit_expense ?? (isSystemAdminRole || isAdminRole || isStationRole),
+        delete_expense: currentPerms.delete_expense ?? (isSystemAdminRole || isAdminRole),
+        create_voucher: (isAdminRole || isSystemAdminRole) ? false : (currentPerms.create_voucher ?? (isSystemAdminRole || isStationRole)),
+        approve_voucher: currentPerms.approve_voucher ?? (isSystemAdminRole || isAdminRole || isRegionalRole),
+        reject_voucher: currentPerms.reject_voucher ?? (isSystemAdminRole || isAdminRole || isRegionalRole),
+        create_custody: currentPerms.create_custody ?? (isSystemAdminRole || isAdminRole),
+        edit_custody: currentPerms.edit_custody ?? (isSystemAdminRole || isAdminRole),
+        replace_custody: currentPerms.replace_custody ?? (isSystemAdminRole || isAdminRole || isRegionalRole),
+        view_reports: currentPerms.view_reports ?? true,
+        manage_users: currentPerms.manage_users ?? (isSystemAdminRole || isAdminRole),
+        manage_companies: currentPerms.manage_companies ?? isSystemAdminRole,
+        manage_regions: currentPerms.manage_regions ?? (isSystemAdminRole || isAdminRole),
+        manage_stations: currentPerms.manage_stations ?? (isSystemAdminRole || isAdminRole),
+        manage_roles: currentPerms.manage_roles ?? (isSystemAdminRole || isAdminRole),
+        manage_settings: currentPerms.manage_settings ?? (isSystemAdminRole || isAdminRole),
+        settle_voucher: (isAdminRole || isSystemAdminRole) ? false : (currentPerms.settle_voucher ?? (isSystemAdminRole || isStationRole)),
+      };
+
+      let customToken: string | null = null;
+      try {
+        const adminAuth = getAdminAuth(getAdminApp());
+        customToken = await adminAuth.createCustomToken(userId);
+      } catch (tokenErr: any) {
+        console.warn(
+          "[verify-credentials] createCustomToken failed; continuing without customToken:",
+          tokenErr?.message || tokenErr
+        );
+        customToken = null;
+      }
+
+      const serverSessionToken = signServerSessionToken({
+        uid: userId,
+        email: emailLower,
+        role: publicUser.role,
+        company_id: publicUser.company_id
+      });
+
       return res.json({
         success: true,
-        data: { userId: targetId, temporaryPassword, requiresPasswordChange: true },
-        message: 'تم إعادة تعيين كلمة المرور. تُعرض الكلمة المؤقتة مرة واحدة فقط.',
+        user: publicUser,
+        customToken,
+        sessionToken: serverSessionToken,
+        mustChangePassword: Boolean(publicUser.must_change_password)
       });
     } catch (err: any) {
-      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
+      console.error("Error in verify-credentials endpoint:", err);
+      return res.status(500).json({ success: false, message: "تعذر الاتصال بقاعدة البيانات، يرجى المحاولة لاحقًا." });
     }
   });
 
-  // SEC-USER-ADMIN: revoke all sessions for a user
-  app.post('/api/users/:id/revoke-sessions', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
+  // API Route - Server-side Forced Password Change Gate
+  app.post("/api/auth/change-password", otpRateLimiter, changePasswordRateLimiter, async (req, res) => {
     try {
-      const tenantId = (req as any).authContext.tenantId;
-      const actorId = (req as any).authContext.userId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const targetId = String(req.params.id || '');
-      const existing = await storage.getUserById(targetId);
-      if (!existing.success || !existing.data || existing.data.tenantId !== tenantId) {
-        return res.status(404).json({
-          type: 'https://api.an-erp.local/errors/not-found',
-          title: 'المستخدم غير موجود',
-          status: 404,
-          detail: 'لا يوجد مستخدم بهذا المعرّف في المنشأة الحالية.',
-        });
-      }
-      // SEC-ROLE-CEILING-1: a lower admin cannot kick a platform-level account out
-      const revokeGuard = checkTargetAccess((req as any).authContext, existing.data);
-      if (!revokeGuard.ok) return res.status(revokeGuard.status).json({ type: revokeGuard.type, title: revokeGuard.title, status: revokeGuard.status, detail: revokeGuard.detail });
-      const tokenServiceRev = new TokenService(storage);
-      const revoked = await tokenServiceRev.revokeSessionsForUser(targetId, 'ADMIN_REVOKE_SESSIONS');
-
-      await recordAudit(actorId, 'المستخدم الحالي', 'REVOKE_USER_SESSIONS', 'USER', targetId, { revoked }, req.ip || '127.0.0.1', tenantId, storage);
-      return res.json({ success: true, revoked });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
-    }
-  });
-
-  // 1L — Invitation link generation (Phase 5 / AUTH-003: persistent, only the SHA-256 hash is stored)
-  app.post('/api/invitations', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const { email, role } = req.body;
-    if (!email || !role) {
-      return res.status(400).json({ error: 'البريد الإلكتروني والدور مطلوبان لإنشاء الدعوة' });
-    }
-
-    // Verify SoD before issuing invitation
-    const sodCheck = SoDPolicyEngine.validateRoleAssignment([], role);
-    if (!sodCheck.allowed && sodCheck.problem) {
-      return res.status(sodCheck.problem.status).json(sodCheck.problem);
-    }
-
-    const rawToken = crypto.randomBytes(32).toString('base64url');
-    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
-
-    const invitationId = `INV-${crypto.randomUUID()}`;
-    const created = await storage.createInvitation(tenantId, {
-      id: invitationId,
-      tenantId,
-      tokenHash,
-      email,
-      proposedRole: role,
-      orgNodeId: (req as any).authContext.orgNodeId || undefined,
-      status: 'PENDING',
-      expiresAt,
-      createdBy: (req as any).authContext.userId,
-    });
-    if (!created.success) {
-      return res.status(500).json({ error: 'تعذر إنشاء الدعوة' });
-    }
-
-    // Out of scope (Phase 5): the host below still comes from req.get('host').
-    const inviteUrl = `${req.protocol}://${req.get('host')}/join?token=${rawToken}`;
-
-    DomainEventBus.publish({
-      eventType: 'USER_INVITED',
-      tenantId,
-      actorId: (req as any).authContext.userId || 'USR-001',
-      actorName: 'المستخدم الحالي',
-      payload: { email, role, expiresAt },
-    });
-
-    recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'INVITE_USER', 'INVITATION', email, { role, expiresAt }, req.ip || '127.0.0.1', tenantId, storage);
-
-    await logSystemChange(storage, (req as any).authContext.userId, 'SECURITY', 'INVITATIONS', [`INVITATION:${invitationId}`, `TENANT:${tenantId}`], `إنشاء دعوة مستخدم بدور (${role})`);
-
-    return res.json({
-      success: true,
-      data: {
-        email,
-        role,
-        inviteUrl,
-        expiresAt,
-      },
-    });
-  });
-
-  // Phase 5 (AUTH-003): PUBLIC invitation acceptance. Role / email / org node come ONLY from the invitation row.
-  app.post('/api/invitations/accept', authRateLimiter, async (req: Request, res: Response) => {
-    const body = req.body || {};
-    const { tenantId, token, username, fullName, password } = body;
-    const isFilled = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
-    if (![tenantId, token, username, fullName, password].every(isFilled) || (password as string).length < 12) {
-      return res.status(400).json({ error: 'بيانات قبول الدعوة غير مكتملة أو غير صالحة (كلمة المرور 12 حرفًا على الأقل)' });
-    }
-    const gone = () => res.status(410).json({ error: 'رابط الدعوة غير صالح أو منتهي الصلاحية أو تم استخدامه' });
-
-    let storage: StoragePort;
-    try {
-      const tenantRes = await masterStorage.getTenant(tenantId);
-      if (!tenantRes.success || !tenantRes.data) return gone();
-      storage = await globalStorageRouter.resolveAdapterAsync(tenantRes.data);
-    } catch (err: any) {
-      console.error(`[invitations/accept] tenant storage unavailable: ${err?.message}`);
-      return res.status(503).json({
-        type: 'https://api.an-erp.local/errors/storage-unavailable',
-        title: 'مخزن بيانات المنشأة غير متاح',
-        status: 503,
-        detail: 'تعذر الاتصال بمخزن بيانات هذه المنشأة. حاول لاحقًا أو تواصل مع مدير النظام.',
-      });
-    }
-
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const consumed = await storage.consumeInvitation(tenantId, tokenHash);
-    if (!consumed.success) return res.status(500).json({ error: 'تعذر معالجة الدعوة' });
-    if (!consumed.data) return gone();
-    const inv = consumed.data;
-
-    let userCreated = false;
-    const release = async () => {
-      try {
-        const r = await storage.releaseInvitation(tenantId, tokenHash);
-        if (!r.success) console.error('[invitations/accept] release failed for invitation', inv.id);
-      } catch (e: any) {
-        console.error('[invitations/accept] release failed for invitation', inv.id, e?.message);
-      }
-    };
-
-    try {
-      const existing = await storage.getUserByUsername(tenantId, username);
-      if (!existing.success) {
-        await release();
-        return res.status(500).json({ error: 'تعذر التحقق من اسم المستخدم' });
-      }
-      if (existing.data) {
-        await release();
-        return res.status(409).json({ error: 'اسم المستخدم مستخدم بالفعل، اختر اسمًا آخر ويمكنك إعادة استخدام نفس الدعوة' });
-      }
-
-      const hash = await argon2.hash(password, { type: argon2.argon2id });
-      const totp = generateSecret();
-      const encryptedTotp = EncryptionService.encryptPII(totp);
-      const backupCodes = EncryptionService.generateEmergencyBackupCodes();
-      const role = inv.proposedRole; // NEVER read from the request body
-      const newId = `USR-${crypto.randomUUID().slice(0, 8)}`;
-
-      const newUser: User = {
-        id: newId,
-        tenantId,
-        username,
-        fullName,
-        email: inv.email,
-        role,
-        roleTitleAr: role === 'accountant' ? 'محاسب عام' : role === 'financial_approver' ? 'معتمد مالي' : role === 'warehouse_keeper' ? 'أمين مستودع' : 'موظف تشغيلي',
-        branchName: 'الفرع الرئيسي',
-        status: 'ACTIVE',
-        assignedNodeId: inv.orgNodeId,
-        encryptedPii: EncryptionService.encryptPII({ email: inv.email }),
-        passwordHash: hash,
-        twoFactorSecret: encryptedTotp,
-        twoFactorEnabled: false,
-        backupCodes: backupCodes.hashedCodes,
-        hashedBackupCodes: backupCodes.hashedCodes,
-        requiresPasswordChange: false,
-        createdAt: new Date().toISOString(),
-      };
-
-      const saved = await storage.saveUser(newUser, `accept-invite-${inv.id}`);
-      if (!saved.success) {
-        await release();
-        return res.status(500).json({ error: 'تعذر إنشاء المستخدم' });
-      }
-      userCreated = true;
-
-      // No token, token hash, password or password hash in the audit record.
-      await recordAudit(newId, fullName, 'ACCEPT_INVITATION', 'INVITATION', inv.id, { userId: newId, username, role }, req.ip || '127.0.0.1', tenantId, storage);
-
-      return res.json({ success: true, data: { id: newId, username, role } });
-    } catch (err: any) {
-      if (!userCreated) await release();
-      console.error('[invitations/accept] failed:', err?.message);
-      return res.status(500).json({ error: 'تعذر قبول الدعوة' });
-    }
-  });
-
-  // 1I — Active Sessions List & Remote Instant Revocation via StoragePort
-  app.get('/api/sessions', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const listRes = await storage.listActiveSessions(tenantId);
-    const list = listRes.success && listRes.data ? listRes.data : [];
-    return res.json({ success: true, data: list });
-  });
-
-  app.delete('/api/sessions/:sessionId', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const tokenService = new TokenService(storage);
-    const anomalyDetector = new AnomalyDetector(storage);
-    const { sessionId } = req.params;
-    const sessionRes = await storage.getActiveSession(sessionId);
-    if (!sessionRes.success || !sessionRes.data) {
-      return res.status(404).json({ error: 'الجلسة غير موجودة' });
-    }
-    const session = sessionRes.data;
-
-    // Instantly invalidate entire refresh token family (Section 1I)
-    await tokenService.revokeFamily(session.familyId, 'REMOTE_TERMINATION');
-    await storage.deleteActiveSession(sessionId);
-    await anomalyDetector.terminateSession(sessionId);
-
-    DomainEventBus.publish({
-      eventType: 'SESSION_REVOKED',
-      tenantId,
-      actorId: (req as any).authContext.userId || 'USR-001',
-      actorName: 'المستخدم الحالي',
-      payload: { sessionId, reason: 'REMOTE_INSTANT_TERMINATION' },
-    });
-
-    await recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'TERMINATE_SESSION', 'SESSION', sessionId, { targetUser: session.username }, req.ip || '127.0.0.1', tenantId, storage);
-
-    return res.json({ success: true, message: 'تم إنهاء الجلسة عن بُعد وإبطال سلسلة التوكن بالكامل فوراً' });
-  });
-
-  // 1G — No-Code Custom Fields Management (StoragePort)
-  app.get('/api/custom-fields', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const resFields = await storage.getCustomFields(tenantId);
-    const data = resFields.success && resFields.data ? resFields.data : [];
-    return res.json({ success: true, data });
-  });
-
-  app.post('/api/custom-fields', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const { targetEntity, fieldName, fieldLabelAr, fieldType, isRequired, options } = req.body;
-    if (!fieldName || !fieldLabelAr || !fieldType) {
-      return res.status(400).json({ error: 'الاسم التقني والاسم العربي ونوع الحقل مطلوبة' });
-    }
-
-    const newField: CustomFieldDefinition = {
-      id: `cf-${Date.now()}`,
-      tenantId,
-      module: targetEntity || 'JOURNAL_ENTRY',
-      fieldKey: fieldName,
-      fieldLabelAr,
-      fieldType,
-      isRequired: !!isRequired,
-      options: options || [],
-    };
-
-    await storage.saveCustomField(tenantId, newField);
-    await recordAudit((req as any).authContext.userId || 'USR-001', 'المستخدم الحالي', 'ADD_CUSTOM_FIELD', 'SCHEMA', newField.id, newField, req.ip || '127.0.0.1', tenantId, storage);
-
-    await logSystemChange(storage, (req as any).authContext.userId, 'PLATFORM_MANAGEMENT', 'CUSTOM_FIELDS', [`CUSTOM_FIELD:${newField.id}`, `TENANT:${tenantId}`], 'إضافة حقل مخصص');
-
-    return res.json({ success: true, data: newField, message: 'تم إضافة الحقل المخصص بنجاح' });
-  });
-
-  // 1E — Operational Audit Trail
-  app.get('/api/audit-trail', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const resAudit = await storage.getAuditRecords(tenantId);
-    const data = resAudit.success && resAudit.data ? resAudit.data : [];
-    return res.json({ success: true, data });
-  });
-
-  // 1F — Domain Events Stream
-  app.get('/api/domain-events', requireAuth, requirePermission('AUDIT_LOG_VIEW'), (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const events = DomainEventBus.getRecentEvents(tenantId);
-    return res.json({ success: true, data: events });
-  });
-
-  // 3. Transactions List (Read via StoragePort)
-  app.get('/api/transactions', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const result = await storage.listJournalEntries(tenantId);
-    if (!result.success) {
-      return res.status(result.error?.status || 500).json(result.error);
-    }
-    return res.json({ success: true, data: result.data });
-  });
-
-  // 4. Create and Post Transaction
-  app.post('/api/transactions/post', requireAuth, requirePermission('ENTRY_POST'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const { entry, idempotencyKey } = req.body;
-    if (!idempotencyKey) {
-      const problem: RFC7807Problem = {
-        type: 'https://api.an-erp.local/errors/missing-idempotency-key',
-        title: 'مفتاح Idempotency-Key إلزامي',
-        status: 400,
-        detail: 'كل عملية كتابة حساسة تتطلب مفتاح idempotencyKey لمنع تكرار القيد.',
-      };
-      return res.status(400).json(problem);
-    }
-
-    // Phase 9 (VAL-001): validate date and every line BEFORE any numbering or draft is created
-    if (entry === null || typeof entry !== 'object') {
-      return res.status(400).json(validationError('بيانات القيد (entry) مطلوبة.'));
-    }
-    const jv = validateJournalInput(entry.date, entry.lines);
-    if (!jv.ok) return res.status(400).json(validationError((jv as { ok: false; detail: string }).detail));
-    if (jv.date !== undefined) entry.date = jv.date;
-    entry.lines.forEach((l: any, i: number) => {
-      l.debit = jv.amounts[i].debit;
-      l.credit = jv.amounts[i].credit;
-    });
-
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const postingEngine = new PostingEngine(storage);
-    const numberingEngine = new NumberingEngine(storage);
-
-    if (!entry.code) {
-      const seqRes = await numberingEngine.generateNumber(tenantId, 'JV_SEQ', 'JV-2026', `${idempotencyKey}-seq`);
-      if (seqRes.success && seqRes.data) {
-        entry.code = seqRes.data.formattedCode;
-      }
-    }
-
-    const draftRes = await postingEngine.draftEntry(tenantId, entry, `${idempotencyKey}-draft`);
-    if (!draftRes.success) {
-      return res.status(draftRes.error?.status || 422).json(draftRes.error);
-    }
-
-    const postRes = await postingEngine.postEntry(tenantId, entry.id, idempotencyKey);
-    if (!postRes.success) {
-      return res.status(postRes.error?.status || 422).json(postRes.error);
-    }
-
-    DomainEventBus.publish({
-      eventType: 'DOCUMENT_POSTED',
-      tenantId,
-      actorId: entry.createdBy || userId || 'USR-001',
-      actorName: 'المستخدم الحالي',
-      payload: postRes.data,
-      idempotencyKey,
-    });
-
-    await recordAudit(
-      entry.createdBy || userId || 'USR-001',
-      'المستخدم الحالي',
-      'POST_JOURNAL_ENTRY',
-      'JOURNAL_ENTRY',
-      entry.id,
-      { code: entry.code, amount: entry.totalAmount },
-      req.ip || '127.0.0.1',
-      tenantId,
-      storage
-    );
-
-    return res.json({ success: true, data: postRes.data });
-  });
-
-  // 5. Approve Transaction with Segregation of Duties (SoD)
-  app.post('/api/transactions/approve', requireAuth, requirePermission('ENTRY_APPROVE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const { requestId, approverId, idempotencyKey } = req.body;
-
-    if (!idempotencyKey) {
-      return res.status(400).json({
-        type: 'https://api.an-erp.local/errors/missing-idempotency-key',
-        title: 'مفتاح idempotencyKey مطلوب',
-        status: 400,
-        detail: 'عمليات الاعتماد المالي تتطلب idempotencyKey.',
-      });
-    }
-
-    const effectiveApproverId = approverId || userId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const approvalEngine = new ApprovalEngine(storage);
-
-    const approveRes = await approvalEngine.executeApproval(tenantId, requestId, effectiveApproverId, idempotencyKey);
-    if (!approveRes.success) {
-      return res.status(approveRes.error?.status || 403).json(approveRes.error);
-    }
-
-    await recordAudit(
-      effectiveApproverId,
-      effectiveApproverId,
-      'APPROVE_DOCUMENT',
-      'JOURNAL_ENTRY',
-      requestId,
-      { approverId: effectiveApproverId },
-      req.ip || '127.0.0.1',
-      tenantId,
-      storage
-    );
-
-    return res.json({ success: true, data: approveRes.data });
-  });
-
-  // 5.1 Approve transaction by URL param id
-  app.post('/api/transactions/:id/approve', requireAuth, requirePermission('ENTRY_APPROVE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const requestId = req.params.id;
-    const idempotencyKey = (req.headers['idempotency-key'] as string) || req.body?.idempotencyKey;
-    if (!idempotencyKey) {
-      return res.status(400).json({
-        type: 'https://api.an-erp.local/errors/missing-idempotency-key',
-        title: 'مفتاح idempotencyKey مطلوب',
-        status: 400,
-        detail: 'عمليات الاعتماد المالي تتطلب Idempotency-Key.',
-      });
-    }
-
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const approvalEngine = new ApprovalEngine(storage);
-
-    const approveRes = await approvalEngine.executeApproval(tenantId, requestId, userId, idempotencyKey);
-    if (!approveRes.success) {
-      return res.status(approveRes.error?.status || 403).json(approveRes.error);
-    }
-
-    await recordAudit(
-      userId,
-      userId,
-      'APPROVE_DOCUMENT',
-      'JOURNAL_ENTRY',
-      requestId,
-      { approverId: userId },
-      req.ip || '127.0.0.1',
-      tenantId,
-      storage
-    );
-
-    return res.json({ success: true, data: approveRes.data });
-  });
-
-  // ============================================================================
-  // Phase 12 (APR-001): configurable approvals — policies, inbox, approve, reject
-  // ============================================================================
-
-  const approvalIdempotencyKey = (req: Request): string => String((req.headers['idempotency-key'] as string) || req.body?.idempotencyKey || '').trim();
-  const missingApprovalKey = (res: Response) => res.status(400).json({
-    type: 'https://api.an-erp.local/errors/missing-idempotency-key',
-    title: 'مفتاح idempotencyKey مطلوب',
-    status: 400,
-    detail: 'عمليات الموافقات تتطلب Idempotency-Key.',
-  });
-
-  app.get('/api/approvals/policies', requireAuth, requirePermission('APPROVAL_POLICY_MANAGE'), async (req: Request, res: Response) => {
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const r = await storage.listApprovalPolicies((req as any).authContext.tenantId);
-    if (!r.success) return res.status(r.error?.status || 500).json(r.error);
-    return res.json({ success: true, data: r.data });
-  });
-
-  app.put('/api/approvals/policies/:documentType', requireAuth, requirePermission('APPROVAL_POLICY_MANAGE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const idempotencyKey = approvalIdempotencyKey(req);
-    if (!idempotencyKey) return missingApprovalKey(res);
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const engine = new ApprovalEngine(storage);
-    const body = req.body || {};
-    const candidate = {
-      tenantId,
-      documentType: req.params.documentType,
-      mode: body.mode,
-      steps: body.steps === undefined ? [] : body.steps,
-      enforceDistinctApprovers: body.enforceDistinctApprovers === undefined ? true : body.enforceDistinctApprovers,
-      isActive: body.isActive === undefined ? true : body.isActive,
-    };
-    const valid = await engine.validatePolicy(candidate, storage);
-    if (!valid.success) return res.status(valid.error?.status || 400).json(valid.error);
-
-    const saved = await storage.saveApprovalPolicy(tenantId, {
-      id: `apol-${crypto.createHash('sha1').update(`${tenantId}:${candidate.documentType}`).digest('hex').slice(0, 24)}`,
-      tenantId,
-      documentType: candidate.documentType as any,
-      mode: candidate.mode,
-      steps: (candidate.steps as any[]).map(st => ({ label: String(st.label).trim(), approverType: st.approverType, approverRef: String(st.approverRef).trim(), stepKind: st.stepKind })),
-      enforceDistinctApprovers: candidate.enforceDistinctApprovers,
-      isActive: candidate.isActive,
-      version: 1,
-      updatedBy: userId,
-      updatedAt: new Date().toISOString(),
-    }, idempotencyKey);
-    if (!saved.success || !saved.data) return res.status(saved.error?.status || 500).json(saved.error);
-
-    // Change-log entry: policy shape only (no secrets, no user names)
-    try {
-      const logged = await storage.appendSystemChangeLog({
-        id: `LOG-APPROVALS-${Date.now()}-${crypto.randomUUID().slice(0, 6)}`,
-        timestamp: new Date().toISOString(),
-        actor: userId,
-        changeType: 'PLATFORM_MANAGEMENT',
-        module: 'APPROVALS',
-        entitiesAffected: [`APPROVAL_POLICY:${saved.data.documentType}`, `TENANT:${tenantId}`],
-        summaryAr: `تحديث سياسة الاعتماد (${saved.data.documentType}) إلى الإصدار ${saved.data.version} بنمط ${saved.data.mode}`,
-        version: '1',
-      });
-      if (!logged.success) console.error('[audit] system change log failed:', (logged as any).error?.title || 'storage error');
-    } catch (e: any) {
-      console.error('[audit] system change log failed:', e?.message);
-    }
-    return res.json({ success: true, data: saved.data });
-  });
-
-  app.get('/api/approvals/inbox', requireAuth, requirePermission('ENTRY_APPROVE'), async (req: Request, res: Response) => {
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const engine = new ApprovalEngine(storage);
-    const r = await engine.listInbox((req as any).authContext.tenantId, (req as any).authContext.userId, (req as any).authContext.role || '');
-    if (!r.success) return res.status(r.error?.status || 500).json(r.error);
-    return res.json({ success: true, data: r.data });
-  });
-
-  app.post('/api/approvals/:id/approve', requireAuth, requirePermission('ENTRY_APPROVE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const role = (req as any).authContext.role || '';
-    const idempotencyKey = approvalIdempotencyKey(req);
-    if (!idempotencyKey) return missingApprovalKey(res);
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const engine = new ApprovalEngine(storage);
-    const r = await engine.approve(tenantId, req.params.id, userId, role, idempotencyKey);
-    if (!r.success) return res.status(r.error?.status || 403).json(r.error);
-    await recordAudit(userId, userId, 'APPROVE_STEP', 'APPROVAL_REQUEST', req.params.id, { status: r.data?.status, currentStep: r.data?.currentStep }, req.ip || '127.0.0.1', tenantId, storage);
-    return res.json({ success: true, data: r.data });
-  });
-
-  app.post('/api/approvals/:id/reject', requireAuth, requirePermission('ENTRY_APPROVE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const role = (req as any).authContext.role || '';
-    const idempotencyKey = approvalIdempotencyKey(req);
-    if (!idempotencyKey) return missingApprovalKey(res);
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const engine = new ApprovalEngine(storage);
-    const r = await engine.reject(tenantId, req.params.id, userId, role, String(req.body?.reason ?? ''), idempotencyKey);
-    if (!r.success) return res.status(r.error?.status || 403).json(r.error);
-    await recordAudit(userId, userId, 'REJECT_STEP', 'APPROVAL_REQUEST', req.params.id, { status: r.data?.status, rejectedStep: r.data?.rejectedStep }, req.ip || '127.0.0.1', tenantId, storage);
-    return res.json({ success: true, data: r.data });
-  });
-
-  // 5.2 Post transaction by URL param id
-  app.post('/api/transactions/:id/post', requireAuth, requirePermission('ENTRY_POST'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const entryId = req.params.id;
-    const idempotencyKey = (req.headers['idempotency-key'] as string) || req.body?.idempotencyKey;
-    if (!idempotencyKey) {
-      return res.status(400).json({
-        type: 'https://api.an-erp.local/errors/missing-idempotency-key',
-        title: 'مفتاح idempotencyKey مطلوب',
-        status: 400,
-        detail: 'عمليات ترحيل القيود تتطلب Idempotency-Key.',
-      });
-    }
-
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const postingEngine = new PostingEngine(storage);
-
-    const postRes = await postingEngine.postEntry(tenantId, entryId, idempotencyKey);
-    if (!postRes.success) {
-      return res.status(postRes.error?.status || 422).json(postRes.error);
-    }
-
-    return res.json({ success: true, data: postRes.data });
-  });
-
-  // ============================================================================
-  // PHASE 2 API ROUTES: WIZARD, DATA GOVERNANCE, NUMBERING, AS-OF & AUDIT CHAIN
-  // ============================================================================
-
-  // 2A: Country Tax Rules Catalog
-  app.get('/api/wizard/tax-rules', (req: Request, res: Response) => {
-    return res.json({ success: true, data: Object.values(COUNTRY_TAX_RULES) });
-  });
-
-  // 2A: 50 Activity Templates Catalog
-  app.get('/api/wizard/activity-templates', (req: Request, res: Response) => {
-    return res.json({
-      success: true,
-      totalCount: Object.keys(ACTIVITY_TEMPLATES).length,
-      data: Object.values(ACTIVITY_TEMPLATES),
-    });
-  });
-
-  // ============================================================================
-  // PLATFORM-LEVEL ROUTES (Section 4.6B)
-  // Direct access to masterStorage is strictly restricted to platform-level tenant
-  // provisioning and tenant directory listing. Business operations MUST NOT use masterStorage.
-  // ============================================================================
-
-  // 2A, 2B, 2H: Execute 5-Step Company Creation Wizard (Platform Route — Section 4.6B)
-  app.post('/api/wizard/create-company', requirePlatformAdmin, async (req: Request, res: Response) => {
-    const storage = masterStorage; // Explicitly allowed: Platform tenant provisioning (4.6B)
-    const wizard = new CompanyWizardService(storage);
-    const result = await wizard.createCompany(req.body);
-    if (!result.success) {
-      return res.status(result.error?.status || 400).json(result.error);
-    }
-    return res.status(201).json(result);
-  });
-
-  // 2B: List Registered Tenants / Companies (Platform Route — Section 4.6B)
-  
-  // ORG-GROUP-1: platform company groups
-  app.get('/api/groups', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const result = await storage.listCompanyGroups();
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json(result);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر جلب المجموعات', detail: e?.message });
-    }
-  });
-
-  app.post('/api/groups', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const v = validateNewGroupInput(req.body || {});
-      if (!v.ok) return res.status(v.status).json({ type: v.type, title: v.title, status: v.status, detail: v.detail });
-      const existing = await storage.listCompanyGroups();
-      if (existing.success && existing.data.some((g) => g.code === v.code)) {
-        return res.status(409).json({
-          type: 'https://api.an-erp.local/errors/group-code-exists',
-          title: 'رمز المجموعة مستخدم',
-          status: 409,
-          detail: 'اختر رمزًا آخر للمجموعة.',
-        });
-      }
-      const group = buildCompanyGroup({ code: v.code!, nameAr: v.nameAr!, nameEn: v.nameEn });
-      const key = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || `grp-${group.id}-${Date.now()}`);
-      const saved = await storage.saveCompanyGroup(group, key);
-      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
-      return res.status(201).json(saved);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر إنشاء المجموعة', detail: e?.message });
-    }
-  });
-
-  app.get('/api/groups/:id', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const result = await storage.getCompanyGroup(String(req.params.id || ''));
-      if (!result.success) return res.status(result.error?.status || 404).json(result.error);
-      return res.json(result);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر جلب المجموعة', detail: e?.message });
-    }
-  });
-
-  app.post('/api/groups/:id/members', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const groupId = String(req.params.id || '');
-      const tenantId = String(req.body?.tenantId || '').trim();
-      const gRes = await storage.getCompanyGroup(groupId);
-      if (!gRes.success || !gRes.data) return res.status(gRes.error?.status || 404).json(gRes.error);
-      const tRes = await storage.listTenants();
-      if (!tRes.success) return res.status(tRes.error?.status || 500).json(tRes.error);
-      const gate = assertTenantCanJoin(tenantId, tRes.data || [], gRes.data);
-      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
-      const updated = {
-        ...gRes.data,
-        memberTenantIds: [...gRes.data.memberTenantIds, tenantId],
-        updatedAt: new Date().toISOString(),
-      };
-      const key = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || `grp-mem-${groupId}-${tenantId}`);
-      const saved = await storage.saveCompanyGroup(updated, key);
-      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
-      return res.json(saved);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر إضافة العضو', detail: e?.message });
-    }
-  });
-
-  app.delete('/api/groups/:id/members/:tenantId', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const groupId = String(req.params.id || '');
-      const tenantId = String(req.params.tenantId || '');
-      const gRes = await storage.getCompanyGroup(groupId);
-      if (!gRes.success || !gRes.data) return res.status(gRes.error?.status || 404).json(gRes.error);
-      if (!gRes.data.memberTenantIds.includes(tenantId)) {
-        return res.status(404).json({
-          type: 'https://api.an-erp.local/errors/member-not-found',
-          title: 'العضو غير موجود',
-          status: 404,
-          detail: 'هذه الشركة ليست ضمن المجموعة.',
-        });
-      }
-      const updated = {
-        ...gRes.data,
-        memberTenantIds: gRes.data.memberTenantIds.filter((id) => id !== tenantId),
-        updatedAt: new Date().toISOString(),
-      };
-      const key = String(req.headers['idempotency-key'] || `grp-rm-${groupId}-${tenantId}-${Date.now()}`);
-      const saved = await storage.saveCompanyGroup(updated, key);
-      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
-      return res.json(saved);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر إزالة العضو', detail: e?.message });
-    }
-  });
-
-
-  // MASTER-ITEM-GROUP-1: group-level item masters
-  
-  // RPT-GROUP-1: read-only group KPI summary (platform)
-  
-  // CONSOL-1: consolidated trial balance (platform, read-only merge by account code)
-  
-  // GATE-PROD-1: production readiness checklist (platform, read-only)
-  app.get('/api/platform/gate-prod', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      let packagesDone: string[] = [];
-      let openP1Count = 0;
-      let configDefectIds: string[] = [];
-      try {
-        const reg = JSON.parse(fs.readFileSync('docs/STATE_REGISTER.json', 'utf8'));
-        packagesDone = (reg.packages || []).filter((p: any) => p.status === 'DONE').map((p: any) => p.id);
-        openP1Count = (reg.defects || []).filter((d: any) => d.status === 'OPEN' && String(d.severity || '').toUpperCase() === 'P1').length;
-        configDefectIds = (reg.defects || []).filter((d: any) => d.status === 'CONFIG').map((d: any) => d.id);
-      } catch {
-        packagesDone = [];
-      }
-      const report = evaluateGateProd({
-        packagesDone,
-        requiredPackages: [...GATE_REQUIRED_PACKAGES],
-        openP1Count,
-        configDefectIds,
-        hasHealthRoute: true,
-        hasConsolRoute: packagesDone.includes('CONSOL-1'),
-        hasGroupReportRoute: packagesDone.includes('RPT-GROUP-1'),
-        hasXcompanyRoutes: packagesDone.includes('STK-XCOMPANY-1'),
-        hasEntityCloseRoutes: packagesDone.includes('ACC-ENTITY-CLOSE-1'),
-      });
-      return res.json({ success: true, data: report });
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر تقييم بوابة الإنتاج', detail: e?.message });
-    }
-  });
-
-app.get('/api/groups/:id/consol/trial-balance', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const groupId = String(req.params.id || '');
-      const asOfDate = String(req.query.asOfDate || new Date().toISOString().split('T')[0]);
-      const g = await storage.getCompanyGroup(groupId);
-      if (!g.success || !g.data) return res.status(g.error?.status || 404).json(g.error);
-      const group = g.data;
-      const byTenant: Record<string, any[]> = {};
-      const acct = new AccountingService(storage);
-      for (const tenantId of group.memberTenantIds) {
-        try {
-          const tb = await acct.getTrialBalance(tenantId, asOfDate);
-          byTenant[tenantId] = tb?.rows || [];
-        } catch {
-          byTenant[tenantId] = [];
+      const authResult = await authenticateSessionOrBearer(req);
+      let sessionUser = authResult.authenticated ? authResult.user : null;
+      let sessionUid = sessionUser ? String(sessionUser.id || "").trim() : "";
+
+      let { currentPassword, newPassword, email, userId } = req.body || {};
+
+      let user = sessionUser;
+      const requestedEmail = email ? String(email).toLowerCase().trim() : "";
+      const requestedUserId = userId ? String(userId).trim() : "";
+
+      // Check if session cookie belongs to a different user than what the client is changing password for
+      const isMismatchedSession = Boolean(
+        (requestedEmail && sessionUser?.email && sessionUser.email.toLowerCase().trim() !== requestedEmail) ||
+        (requestedUserId && sessionUid && sessionUid !== requestedUserId)
+      );
+
+      // Fallback auth: if bearer/session is pending, blocked, or belongs to another user (stale admin session cookie)
+      if (!sessionUid || isMismatchedSession) {
+        let userDoc: any = null;
+        if (requestedUserId) {
+          const doc = await adminDb.collection("users").doc(requestedUserId).get();
+          if (doc.exists) userDoc = doc;
         }
-      }
-      const xct = await storage.listCrossCompanyTransfers({ groupId });
-      const openX = (xct.success ? xct.data || [] : []).filter((t) => t.status === 'REQUESTED' || t.status === 'IN_TRANSIT').length;
-      const report = mergeTrialBalances({
-        groupId: group.id,
-        asOfDate,
-        memberTenantIds: group.memberTenantIds,
-        byTenant,
-        openXcompanyCount: openX,
-      });
-      return res.json({ success: true, data: report });
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر بناء ميزان المراجعة المجمّع', detail: e?.message });
-    }
-  });
-
-app.get('/api/groups/:id/report/summary', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const groupId = String(req.params.id || '');
-      const g = await storage.getCompanyGroup(groupId);
-      if (!g.success || !g.data) return res.status(g.error?.status || 404).json(g.error);
-      const group = g.data;
-      const xct = await storage.listCrossCompanyTransfers({ groupId });
-      const xctList = xct.success ? xct.data || [] : [];
-      const members: any[] = [];
-      for (const tenantId of group.memberTenantIds) {
-        const tRes = await storage.getTenant(tenantId);
-        const items = await storage.listStockItems(tenantId);
-        const wh = await storage.listWarehouses(tenantId);
-        let stockRows: any[] = [];
-        try {
-          const st = await storage.listWarehouseStock(tenantId);
-          if (st.success && st.data) stockRows = st.data as any[];
-        } catch {
-          stockRows = [];
-        }
-        const books = await storage.getEntityBooksState(tenantId);
-        const openOut = xctList.filter((t) => t.sourceTenantId === tenantId && (t.status === 'REQUESTED' || t.status === 'IN_TRANSIT')).length;
-        const openIn = xctList.filter((t) => t.targetTenantId === tenantId && (t.status === 'REQUESTED' || t.status === 'IN_TRANSIT')).length;
-        members.push({
-          tenantId,
-          tenantNameAr: tRes.success ? tRes.data?.nameAr : undefined,
-          itemCount: items.success ? (items.data || []).length : 0,
-          warehouseCount: wh.success ? (wh.data || []).length : 0,
-          stockValue: sumStockValue(stockRows),
-          openXcompanyOut: openOut,
-          openXcompanyIn: openIn,
-          entityBooksStatus: books.success && books.data ? books.data.status : 'UNKNOWN',
-        });
-      }
-      const summary = aggregateGroupKpis({
-        groupId: group.id,
-        groupCode: group.code,
-        groupNameAr: group.nameAr,
-        members,
-      });
-      return res.json({ success: true, data: summary });
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر بناء تقرير المجموعة', detail: e?.message });
-    }
-  });
-
-app.get('/api/groups/:id/items', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const groupId = String(req.params.id || '');
-      const g = await storage.getCompanyGroup(groupId);
-      if (!g.success) return res.status(g.error?.status || 404).json(g.error);
-      const result = await storage.listGroupMasterItems(groupId);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json(result);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر جلب أصناف المجموعة', detail: e?.message });
-    }
-  });
-
-  app.post('/api/groups/:id/items', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const groupId = String(req.params.id || '');
-      const g = await storage.getCompanyGroup(groupId);
-      if (!g.success || !g.data) return res.status(g.error?.status || 404).json(g.error);
-      const v = validateGroupMasterItemInput(req.body || {});
-      if (!v.ok) return res.status(v.status).json({ type: v.type, title: v.title, status: v.status, detail: v.detail });
-      const existing = await storage.listGroupMasterItems(groupId);
-      if (!existing.success) return res.status(existing.error?.status || 500).json(existing.error);
-      const uniq = assertUniqueItemCodeInGroup(v.itemCode!, existing.data || []);
-      if (!uniq.ok) return res.status(uniq.status).json({ type: uniq.type, title: uniq.title, status: uniq.status, detail: uniq.detail });
-      const item = buildGroupMasterItem({
-        groupId,
-        itemCode: v.itemCode!,
-        nameAr: v.nameAr!,
-        nameEn: v.nameEn,
-        category: v.category!,
-        uom: v.uom!,
-      });
-      const key = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || `gmi-${item.id}`);
-      const saved = await storage.saveGroupMasterItem(item, key);
-      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
-      return res.status(201).json(saved);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر إنشاء صنف المجموعة', detail: e?.message });
-    }
-  });
-
-  app.post('/api/groups/:id/items/:itemId/publish', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const groupId = String(req.params.id || '');
-      const itemId = String(req.params.itemId || '');
-      const g = await storage.getCompanyGroup(groupId);
-      if (!g.success || !g.data) return res.status(g.error?.status || 404).json(g.error);
-      const itemRes = await storage.getGroupMasterItem(groupId, itemId);
-      if (!itemRes.success || !itemRes.data) return res.status(itemRes.error?.status || 404).json(itemRes.error);
-      const gmi = itemRes.data;
-      const published: string[] = [];
-      const skipped: string[] = [];
-      for (const tenantId of g.data.memberTenantIds) {
-        const list = await storage.listStockItems(tenantId);
-        const has = !!(list.success && list.data && list.data.some((it) => it.itemCode === gmi.itemCode));
-        if (has) {
-          skipped.push(tenantId);
-          continue;
-        }
-        const cfg = defaultStockAccountingConfig(tenantId);
-        const shell = stockItemShellFromGroupMaster(tenantId, gmi, {
-          inventoryAccountCode: cfg.defaultInventoryAccountCode,
-          cogsAccountCode: cfg.defaultCogsAccountCode,
-          adjustmentExpenseAccountCode: cfg.adjustmentExpenseAccountCode,
-          adjustmentGainAccountCode: cfg.adjustmentGainAccountCode,
-        });
-        const key = String(req.headers['idempotency-key'] || `pub-${groupId}-${gmi.itemCode}-${tenantId}`);
-        const saved = await storage.saveStockItem(tenantId, shell, key);
-        if (saved.success) published.push(tenantId);
-        else skipped.push(tenantId);
-      }
-      return res.json({ success: true, data: { itemId: gmi.id, itemCode: gmi.itemCode, published, skipped } });
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر نشر الصنف للأعضاء', detail: e?.message });
-    }
-  });
-
-
-  // STK-XCOMPANY-1: inter-company stock transfers (same group; books stay separate)
-  app.get('/api/xcompany/transfers', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const result = await storage.listCrossCompanyTransfers({
-        groupId: req.query.groupId as string | undefined,
-        status: req.query.status as string | undefined,
-      });
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json(result);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر جلب التحويلات', detail: e?.message });
-    }
-  });
-
-  app.post('/api/xcompany/transfers', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const body = req.body || {};
-      const groupId = String(body.groupId || '').trim();
-      const g = await storage.getCompanyGroup(groupId);
-      const gate = validateCrossCompanyCreate({
-        group: g.success ? g.data : null,
-        sourceTenantId: body.sourceTenantId,
-        targetTenantId: body.targetTenantId,
-        sourceWarehouseId: body.sourceWarehouseId,
-        targetWarehouseId: body.targetWarehouseId,
-        itemCode: body.itemCode,
-        quantity: body.quantity,
-      });
-      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
-      const tr = buildCrossCompanyTransfer({
-        groupId,
-        sourceTenantId: String(body.sourceTenantId).trim(),
-        targetTenantId: String(body.targetTenantId).trim(),
-        sourceWarehouseId: String(body.sourceWarehouseId).trim(),
-        targetWarehouseId: String(body.targetWarehouseId).trim(),
-        itemCode: String(body.itemCode).trim(),
-        quantity: Number(body.quantity),
-        unitCost: body.unitCost != null ? Number(body.unitCost) : 0,
-        notes: body.notes,
-      });
-      const key = String(req.headers['idempotency-key'] || body.idempotencyKey || `xct-${tr.id}`);
-      const saved = await storage.saveCrossCompanyTransfer(tr, key);
-      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
-      return res.status(201).json(saved);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر إنشاء التحويل', detail: e?.message });
-    }
-  });
-
-  app.post('/api/xcompany/transfers/:id/dispatch', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const id = String(req.params.id || '');
-      const trRes = await storage.getCrossCompanyTransfer(id);
-      if (!trRes.success || !trRes.data) return res.status(trRes.error?.status || 404).json(trRes.error);
-      const tr = trRes.data;
-      const gate = assertCanDispatch(tr);
-      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
-      const srcBooks = await storage.getEntityBooksState(tr.sourceTenantId);
-      const srcGate = assertEntityOpenForStockMove(srcBooks.success ? srcBooks.data : null, 'source');
-      if (!srcGate.ok) return res.status(srcGate.status).json({ type: srcGate.type, title: srcGate.title, status: srcGate.status, detail: srcGate.detail });
-      const tgtBooksD = await storage.getEntityBooksState(tr.targetTenantId);
-      const tgtGateD = assertEntityOpenForStockMove(tgtBooksD.success ? tgtBooksD.data : null, 'target');
-      if (!tgtGateD.ok) return res.status(tgtGateD.status).json({ type: tgtGateD.type, title: tgtGateD.title, status: tgtGateD.status, detail: tgtGateD.detail });
-      const items = await storage.listStockItems(tr.sourceTenantId);
-      if (!items.success) return res.status(items.error?.status || 500).json(items.error);
-      const srcItem = (items.data || []).find((it) => it.itemCode === tr.itemCode);
-      if (!srcItem) {
-        return res.status(404).json({ type: 'https://api.an-erp.local/errors/item-missing-source', title: 'الصنف غير موجود عند المصدر', status: 404, detail: 'انشر صنف المجموعة أو أنشئ البطاقة في شركة المصدر.' });
-      }
-      const pe = new PostingEngine(storage);
-      const ne = new NumberingEngine(storage);
-      const inv = new InventoryService(storage, pe, ne);
-      const actor = (req as any).authContext || {};
-      const idem = String(req.headers['idempotency-key'] || `xct-disp-${tr.id}`);
-      const issue = await inv.issueStock(tr.sourceTenantId, {
-        warehouseId: tr.sourceWarehouseId,
-        itemId: srcItem.id,
-        quantity: tr.quantity,
-        notes: `XCOMPANY ${tr.id}`,
-        performedBy: actor.userId || 'platform',
-        performedByName: actor.username || 'platform',
-        idempotencyKey: idem,
-        sourceDocumentType: 'XCOMPANY_TRANSFER',
-        sourceDocumentId: tr.id,
-        header: {
-          warehouseId: tr.sourceWarehouseId,
-          notes: `XCOMPANY ${tr.id}`,
-          performedBy: actor.userId || 'platform',
-          performedByName: actor.username || 'platform',
-          idempotencyKey: idem,
-          sourceDocumentType: 'XCOMPANY_TRANSFER',
-          sourceDocumentId: tr.id,
-        },
-      });
-      if (!issue.success) return res.status(issue.error?.status || 400).json(issue.error);
-      const updated = {
-        ...tr,
-        status: 'IN_TRANSIT' as const,
-        dispatchedAt: new Date().toISOString(),
-        itemIdSource: srcItem.id,
-        sourceIssueDocumentId: issue.data?.id,
-        unitCost: tr.unitCost || srcItem.averageCost || 0,
-      };
-      const saved = await storage.saveCrossCompanyTransfer(updated, `${idem}-save`);
-      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
-      return res.json(saved);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر إرسال التحويل', detail: e?.message });
-    }
-  });
-
-  app.post('/api/xcompany/transfers/:id/receive', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const storage = masterStorage;
-      const id = String(req.params.id || '');
-      const trRes = await storage.getCrossCompanyTransfer(id);
-      if (!trRes.success || !trRes.data) return res.status(trRes.error?.status || 404).json(trRes.error);
-      const tr = trRes.data;
-      const gate = assertCanReceive(tr);
-      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
-      const srcBooksR = await storage.getEntityBooksState(tr.sourceTenantId);
-      const srcGateR = assertEntityOpenForStockMove(srcBooksR.success ? srcBooksR.data : null, 'source');
-      if (!srcGateR.ok) return res.status(srcGateR.status).json({ type: srcGateR.type, title: srcGateR.title, status: srcGateR.status, detail: srcGateR.detail });
-      const tgtBooks = await storage.getEntityBooksState(tr.targetTenantId);
-      const tgtGate = assertEntityOpenForStockMove(tgtBooks.success ? tgtBooks.data : null, 'target');
-      if (!tgtGate.ok) return res.status(tgtGate.status).json({ type: tgtGate.type, title: tgtGate.title, status: tgtGate.status, detail: tgtGate.detail });
-      const items = await storage.listStockItems(tr.targetTenantId);
-      if (!items.success) return res.status(items.error?.status || 500).json(items.error);
-      let tgtItem = (items.data || []).find((it) => it.itemCode === tr.itemCode);
-      if (!tgtItem) {
-        return res.status(404).json({ type: 'https://api.an-erp.local/errors/item-missing-target', title: 'الصنف غير موجود عند الوجهة', status: 404, detail: 'انشر صنف المجموعة إلى شركة الوجهة أولًا.' });
-      }
-      const pe = new PostingEngine(storage);
-      const ne = new NumberingEngine(storage);
-      const inv = new InventoryService(storage, pe, ne);
-      const actor = (req as any).authContext || {};
-      const idem = String(req.headers['idempotency-key'] || `xct-recv-${tr.id}`);
-      const recv = await inv.receiveStock(tr.targetTenantId, {
-        warehouseId: tr.targetWarehouseId,
-        itemId: tgtItem.id,
-        quantity: tr.quantity,
-        unitCost: tr.unitCost || tgtItem.averageCost || 0,
-        notes: `XCOMPANY ${tr.id}`,
-        performedBy: actor.userId || 'platform',
-        performedByName: actor.username || 'platform',
-        idempotencyKey: idem,
-        sourceDocumentType: 'XCOMPANY_TRANSFER',
-        sourceDocumentId: tr.id,
-        header: {
-          warehouseId: tr.targetWarehouseId,
-          notes: `XCOMPANY ${tr.id}`,
-          performedBy: actor.userId || 'platform',
-          performedByName: actor.username || 'platform',
-          idempotencyKey: idem,
-          sourceDocumentType: 'XCOMPANY_TRANSFER',
-          sourceDocumentId: tr.id,
-        },
-      });
-      if (!recv.success) return res.status(recv.error?.status || 400).json(recv.error);
-      const updated = {
-        ...tr,
-        status: 'RECEIVED' as const,
-        receivedAt: new Date().toISOString(),
-        itemIdTarget: tgtItem.id,
-        targetReceiveDocumentId: recv.data?.id,
-      };
-      const saved = await storage.saveCrossCompanyTransfer(updated, `${idem}-save`);
-      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
-      return res.json(saved);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر استلام التحويل', detail: e?.message });
-    }
-  });
-
-app.get('/api/tenants', requirePlatformAdmin, async (req: Request, res: Response) => {
-    const storage = masterStorage; // Explicitly allowed: Platform tenant directory (4.6B)
-    const result = await storage.listTenants();
-    if (!result.success) {
-      return res.status(result.error?.status || 500).json(result.error);
-    }
-    return res.json(result);
-  });
-
-
-  // ORG-COMPANY-1: platform suspend/activate a legal company (tenant)
-  app.patch('/api/tenants/:id/status', requirePlatformAdmin, async (req: Request, res: Response) => {
-    try {
-      const tenantId = String(req.params.id || '');
-      const status = String(req.body?.status || '').toUpperCase();
-      if (!tenantId || (status !== 'ACTIVE' && status !== 'SUSPENDED')) {
-        return res.status(400).json({
-          type: 'https://api.an-erp.local/errors/validation',
-          title: 'طلب غير صالح',
-          status: 400,
-          detail: 'المعرّف مطلوب والحالة يجب أن تكون ACTIVE أو SUSPENDED.',
-        });
-      }
-      const storage = masterStorage;
-      const existing = await storage.getTenant(tenantId);
-      if (!existing.success || !existing.data) {
-        return res.status(404).json({
-          type: 'https://api.an-erp.local/errors/not-found',
-          title: 'المنشأة غير موجودة',
-          status: 404,
-          detail: `لا توجد منشأة بالمعرّف ${tenantId}.`,
-        });
-      }
-      const updated = { ...existing.data, status: status as 'ACTIVE' | 'SUSPENDED' };
-      const saved = await storage.saveTenant(updated, `tenant-status-${tenantId}-${status}`);
-      if (!saved.success) {
-        return res.status(500).json(saved.error || { status: 500, title: 'تعذر الحفظ' });
-      }
-      // FIX-TENANT-SUSPEND-1: on suspend, invalidate all live sessions/token families for this tenant
-      let sessionsRevoked = 0;
-      if (status === 'SUSPENDED') {
-        try {
-          const tenantStorage = await globalStorageRouter.resolveAdapterAsync(updated);
-          const tokenService = new TokenService(tenantStorage);
-          const sessions = await tenantStorage.listActiveSessions(tenantId);
-          if (sessions.success && sessions.data) {
-            for (const sess of sessions.data) {
-              await tokenService.revokeSessionAndFamily(sess, 'TENANT_SUSPENDED');
-              sessionsRevoked++;
+        if (!userDoc && requestedEmail) {
+          const snap = await adminDb.collection("users").where("email", "==", requestedEmail).limit(1).get();
+          if (!snap.empty) {
+            userDoc = snap.docs[0];
+          } else {
+            const prefix = requestedEmail.split('@')[0];
+            const allUsersSnap = await adminDb.collection("users").get();
+            for (const d of allUsersSnap.docs) {
+              const uEmail = (d.data().email || '').toLowerCase().trim();
+              if (uEmail && (uEmail === requestedEmail || uEmail.startsWith(prefix) || prefix.startsWith(uEmail.split('@')[0]))) {
+                userDoc = d;
+                break;
+              }
             }
           }
-        } catch (revErr: any) {
-          console.error(`[tenant-status] session revoke partial failure tenant=${tenantId}: ${revErr?.message || revErr}`);
+        }
+        if (userDoc) {
+          user = { ...userDoc.data(), id: userDoc.id };
         }
       }
-      return res.json({
-        success: true,
-        data: {
-          id: updated.id,
-          code: updated.code,
-          nameAr: updated.nameAr,
-          status: updated.status,
-          sessionsRevoked,
-        },
-      });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, message: publicErrorMessage(err) });
-    }
-  });
 
-  // 2B: Propose BackendConfig Migration
-  app.post('/api/storage/propose-migration', requirePlatformAdmin, (req: Request, res: Response) => {
-    const { tenantId, targetConfig, requestedBy, justificationAr } = req.body;
-    const result = globalStorageRouter.proposeMigration(tenantId, targetConfig, requestedBy || 'USR-ADMIN', justificationAr || 'ترقية البنية التحتية');
-    if (!result.success) {
-      return res.status(result.error?.status || 400).json(result.error);
-    }
-    return res.json(result);
-  });
-
-  // 2C: Numbering Sequence Manual Override with Mandatory Audit Justification
-  app.post('/api/numbering/override', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const { sequenceKey, targetSequence, justificationAr, authorizedBy, idempotencyKey } = req.body;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const numbering = new NumberingEngine(storage);
-    const result = await numbering.overrideSequence(
-      tenantId,
-      sequenceKey,
-      Number(targetSequence),
-      justificationAr,
-      authorizedBy || userId || 'USR-001',
-      idempotencyKey
-    );
-    if (!result.success) {
-      return res.status(result.error?.status || 400).json(result.error);
-    }
-    await logSystemChange(storage, userId, 'NUMBERING_OVERRIDE', 'NUMBERING', [`SEQUENCE:${sequenceKey}`, `TENANT:${tenantId}`], 'تجاوز يدوي لتسلسل الترقيم');
-    return res.json(result);
-  });
-
-  // 2D: As-Of Historical Balance Query
-  app.get('/api/reports/balance-as-of', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const { accountCode, asOfDate } = req.query;
-    if (!accountCode || !asOfDate) {
-      return res.status(400).json({
-        type: 'https://api.an-erp.local/errors/missing-as-of-params',
-        title: 'معاملات الاستعلام التاريخي غير مكتملة',
-        status: 400,
-        detail: 'رقم الحساب (accountCode) وتاريخ الاستعلام (asOfDate بصيغة YYYY-MM-DD) مطلوبان.',
-      });
-    }
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const historyService = new HistoricalQueryService(storage);
-    const result = await historyService.getAccountBalanceAsOf(
-      tenantId,
-      String(accountCode),
-      String(asOfDate)
-    );
-    if (!result.success) {
-      return res.status(result.error?.status || 404).json(result.error);
-    }
-    return res.json(result);
-  });
-
-  // 2D: As-Of Historical Account Statement
-  app.get('/api/reports/statement-as-of', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const { accountCode, asOfDate } = req.query;
-    if (!accountCode || !asOfDate) {
-      return res.status(400).json({
-        type: 'https://api.an-erp.local/errors/missing-statement-params',
-        title: 'معاملات كشف الحساب غير مكتملة',
-        status: 400,
-        detail: 'رقم الحساب (accountCode) وتاريخ الاستعلام (asOfDate) مطلوبان.',
-      });
-    }
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const historyService = new HistoricalQueryService(storage);
-    const result = await historyService.getStatementAsOf(
-      tenantId,
-      String(accountCode),
-      String(asOfDate)
-    );
-    if (!result.success) {
-      return res.status(result.error?.status || 404).json(result.error);
-    }
-    return res.json(result);
-  });
-
-  // 2F: Dual-Control Master Items
-  app.post('/api/master-data/items', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const { item, createdBy, idempotencyKey } = req.body;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const dualControl = new DualControlService(storage);
-    const result = await dualControl.createMasterItem(
-      tenantId,
-      item,
-      createdBy || { id: userId || 'USR-001', fullName: 'المستخدم الحالي', role: 'accountant' },
-      idempotencyKey
-    );
-    if (!result.success) {
-      return res.status(result.error?.status || 400).json(result.error);
-    }
-    return res.status(201).json(result);
-  });
-
-  app.post('/api/master-data/items/:id/approve', requireAuth, requirePermission('ENTRY_APPROVE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const { approvedBy, idempotencyKey } = req.body;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const dualControl = new DualControlService(storage);
-    const result = await dualControl.approveMasterItem(
-      tenantId,
-      req.params.id,
-      approvedBy || { id: userId || 'USR-002', fullName: 'المدير المالي', role: 'financial_approver' },
-      idempotencyKey
-    );
-    if (!result.success) {
-      return res.status(result.error?.status || 403).json(result.error);
-    }
-    return res.json(result);
-  });
-
-  // 2F: Dual-Control Master Partners (Customer/Vendor)
-
-  app.get('/api/master-data/partners', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const type = (req.query.type as string) || undefined;
-      const result = await storage.listMasterPartners(tenantId, type as any);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/master-data/partners', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const { partner, createdBy, idempotencyKey } = req.body;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const dualControl = new DualControlService(storage);
-    const result = await dualControl.createMasterPartner(
-      tenantId,
-      partner,
-      createdBy || { id: userId || 'USR-001', fullName: 'المستخدم الحالي', role: 'accountant' },
-      idempotencyKey
-    );
-    if (!result.success) {
-      return res.status(result.error?.status || 400).json(result.error);
-    }
-    return res.status(201).json(result);
-  });
-
-  app.post('/api/master-data/partners/:id/approve', requireAuth, requirePermission('ENTRY_APPROVE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const { approvedBy, idempotencyKey } = req.body;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const dualControl = new DualControlService(storage);
-    const result = await dualControl.approveMasterPartner(
-      tenantId,
-      req.params.id,
-      approvedBy || { id: userId || 'USR-002', fullName: 'المدير المالي', role: 'financial_approver' },
-      idempotencyKey
-    );
-    if (!result.success) {
-      return res.status(result.error?.status || 403).json(result.error);
-    }
-    return res.json(result);
-  });
-
-  // 2E & 2G: SHA-256 Tamper-Evident Hash Chain Audit
-  app.get('/api/audit-chain', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const result = await storage.getAuditChain(tenantId);
-    if (!result.success) {
-      return res.status(result.error?.status || 500).json(result.error);
-    }
-    return res.json(result);
-  });
-
-  app.post('/api/audit-chain/verify', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const auditService = new AuditChainService(storage);
-    const result = await auditService.verifyIntegrity(tenantId);
-    if (!result.success) {
-      return res.status(result.error?.status || 500).json(result.error);
-    }
-    return res.json(result);
-  });
-
-  // 2H: Tenant Active Module Manifests
-  app.get('/api/tenant-modules', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
-    const tenantId = (req as any).authContext.tenantId;
-    const storage = getRequestStorage(req, res);
-    if (!storage) return;
-    const result = await storage.getTenantModules(tenantId);
-    if (!result.success) {
-      return res.status(result.error?.status || 500).json(result.error);
-    }
-    return res.json(result);
-  });
-
-  // Phase 2 Comprehensive Acceptance Battery Endpoint
-  app.get('/api/internal/phase2-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
-    const result = await runPhase2Battery();
-    return res.json(result);
-  });
-
-  // Phase 3 Comprehensive Acceptance Battery Endpoint
-  app.get('/api/internal/phase3-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
-    const result = await runPhase3Battery();
-    return res.json(result);
-  });
-
-  // 6. Internal Route: /internal/build-status (Protected audit view per section 1.3)
-  app.get('/api/internal/build-status', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
-    const runner = new Phase0TestRunner();
-    const report = await runner.runAll();
-    return res.json(report);
-  });
-
-  // Wave 7.5H & v7.3 Clause 18: Operational Health Dashboard (/internal/health)
-  app.get('/api/internal/health', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
-    const p95 = getP95Latency(latencySamples);
-    const mem = process.memoryUsage();
-    return res.json({
-      status: 'HEALTHY',
-      system: 'A.N ERP',
-      version: `v${APP_VERSION}`,
-      uptimeSeconds: Math.floor(process.uptime()),
-      timestamp: new Date().toISOString(),
-      observability: {
-        totalRequestsTracked: latencySamples.length,
-        p95LatencyMs: p95,
-        targetP95Ms: 150,
-        meetsPerformanceTarget: p95 <= 150,
-      },
-      memory: {
-        heapUsedMb: Math.round((mem.heapUsed / 1024 / 1024) * 100) / 100,
-        rssMb: Math.round((mem.rss / 1024 / 1024) * 100) / 100,
-      },
-      storage: {
-        primaryConfigured: !!process.env.DATABASE_URL,
-        currentPrimary: process.env.DATABASE_URL ? 'PostgreSQL' : 'InMemory (Dev)',
-      },
-    });
-  });
-
-  app.get('/api/internal/primary-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
-    const result = await executePrimaryBattery();
-    return res.json(result);
-  });
-
-  // Phase 1 Acceptance Battery Endpoint
-  app.get('/api/internal/phase1-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
-    const result = await runPhase1Battery();
-    return res.json(result);
-  });
-
-  // Phase 4.6 Foundation Hardening Acceptance Battery Endpoint
-  app.get('/api/internal/phase4_6-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
-    const result = await runPhase46Battery();
-    return res.json(result);
-  });
-
-  // ============================================================================
-  // PHASE 4: ACCOUNTING CORE (نظام المحاسبة الشامل وإدارة الدفاتر والقوائم المالية)
-  // ============================================================================
-
-  const getAccountingService = (req: Request, res: Response): AccountingService | null => {
-    const storage = getRequestStorage(req, res);
-    if (!storage) return null;
-    return new AccountingService(storage);
-  };
-
-  const requireIdempotencyKey = (req: Request, res: Response, actionNameAr: string): string | null => {
-    const key = req.headers['idempotency-key'] as string;
-    if (!key || !key.trim()) {
-      const problem: RFC7807Problem = {
-        type: 'https://api.an-erp.local/errors/missing-idempotency-key',
-        title: 'مفتاح الإدهنية مطلوب',
-        status: 400,
-        detail: `الترويسة Idempotency-Key إلزامية لتنفيذ ${actionNameAr} لضمان منع التكرار وحماية أرصدة الحسابات (البند 8.1 والبند 4.5F).`,
-      };
-      res.status(400).json(problem);
-      return null;
-    }
-    return key.trim();
-  };
-
-  function denyForbidden(res: Response, role: string | undefined, permission: string) {
-    return res.status(403).json({
-      type: 'https://api.an-erp.local/errors/forbidden',
-      title: 'صلاحيات غير كافية',
-      status: 403,
-      detail: `دور المستخدم (${role || 'غير محدد'}) لا يملك صلاحية تنفيذ هذه العملية (${permission}).`,
-    });
-  }
-
-  function expenseAccess(req: Request) {
-    const role = (req as any).authContext?.role as string | undefined;
-    const canViewAll = hasPermission(role, 'EXPENSE_APPROVE') || hasPermission(role, 'FINANCIAL_REPORTS');
-    const isSubmitter = hasPermission(role, 'EXPENSE_SUBMIT');
-    return { role, canViewAll, isSubmitter };
-  }
-
-  // Phase 18 (SCOPE-001): per-user warehouse scope
-  const SCOPE_EXEMPT_ROLES = new Set(['super_admin', 'admin', 'platform_admin', 'system_admin', 'auditor']);
-  async function getAllowedWarehouseIds(req: Request, storage: StoragePort): Promise<Set<string> | null> {
-    const cached = (req as any).__allowedWarehouses;
-    if (cached !== undefined) return cached;
-    const role = String((req as any).authContext?.role || '').toLowerCase();
-    if (SCOPE_EXEMPT_ROLES.has(role)) {
-      (req as any).__allowedWarehouses = null;
-      return null;
-    }
-    const tenantId = (req as any).authContext.tenantId;
-    const userId = (req as any).authContext.userId;
-    const res = await storage.listUserWarehouseAccess(tenantId, userId);
-    if (!res.success) {
-      (req as any).__allowedWarehouses = null;
-      return null;
-    }
-    const ids = res.data || [];
-    const allowed = ids.length === 0 ? null : new Set(ids);
-    (req as any).__allowedWarehouses = allowed;
-    return allowed;
-  }
-  async function assertWarehouseAllowed(req: Request, res: Response, storage: StoragePort, warehouseId: string | undefined | null): Promise<boolean> {
-    if (!warehouseId) {
-      res.status(400).json({ type: 'https://api.an-erp.local/errors/validation-failed', title: 'بيانات غير صالحة', status: 400, detail: 'معرّف المستودع مطلوب.' });
-      return false;
-    }
-    const allowed = await getAllowedWarehouseIds(req, storage);
-    if (allowed === null) return true;
-    if (!allowed.has(warehouseId)) {
-      const role = (req as any).authContext?.role as string | undefined;
-      denyForbidden(res, role, 'WAREHOUSE_SCOPE');
-      return false;
-    }
-    return true;
-  }
-
-  // 4A: دليل الحسابات (Chart of Accounts)
-  app.get('/api/accounting/accounts', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const accounts = await svc.listAccounts(tenantId);
-      return res.json({ success: true, data: accounts });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) || 'فشل جلب دليل الحسابات' });
-    }
-  });
-
-  app.post('/api/accounting/accounts', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const key = requireIdempotencyKey(req, res, 'حفظ الحساب المحاسبي');
-      if (!key) return;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const account = await svc.saveAccount(tenantId, req.body, key);
-      return res.json({ success: true, data: account, message: 'تم حفظ وتحديث الحساب بنجاح' });
-    } catch (err: any) {
-      return res.status(422).json({ success: false, error: publicErrorMessage(err) || 'فشل حفظ الحساب' });
-    }
-  });
-
-  app.patch('/api/accounting/accounts/:code/status', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const { code } = req.params;
-      const { isActive } = req.body;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const result = await svc.toggleAccountStatus(tenantId, code, isActive);
-      return res.json({ success: true, updated: result });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 4B: الفترات المحاسبية (Fiscal Periods)
-  app.get('/api/accounting/periods', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const periods = await svc.listFiscalPeriods(tenantId);
-      return res.json({ success: true, data: periods });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/accounting/periods/close', requireAuth, requirePermission('PERIOD_CLOSE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId;
-      const { periodId } = req.body;
-      const key = requireIdempotencyKey(req, res, 'إقفال الفترة المحاسبية');
-      if (!key) return;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const result = await svc.executePeriodClosingChecklist(tenantId, periodId, userId, key);
-      return res.json(result);
-    } catch (err: any) {
-      return res.status(err.status || 500).json({ success: false, error: (err.status && err.status < 500 && err.detail) ? err.detail : publicErrorMessage(err) });
-    }
-  });
-
-  
-  // ACC-ENTITY-CLOSE-1: legal entity books close (after period close)
-  app.get('/api/accounting/entity-close-status', requireAuth, requirePermission('PERIOD_CLOSE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const result = await storage.getEntityBooksState(tenantId);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json(result);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر جلب حالة إقفال الكيان', detail: e?.message });
-    }
-  });
-
-  app.post('/api/accounting/entity-close', requireAuth, requirePermission('PERIOD_CLOSE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'user';
-      const periodId = String(req.body?.periodId || '').trim();
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const current = await storage.getEntityBooksState(tenantId);
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const periods = await svc.listFiscalPeriods(tenantId);
-      const period = periods.find((p: any) => p.id === periodId || p.code === periodId);
-      const gate = assertCanCloseEntity({ current: current.success ? current.data : null, period: period || null });
-      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
-      const state = buildClosedState(tenantId, period, userId);
-      const key = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || `entity-close-${tenantId}-${periodId}`);
-      const saved = await storage.saveEntityBooksState(state, key);
-      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
-      return res.json(saved);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر إقفال الكيان', detail: e?.message });
-    }
-  });
-
-  app.post('/api/accounting/entity-reopen', requireAuth, requirePermission('PERIOD_CLOSE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const reason = String(req.body?.reason || '');
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const current = await storage.getEntityBooksState(tenantId);
-      const gate = assertCanReopenEntity({ current: current.success ? current.data : null, reason });
-      if (!gate.ok) return res.status(gate.status).json({ type: gate.type, title: gate.title, status: gate.status, detail: gate.detail });
-      const state = buildReopenedState(tenantId, reason);
-      const key = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || `entity-reopen-${tenantId}-${Date.now()}`);
-      const saved = await storage.saveEntityBooksState(state, key);
-      if (!saved.success) return res.status(saved.error?.status || 500).json(saved.error);
-      return res.json(saved);
-    } catch (e: any) {
-      return res.status(500).json({ status: 500, title: 'تعذر إعادة فتح الكيان', detail: e?.message });
-    }
-  });
-
-app.post('/api/accounting/periods/reopen', requireAuth, requirePermission('PERIOD_CLOSE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId;
-      const { periodId, reason } = req.body;
-      const key = requireIdempotencyKey(req, res, 'إعادة فتح الفترة المحاسبية');
-      if (!key) return;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const result = await svc.reopenPeriod(tenantId, periodId, reason, userId, key);
-      return res.json({ success: true, reopened: result, message: 'تم إعادة فتح الفترة المحاسبية وتوثيق ذلك في سلسلة التدقيق.' });
-    } catch (err: any) {
-      return res.status(400).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 4B: القيود اليومية (Manual Journal Entries with PostingEngine)
-  app.get('/api/accounting/journal-entries', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const primary: any = getRequestStorage(req, res);
-      if (!primary) return;
-      let entries: any[] = [];
-      if (typeof primary.query === 'function') {
-        const resDb = await primary.query(
-          `SELECT e.*, 
-                  json_agg(json_build_object('id', l.id, 'accountCode', l.account_code, 'debit', l.debit, 'credit', l.credit, 'description', l.description)) as lines
-           FROM an_journal_entries e
-           LEFT JOIN an_journal_lines l ON e.id = l.entry_id AND e.tenant_id = l.tenant_id
-           WHERE e.tenant_id = $1
-           GROUP BY e.tenant_id, e.id
-           ORDER BY e.date DESC, e.posted_at DESC LIMIT 50`,
-          [tenantId]
-        );
-        entries = (resDb.rows || []).map((r: any) => ({
-          id: r.id,
-          code: r.entry_number,
-          date: r.date,
-          description: r.description,
-          totalAmount: Number(r.total_debit),
-          status: r.is_posted ? 'POSTED' : 'DRAFT',
-          lines: r.lines || [],
-        }));
+      if (!user) {
+        return res.status(authResult.statusCode || 401).json({ success: false, message: authResult.message || "Unauthorized" });
       }
-      return res.json({ success: true, data: entries });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
 
-  app.post('/api/accounting/journal-entries', requireAuth, requirePermission('ENTRY_POST'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId;
-      const key = requireIdempotencyKey(req, res, 'ترحيل القيد المحاسبي');
-      if (!key) return;
-      const payload = req.body;
+      const uid = String(user.id || "").trim();
+      if (!uid) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-      if (!payload.id || !payload.code) {
+      currentPassword = String(currentPassword ?? "").trim();
+      if (typeof newPassword === 'string') {
+        newPassword = newPassword.trim();
+      }
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ success: false, message: "يرجى إدخال كلمة المرور الحالية وكلمة المرور الجديدة / Both current and new password are required." });
+      }
+
+      if (typeof newPassword !== 'string' || newPassword.length < 12 || !/[a-zA-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
         return res.status(400).json({
-          type: 'https://api.an-erp.local/errors/invalid-payload',
-          title: 'بيانات القيد غير مكتملة',
-          status: 400,
-          detail: 'معرف القيد ورمز القيد مطلوبان صراحة لترحيل القيد المحاسبي.',
+          success: false,
+          message: "كلمة المرور الجديدة يجب أن تتكون من 12 حرف على الأقل وتحتوي على حروف وأرقام / New password must be at least 12 characters and contain letters and numbers."
         });
       }
 
-      // Phase 9 (VAL-001): validate date and every line BEFORE the service is called
-      let entryDate: string = new Date().toISOString().split('T')[0];
-      if (payload.date !== undefined && payload.date !== null && payload.date !== '') {
-        const dateCheck = parseIsoDate(payload.date, 'تاريخ القيد (date)');
-        if (!dateCheck.ok) return res.status(400).json(validationError(dateCheck.detail));
-        entryDate = dateCheck.value;
-      }
-      if (!Array.isArray(payload.lines) || payload.lines.length === 0) {
-        return res.status(400).json(validationError('أسطر القيد (lines) مطلوبة ويجب أن تحتوي على سطر واحد على الأقل.'));
-      }
-      const checkedAmounts: Array<{ debit: number; credit: number }> = [];
-      for (let i = 0; i < payload.lines.length; i++) {
-        const l = payload.lines[i];
-        if (l === null || typeof l !== 'object') {
-          return res.status(400).json(validationError(`السطر رقم ${i + 1} من القيد (lines[${i}]) غير صالح.`));
+      // Verify current password against vault
+      let credDoc = await adminDb.collection("user_credentials").doc(uid).get();
+      const emailLower = String(user.email || '').toLowerCase().trim();
+      if (!credDoc.exists && emailLower) {
+        const credEmailDoc = await adminDb.collection("user_credentials").doc(emailLower).get();
+        if (credEmailDoc.exists) {
+          credDoc = credEmailDoc;
         }
-        const amt = (v: unknown, label: string): ParseResult<number> =>
-          v === undefined || v === null || v === '' ? { ok: true, value: 0 } : parseNonNegativeMoney(v, label);
-        const d = amt(l.debit, `المدين (debit) في السطر رقم ${i + 1}`);
-        if (!d.ok) return res.status(400).json(validationError(d.detail));
-        const c = amt(l.credit, `الدائن (credit) في السطر رقم ${i + 1}`);
-        if (!c.ok) return res.status(400).json(validationError(c.detail));
-        if (d.value > 0 && c.value > 0) {
-          return res.status(400).json(validationError(`السطر رقم ${i + 1} يحتوي على مدين ودائن معًا؛ يجب أن يكون أحدهما صفرًا (debit / credit).`));
-        }
-        checkedAmounts.push({ debit: d.value, credit: c.value });
       }
 
-      const entryId = payload.id;
-      const entry: JournalEntry = {
-        id: entryId,
-        code: payload.code,
-        tenantId,
-        date: entryDate,
-        type: payload.type || 'قيد يدوي عام',
-        description: payload.description,
-        totalAmount: checkedAmounts.reduce((s: number, a) => s + a.debit, 0),
-        status: 'APPROVED',
-        createdBy: userId,
-        lines: payload.lines.map((l: any, i: number) => ({
-          id: `${entryId}-L${i + 1}`,
-          accountCode: l.accountCode,
-          debit: checkedAmounts[i].debit,
-          credit: checkedAmounts[i].credit,
-          description: l.description || payload.description,
-          costCenter: l.costCenter,
-        })),
-      };
+      let storedPasswordHash = '';
+      let salt = user.salt || emailLower;
+      let kdf = 'legacy';
+      let pepperVersion = 2;
 
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const posted = await svc.postJournalEntryWithInvariants(tenantId, entry, key);
-      return res.json({ success: true, data: posted, message: 'تم ترحيل القيد المحاسبي ذرياً بنجاح' });
-    } catch (err: any) {
-      const status = err.status || 422;
-      return res.status(status).json(err);
-    }
-  });
-
-  // 4C: الأبعاد المحاسبية (Dimensions)
-  app.get('/api/accounting/dimensions', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const type = req.query.type as any;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const dimensions = await svc.listDimensions(tenantId, type);
-      return res.json({ success: true, data: dimensions });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/accounting/dimensions', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const dim = await svc.saveDimension(tenantId, req.body);
-      return res.json({ success: true, data: dim });
-    } catch (err: any) {
-      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.get('/api/accounting/dimensions/analytics', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const type = (req.query.type as any) || 'COST_CENTER';
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const report = await svc.getDimensionAnalyticalReport(tenantId, type);
-      return res.json({ success: true, data: report });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 4D: الأصناف والوحدات (Items & Units)
-  app.get('/api/accounting/units', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const units = await svc.listUnits(tenantId);
-      return res.json({ success: true, data: units });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.get('/api/accounting/items', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const items = await svc.listItems(tenantId);
-      return res.json({ success: true, data: items });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/accounting/items', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const saved = await svc.saveItem(tenantId, req.body);
-      return res.json({ success: true, data: saved, message: 'تم حفظ الصنف المحاسبي بنجاح' });
-    } catch (err: any) {
-      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 4E: الأرصدة الافتتاحية (Opening Balances)
-  app.post('/api/accounting/opening-balances', requireAuth, requirePermission('ENTRY_POST'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId;
-      const key = requireIdempotencyKey(req, res, 'ترحيل الأرصدة الافتتاحية');
-      if (!key) return;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const entry = await svc.postOpeningBalanceEntry(tenantId, req.body.lines, key, userId);
-      return res.json({ success: true, data: entry, message: 'تم ترحيل الأرصدة الافتتاحية بنجاح' });
-    } catch (err: any) {
-      return res.status(err.status || 422).json(err);
-    }
-  });
-
-  // 4F: القوائم المالية الثلاث 🔒 (Three Financial Statements)
-  app.get('/api/accounting/reports/trial-balance', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const report = await svc.getTrialBalance(tenantId, req.query.asOfDate as string);
-      return res.json({ success: true, data: report });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.get('/api/accounting/reports/income-statement', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const periodId = req.query.periodId as string;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const report = await svc.getIncomeStatement(tenantId, periodId);
-      return res.json({ success: true, data: report });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.get('/api/accounting/reports/balance-sheet', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const periodId = req.query.periodId as string;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const report = await svc.getBalanceSheet(tenantId, periodId);
-      return res.json({ success: true, data: report });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.get('/api/accounting/reports/cash-flow', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const periodId = req.query.periodId as string;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const report = await svc.getCashFlowStatement(tenantId, periodId);
-      return res.json({ success: true, data: report });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 4G: الاستيراد القياسي (Import)
-  app.post('/api/accounting/import/validate', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const accounts = await svc.listAccounts(tenantId);
-      const validation = svc.validateImportData(tenantId, req.body.rows || [], accounts);
-      return res.json(validation);
-    } catch (err: any) {
-      return res.status(500).json({ isValid: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/accounting/import/execute', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId;
-      const key = requireIdempotencyKey(req, res, 'استيراد وترحيل القيود');
-      if (!key) return;
-      const { entryCode, description, date, rows } = req.body;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const entry = await svc.executeStandardImport(tenantId, entryCode, description, date, rows, userId, key);
-      return res.json({ success: true, data: entry, message: 'تم استيراد وترحيل القيود بنجاح' });
-    } catch (err: any) {
-      return res.status(err.status || 422).json(err);
-    }
-  });
-
-  // 4H: الموازنات والقيود الدورية (Budgets & Recurring)
-  app.get('/api/accounting/budgets', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const year = req.query.year ? Number(req.query.year) : 2026;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const budgets = await svc.listBudgets(tenantId, year);
-      return res.json({ success: true, data: budgets });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/accounting/budgets', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const saved = await svc.saveBudget(tenantId, req.body);
-      return res.json({ success: true, data: saved, message: 'تم حفظ الموازنة التقديرية بنجاح' });
-    } catch (err: any) {
-      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.get('/api/accounting/recurring', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const entries = await svc.listRecurringEntries(tenantId);
-      return res.json({ success: true, data: entries });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/accounting/recurring/:id/run', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId;
-      const key = requireIdempotencyKey(req, res, 'توليد وترحيل القيد الدوري');
-      if (!key) return;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const entry = await svc.generateRecurringEntry(tenantId, req.params.id, userId, key);
-      return res.json({ success: true, data: entry, message: 'تم توليد وترحيل القيد الدوري بنجاح' });
-    } catch (err: any) {
-      return res.status(422).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 4I: هجرة من أنظمة أخرى (Legacy Migration)
-  app.get('/api/accounting/migration/templates', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), (req: Request, res: Response) => {
-    const system = ((req.query.system as string) || 'ORACLE').toUpperCase() as any;
-    const svc = getAccountingService(req, res);
-    if (!svc) return;
-    const template = svc.generateMappingTemplate(system);
-    return res.json({ success: true, data: template });
-  });
-
-  // 4J: فاحص التوازن المستمر (Continuous Trial Balance Checker)
-  app.get('/api/accounting/balance-checker/run', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const simulate = req.query.simulate === 'true';
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const log = await svc.runContinuousBalanceCheck(tenantId, simulate);
-      return res.json({ success: true, data: log });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.get('/api/accounting/balance-checker/history', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const logs = await svc.getBalanceCheckHistory(tenantId);
-      return res.json({ success: true, data: logs });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 4K: اختبار الخصائص العشوائي على PostingEngine ضد PostgreSQL
-  app.post('/api/accounting/fuzz-test', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const fz = parseFuzzIterations(req.body?.iterations);
-      if (!fz.ok) return res.status(400).json({ success: false, error: `iterations يجب أن يكون عددًا صحيحًا بين 1 و${fz.max}` });
-      const iterations = fz.value;
-      const svc = getAccountingService(req, res);
-      if (!svc) return;
-      const results = await svc.runFuzzTestingBattery(tenantId, iterations);
-      return res.json({ success: true, data: results });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // ============================================================================
-  // PHASE 5: CASH CUSTODY MODULE (موديول العهدة النقدية - موديول 1 من 15)
-  // ============================================================================
-
-  const getCustodyService = (req: Request, res: Response): CashCustodyService | null => {
-    const storage = getRequestStorage(req, res);
-    if (!storage) return null;
-    return new CashCustodyService(storage);
-  };
-
-  // Phase 5 Acceptance Battery Endpoint (Internal / Auditor)
-  app.get('/api/internal/phase5-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
-    const result = await runPhase5Battery();
-    return res.json(result);
-  });
-
-  // 5A: عرض قائمة العهد النقدية للمنشأة
-  app.get('/api/custody/custodies', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const filter = {
-        status: req.query.status as string,
-        employeeId: req.query.employeeId as string,
-      };
-      const result = await storage.listCashCustodies(tenantId, filter);
-      if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 5A: جلب تفاصيل عهدة واحدة
-  app.get('/api/custody/custodies/:id', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const result = await storage.getCashCustody(tenantId, req.params.id);
-      if (!result.success) return res.status(500).json(result.error);
-      if (!result.data) return res.status(404).json({ error: 'العهدة غير موجودة' });
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 5A: فتح وتخصيص عهدة نقدية جديدة لموظف/فرع
-  app.post('/api/custody/custodies', requireAuth, requirePermission('CUSTODY_OPEN'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-fin';
-      const key = requireIdempotencyKey(req, res, 'فتح عهدة نقدية');
-      if (!key) return;
-
-      const svc = getCustodyService(req, res);
-      if (!svc) return;
-
-      const payload = {
-        ...req.body,
-        openedBy: userId,
-        openedByName: req.body.openedByName || 'المعتمد المالي',
-        idempotencyKey: key,
-      };
-
-      const result = await svc.openCustody(tenantId, payload);
-      if (!result.success) {
-        return res.status(result.error?.status || 400).json(result.error);
+      if (credDoc.exists) {
+        const credData = credDoc.data() || {};
+        storedPasswordHash = credData.passwordHash || credData.password || '';
+        salt = credData.salt || salt;
+        kdf = credData.kdf || 'legacy';
+        pepperVersion = typeof credData.pepper_version === 'number' ? credData.pepper_version : 2;
+      } else {
+        storedPasswordHash = user.password || '';
+        pepperVersion = typeof user.pepper_version === 'number' ? user.pepper_version : 1;
       }
 
-      return res.json({ success: true, data: result.data, message: 'تم فتح وتخصيص العهدة النقدية بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
+      // Perform Password Comparisons across KDF iterations using stored pepper_version
+      const pbkdf2Hash = hashPasswordPBKDF2_210k(currentPassword, salt, pepperVersion);
+      const pbkdf2HashAlt = hashPasswordPBKDF2_210k(currentPassword, salt, pepperVersion === 2 ? 1 : 2);
+      const hash10k = hashPassword(currentPassword, salt, pepperVersion);
+      const hash1k = legacyStretchedHashPassword1000(currentPassword, salt, pepperVersion); // TODO(remove-after-2027-02-01)
+      const hashSinglePass = legacySinglePassHashPassword(currentPassword, salt, pepperVersion); // TODO(remove-after-2027-02-01)
+      const hashOldEmailSalt = legacyHashPassword(currentPassword, emailLower); // TODO(remove-after-2027-02-01)
+      const hashLegacyUnsalted = legacyHashPassword(currentPassword); // TODO(remove-after-2027-02-01)
 
-  // 5B: تسجيل مصروف من العهدة النقدية
-  app.post('/api/custody/expenses', requireAuth, requirePermission('CUSTODY_EXPENSE_RECORD'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-emp';
-      const key = requireIdempotencyKey(req, res, 'تسجيل مصروف من العهدة');
-      if (!key) return;
+      const isPBKDF2Match = storedPasswordHash !== '' && (storedPasswordHash === pbkdf2Hash || storedPasswordHash === pbkdf2HashAlt);
+      const is10kMatch = storedPasswordHash !== '' && storedPasswordHash === hash10k;
+      const is1kMatch = storedPasswordHash !== '' && storedPasswordHash === hash1k; // TODO(remove-after-2027-02-01)
+      const isSinglePassMatch = storedPasswordHash !== '' && storedPasswordHash === hashSinglePass; // TODO(remove-after-2027-02-01)
+      const isOldEmailSaltMatch = storedPasswordHash !== '' && storedPasswordHash === hashOldEmailSalt; // TODO(remove-after-2027-02-01)
+      const isLegacyUnsaltedMatch = storedPasswordHash !== '' && storedPasswordHash === hashLegacyUnsalted; // TODO(remove-after-2027-02-01)
 
-      const svc = getCustodyService(req, res);
-      if (!svc) return;
+      const isMatch = isPBKDF2Match || is10kMatch || is1kMatch || isSinglePassMatch || isOldEmailSaltMatch || isLegacyUnsaltedMatch;
 
-      const payload = {
-        ...req.body,
-        recordedBy: userId,
-        recordedByName: req.body.recordedByName || 'الموظف المسؤول',
-        idempotencyKey: key,
-      };
-
-      const result = await svc.recordExpense(tenantId, payload);
-      if (!result.success) {
-        return res.status(result.error?.status || 400).json(result.error);
+      if (!isMatch) {
+        return res.status(400).json({ success: false, message: "كلمة المرور الحالية غير صحيحة / Incorrect current password." });
       }
 
-      return res.json({ success: true, data: result.data, message: 'تم تسجيل الصرف وخصم المبلغ من رصيد العهدة بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 5B: جلب قائمة مصروفات العهدة
-  app.get('/api/custody/expenses', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const custodyId = req.query.custodyId as string;
-      const result = await storage.listCustodyTransactions(tenantId, custodyId);
-      if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 5C: اعتماد وتسوية العهدة الدورية وتوليد قيد الترحيل (PostingEngine + SoD)
-  app.post('/api/custody/settlements', requireAuth, requirePermission('CUSTODY_SETTLE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-auditor';
-      const key = requireIdempotencyKey(req, res, 'تسوية دورية للعهدة النقدية');
-      if (!key) return;
-
-      const svc = getCustodyService(req, res);
-      if (!svc) return;
-
-      const payload = {
-        ...req.body,
-        settledBy: userId,
-        settledByName: req.body.settledByName || 'المدقق المالي المعتمد',
-        idempotencyKey: key,
-      };
-
-      const result = await svc.settleCustody(tenantId, payload);
-      if (!result.success) {
-        return res.status(result.error?.status || 400).json(result.error);
-      }
-
-      return res.json({
-        success: true,
-        data: result.data,
-        message: 'تم ترحيل قيد تسوية العهدة وتجديد الرصيد عبر محرك الترحيل بنجاح',
-      });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 5C: قائمة تسويات العهدة
-  app.get('/api/custody/settlements', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const custodyId = req.query.custodyId as string;
-      const result = await storage.listCustodySettlements(tenantId, custodyId);
-      if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 5D: فحص إخلاء طرف الموظف للعهد النقدية (HR Clearance Check)
-  app.get('/api/custody/hr-clearance/:employeeId', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getCustodyService(req, res);
-      if (!svc) return;
-      const clearance = await svc.checkEmployeeClearance(tenantId, req.params.employeeId);
-      return res.json({ success: true, data: clearance });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 5D: تصفية العهدة وإقفالها
-  app.post('/api/custody/custodies/:id/liquidate', requireAuth, requirePermission('CUSTODY_SETTLE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-auditor';
-      const key = requireIdempotencyKey(req, res, 'تصفية وإقفال العهدة');
-      if (!key) return;
-
-      const svc = getCustodyService(req, res);
-      if (!svc) return;
-
-      const result = await svc.liquidateCustody(
-        tenantId,
-        req.params.id,
-        userId,
-        req.body.liquidatorName || 'المدقق المالي',
-        key
-      );
-
-      if (!result.success) {
-        return res.status(result.error?.status || 400).json(result.error);
-      }
-
-      return res.json({ success: true, data: result.data, message: 'تم إقفال وتصفية العهدة النقدية نهائياً' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 5D: تحويل مسؤولية العهدة لموظف آخر
-  app.post('/api/custody/custodies/:id/transfer', requireAuth, requirePermission('CUSTODY_OPEN'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-manager';
-      const key = requireIdempotencyKey(req, res, 'تحويل مسؤولية العهدة');
-      if (!key) return;
-
-      const svc = getCustodyService(req, res);
-      if (!svc) return;
-
-      const { newEmployeeId, newEmployeeName } = req.body;
-      if (!newEmployeeId || !newEmployeeName) {
-        return res.status(400).json({ error: 'معرف واسم الموظف البديل مطلوبان' });
-      }
-
-      const result = await svc.transferCustody(
-        tenantId,
-        req.params.id,
-        newEmployeeId,
-        newEmployeeName,
-        userId,
-        req.body.transferredByName || 'مدير الحسابات',
-        key
-      );
-
-      if (!result.success) {
-        return res.status(result.error?.status || 400).json(result.error);
-      }
-
-      return res.json({ success: true, data: result.data, message: 'تم تحويل مسؤولية العهدة النقدية بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // ============================================================================
-  // PHASE 6: EXPENSES MODULE (موديول المصروفات - موديول 2 من 15)
-  // ============================================================================
-
-  const getExpenseService = (req: Request, res: Response): ExpenseService | null => {
-    const storage = getRequestStorage(req, res);
-    if (!storage) return null;
-    const pe = new PostingEngine(storage);
-    const ne = new NumberingEngine(storage);
-    const ae = new ApprovalEngine(storage);
-    return new ExpenseService(storage, pe, ne, ae);
-  };
-
-  // Phase 6 Acceptance Battery Endpoint (Internal / Auditor)
-  app.get('/api/internal/phase6-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
-    const result = await runPhase6Battery();
-    return res.json(result);
-  });
-
-  // 6A: عرض فئات المصروفات
-  app.get('/api/expenses/categories', requireAuth, requirePermission('EXPENSE_SUBMIT'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const result = await storage.listExpenseCategories(tenantId);
-      if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 6A: حفظ / إنشاء فئة مصروفات
-  app.post('/api/expenses/categories', requireAuth, requirePermission('EXPENSE_SUBMIT'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const key = requireIdempotencyKey(req, res, 'إنشاء فئة مصروفات');
-      if (!key) return;
-
-      const category = {
-        ...req.body,
-        id: req.body.id || `cat-${Date.now()}`,
-        tenantId,
-        companyId: tenantId,
-        createdAt: new Date().toISOString(),
-      };
-      const result = await storage.saveExpenseCategory(tenantId, category, key);
-      if (!result.success) return res.status(400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 6A: استعلام طلبات الصرف مع الفلترة
-  app.get('/api/expenses/requests', requireAuth, requirePermission('EXPENSE_SUBMIT'), async (req: Request, res: Response) => {
-    try {
-      const { role, canViewAll, isSubmitter } = expenseAccess(req);
-      if (!canViewAll && !isSubmitter) {
-        return denyForbidden(res, role, 'EXPENSE_SUBMIT');
-      }
-
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const filter = {
-        status: req.query.status as string,
-        employeeId: req.query.employeeId as string,
-        department: req.query.department as string,
-      };
-      const result = await storage.listExpenseRequests(tenantId, filter);
-      if (!result.success) return res.status(500).json(result.error);
-
-      let items = result.data || [];
-      if (!canViewAll) {
-        const userId = (req as any).authContext?.userId;
-        items = items.filter((x: any) => x.submittedBy === userId);
-      }
-      return res.json({ success: true, data: items });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 6A: تفاصيل طلب صرف واحد مع البنود والمرفقات
-  app.get('/api/expenses/requests/:id', requireAuth, requirePermission('EXPENSE_SUBMIT'), async (req: Request, res: Response) => {
-    try {
-      const { role, canViewAll, isSubmitter } = expenseAccess(req);
-      if (!canViewAll && !isSubmitter) {
-        return denyForbidden(res, role, 'EXPENSE_SUBMIT');
-      }
-
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const result = await storage.getExpenseRequest(tenantId, req.params.id);
-      if (!result.success) return res.status(500).json(result.error);
-      if (!result.data) return res.status(404).json({ error: 'طلب المصروفات غير موجود' });
-
-      const submittedBy = (result.data as any).request?.submittedBy || (result.data as any).submittedBy;
-      if (!canViewAll && submittedBy !== (req as any).authContext?.userId) {
-        return res.status(404).json({ error: 'طلب المصروفات غير موجود' });
-      }
-
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 6A: تقديم طلب صرف جديد
-  app.post('/api/expenses/requests', requireAuth, requirePermission('EXPENSE_SUBMIT'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-emp';
-      const key = requireIdempotencyKey(req, res, 'تقديم طلب صرف');
-      if (!key) return;
-
-      const svc = getExpenseService(req, res);
-      if (!svc) return;
-
-      const payload = {
-        ...req.body,
-        submittedBy: userId,
-        submittedByName: req.body.submittedByName || 'الموظف مقدم الطلب',
-        idempotencyKey: key,
-      };
-
-      const result = await svc.submitExpenseRequest(tenantId, payload);
-      if (!result.success) {
-        return res.status(result.error?.status || 400).json(result.error);
-      }
-
-      return res.json({
-        success: true,
-        data: result.data,
-        message: 'تم رفع طلب المصروفات وبدء مسار الاعتماد بنجاح',
-      });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 6B: اعتماد المستوى الأول (L1 - المدير المباشر)
-  app.post('/api/expenses/requests/:id/approve-l1', requireAuth, requirePermission('EXPENSE_APPROVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-manager';
-      const key = requireIdempotencyKey(req, res, 'اعتماد طلب صرف مستوى أول');
-      if (!key) return;
-
-      const svc = getExpenseService(req, res);
-      if (!svc) return;
-
-      const result = await svc.approveL1(tenantId, {
-        requestId: req.params.id,
-        approverId: userId,
-        approverName: req.body.approverName || 'المدير المباشر',
-        comment: req.body.comment,
-        idempotencyKey: key,
-      });
-
-      if (!result.success) {
-        return res.status(result.error?.status || 400).json(result.error);
-      }
-
-      return res.json({
-        success: true,
-        data: result.data,
-        message: result.data.status === 'POSTED'
-          ? 'تم اعتماد وترحيل طلب المصروفات آلياً بنجاح'
-          : 'تم اعتماد المستوى الأول بنجاح وتصعيد الطلب للمدير المالي (L2)',
-      });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 6B: اعتماد المستوى الثاني (L2 - المدير المالي)
-  app.post('/api/expenses/requests/:id/approve-l2', requireAuth, requirePermission('EXPENSE_APPROVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-cfo';
-      const key = requireIdempotencyKey(req, res, 'اعتماد طلب صرف نهائي');
-      if (!key) return;
-
-      const svc = getExpenseService(req, res);
-      if (!svc) return;
-
-      const result = await svc.approveL2(tenantId, {
-        requestId: req.params.id,
-        approverId: userId,
-        approverName: req.body.approverName || 'المدير المالي',
-        comment: req.body.comment,
-        disbursementAccountCode: req.body.disbursementAccountCode,
-        idempotencyKey: key,
-      });
-
-      if (!result.success) {
-        return res.status(result.error?.status || 400).json(result.error);
-      }
-
-      return res.json({
-        success: true,
-        data: result.data,
-        message: 'تم الاعتماد النهائي وترحيل القيد المحاسبي المتوازن لطلب المصروفات بنجاح',
-      });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 6B: رفض طلب الصرف
-  app.post('/api/expenses/requests/:id/reject', requireAuth, requirePermission('EXPENSE_APPROVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-reviewer';
-      const key = requireIdempotencyKey(req, res, 'رفض طلب صرف');
-      if (!key) return;
-
-      const svc = getExpenseService(req, res);
-      if (!svc) return;
-
-      const result = await svc.rejectExpenseRequest(tenantId, {
-        requestId: req.params.id,
-        rejectedBy: userId,
-        rejectedByName: req.body.rejectedByName || 'المسؤول',
-        reasonAr: req.body.reasonAr || 'رفض الطلب لعدم استيفاء الشروط',
-        idempotencyKey: key,
-      });
-
-      if (!result.success) {
-        return res.status(result.error?.status || 400).json(result.error);
-      }
-
-      return res.json({
-        success: true,
-        data: result.data,
-        message: 'تم رفض طلب المصروفات وتحديث الحالة بنجاح',
-      });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // ============================================================================
-  // PHASE 7: WAREHOUSES & INVENTORY MODULE (موديول المخازن والمخزون - موديول 3 من 15)
-  // ============================================================================
-
-  const getPurchasingService = (req: Request, res: Response): PurchasingService | null => {
-    const storage = getRequestStorage(req, res);
-    if (!storage) return null;
-    const pe = new PostingEngine(storage);
-    const ne = new NumberingEngine(storage);
-    const inv = new InventoryService(storage, pe, ne);
-    const appr = new ApprovalEngine(storage);
-    return new PurchasingService(storage, appr, ne, inv);
-  };
-
-  const getInventoryService = (req: Request, res: Response): InventoryService | null => {
-    const storage = getRequestStorage(req, res);
-    if (!storage) return null;
-    const pe = new PostingEngine(storage);
-    const ne = new NumberingEngine(storage);
-    return new InventoryService(storage, pe, ne);
-  };
-
-  // F3a (SI-7): "why was this entry/treatment produced?" — read-only, tenant-scoped via getRequestStorage.
-  app.get('/api/standards/explain/journal/:entryId', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const out = await new RuleExplanationService(storage).explainJournal((req as any).authContext.tenantId, String(req.params.entryId));
-      return res.status(out.found ? 200 : 404).json({ success: out.found, data: out });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.get('/api/standards/explain/decision/:id', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const out = await new RuleExplanationService(storage).explainDecision((req as any).authContext.tenantId, String(req.params.id));
-      return res.status(out.found ? 200 : 404).json({ success: out.found, data: out });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.get('/api/standards/decisions', requireAuth, requirePermission('AUDIT_LOG_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const q = req.query as Record<string, string | undefined>;
-      const limit = Math.min(Math.max(parseInt(q.limit || '50', 10) || 50, 1), 200);
-      const result = await new StandardsDecisionService(storage).findDecisions((req as any).authContext.tenantId, { eventType: q.eventType, eventId: q.eventId, journalEntryId: q.journalEntryId, status: q.status, limit });
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-
-  // Phase 7 Acceptance Battery Endpoint (Internal / Auditor)
-  app.get('/api/internal/phase7-battery', requireDeveloperOrAuditor, async (req: Request, res: Response) => {
-    const result = await runPhase7Battery();
-    return res.json(result);
-  });
-
-  // 7A: Warehouses List
-  
-  // Phase 18 (SCOPE-001): manage user warehouse access
-  app.get('/api/inventory/warehouse-access/:userId', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const result = await storage.listUserWarehouseAccess(tenantId, req.params.userId);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-  app.put('/api/inventory/warehouse-access/:userId', requireAuth, requirePermission('USER_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const actorId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'تحديث نطاق المستودعات');
-      if (!key) return;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const warehouseIds = Array.isArray(req.body?.warehouseIds) ? req.body.warehouseIds
-        : (Array.isArray(req.body?.warehouse_ids) ? req.body.warehouse_ids : null);
-      if (!Array.isArray(warehouseIds)) {
-        return res.status(400).json({ type: 'https://api.an-erp.local/errors/validation-failed', title: 'بيانات غير صالحة', status: 400, detail: 'warehouseIds يجب أن يكون مصفوفة.' });
-      }
-      if (warehouseIds.length > 200) {
-        return res.status(400).json({ type: 'https://api.an-erp.local/errors/validation-failed', title: 'بيانات غير صالحة', status: 400, detail: 'الحد الأقصى 200 مستودعًا.' });
-      }
-      const result = await storage.setUserWarehouseAccess(tenantId, req.params.userId, warehouseIds.map(String), actorId, key);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
+      // Update Firebase Auth user password
       try {
-        await storage.appendSystemChangeLog({
-          id: `scl-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          actor: actorId,
-          changeType: 'SECURITY',
-          module: 'WAREHOUSE_SCOPE',
-          entitiesAffected: [req.params.userId],
-          summaryAr: `تحديث نطاق مستودعات المستخدم (${(result.data || []).length} مستودع)`,
-          afterState: { warehouseIds: result.data },
-          version: 'phase-18',
+        await getAdminAuth(adminApp).updateUser(uid, { password: newPassword });
+      } catch (authErr: any) {
+        console.warn("Firebase Auth password update failed (non-blocking if local user):", authErr?.message);
+      }
+
+      // Re-hash new password with PBKDF2 210,000 iterations & vault it
+      const newSalt = crypto.randomUUID();
+      const newPbkdf2Hash = hashPasswordPBKDF2_210k(newPassword, newSalt, 2);
+      const updatedCredPayload = {
+        id: uid,
+        company_id: user.company_id || 'platform',
+        email: emailLower,
+        passwordHash: newPbkdf2Hash,
+        password: newPbkdf2Hash,
+        salt: newSalt,
+        kdf: 'sha256_pbkdf2_210k',
+        pepper_version: 2,
+        is_temporary: false,
+        updated_at: new Date().toISOString()
+      };
+      await adminDb.collection("user_credentials").doc(uid).set(updatedCredPayload, { merge: true });
+      if (emailLower) {
+        await adminDb.collection("user_credentials").doc(emailLower).set(updatedCredPayload, { merge: true });
+      }
+
+      // Update users collection document: set must_change_password = false & strip plaintext password/salt
+      await adminDb.collection("users").doc(uid).update({
+        must_change_password: false,
+        password: FieldValue.delete(),
+        salt: FieldValue.delete(),
+        updated_at: new Date().toISOString()
+      });
+
+      const updatedDoc = await adminDb.collection("users").doc(uid).get();
+      const updatedUserData = updatedDoc.data() || {};
+      const { password: _, salt: __, ...publicUser } = updatedUserData;
+      publicUser.id = uid;
+
+      // Generate fresh customToken for the targeted user
+      let customToken: string | null = null;
+      try {
+        customToken = await getAdminAuth(adminApp).createCustomToken(uid);
+      } catch (tokenErr) {
+        console.warn("Could not create custom token on change-password:", tokenErr);
+      }
+
+      // If there was a mismatched session (e.g. old admin cookie), clear it so the browser does not stay attached to the old user
+      if (isMismatchedSession) {
+        res.clearCookie('session', { httpOnly: true, secure: true, sameSite: 'strict', path: '/' });
+        res.clearCookie('session', { path: '/' });
+      }
+
+      return res.json({
+        success: true,
+        message: "تم تغيير كلمة المرور بنجاح / Password changed successfully.",
+        user: publicUser,
+        customToken
+      });
+    } catch (err: any) {
+      console.error("Error in /api/auth/change-password:", err);
+      return res.status(500).json({ success: false, message: "حدث خطأ أثناء تغيير كلمة المرور / Server error changing password." });
+    }
+  });
+
+  // API Route - Server-side Save User Credentials (PBKDF2 210k)
+  app.post("/api/auth/save-credentials", adminRateLimiter, requireAdminOrSystemAdminAuth, async (req, res) => {
+    try {
+      const { userId, companyId, email, password, salt } = req.body;
+      if (!userId || !password) {
+        return res.status(400).json({ success: false, message: "معلمات غير كافية لحفظ الاعتمادات." });
+      }
+
+      if (typeof password !== 'string' || password.trim().length < 12) {
+        return res.status(400).json({
+          success: false,
+          message: "كلمة المرور يجب أن لا تقل عن 12 حرفاً / Password must be at least 12 characters."
         });
-      } catch { /* non-fatal */ }
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-app.get('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const filter = {
-        isActive: req.query.isActive !== undefined ? req.query.isActive === 'true' : undefined,
-        branchId: req.query.branchId as string,
-      };
-      const result = await svc.listWarehouses(tenantId, filter);
-      if (!result.success) return res.status(500).json(result.error);
-      {
-        const storage = getRequestStorage(req, res);
-        if (!storage) return;
-        const allowed = await getAllowedWarehouseIds(req, storage);
-        const data = allowed === null ? result.data : (result.data || []).filter((w: any) => allowed.has(w.id));
-        return res.json({ success: true, data });
-      }
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7A: Save / Create Warehouse
-  app.post('/api/inventory/warehouses', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const key = requireIdempotencyKey(req, res, 'حفظ مستودع');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const result = await svc.saveWarehouse(tenantId, req.body, key);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ المستودع بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7A: Warehouse Bins
-  app.get('/api/inventory/warehouses/:id/bins', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      {
-        const storage = getRequestStorage(req, res);
-        if (!storage) return;
-        if (!(await assertWarehouseAllowed(req, res, storage, req.params.id))) return;
-      }
-      const result = await svc.listWarehouseBins(tenantId, req.params.id);
-      if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/inventory/warehouses/:id/bins', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const result = await svc.saveWarehouseBin(tenantId, { ...req.body, warehouseId: req.params.id });
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data, message: 'تم إضافة موقع التخزين الفرعي بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7A: Items List & Card
-  app.get('/api/inventory/items', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const filter = {
-        category: req.query.category as string,
-        isActive: req.query.isActive !== undefined ? req.query.isActive === 'true' : undefined,
-      };
-      const result = await svc.listStockItems(tenantId, filter);
-      if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/inventory/items', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const key = requireIdempotencyKey(req, res, 'حفظ بطاقة صنف');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const result = await svc.saveStockItem(tenantId, req.body, key);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ بطاقة الصنف بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // Phase 13 (COST-001): inventory settings (default valuation method, negative stock, over-receipt tolerance)
-  app.get('/api/inventory/settings', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const result = await svc.getInventorySettings(tenantId);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.put('/api/inventory/settings', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'تحديث إعدادات المخزون');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const b = req.body || {};
-      const result = await svc.saveInventorySettings(tenantId, {
-        defaultValuationMethod: b.default_valuation_method ?? b.defaultValuationMethod,
-        allowNegativeStock: b.allow_negative_stock ?? b.allowNegativeStock,
-        overReceiptTolerancePct: b.over_receipt_tolerance_pct ?? b.overReceiptTolerancePct,
-      }, userId, key);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data, message: 'تم تحديث إعدادات المخزون' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-
-
-  // Phase 15 (PO-001): Purchase Orders & Goods Receipts
-  app.get('/api/purchasing/orders', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.listPurchaseOrders(tenantId, { status: req.query.status as string, vendorId: req.query.vendorId as string });
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/orders', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'إنشاء أمر شراء');
-      if (!key) return;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const b = req.body || {};
-      const result = await svc.createPurchaseOrder(tenantId, {
-        vendorId: b.vendor_id || b.vendorId,
-        orderDate: b.order_date || b.orderDate,
-        expectedDate: b.expected_date || b.expectedDate,
-        notes: b.notes,
-        lines: (b.lines || []).map((l: any) => ({ itemId: l.item_id || l.itemId, orderedQty: l.ordered_qty ?? l.orderedQty, unitCost: l.unit_cost ?? l.unitCost })),
-        createdBy: userId,
-        idempotencyKey: key,
-      });
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.get('/api/purchasing/orders/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.getPurchaseOrder(tenantId, req.params.id);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'غير موجود' } });
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/orders/:id/open', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.openPurchaseOrder(tenantId, req.params.id, userId);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/orders/:id/close', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.closePurchaseOrder(tenantId, req.params.id, userId);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/orders/:id/cancel', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.cancelPurchaseOrder(tenantId, req.params.id, userId);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.get('/api/purchasing/receipts', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.listGoodsReceipts(tenantId, { poId: req.query.poId as string, status: req.query.status as string });
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/receipts', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'إنشاء إيصال استلام');
-      if (!key) return;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const b = req.body || {};
-      const result = await svc.createGoodsReceipt(tenantId, {
-        poId: b.po_id || b.poId,
-        warehouseId: b.warehouse_id || b.warehouseId,
-        lines: (b.lines || []).map((l: any) => ({
-          poLineId: l.po_line_id || l.poLineId,
-          receivedQty: l.received_qty ?? l.receivedQty,
-          batchNumber: l.batch_number || l.batchNumber,
-          serialNumber: l.serial_number || l.serialNumber,
-          expiryDate: l.expiry_date || l.expiryDate,
-        })),
-        createdBy: userId,
-        idempotencyKey: key,
-      });
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.get('/api/purchasing/receipts/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.getGoodsReceipt(tenantId, req.params.id);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'غير موجود' } });
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/receipts/:id/approve', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const role = (req as any).authContext.role || (req as any).authContext.roles?.[0] || 'warehouse_keeper';
-      const key = requireIdempotencyKey(req, res, 'اعتماد إيصال استلام');
-      if (!key) return;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.approveReceipt(tenantId, req.params.id, userId, role, key);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/receipts/:id/reject', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const role = (req as any).authContext.role || (req as any).authContext.roles?.[0] || 'warehouse_keeper';
-      const key = requireIdempotencyKey(req, res, 'رفض إيصال استلام');
-      if (!key) return;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const reason = (req.body || {}).reason || (req.body || {}).reject_reason;
-      const result = await svc.rejectReceipt(tenantId, req.params.id, userId, role, reason, key);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/receipts/:id/retry-post', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const key = requireIdempotencyKey(req, res, 'إعادة ترحيل إيصال');
-      if (!key) return;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.retryPostReceipt(tenantId, req.params.id, key);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-
-
-  // Phase 8a/8b — Purchase Request / RFQ / Supplier Quotes API
-  app.get('/api/purchasing/requests', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.listPurchaseRequests(tenantId, { status: req.query.status as string, requestedBy: req.query.requestedBy as string });
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.get('/api/purchasing/requests/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.getPurchaseRequest(tenantId, req.params.id);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'طلب الشراء غير موجود' } });
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/requests', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'إنشاء طلب شراء');
-      if (!key) return;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const b = req.body || {};
-      const result = await svc.createPurchaseRequest(tenantId, {
-        requestedBy: userId,
-        neededBy: b.needed_by || b.neededBy,
-        notes: b.notes,
-        costCenterId: b.cost_center_id || b.costCenterId,
-        projectId: b.project_id || b.projectId,
-        lines: (b.lines || []).map((l: any) => ({
-          itemId: l.item_id || l.itemId,
-          quantity: l.quantity ?? l.qty,
-          uom: l.uom,
-          neededBy: l.needed_by || l.neededBy,
-          costCenterId: l.cost_center_id || l.costCenterId,
-          projectId: l.project_id || l.projectId,
-          notes: l.notes,
-        })),
-        idempotencyKey: key,
-      });
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/requests/:id/submit', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.submitPurchaseRequest(tenantId, req.params.id, userId);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/requests/:id/approve', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.approvePurchaseRequest(tenantId, req.params.id, userId);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/requests/:id/reject', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const reason = (req.body || {}).reason || 'مرفوض';
-      const result = await svc.rejectPurchaseRequest(tenantId, req.params.id, userId, reason);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/requests/:id/convert-to-po', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'تحويل طلب شراء لأمر شراء');
-      if (!key) return;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const b = req.body || {};
-      const result = await svc.convertPurchaseRequestToPO(tenantId, {
-        prId: req.params.id,
-        vendorId: b.vendor_id || b.vendorId,
-        actorId: userId,
-        unitCosts: b.unit_costs || b.unitCosts || {},
-        idempotencyKey: key,
-      });
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-
-  app.get('/api/purchasing/rfqs', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.listRfqs(tenantId, { status: req.query.status as string, prId: req.query.prId as string });
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.get('/api/purchasing/rfqs/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.getRfq(tenantId, req.params.id);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'طلب عرض السعر غير موجود' } });
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/rfqs', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'إنشاء طلب عرض سعر');
-      if (!key) return;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const b = req.body || {};
-      const result = await svc.createRfq(tenantId, {
-        prId: b.pr_id || b.prId,
-        notes: b.notes,
-        createdBy: userId,
-        lines: b.lines ? (b.lines || []).map((l: any) => ({
-          itemId: l.item_id || l.itemId,
-          quantity: l.quantity ?? l.qty,
-          uom: l.uom,
-          notes: l.notes,
-        })) : undefined,
-        idempotencyKey: key,
-      });
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/rfqs/:id/send', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.sendRfq(tenantId, req.params.id, userId);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-
-  app.get('/api/purchasing/quotes', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.listSupplierQuotes(tenantId, {
-        rfqId: req.query.rfqId as string,
-        vendorId: req.query.vendorId as string,
-        status: req.query.status as string,
-      });
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.get('/api/purchasing/quotes/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.getSupplierQuote(tenantId, req.params.id);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'عرض المورد غير موجود' } });
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/quotes', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'تسجيل عرض مورد');
-      if (!key) return;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const b = req.body || {};
-      const result = await svc.recordSupplierQuote(tenantId, {
-        rfqId: b.rfq_id || b.rfqId,
-        vendorId: b.vendor_id || b.vendorId,
-        quoteDate: b.quote_date || b.quoteDate,
-        validUntil: b.valid_until || b.validUntil,
-        notes: b.notes,
-        createdBy: userId,
-        lines: (b.lines || []).map((l: any) => ({
-          rfqLineId: l.rfq_line_id || l.rfqLineId,
-          itemId: l.item_id || l.itemId,
-          quantity: l.quantity ?? l.qty,
-          unitPrice: l.unit_price ?? l.unitPrice,
-          leadTimeDays: l.lead_time_days ?? l.leadTimeDays,
-          notes: l.notes,
-        })),
-        idempotencyKey: key,
-      });
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/quotes/:id/select', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.selectSupplierQuote(tenantId, req.params.id, userId);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/quotes/:id/convert-to-po', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'تحويل عرض مورد لأمر شراء');
-      if (!key) return;
-      const svc = getPurchasingService(req, res);
-      if (!svc) return;
-      const result = await svc.convertQuoteToPO(tenantId, { quoteId: req.params.id, actorId: userId, idempotencyKey: key });
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-
-
-  // Phase 8c — Supplier Invoice + Three-Way Matching
-  app.get('/api/purchasing/invoices', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res); if (!svc) return;
-      const result = await svc.listSupplierInvoices(tenantId, { status: req.query.status as string, poId: req.query.poId as string, vendorId: req.query.vendorId as string });
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.get('/api/purchasing/invoices/:id', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res); if (!svc) return;
-      const result = await svc.getSupplierInvoice(tenantId, req.params.id);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      if (!result.data) return res.status(404).json({ success: false, error: { detail: 'فاتورة المورد غير موجودة' } });
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/invoices', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'إنشاء فاتورة مورد'); if (!key) return;
-      const svc = getPurchasingService(req, res); if (!svc) return;
-      const b = req.body || {};
-      const result = await svc.createSupplierInvoice(tenantId, {
-        poId: b.po_id || b.poId, receiptId: b.receipt_id || b.receiptId,
-        vendorInvoiceRef: b.vendor_invoice_ref || b.vendorInvoiceRef,
-        invoiceDate: b.invoice_date || b.invoiceDate, dueDate: b.due_date || b.dueDate,
-        notes: b.notes, taxAmount: b.tax_amount ?? b.taxAmount, autoMatch: b.auto_match ?? b.autoMatch,
-        lines: (b.lines || []).map((l: any) => ({
-          poLineId: l.po_line_id || l.poLineId, itemId: l.item_id || l.itemId,
-          invoicedQty: l.invoiced_qty ?? l.invoicedQty, unitPrice: l.unit_price ?? l.unitPrice,
-          taxAmount: l.tax_amount ?? l.taxAmount, notes: l.notes,
-        })),
-        createdBy: userId, idempotencyKey: key,
-      });
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/invoices/:id/match', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res); if (!svc) return;
-      const result = await svc.runThreeWayMatch(tenantId, req.params.id);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/invoices/:id/approve', requireAuth, requirePermission('SUPPLIER_INVOICE_APPROVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'اعتماد فاتورة مورد'); if (!key) return;
-      const svc = getPurchasingService(req, res); if (!svc) return;
-      const result = await svc.approveSupplierInvoice(tenantId, req.params.id, userId, key);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-  app.post('/api/purchasing/invoices/:id/reject', requireAuth, requirePermission('SUPPLIER_INVOICE_APPROVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const svc = getPurchasingService(req, res); if (!svc) return;
-      const result = await svc.rejectSupplierInvoice(tenantId, req.params.id, userId, (req.body || {}).reason || 'مرفوضة');
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-
-
-
-  // PH8-REORDER: generate purchase requests for items at/below reorder point
-  app.post('/api/purchasing/reorder/generate', requireAuth, requirePermission('PURCHASE_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const svc = getPurchasingService(req, res); if (!svc) return;
-      const body = req.body || {};
-      const result = await svc.generatePurchaseRequestsFromReorder(tenantId, {
-        warehouseId: body.warehouseId,
-        requestedBy: userId,
-        idempotencyKey: (req.headers['idempotency-key'] as string) || body.idempotencyKey || `reorder-gen-${Date.now()}`,
-        dryRun: body.dryRun === true,
-      });
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-
-  // PH8-RETURN: purchase returns against approved goods receipts
-  app.get('/api/purchasing/returns', requireAuth, requirePermission('PURCHASE_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getPurchasingService(req, res); if (!svc) return;
-      const result = await svc.listPurchaseReturns(tenantId, { receiptId: req.query.receiptId as string });
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-
-  app.post('/api/purchasing/returns', requireAuth, requirePermission('STOCK_RETURN'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const userName = (req as any).authContext.fullName || userId;
-      const svc = getPurchasingService(req, res); if (!svc) return;
-      const body = req.body || {};
-      const result = await svc.createPurchaseReturn(tenantId, {
-        receiptId: body.receiptId,
-        lines: body.lines || [],
-        createdBy: userId,
-        createdByName: userName,
-        reason: body.reason,
-        idempotencyKey: req.headers['idempotency-key'] as string || body.idempotencyKey,
-      });
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data });
-    } catch (err: any) { return res.status(500).json({ success: false, error: publicErrorMessage(err) }); }
-  });
-
-  // Phase 14 (ACC-AUTO-001)
-  app.get('/api/inventory/accounting-config', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const result = await svc.getStockAccountingConfig(tenantId);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-  app.put('/api/inventory/accounting-config', requireAuth, requirePermission('COMPANY_SETTINGS_MANAGE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'system';
-      const key = requireIdempotencyKey(req, res, 'تحديث إعدادات محاسبة المخزون');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const b = req.body || {};
-      const result = await svc.saveStockAccountingConfig(tenantId, {
-        autoPostEnabled: b.auto_post_enabled ?? b.autoPostEnabled,
-        grirAccountCode: b.grir_account_code ?? b.grirAccountCode,
-        inTransitAccountCode: b.in_transit_account_code ?? b.inTransitAccountCode,
-        defaultInventoryAccountCode: b.default_inventory_account_code ?? b.defaultInventoryAccountCode,
-        defaultCogsAccountCode: b.default_cogs_account_code ?? b.defaultCogsAccountCode,
-      }, userId, key);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data, message: 'تم تحديث إعدادات محاسبة المخزون' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-  app.post('/api/inventory/documents/:id/post-journal', requireAuth, requirePermission('ENTRY_POST'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const key = requireIdempotencyKey(req, res, 'إعادة ترحيل قيد مستند المخزون');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const result = await svc.retryStockDocumentJournal(tenantId, req.params.id, key);
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7B: Stock Balances & Real-Time Levels
-  
-  // Phase 16 (REC-001): stock vs ledger reconciliation (read-only)
-  app.get('/api/inventory/reconciliation', requireAuth, requirePermission('FINANCIAL_REPORTS'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const result = await svc.getInventoryReconciliation(tenantId);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-app.get('/api/inventory/stock', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const warehouseId = req.query.warehouseId as string;
-      const itemId = req.query.itemId as string;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      if (warehouseId && !(await assertWarehouseAllowed(req, res, storage, warehouseId))) return;
-      const result = await svc.listWarehouseStock(tenantId, warehouseId, itemId);
-      if (!result.success) return res.status(500).json(result.error);
-      const allowed = await getAllowedWarehouseIds(req, storage);
-      const data = allowed === null ? result.data : (result.data || []).filter((r: any) => allowed.has(r.warehouseId));
-      return res.json({ success: true, data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7B: Stock Movements
-  app.get('/api/inventory/movements', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const filter = {
-        warehouseId: req.query.warehouseId as string,
-        itemId: req.query.itemId as string,
-        movementType: req.query.movementType as string,
-        fromDate: req.query.fromDate as string,
-        toDate: req.query.toDate as string,
-        limit: req.query.limit ? Number(req.query.limit) : undefined,
-      };
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      if (filter.warehouseId && !(await assertWarehouseAllowed(req, res, storage, filter.warehouseId))) return;
-      const result = await svc.listStockMovements(tenantId, filter);
-      if (!result.success) return res.status(500).json(result.error);
-      const allowed = await getAllowedWarehouseIds(req, storage);
-      const data = allowed === null ? result.data : (result.data || []).filter((r: any) => allowed.has(r.warehouseId));
-      return res.json({ success: true, data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7B: Stock Receipt (توريد مخزني)
-  app.post(['/api/inventory/receive', '/api/inventory/movements/receive'], requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-storekeeper';
-      const key = requireIdempotencyKey(req, res, 'توريد مخزني');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      {
-        const storage = getRequestStorage(req, res);
-        if (!storage) return;
-        const wid = (req.body || {}).warehouseId || (req.body || {}).warehouse_id;
-        if (!(await assertWarehouseAllowed(req, res, storage, wid))) return;
       }
 
-      const result = await svc.receiveStock(tenantId, {
-        ...req.body,
-        performedBy: userId,
-        performedByName: req.body.performedByName || 'أمين المستودع',
-        idempotencyKey: key,
-      });
-
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data, message: 'تم تسجيل التوريد المخزني واحتساب التكلفة بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7B: Stock Issue (صرف مخزني)
-  app.post(['/api/inventory/issue', '/api/inventory/movements/issue'], requireAuth, requirePermission('STOCK_ISSUE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-storekeeper';
-      const key = requireIdempotencyKey(req, res, 'صرف مخزني');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      {
-        const storage = getRequestStorage(req, res);
-        if (!storage) return;
-        const wid = (req.body || {}).warehouseId || (req.body || {}).warehouse_id;
-        if (!(await assertWarehouseAllowed(req, res, storage, wid))) return;
+      const requester = (req as any).user;
+      const isSystemAdmin = requester?.role === 'SystemAdmin';
+      const resolvedCompanyId = isSystemAdmin ? companyId : requester?.company_id;
+      if (!resolvedCompanyId) {
+        return res.status(422).json({
+          success: false,
+          message: "بيانات الشركة غير مكتملة / Missing or invalid company context for credentials."
+        });
       }
 
-      const result = await svc.issueStock(tenantId, {
-        ...req.body,
-        performedBy: userId,
-        performedByName: req.body.performedByName || 'أمين المستودع',
-        idempotencyKey: key,
-      });
+      const emailLower = (email || '').toLowerCase().trim();
+      const userSalt = salt || crypto.randomUUID();
+      const newPbkdf2Hash = hashPasswordPBKDF2_210k(password, userSalt, 2);
 
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data, message: 'تم صرف الأصناف وتحديث الأرصدة بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
+      // Save strictly to user_credentials collection using Admin SDK
+      await adminDb.collection("user_credentials").doc(userId).set({
+        id: userId,
+        company_id: resolvedCompanyId,
+        email: emailLower,
+        passwordHash: newPbkdf2Hash,
+        salt: userSalt,
+        kdf: 'sha256_pbkdf2_210k',
+        pepper_version: 2,
+        updated_at: new Date().toISOString()
+      }, { merge: true });
 
-  // 7A: Transfers Between Warehouses
-  app.get('/api/inventory/transfers', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const filter = {
-        status: req.query.status as string,
-        warehouseId: req.query.warehouseId as string,
-      };
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const result = await svc.listStockTransfers(tenantId, filter);
-      if (!result.success) return res.status(500).json(result.error);
-      const allowed = await getAllowedWarehouseIds(req, storage);
-      const data = allowed === null ? result.data : (result.data || []).filter((t: any) => allowed.has(t.sourceWarehouseId) || allowed.has(t.targetWarehouseId));
-      return res.json({ success: true, data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/inventory/transfers', requireAuth, requirePermission('STOCK_TRANSFER'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-logistics';
-      const key = requireIdempotencyKey(req, res, 'إنشاء تحويل مخزني');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      {
-        const storage = getRequestStorage(req, res);
-        if (!storage) return;
-        const src = (req.body || {}).sourceWarehouseId || (req.body || {}).source_warehouse_id;
-        if (!(await assertWarehouseAllowed(req, res, storage, src))) return;
+      // Clean password/salt from public 'users' collection
+      const userRef = adminDb.collection("users").doc(userId);
+      const userDoc = await userRef.get();
+      if (userDoc.exists) {
+        await userRef.update({
+          password: FieldValue.delete(),
+          salt: FieldValue.delete()
+        });
       }
 
-      const result = await svc.createTransfer(tenantId, {
-        ...req.body,
-        requestedBy: userId,
-        requestedByName: req.body.requestedByName || 'مشرف الحركة المخزنية',
-        idempotencyKey: key,
-      });
-
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data, message: 'تم إنشاء مستند التحويل وإرسال البضاعة بنجاح' });
+      return res.json({ success: true });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+      console.error("Error in save-credentials endpoint:", err);
+      return res.status(500).json({ success: false, message: "حدث خطأ أثناء حفظ الاعتمادات." });
     }
   });
 
-  app.get('/api/inventory/transfers/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
+  // API Route - Server-side Migrate Credential Vault ID (when legacy user ID -> Firebase Auth UID)
+  app.post("/api/auth/migrate-credential-id", adminRateLimiter, async (req, res) => {
     try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const result = await svc.getStockTransfer(tenantId, req.params.id);
-      if (!result.success) return res.status(500).json(result.error);
-      if (!result.data) return res.status(404).json({ error: 'مستند التحويل غير موجود' });
-      {
-        const storage = getRequestStorage(req, res);
-        if (!storage) return;
-        const allowed = await getAllowedWarehouseIds(req, storage);
-        const tr = (result.data as any).transfer || result.data;
-        if (allowed !== null && !allowed.has(tr.sourceWarehouseId) && !allowed.has(tr.targetWarehouseId)) {
-          return denyForbidden(res, (req as any).authContext?.role, 'WAREHOUSE_SCOPE');
+      const authHeader = req.headers.authorization || "";
+      const idToken = authHeader.split("Bearer ")[1]?.trim();
+      if (!idToken) {
+        return res.status(401).json({ success: false, message: "Unauthorized token." });
+      }
+      const decodedToken = await getAdminAuth(adminApp).verifyIdToken(idToken);
+      const { oldId, newId, email } = req.body;
+      if (!oldId || !newId || decodedToken.uid !== newId) {
+        return res.status(400).json({ success: false, message: "Invalid migration parameters or token mismatch." });
+      }
+
+      // Resolve requesting user's own email from decodedToken or by loading users/{newId} server-side
+      let callerEmail = (decodedToken.email || "").toLowerCase().trim();
+      if (!callerEmail) {
+        const userDocSnap = await adminDb.collection("users").doc(newId).get();
+        callerEmail = (userDocSnap.data()?.email || "").toLowerCase().trim();
+      }
+      if (!callerEmail) {
+        return res.status(403).json({ success: false, message: "Caller email could not be resolved for authorization." });
+      }
+
+      const oldCredRef = adminDb.collection("user_credentials").doc(oldId);
+      const oldCredDoc = await oldCredRef.get();
+      if (oldCredDoc.exists) {
+        const credData = oldCredDoc.data() || {};
+        const oldEmail = (credData.email || "").toLowerCase().trim();
+        // Check that oldId actually belongs to the same person making the request
+        if (!oldEmail || oldEmail !== callerEmail) {
+          return res.status(403).json({ success: false, message: "Forbidden: credential ownership mismatch." });
+        }
+
+        await adminDb.collection("user_credentials").doc(newId).set({
+          ...credData,
+          id: newId,
+          email: callerEmail,
+          updated_at: new Date().toISOString()
+        }, { merge: true });
+        if (oldId !== newId) {
+          try {
+            await oldCredRef.delete();
+          } catch (delErr) {
+            console.warn("Failed to delete legacy user_credentials doc:", delErr);
+          }
+        }
+        return res.json({ success: true, message: "Credential vault migrated successfully." });
+      }
+      return res.json({ success: false, message: "No legacy credential found to migrate." });
+    } catch (err: any) {
+      console.error("Error migrating credential vault ID:", err);
+      return res.status(500).json({ success: false, message: "Server error during credential migration." });
+    }
+  });
+
+  // API Route - One-time repair for already orphaned user_credentials (requires SystemAdmin or manual confirmation)
+  app.post("/api/auth/repair-orphaned-credentials", requireSystemAdminAuth, async (req, res) => {
+    try {
+      const { targetEmail, confirmPairing, manualOldId, manualNewId } = req.body || {};
+      const usersSnap = await adminDb.collection("users").get();
+      const credsSnap = await adminDb.collection("user_credentials").get();
+      const userIds = new Set(usersSnap.docs.map(d => d.id));
+
+      const orphanedDocs = credsSnap.docs.filter(d => !userIds.has(d.id));
+      const repaired: string[] = [];
+      const pendingConfirmation: any[] = [];
+
+      for (const oldDoc of orphanedDocs) {
+        const data = oldDoc.data() || {};
+        const docEmail = (data.email || '').toLowerCase().trim();
+
+        if (manualOldId && manualNewId && confirmPairing && oldDoc.id === manualOldId) {
+          const resolvedEmail = (targetEmail || docEmail || '').toLowerCase().trim();
+          if (!resolvedEmail) {
+            pendingConfirmation.push({ oldId: oldDoc.id, reason: "No email field present on orphaned record or request; manual email confirmation required." });
+            continue;
+          }
+          await adminDb.collection("user_credentials").doc(manualNewId).set({
+            ...data,
+            id: manualNewId,
+            email: resolvedEmail,
+            updated_at: new Date().toISOString()
+          }, { merge: true });
+          await oldDoc.ref.delete();
+          repaired.push(`Manually paired ${oldDoc.id} -> ${manualNewId}`);
+          continue;
+        }
+
+        if (docEmail) {
+          const matchingUserDoc = usersSnap.docs.find(u => (u.data()?.email || '').toLowerCase().trim() === docEmail);
+          if (matchingUserDoc) {
+            await adminDb.collection("user_credentials").doc(matchingUserDoc.id).set({
+              ...data,
+              id: matchingUserDoc.id,
+              email: docEmail,
+              updated_at: new Date().toISOString()
+            }, { merge: true });
+            await oldDoc.ref.delete();
+            repaired.push(`Auto-repaired by email ${docEmail}: ${oldDoc.id} -> ${matchingUserDoc.id}`);
+          } else {
+            pendingConfirmation.push({ oldId: oldDoc.id, email: docEmail });
+          }
+        } else {
+          pendingConfirmation.push({ oldId: oldDoc.id, reason: "No email field present on orphaned record; manual confirmation required." });
         }
       }
-      return res.json({ success: true, data: result.data });
+
+      return res.json({
+        success: true,
+        repairedCount: repaired.length,
+        repaired,
+        pendingConfirmation
+      });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+      console.error("Error in repair-orphaned-credentials:", err);
+      return res.status(500).json({ success: false, message: "Error repairing orphaned credentials." });
     }
   });
 
-  app.post('/api/inventory/transfers/:id/dispatch', requireAuth, requirePermission('STOCK_TRANSFER'), async (req: Request, res: Response) => {
+  // API Route - Check Hash Migration Status (Phase 4.1 Deprecation Plan)
+  // Queries user_credentials to report how many accounts are still on legacy hash formats (pepper_version 1 or 3) vs PBKDF2 210,000 (pepper_version 2)
+  app.get("/api/auth/hash-migration-status", requireSystemAdminAuth, async (req, res) => {
     try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      {
-        const storage = getRequestStorage(req, res);
-        if (!storage) return;
-        const existing = await svc.getStockTransfer(tenantId, req.params.id);
-        const tr = existing.success && existing.data ? ((existing.data as any).transfer || existing.data) : null;
-        if (!(await assertWarehouseAllowed(req, res, storage, tr?.sourceWarehouseId))) return;
-      }
-      const existing = await svc.getStockTransfer(tenantId, req.params.id);
-      if (!existing.success || !existing.data) return res.status(404).json({ error: 'مستند التحويل غير موجود' });
-      return res.json({ success: true, data: existing.data, message: 'التحويل أُرسل عند إنشائه، والخصم من مستودع المصدر تم وقتها.' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
+      const credsSnap = await adminDb.collection("user_credentials").get();
+      let legacyCount = 0;
+      let pbkdf2Count = 0;
+      let transientV2Count = 0;
+      const details: { userId: string; pepperVersion: number; format: string }[] = [];
 
-  app.post('/api/inventory/transfers/:id/receive', requireAuth, requirePermission('STOCK_TRANSFER'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-storekeeper-dest';
-      const key = requireIdempotencyKey(req, res, 'استلام تحويل مخزني');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      {
-        const storage = getRequestStorage(req, res);
-        if (!storage) return;
-        const existing = await svc.getStockTransfer(tenantId, req.params.id);
-        const tr = existing.success && existing.data ? ((existing.data as any).transfer || existing.data) : null;
-        if (!(await assertWarehouseAllowed(req, res, storage, tr?.targetWarehouseId))) return;
-      }
-
-      const result = await svc.receiveTransfer(
-        tenantId,
-        req.params.id,
-        userId,
-        req.body.receivedByName || 'أمين مستودع الوصول',
-        key
-      );
-
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data, message: 'تم تأكيد استلام الشحنة وإيداعها بالمستودع بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7C: Inventory Counts (الجرد الفعلي والتسويات)
-  app.get('/api/inventory/counts', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const filter = {
-        warehouseId: req.query.warehouseId as string,
-        status: req.query.status as string,
-      };
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      if ((filter as any).warehouseId && !(await assertWarehouseAllowed(req, res, storage, (filter as any).warehouseId))) return;
-      const result = await svc.listStockCounts(tenantId, filter);
-      if (!result.success) return res.status(500).json(result.error);
-      const allowed = await getAllowedWarehouseIds(req, storage);
-      const data = allowed === null ? result.data : (result.data || []).filter((c: any) => allowed.has(c.warehouseId));
-      return res.json({ success: true, data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/inventory/counts', requireAuth, requirePermission('STOCK_COUNT_APPROVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-auditor';
-      const key = requireIdempotencyKey(req, res, 'تسجيل محضر جرد');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      {
-        const storage = getRequestStorage(req, res);
-        if (!storage) return;
-        const wid = (req.body || {}).warehouseId || (req.body || {}).warehouse_id;
-        if (!(await assertWarehouseAllowed(req, res, storage, wid))) return;
-      }
-
-      const result = await svc.createStockCount(tenantId, {
-        ...req.body,
-        performedBy: userId,
-        performedByName: req.body.performedByName || 'المراجع الميداني',
-        idempotencyKey: key,
+      credsSnap.docs.forEach(d => {
+        const data = d.data() || {};
+        const pVer = typeof data.pepper_version === 'number' ? data.pepper_version : 1;
+        if (pVer === 1) {
+          legacyCount++;
+          details.push({ userId: d.id, pepperVersion: 1, format: "legacy_sha256" });
+        } else if (pVer === 3) {
+          transientV2Count++;
+          details.push({ userId: d.id, pepperVersion: 3, format: "transient_regression_v2" });
+        } else {
+          pbkdf2Count++;
+          details.push({ userId: d.id, pepperVersion: 2, format: "pbkdf2_210000" });
+        }
       });
 
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ محضر الجرد واحتساب الفروقات بنجاح' });
+      const deprecationPolicy = getLegacyHashDeprecationPolicy();
+      return res.json({
+        success: true,
+        totalCredentials: credsSnap.docs.length,
+        legacyCount,
+        transientV2Count,
+        pbkdf2Count,
+        details,
+        deprecationPolicy,
+        messageAr: `حالة التشفير: ${pbkdf2Count} حساب محدث (PBKDF2)، ${legacyCount + transientV2Count} حساب يحتاج هجرة تلقائية عند تسجيل الدخول. (انتهاء صلاحية التشفير القديم: ${deprecationPolicy.sunsetDate})`,
+        messageEn: `Encryption status: ${pbkdf2Count} upgraded (PBKDF2), ${legacyCount + transientV2Count} pending auto-migration upon login. (Legacy Sunset Date: ${deprecationPolicy.sunsetDate})`
+      });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+      console.error("Error in hash-migration-status:", err);
+      return res.status(500).json({ success: false, message: "Error retrieving hash migration status." });
     }
   });
 
-  app.get('/api/inventory/counts/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
+  // Helper: Server-side Firestore Seed Function with Admin SDK
+  async function seedDatabaseIfEmptyServer(adminDbInstance: FirebaseFirestore.Firestore) {
+    console.log('[Server Seed] Checking if Firestore requires initial seeding...');
     try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const result = await svc.getStockCount(tenantId, req.params.id);
-      if (!result.success) return res.status(500).json(result.error);
-      if (!result.data) return res.status(404).json({ error: 'محضر الجرد غير موجود' });
-      {
-        const storage = getRequestStorage(req, res);
-        if (!storage) return;
-        const allowed = await getAllowedWarehouseIds(req, storage);
-        const cnt = (result.data as any).count || result.data;
-        if (allowed !== null && !allowed.has(cnt.warehouseId)) {
-          return denyForbidden(res, (req as any).authContext?.role, 'WAREHOUSE_SCOPE');
-        }
+      const metaDoc = await adminDbInstance.collection('system_meta').doc('seed_status_v7').get();
+
+      if (metaDoc.exists) {
+        console.log('[Server Seed] Database is already initialized with v7. Skipping seed to prevent resurrecting deleted entities.');
+        return { alreadySeeded: true };
       }
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
 
-  // 7C: Approve & Post Count (with strict SoD check & PostingEngine)
-  app.post('/api/inventory/counts/:id/approve', requireAuth, requirePermission('STOCK_COUNT_APPROVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-cfo';
-      const key = requireIdempotencyKey(req, res, 'اعتماد وترحيل تسوية الجرد');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
+      console.log('[Server Seed] Database is empty or missing v7 marker. Starting server-side atomic seeding...');
 
-      const result = await svc.approveAndPostStockCount(tenantId, {
-        countId: req.params.id,
-        approvedBy: userId,
-        approvedByName: req.body.approvedByName || 'المدير المالي',
-        idempotencyKey: key,
+      // Check deleted_companies tombstones to never resurrect deleted companies
+      const deletedSnap = await adminDbInstance.collection('deleted_companies').get();
+      const deletedCompanyIds = new Set(deletedSnap.docs.map(d => d.id));
+      const companiesToSeed = DEFAULT_COMPANIES.filter(c => !deletedCompanyIds.has(c.id));
+
+      // 1. Seed companies
+      const compBatch = adminDbInstance.batch();
+      companiesToSeed.forEach(c => {
+        compBatch.set(adminDbInstance.collection('companies').doc(c.id), c);
+      });
+      await compBatch.commit();
+      console.log(`[Server Seed] Seeded ${companiesToSeed.length} companies.`);
+
+      // 2. Seed regions
+      const regBatch = adminDbInstance.batch();
+      DEFAULT_REGIONS.forEach(r => {
+        regBatch.set(adminDbInstance.collection('regions').doc(r.id), r);
+      });
+      await regBatch.commit();
+      console.log(`[Server Seed] Seeded ${DEFAULT_REGIONS.length} regions.`);
+
+      // 3. Seed stations
+      const stnBatch = adminDbInstance.batch();
+      DEFAULT_STATIONS.forEach(s => {
+        stnBatch.set(adminDbInstance.collection('stations').doc(s.id), s);
+      });
+      await stnBatch.commit();
+      console.log(`[Server Seed] Seeded ${DEFAULT_STATIONS.length} stations.`);
+
+      // 4. Seed categories
+      const catBatch = adminDbInstance.batch();
+      DEFAULT_CATEGORIES.forEach(c => {
+        catBatch.set(adminDbInstance.collection('categories').doc(c.id), c);
+      });
+      await catBatch.commit();
+      console.log(`[Server Seed] Seeded ${DEFAULT_CATEGORIES.length} categories.`);
+
+      // 5. Seed organization units
+      const orgBatch = adminDbInstance.batch();
+      DEFAULT_ORGANIZATION_UNITS.forEach(u => {
+        orgBatch.set(adminDbInstance.collection('organization_units').doc(u.id), u);
+      });
+      await orgBatch.commit();
+      console.log(`[Server Seed] Seeded ${DEFAULT_ORGANIZATION_UNITS.length} organization units.`);
+
+      // 6. Seed users & user_credentials
+      const userBatch = adminDbInstance.batch();
+      DEFAULT_USERS.forEach(u => {
+        const pwd = u.password || '123456';
+        const salt = u.salt || u.email;
+        const hashedPwd = hashPasswordPBKDF2_210k(pwd, salt, 2);
+        const { password: _p, salt: _s, ...publicUser } = u;
+
+        userBatch.set(adminDbInstance.collection('users').doc(u.id), {
+          ...publicUser,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+
+        userBatch.set(adminDbInstance.collection('user_credentials').doc(u.id), {
+          id: u.id,
+          company_id: u.company_id || '',
+          email: u.email.toLowerCase().trim(),
+          password: hashedPwd,
+          salt: salt,
+          pepper_version: 2,
+          is_temporary: false,
+          updated_at: new Date().toISOString()
+        });
+      });
+      await userBatch.commit();
+      console.log(`[Server Seed] Seeded ${DEFAULT_USERS.length} users and credentials with PBKDF2 210k.`);
+
+      // 7. Seed config main
+      await adminDbInstance.collection('config').doc('main').set({
+        ...DEFAULT_CONFIG,
+        updated_at: new Date().toISOString()
       });
 
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data, message: 'تم اعتماد محضر الجرد وترحيل قيود التسوية المتوازنة بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
+      // 8. Seed permissions and roles
+      const permBatch = adminDbInstance.batch();
+      DEFAULT_PERMISSIONS.forEach(p => {
+        permBatch.set(adminDbInstance.collection('Permissions').doc(p.id), p);
+      });
+      DEFAULT_ROLES.forEach(r => {
+        permBatch.set(adminDbInstance.collection('Roles').doc(r.id), r);
+      });
+      await permBatch.commit();
 
-  // =========================================================================
-  // PHASE 7.6 UPGRADE ENDPOINTS: Multi-Line, Printing, Returns, Stock Card
-  // =========================================================================
+      // 9. Seed logs and transactions
+      const logBatch = adminDbInstance.batch();
+      DEFAULT_LOGS.forEach(l => {
+        logBatch.set(adminDbInstance.collection('logs').doc(l.id), l);
+      });
+      DEFAULT_TRANSACTIONS.forEach(t => {
+        logBatch.set(adminDbInstance.collection('transactions').doc(t.id), t);
+      });
+      await logBatch.commit();
 
-  // 7.6A: Stock Documents List (Multi-line Receipts, Issues, Returns)
-  app.get('/api/inventory/documents', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const filter = {
-        documentType: req.query.documentType as any,
-        warehouseId: req.query.warehouseId as string,
-        limit: req.query.limit ? Number(req.query.limit) : undefined,
-      };
-      if (filter.warehouseId && !(await assertWarehouseAllowed(req, res, storage, filter.warehouseId))) return;
-      const result = await storage.listStockDocuments(tenantId, filter);
-      if (!result.success) return res.status(500).json(result.error);
-      const allowed = await getAllowedWarehouseIds(req, storage);
-      const data = allowed === null ? result.data : (result.data || []).filter((d: any) => allowed.has(d.warehouseId));
-      return res.json({ success: true, data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7.6A: Stock Document Detail
-  app.get('/api/inventory/documents/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const result = await storage.getStockDocument(tenantId, req.params.id);
-      if (!result.success) return res.status(500).json(result.error);
-      if (!result.data) return res.status(404).json({ error: 'المستند غير موجود' });
-      {
-        const allowed = await getAllowedWarehouseIds(req, storage);
-        if (allowed !== null && !allowed.has((result.data as any).warehouseId)) {
-          return denyForbidden(res, (req as any).authContext?.role, 'WAREHOUSE_SCOPE');
-        }
-      }
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7.6D: Stock Return (Multi-line Return for Receipt or Issue with GL Reversal)
-  app.post('/api/inventory/returns', requireAuth, requirePermission('STOCK_RETURN'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-storekeeper';
-      const key = requireIdempotencyKey(req, res, 'مرتجع مخزني');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      {
-        const storage = getRequestStorage(req, res);
-        if (!storage) return;
-        const wid = (req.body || {}).warehouseId || (req.body || {}).warehouse_id;
-        if (!(await assertWarehouseAllowed(req, res, storage, wid))) return;
-      }
-
-      const result = await svc.returnStock(tenantId, {
-        ...req.body,
-        performedBy: userId,
-        performedByName: req.body.performedByName || 'أمين المستودع',
-        idempotencyKey: key,
+      // 10. Mark v7 seed status
+      await adminDbInstance.collection('system_meta').doc('seed_status_v7').set({
+        seeded: true,
+        timestamp: new Date().toISOString(),
+        seededBy: 'server_bootstrap',
+        version: '7.0'
       });
 
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data, message: 'تم ترحيل إذن المرتجع المخزني وعكس الأثر المالي بنجاح' });
+      console.log('[Server Seed] Firestore seeding completed successfully.');
+      return { success: true, seededCount: DEFAULT_COMPANIES.length };
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7.6E: Item Ledger / Stock Card (كارت الصنف)
-  
-  app.get('/api/inventory/items/:id', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      if (req.params.id === 'search') return res.status(404).json({ error: 'not-found' });
-      const result = await svc.getStockItem(tenantId, req.params.id);
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error || { error: 'failed' });
-      if (!result.data) return res.status(404).json({ success: false, error: { title: 'الصنف غير موجود', status: 404 } });
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.get('/api/inventory/items/:id/ledger', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const __scopeStorage = getRequestStorage(req, res);
-      if (!__scopeStorage) return;
-      const __allowedWh = await getAllowedWarehouseIds(req, __scopeStorage);
-      const warehouseId = req.query.warehouseId as string;
-      const fromDate = req.query.from as string;
-      const toDate = req.query.to as string;
-
-      const result = await svc.getItemLedger(tenantId, req.params.id, {
-        warehouseId,
-        fromDate,
-        toDate,
-      });
-
-      if (!result.success) return res.status(result.error?.status || 500).json(result.error);
-      {
-        let data = result.data as any;
-        if (__allowedWh !== null && data) {
-          if (Array.isArray(data)) data = data.filter((m: any) => __allowedWh.has(m.warehouseId));
-          else if (Array.isArray(data.movements)) data.movements = data.movements.filter((m: any) => __allowedWh.has(m.warehouseId));
-          else if (Array.isArray(data.entries)) data.entries = data.entries.filter((m: any) => __allowedWh.has(m.warehouseId));
-        }
-        return res.json({ success: true, data });
-      }
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7.6F: Item Prices (قوائم أسعار الصنف)
-  app.get('/api/inventory/items/:id/prices', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const result = await svc.getItemPrices(tenantId, req.params.id);
-      if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.post('/api/inventory/items/:id/prices', requireAuth, requirePermission('STOCK_RECEIVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const key = requireIdempotencyKey(req, res, 'حفظ سعر الصنف');
-      if (!key) return;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-
-      const result = await svc.saveItemPrice(tenantId, {
-        ...req.body,
-        itemId: req.params.id,
-      });
-
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ تسعيرة الصنف بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7.6F: Barcode Lookup & SVG
-  app.get('/api/inventory/items/search/barcode', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const barcode = req.query.barcode as string;
-      if (!barcode) return res.status(400).json({ error: 'رمز الباركود مطلوب' });
-      const result = await svc.searchItemsByBarcode(tenantId, barcode);
-      if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.get('/api/inventory/items/:id/barcode-svg', requireAuth, requirePermission('STOCK_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const svc = getInventoryService(req, res);
-      if (!svc) return;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const itemRes = await storage.getStockItem(tenantId, req.params.id);
-      const barcode = itemRes.success && itemRes.data?.barcode ? itemRes.data.barcode : req.params.id;
-      const svg = svc.generateBarcodeSvg(barcode);
-      res.setHeader('Content-Type', 'image/svg+xml');
-      return res.send(svg);
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // P3 (AUTHZ-002): attachment / print authorization maps (local, reuse existing PermissionGroup + hasPermission)
-
-  // Phase 17 (ATT-001): resolve document existence + ownership (read-only check)
-  async function assertAttachmentDocument(
-    storage: StoragePort,
-    tenantId: string,
-    docType: string,
-    docId: string,
-    access: { userId: string; canViewAllExpenses: boolean }
-  ): Promise<{ ok: true; documentNumber?: string; status?: never; error?: never } | { ok: false; status: number; error: any; documentNumber?: never }> {
-    if (!docType || !docId || docId.length > 64 || docType.length > 64) {
-      return { ok: false, status: 400, error: validationError('documentType و documentId مطلوبان وبطول معقول (≤ 64).') };
-    }
-    const notFound = () => ({ ok: false as const, status: 404, error: { type: 'https://api.an-erp.local/errors/not-found', title: 'المستند غير موجود', status: 404, detail: 'المستند غير موجود أو غير متاح.' } });
-    try {
-      switch (docType) {
-        case 'JOURNAL_ENTRY': {
-          const r = await storage.getJournalEntry(tenantId, docId);
-          if (!r.success || !r.data) return notFound();
-          return { ok: true, documentNumber: (r.data as any).entryNumber || (r.data as any).code };
-        }
-        case 'CUSTODY_VOUCHER': {
-          const r = await storage.getCustodyExpenseVoucher(tenantId, docId);
-          if (!r.success || !r.data) return notFound();
-          return { ok: true, documentNumber: (r.data as any).voucherNumber };
-        }
-        case 'CUSTODY_SETTLEMENT': {
-          const r = await storage.listCustodySettlements(tenantId);
-          const hit = r.success && r.data ? r.data.find((x: any) => x.id === docId) : null;
-          if (!hit) return notFound();
-          return { ok: true, documentNumber: (hit as any).settlementNumber };
-        }
-        case 'EXPENSE_CLAIM':
-        case 'EXPENSE_REQUEST': {
-          const r = await storage.getExpenseRequest(tenantId, docId);
-          if (!r.success || !r.data) return notFound();
-          const req = r.data.request || r.data;
-          const ownerId = (req as any).requesterId || (req as any).createdBy || (req as any).submittedBy;
-          if (!access.canViewAllExpenses && ownerId && ownerId !== access.userId) return notFound();
-          return { ok: true, documentNumber: (req as any).requestNumber || (req as any).code };
-        }
-        case 'STOCK_RECEIPT':
-        case 'RECEIPT':
-        case 'STOCK_ISSUE':
-        case 'ISSUE':
-        case 'STOCK_RETURN': {
-          const r = await storage.getStockDocument(tenantId, docId);
-          if (!r.success || !r.data) return notFound();
-          return { ok: true, documentNumber: (r.data as any).documentNumber };
-        }
-        case 'STOCK_TRANSFER': {
-          const r = await storage.getStockTransfer(tenantId, docId);
-          if (!r.success || !r.data) return notFound();
-          return { ok: true, documentNumber: (r.data.transfer || r.data as any).transferNumber };
-        }
-        case 'STOCK_COUNT': {
-          const r = await storage.getStockCount(tenantId, docId);
-          if (!r.success || !r.data) return notFound();
-          return { ok: true, documentNumber: (r.data.count || r.data as any).countNumber };
-        }
-        default:
-          return { ok: false, status: 400, error: validationError(`نوع المستند (${docType}) غير مدعوم للمرفقات.`) };
-      }
-    } catch {
-      return notFound();
+      console.error('[Server Seed] Error during seed:', err);
+      throw err;
     }
   }
 
-  const EXPENSE_DOC_TYPES = new Set<string>(['EXPENSE_CLAIM', 'EXPENSE_REQUEST']);
-  const ATTACHMENT_READ_PERMISSION: Record<string, PermissionGroup> = {
-    STOCK_RECEIPT: 'STOCK_VIEW',
-    RECEIPT: 'STOCK_VIEW',
-    STOCK_ISSUE: 'STOCK_VIEW',
-    ISSUE: 'STOCK_VIEW',
-    STOCK_TRANSFER: 'STOCK_VIEW',
-    STOCK_COUNT: 'STOCK_VIEW',
-    STOCK_RETURN: 'STOCK_VIEW',
-    JOURNAL_ENTRY: 'ENTRY_VIEW',
-    CUSTODY_VOUCHER: 'CUSTODY_VIEW',
-    CUSTODY_SETTLEMENT: 'CUSTODY_VIEW',
-  };
-  const ATTACHMENT_WRITE_PERMISSION: Record<string, PermissionGroup> = {
-    EXPENSE_CLAIM: 'EXPENSE_SUBMIT',
-    EXPENSE_REQUEST: 'EXPENSE_SUBMIT',
-    STOCK_RECEIPT: 'STOCK_RECEIVE',
-    RECEIPT: 'STOCK_RECEIVE',
-    STOCK_ISSUE: 'STOCK_ISSUE',
-    ISSUE: 'STOCK_ISSUE',
-    STOCK_TRANSFER: 'STOCK_TRANSFER',
-    STOCK_COUNT: 'STOCK_COUNT_APPROVE',
-    STOCK_RETURN: 'STOCK_RETURN',
-    JOURNAL_ENTRY: 'ENTRY_CREATE',
-    CUSTODY_VOUCHER: 'CUSTODY_EXPENSE_RECORD',
-    CUSTODY_SETTLEMENT: 'CUSTODY_SETTLE',
-  };
-  const PRINT_PERMISSION: Record<string, PermissionGroup> = {
-    'journal-entry': 'ENTRY_VIEW',
-    'custody-voucher': 'CUSTODY_VIEW',
-    'custody-settlement': 'CUSTODY_VIEW',
-    'stock-receipt': 'STOCK_VIEW',
-    'stock-issue': 'STOCK_VIEW',
-    'stock-transfer': 'STOCK_VIEW',
-    'stock-count': 'STOCK_VIEW',
-    'stock-card': 'STOCK_VIEW',
-    'item-ledger': 'STOCK_VIEW',
-  };
+  // Gated Auto-seed endpoint: only permitted if ALLOW_AUTO_SEED === 'true' OR authenticated as SystemAdmin
+  async function requireAutoSeedPermission(req: express.Request, res: express.Response, next: express.NextFunction) {
+    if (process.env.ALLOW_AUTO_SEED === 'true') {
+      return next();
+    }
+    return requireSystemAdminAuth(req, res, next);
+  }
 
-  // 7.6G: Document Attachments (مرفقات المستندات 4–7)
-  app.get('/api/attachments', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
+  // API Route - Auto seed endpoint (accessible by client on initial check or bootstrap with gate & rate limit)
+  app.post("/api/seed/auto-seed", otpRateLimiter, requireAutoSeedPermission, async (req, res) => {
     try {
-      const docType = String(req.query.documentType || '');
-      const docId = String(req.query.documentId || '');
-      if (!docType || !docId || docType.length > 64 || docId.length > 64) {
-        return res.status(400).json(validationError('documentType و documentId مطلوبان وبطول معقول (≤ 64).'));
-      }
-      const role = (req as any).authContext?.role as string | undefined;
-      const userId = (req as any).authContext.userId || '';
-      let canViewAllExpenses = false;
-      if (EXPENSE_DOC_TYPES.has(docType)) {
-        const access = expenseAccess(req);
-        canViewAllExpenses = access.canViewAll;
-        if (!access.canViewAll && !access.isSubmitter) return denyForbidden(res, role, 'EXPENSE_SUBMIT');
-      } else {
-        const needed = ATTACHMENT_READ_PERMISSION[docType];
-        if (!needed) return res.status(400).json(validationError(`نوع المستند (${docType}) غير مدعوم للمرفقات`));
-        if (!hasPermission(role, needed)) return denyForbidden(res, role, needed);
-      }
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const exists = await assertAttachmentDocument(storage, tenantId, docType, docId, { userId, canViewAllExpenses });
-      if (!exists.ok) return res.status(exists.status).json(exists.error);
-      const result = await storage.listDocumentAttachments(tenantId, docType, docId);
-      if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
+      const result = await seedDatabaseIfEmptyServer(adminDb);
+      return res.json({ success: true, result });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
+      console.error("Error in /api/seed/auto-seed:", err);
+      return res.status(500).json({ success: false, message: err.message });
     }
   });
 
-  app.post('/api/attachments', requireAuth, requirePermission('ENTRY_CREATE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-uploader';
-      const role = (req as any).authContext?.role as string | undefined;
-      const body = req.body || {};
-      const docType = String(body.documentType || '');
-      const docId = String(body.documentId || '');
-      const needed = ATTACHMENT_WRITE_PERMISSION[docType];
-      if (!needed) return res.status(400).json(validationError(`نوع المستند (${docType}) غير مدعوم للمرفقات`));
-      if (!hasPermission(role, needed)) return denyForbidden(res, role, needed);
+  // Run server seed on boot
+  try {
+    await seedDatabaseIfEmptyServer(adminDb);
+  } catch (err) {
+    console.error("Initial server boot seed error:", err);
+  }
 
-      const key = requireIdempotencyKey(req, res, 'إضافة مرفق مستند');
-      if (!key) return;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
 
-      // Validate fields
-      const urlP = parseSafeFileUrl(body.fileUrl);
-      if (!urlP.ok) return res.status(400).json(validationError(urlP.detail));
-      const nameP = parseSafeFileName(body.fileName);
-      if (!nameP.ok) return res.status(400).json(validationError(nameP.detail));
-      const mimeRaw = body.mimeType || body.fileType;
-      const mimeP = parseSafeMimeType(mimeRaw);
-      if (!mimeP.ok) return res.status(400).json(validationError(mimeP.detail));
-      const sizeRaw = body.fileSize ?? body.fileSizeBytes;
-      const sizeP = parseAttachmentSize(sizeRaw);
-      if (!sizeP.ok) return res.status(400).json(validationError(sizeP.detail));
 
-      const canViewAllExpenses = EXPENSE_DOC_TYPES.has(docType)
-        ? expenseAccess(req).canViewAll
-        : true;
-      const exists = await assertAttachmentDocument(storage, tenantId, docType, docId, { userId, canViewAllExpenses });
-      if (!exists.ok) return res.status(exists.status).json(exists.error);
-
-      // Cap 50 attachments per document
-      const listed = await storage.listDocumentAttachments(tenantId, docType, docId);
-      if (listed.success && listed.data && listed.data.length >= ATTACHMENT_LIMITS.maxPerDocument) {
-        return res.status(422).json({
-          type: 'https://api.an-erp.local/errors/attachment-limit',
-          title: 'تجاوز حد المرفقات',
-          status: 422,
-          detail: `الحد الأقصى ${ATTACHMENT_LIMITS.maxPerDocument} مرفقًا لكل مستند.`,
-        });
-      }
-
-      // Real uploader name from user record (never from body)
-      let uploadedByName = 'المستخدم';
-      try {
-        const u = await storage.getUser(tenantId, userId);
-        if (u.success && u.data) uploadedByName = (u.data as any).fullName || (u.data as any).username || uploadedByName;
-      } catch { /* keep default */ }
-
-      const att: any = {
-        id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        tenantId,
-        companyId: tenantId,
-        documentType: docType,
-        documentId: docId,
-        documentNumber: exists.documentNumber || body.documentNumber,
-        fileName: nameP.value,
-        fileUrl: urlP.value,
-        mimeType: mimeP.value,
-        fileSize: sizeP.value,
-        fileType: mimeP.value,
-        fileSizeBytes: sizeP.value,
-        uploadedBy: userId,
-        uploadedByName,
-        createdAt: new Date().toISOString(),
-      };
-
-      const result = await storage.saveDocumentAttachment(tenantId, att);
-      if (!result.success) return res.status((result.error as any)?.status || 500).json(result.error);
-      return res.status(201).json({ success: true, data: result.data, message: 'تم حفظ المرفق بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7.6B: Custody Expense Vouchers (سندات صرف العهدة متعددة البنود)
-  app.get('/api/custody/vouchers', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const custodyId = req.query.custodyId as string;
-      const result = await storage.listCustodyExpenseVouchers(tenantId, custodyId);
-      if (!result.success) return res.status(500).json(result.error);
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  app.get('/api/custody/vouchers/:id', requireAuth, requirePermission('CUSTODY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-      const result = await storage.getCustodyExpenseVoucher(tenantId, req.params.id);
-      if (!result.success) return res.status(500).json(result.error);
-      if (!result.data) return res.status(404).json({ error: 'سند الصرف غير موجود' });
-      return res.json({ success: true, data: result.data });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7.6D: Reversal of Custody Voucher (مرتجع سند صرف عهدة بقيد عكسي)
-  app.post('/api/custody/vouchers/:id/return', requireAuth, requirePermission('CUSTODY_SETTLE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-auditor';
-      const key = requireIdempotencyKey(req, res, 'إلغاء ومرتجع سند صرف عهدة');
-      if (!key) return;
-      const svc = getCustodyService(req, res);
-      if (!svc) return;
-
-      const result = await svc.returnCustodyExpense(tenantId, {
-        voucherId: req.params.id,
-        reason: req.body.reason || 'إلغاء سند الصرف ومرتجع النقدية',
-        performedBy: userId,
-        performedByName: req.body.performedByName || 'المدقق المالي',
-        idempotencyKey: key,
-      });
-
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data, message: 'تم إلغاء سند الصرف وعكس القيد وإعادة الرصيد للعهدة بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7.6D: Reversal of Approved Expense Request (مرتجع طلب مصروف بقيد عكسي)
-  app.post('/api/expenses/requests/:id/reverse', requireAuth, requirePermission('EXPENSE_APPROVE'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const userId = (req as any).authContext.userId || 'usr-cfo';
-      const key = requireIdempotencyKey(req, res, 'قيد عكسي لمصروف معتمد');
-      if (!key) return;
-      const svc = getExpenseService(req, res);
-      if (!svc) return;
-
-      const result = await svc.reverseExpense(tenantId, {
-        requestId: req.params.id,
-        reason: req.body.reason || 'إلغاء المصروف بقيد عكسي',
-        reversedBy: userId,
-        reversedByName: req.body.reversedByName || 'المدير المالي',
-        idempotencyKey: key,
-      });
-
-      if (!result.success) return res.status(result.error?.status || 400).json(result.error);
-      return res.json({ success: true, data: result.data, message: 'تم إلغاء المصروف وترحيل القيد العكسي بنجاح' });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7.6C: Unified Print Service Endpoint (HTML + Print View)
-  app.get('/api/print/:docType/:docId', requireAuth, requirePermission('ENTRY_VIEW'), async (req: Request, res: Response) => {
-    try {
-      const tenantId = (req as any).authContext.tenantId;
-      const storage = getRequestStorage(req, res);
-      if (!storage) return;
-
-      const printService = new UnifiedPrintService(storage);
-      const { docType, docId } = req.params;
-
-      {
-        const role = (req as any).authContext?.role as string | undefined;
-        if (docType === 'expense-request') {
-          const { canViewAll, isSubmitter } = expenseAccess(req);
-          if (!canViewAll && !isSubmitter) return denyForbidden(res, role, 'EXPENSE_SUBMIT');
-        } else {
-          const needed = PRINT_PERMISSION[docType];
-          if (needed && !hasPermission(role, needed)) return denyForbidden(res, role, needed);
-        }
-      }
-
-      let html: string | null = null;
-      switch (docType) {
-        case 'journal-entry':
-          html = await printService.renderJournalEntry(tenantId, docId);
-          break;
-        case 'custody-voucher':
-          html = await printService.renderCustodyVoucher(tenantId, docId);
-          break;
-        case 'custody-settlement':
-          html = await printService.renderCustodySettlement(tenantId, docId);
-          break;
-        case 'expense-request':
-          html = await printService.renderExpenseRequest(tenantId, docId);
-          break;
-        case 'stock-receipt':
-          html = await printService.renderStockReceipt(tenantId, docId);
-          break;
-        case 'stock-issue':
-          html = await printService.renderStockIssue(tenantId, docId);
-          break;
-        case 'stock-transfer':
-          html = await printService.renderStockTransfer(tenantId, docId);
-          break;
-        case 'stock-count':
-          html = await printService.renderStockCount(tenantId, docId);
-          break;
-        case 'stock-card':
-        case 'item-ledger':
-          html = await printService.renderStockCard(tenantId, docId, {
-            warehouseId: req.query.warehouseId as string,
-            fromDate: req.query.from as string,
-            toDate: req.query.to as string,
-          });
-          break;
-        default:
-          return res.status(400).json({ error: `نوع المستند (${docType}) غير مدعوم في خدمة الطباعة الموحدة` });
-      }
-
-      if (!html) {
-        return res.status(404).json({ error: 'المستند المراد طباعته غير موجود أو غير مكتمل' });
-      }
-
-      // If user requested raw HTML for iframe / popup window:
-      if (req.query.format === 'raw' || req.headers.accept?.includes('text/html')) {
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        return res.send(html);
-      }
-
-      return res.json({ success: true, html });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, error: publicErrorMessage(err) });
-    }
-  });
-
-  // 7. Vite middleware for frontend development
-  if (process.env.NODE_ENV !== 'production') {
+  // Serve static assets and handle Vite middleware
+  if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: 'spa',
+      appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req: Request, res: Response) => {
+    app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  try {
-    if (typeof (masterStorage as any).initializeSchema === 'function') {
-      const initRes = await (masterStorage as any).initializeSchema();
-      if (!initRes.success) {
-        const msg = `CRITICAL [trace=${crypto.randomUUID()}] فشل تهيئة المخطط الأولي: ${JSON.stringify(initRes.error)}`;
-        if (process.env.NODE_ENV === 'production') throw new Error(msg);
-        console.error(msg);
-      } else {
-        console.log('✓ تم فحص وتهيئة مخطط جداول قاعدة البيانات بنجاح.');
-      }
-    }
-    await seedOnlyInitialBootstrap(masterStorage);
-    await initSeedUsers(masterStorage, companyProfile.id);
-    console.log('✓ تم فحص وبذر بيانات المستأجر والمستخدمين بنجاح (seedOnly).');
-    // F1 Standards Intelligence: idempotent catalogue seed (reference entries only, never overwrites, non-fatal).
-    try {
-      const sc = await seedStandardsCatalogue(masterStorage as any, 'system');
-      console.log(`✓ كتالوج المعايير: +${sc.standards} معيار، +${sc.jurisdictions} اختصاص (تخطّي ${sc.skipped})${sc.errors.length ? ' | أخطاء: ' + sc.errors.length : ''}`);
-    } catch (e: any) { console.error('[standards] seed skipped:', e?.message || e); }
-
-    // Startup Fail-Fast Guard (Section 13.2 & Item A-3)
-    const t = crypto.randomUUID();
-    const problems: string[] = [];
-    const gTenant = await masterStorage.getTenant(SEED_TENANT_ID);
-    if (!gTenant.success || !gTenant.data || gTenant.data.status !== 'ACTIVE') {
-      problems.push(`an_tenants: لا يوجد صف ACTIVE للمنشأة ${SEED_TENANT_ID}`);
-    }
-    const gAcc = masterStorage.listAccounts ? await masterStorage.listAccounts(SEED_TENANT_ID) : { success: false, data: [] };
-    if (!gAcc.success || (gAcc.data?.length ?? 0) < 14) {
-      problems.push(`an_accounts: ${gAcc.data?.length ?? 0} بدل 14`);
-    }
-    const gCat = await masterStorage.listExpenseCategories(SEED_TENANT_ID);
-    if (!gCat.success || (gCat.data?.length ?? 0) < 5) {
-      problems.push(`فئات المصروفات: ${gCat.data?.length ?? 0} بدل 5`);
-    }
-    const gUsr = await masterStorage.listUsers(SEED_TENANT_ID);
-    if (!gUsr.success || (gUsr.data?.length ?? 0) < 1) {
-      problems.push(`an_users: ${gUsr.data?.length ?? 0}`);
-    }
-    // PLATFORM-ADMIN-BOOTSTRAP-1: require configured platform admin (super_admin / PLATFORM_ADMIN), not demo usernames.
-    const platformUsername = (process.env.PLATFORM_ADMIN_USERNAME || '').trim();
-    const platformRow = (gUsr.data ?? []).find(
-      (x) => x.username && platformUsername && x.username.toLowerCase() === platformUsername.toLowerCase()
-    );
-    if (!platformUsername) {
-      problems.push('PLATFORM_ADMIN_USERNAME غير مضبوط');
-    } else if (!platformRow) {
-      problems.push(`مدير المنصة غير موجود: ${platformUsername}`);
-    } else if (platformRow.role !== 'super_admin' && platformRow.role !== 'platform_admin') {
-      problems.push(`حساب ${platformUsername} ليس بدور منصة (role=${platformRow.role})`);
-    } else if (platformRow.status !== 'ACTIVE') {
-      problems.push(`حساب مدير المنصة غير ACTIVE: ${platformUsername}`);
-    }
-    if (problems.length) {
-      const msg = `CRITICAL [trace=${t}] بذر الإقلاع غير مكتمل: ${problems.join(' | ')}`;
-      if (process.env.NODE_ENV === 'production') throw new Error(msg);
-      console.error(msg);
-    }
-  } catch (seedErr) {
-    const msg = `CRITICAL [trace=${crypto.randomUUID()}] تعذر إكمال بذر البيانات الأولية تلقائياً: ${seedErr instanceof Error ? seedErr.message : String(seedErr)}`;
-    if (process.env.NODE_ENV === 'production') throw new Error(msg);
-    console.error(msg, seedErr);
-  }
-
-  const httpServer = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`A.N ERP Server running on http://0.0.0.0:${PORT}`);
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
-
-  // OPS-1: keep-alive above the typical load-balancer idle timeout (Node's 5s default drops connections the proxy still reuses)
-  httpServer.keepAliveTimeout = 65_000;
-  httpServer.headersTimeout = 66_000;
-
-  // OPS-1: graceful shutdown on SIGTERM (container stop) / SIGINT: finish in-flight requests, close the database pools, exit
-  const shutdown = createShutdownHandler({
-    server: httpServer,
-    closeStorage: () => globalStorageRouter.closeAll(),
-    timeoutMs: 8000,
-    log: (m) => console.log(`[shutdown] ${m}`),
-    exit: (code) => process.exit(code),
-  });
-  process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
-  process.once('SIGINT', () => { void shutdown('SIGINT'); });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start server:', err);
-});
+startServer();

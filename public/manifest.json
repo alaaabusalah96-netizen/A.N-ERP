@@ -1,0 +1,182 @@
+{
+  "id": "/?source=pwa",
+  "name": "KEMIT ERP",
+  "short_name": "KEMIT ERP",
+  "description": "Secure financial, cash custody, and enterprise resource planning system.",
+  "categories": [
+    "business",
+    "finance",
+    "productivity"
+  ],
+  "lang": "en-US",
+  "dir": "auto",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": [
+    "tabbed",
+    "standalone",
+    "window-controls-overlay",
+    "minimal-ui"
+  ],
+  "background_color": "#0f172a",
+  "theme_color": "#10b981",
+  "orientation": "any",
+  "prefer_related_applications": false,
+  "related_applications": [
+    {
+      "platform": "play",
+      "url": "https://play.google.com/store/apps/details?id=com.alfuttaim.kemiterp",
+      "id": "com.alfuttaim.kemiterp"
+    }
+  ],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot-desktop.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "KEMIT ERP Desktop Dashboard"
+    },
+    {
+      "src": "/screenshot-mobile.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "KEMIT ERP Mobile Dashboard"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Reconciliation",
+      "short_name": "Reconciliation",
+      "description": "Reconcile station cash and custody limits",
+      "url": "/?tab=reconciliation",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Transactions",
+      "short_name": "Transactions",
+      "description": "View cash custody transactions",
+      "url": "/?tab=transactions",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "iarc_rating_id": "e58c160e-b072-463d-82d2-8b4386927a44",
+  "scope_extensions": [
+    { "origin": "https://*.run.app" }
+  ],
+  "tab_strip": {
+    "home_tab": {
+      "scope_patterns": [
+        { "pathname": "/" }
+      ]
+    },
+    "new_tab_button": {
+      "url": "/?source=pwa&new-tab=true"
+    }
+  ],
+  "file_handlers": [
+    {
+      "action": "/?file-open=true",
+      "accept": {
+        "text/plain": [".txt"],
+        "application/json": [".json"]
+      },
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ],
+      "launch_type": "single-client"
+    }
+  ],
+  "launch_handler": {
+    "client_mode": ["focus-existing", "auto"]
+  },
+  "edge_side_panel": {
+    "preferred_width": 480
+  },
+  "note_taking": {
+    "new_note_url": "/?tab=reconciliation&new_note=true"
+  },
+  "share_target": {
+    "action": "/?share=true",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  ],
+  "widgets": [
+    {
+      "name": "KEMIT ERP Summary Widget",
+      "short_name": "KEMIT ERP",
+      "description": "Quick view of station status and custody limits.",
+      "tag": "custody-widget",
+      "template": "custody-template",
+      "ms_id": "com.alfuttaim.kemiterp.widget",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ],
+      "screenshots": [
+        {
+          "src": "/screenshot-mobile.png",
+          "sizes": "1080x1920",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "protocol_handlers": [
+    {
+      "protocol": "web+kemiterp",
+      "url": "/?protocol=%s"
+    }
+  ]
+}

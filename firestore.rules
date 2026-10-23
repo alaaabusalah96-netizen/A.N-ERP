@@ -1,0 +1,807 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Core helper functions
+    function isLoggedIn() {
+      return request.auth != null;
+    }
+
+    function isSystemAdmin() {
+      return isLoggedIn() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SystemAdmin'
+      );
+    }
+
+    function userDocExists() {
+      return isLoggedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function getCompanyId() {
+      return userDocExists() ? (
+        ("company_id" in getUserData()) ? getUserData().company_id : (
+          ("companyId" in getUserData()) ? getUserData().companyId : ""
+        )
+      ) : "";
+    }
+
+    function getUserRole() {
+      return userDocExists() ? getUserData().role : "";
+    }
+
+    function getUserOrgUnitId() {
+      return userDocExists() && ("org_unit_id" in getUserData()) ? getUserData().org_unit_id : "";
+    }
+
+    function getDocCompanyId(data) {
+      return data == null ? "" : (
+        ("company_id" in data) ? data.company_id : (
+          ("companyId" in data) ? data.companyId : ""
+        )
+      );
+    }
+
+    function getDocOrgUnitId(data) {
+      return (data != null && ("org_unit_id" in data)) ? data.org_unit_id : "";
+    }
+
+    function isSameCompanyRead(resourceData) {
+      return isSystemAdmin() || (
+        isLoggedIn() && 
+        getCompanyId() != "" && 
+        resourceData != null && 
+        getDocCompanyId(resourceData) == getCompanyId()
+      );
+    }
+
+    function isSameCompanyWrite(requestData, resourceData) {
+      return isSystemAdmin() || (
+        isLoggedIn() &&
+        getCompanyId() != "" &&
+        requestData != null &&
+        getDocCompanyId(requestData) == getCompanyId() &&
+        (resourceData == null || getDocCompanyId(resourceData) == getCompanyId())
+      );
+    }
+
+    function isOrgScopedRead(resourceData) {
+      return isSameCompanyRead(resourceData) && (
+        isSystemAdmin() ||
+        getUserRole() == 'Admin' ||
+        getUserRole() == 'SystemAdmin' ||
+        getUserOrgUnitId() == "" ||
+        resourceData == null ||
+        getDocOrgUnitId(resourceData) == getUserOrgUnitId() ||
+        (userDocExists() && ("station_id" in getUserData()) && ("station_id" in resourceData) && resourceData.station_id == getUserData().station_id) ||
+        (userDocExists() && ("region_id" in getUserData()) && ("region_id" in resourceData) && resourceData.region_id == getUserData().region_id)
+      );
+    }
+
+    function isOrgScopedWrite(requestData, resourceData) {
+      return isSameCompanyWrite(requestData, resourceData) && (
+        isSystemAdmin() ||
+        getUserRole() == 'Admin' ||
+        getUserRole() == 'SystemAdmin' ||
+        getUserOrgUnitId() == "" ||
+        requestData == null ||
+        getDocOrgUnitId(requestData) == getUserOrgUnitId()
+      );
+    }
+
+    function isUserSelfUpdateSafe() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'role',
+        'permissions',
+        'company_id',
+        'companyId',
+        'org_unit_id',
+        'orgUnitId',
+        'is_platform_owner',
+        'is_active',
+        'region_id',
+        'station_id'
+      ]);
+    }
+
+    // --- Companies ---
+    match /companies/{id} {
+      allow read: if isLoggedIn() && (isSystemAdmin() || id == getCompanyId());
+      allow write: if isSystemAdmin() || (isLoggedIn() && id == getCompanyId() && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin'));
+    }
+
+    // --- Dynamic Organization Engine (Phase 2) ---
+    match /organization_unit_types/{id} {
+      allow read: if isLoggedIn() && (
+        isSystemAdmin() ||
+        resource == null ||
+        resource.data.companyId == null ||
+        resource.data.company_id == null ||
+        resource.data.companyId == getCompanyId() ||
+        resource.data.company_id == getCompanyId()
+      );
+      allow write: if isSystemAdmin() || (
+        isLoggedIn() &&
+        (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') &&
+        (request.resource == null || request.resource.data.companyId == getCompanyId() || request.resource.data.company_id == getCompanyId()) &&
+        (resource == null || resource.data.companyId == getCompanyId() || resource.data.company_id == getCompanyId())
+      );
+    }
+
+    match /organization_units/{id} {
+      allow read: if isLoggedIn() && (
+        isSystemAdmin() ||
+        resource == null ||
+        resource.data.companyId == getCompanyId() ||
+        resource.data.company_id == getCompanyId()
+      );
+      allow write: if isSystemAdmin() || (
+        isLoggedIn() &&
+        (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') &&
+        (request.resource == null || request.resource.data.companyId == getCompanyId() || request.resource.data.company_id == getCompanyId())
+      );
+    }
+
+    match /organization_paths/{id} {
+      allow read: if isLoggedIn() && (
+        isSystemAdmin() ||
+        resource == null ||
+        resource.data.companyId == getCompanyId()
+      );
+      allow write: if isSystemAdmin() || (
+        isLoggedIn() &&
+        (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') &&
+        (request.resource == null || request.resource.data.companyId == getCompanyId())
+      );
+    }
+
+    // --- Organization Templates (Phase 3) ---
+    match /organization_templates/{id} {
+      allow read: if isLoggedIn() && (
+        isSystemAdmin() ||
+        resource == null ||
+        resource.data.companyId == null ||
+        resource.data.company_id == null ||
+        resource.data.companyId == getCompanyId() ||
+        resource.data.company_id == getCompanyId()
+      );
+      allow write: if isSystemAdmin() || (
+        isLoggedIn() &&
+        (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') &&
+        (request.resource == null || request.resource.data.companyId == getCompanyId() || request.resource.data.company_id == getCompanyId()) &&
+        (resource == null || resource.data.companyId == getCompanyId() || resource.data.company_id == getCompanyId())
+      );
+    }
+
+    // --- Warehouse Types (Phase 5) ---
+    match /warehouse_types/{id} {
+      allow read: if isLoggedIn() && (
+        isSystemAdmin() ||
+        resource == null ||
+        resource.data.companyId == null ||
+        resource.data.company_id == null ||
+        resource.data.companyId == getCompanyId() ||
+        resource.data.company_id == getCompanyId()
+      );
+      allow write: if isSystemAdmin() || (
+        isLoggedIn() &&
+        (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') &&
+        (request.resource == null || request.resource.data.companyId == getCompanyId() || request.resource.data.company_id == getCompanyId()) &&
+        (resource == null || resource.data.companyId == getCompanyId() || resource.data.company_id == getCompanyId())
+      );
+    }
+
+    // --- Warehouse Templates (Phase 6) ---
+    match /warehouse_templates/{id} {
+      allow read: if isLoggedIn() && (
+        isSystemAdmin() ||
+        resource == null ||
+        resource.data.companyId == null ||
+        resource.data.company_id == null ||
+        resource.data.companyId == getCompanyId() ||
+        resource.data.company_id == getCompanyId()
+      );
+      allow write: if isSystemAdmin() || (
+        isLoggedIn() &&
+        (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') &&
+        (request.resource == null || request.resource.data.companyId == getCompanyId() || request.resource.data.company_id == getCompanyId()) &&
+        (resource == null || resource.data.companyId == getCompanyId() || resource.data.company_id == getCompanyId())
+      );
+    }
+
+    // --- Dynamic Cost Centers (Phase 11) ---
+    match /cost_centers/{id} {
+      allow read: if isLoggedIn() && (
+        isSystemAdmin() ||
+        resource == null ||
+        resource.data.company_id == getCompanyId() ||
+        resource.data.companyId == getCompanyId()
+      );
+      allow write: if isSystemAdmin() || (
+        isLoggedIn() &&
+        (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Accountant') &&
+        (request.resource == null || request.resource.data.company_id == getCompanyId() || request.resource.data.companyId == getCompanyId())
+      );
+    }
+
+    // --- Approval Workflows & Instances (Phase 8) ---
+    match /approval_workflows/{id} {
+      allow read: if isLoggedIn() && (
+        isSystemAdmin() ||
+        resource == null ||
+        resource.data.company_id == getCompanyId()
+      );
+      allow write: if isSystemAdmin() || (
+        isLoggedIn() &&
+        (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') &&
+        (request.resource == null || request.resource.data.company_id == getCompanyId())
+      );
+    }
+
+    match /approval_instances/{id} {
+      allow read: if isLoggedIn() && (
+        isSystemAdmin() ||
+        resource == null ||
+        resource.data.company_id == getCompanyId()
+      );
+      allow write: if isLoggedIn() && (
+        isSystemAdmin() ||
+        (request.resource == null || request.resource.data.company_id == getCompanyId())
+      );
+    }
+
+    // --- Document Number Configurations (Phase 9) ---
+    match /document_number_configs/{id} {
+      allow read: if isLoggedIn() && (
+        isSystemAdmin() ||
+        resource == null ||
+        resource.data.company_id == getCompanyId()
+      );
+      allow write: if isSystemAdmin() || (
+        isLoggedIn() &&
+        (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') &&
+        (request.resource == null || request.resource.data.company_id == getCompanyId())
+      );
+    }
+
+    // --- Transactions (Custody Transactions) ---
+    match /transactions/{id} {
+      allow read: if isOrgScopedRead(resource.data);
+      allow create, update: if isOrgScopedWrite(request.resource.data, resource.data);
+      allow delete: if isOrgScopedWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- GL Accounts (Chart of Accounts) ---
+    match /gl_accounts/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Accountant');
+    }
+
+    // --- Journal Entries (Immutable Accounting Entries) ---
+    match /journal_entries/{id} {
+      allow read: if isOrgScopedRead(resource.data);
+      allow create: if isOrgScopedWrite(request.resource.data, null) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Accountant');
+      allow update, delete: if false; // Journal entries are immutable
+    }
+
+    // --- Company Sequences ---
+    match /company_sequences/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data);
+      allow delete: if isLoggedIn() && (isSystemAdmin() || (getUserRole() == 'Admin' && resource != null && resource.data.company_id == getCompanyId()));
+    }
+
+    // --- CashVouchers (CamelCase) ---
+    match /CashVouchers/{id} {
+      allow read: if isOrgScopedRead(resource.data);
+      allow create: if isOrgScopedWrite(request.resource.data, null);
+      allow update: if isOrgScopedWrite(request.resource.data, resource.data);
+      allow delete: if isOrgScopedWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- Expenses (Single Unified Collection) ---
+    match /Expenses/{id} {
+      allow read: if isOrgScopedRead(resource.data);
+      allow create: if isOrgScopedWrite(request.resource.data, null) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Accountant');
+      allow update: if isOrgScopedWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Accountant');
+      allow delete: if isOrgScopedWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- TransactionHistory ---
+    match /TransactionHistory/{id} {
+      allow read: if isOrgScopedRead(resource.data);
+      allow create: if isOrgScopedWrite(request.resource.data, null);
+      allow update: if isOrgScopedWrite(request.resource.data, resource.data);
+      allow delete: if isOrgScopedWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- deleted_transactions ---
+    match /deleted_transactions/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- business_groups ---
+    match /business_groups/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- warehouse_bins ---
+    match /warehouse_bins/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Storekeeper');
+    }
+
+    // --- vendors ---
+    match /vendors/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Accountant');
+    }
+
+    // --- purchase_requests ---
+    match /purchase_requests/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Accountant');
+    }
+
+    // --- customers ---
+    match /customers/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data);
+    }
+
+    // --- leads ---
+    match /leads/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data);
+    }
+
+    // --- sales_invoices ---
+    match /sales_invoices/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Accountant');
+    }
+
+    // --- pos_transactions ---
+    match /pos_transactions/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create: if isSameCompanyWrite(request.resource.data, null);
+      allow update: if isSameCompanyWrite(request.resource.data, resource.data);
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- delivery_notes ---
+    match /delivery_notes/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data);
+    }
+
+    // --- employees_payroll_items ---
+    match /employees_payroll_items/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- fixed_assets_items ---
+    match /fixed_assets_items/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Accountant');
+    }
+
+    // --- payroll_processed_runs ---
+    match /payroll_processed_runs/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- User Credentials (Private Authentication Vault - Strict Zero-Trust) ---
+    match /user_credentials/{id} {
+      // STRICT ZERO-TRUST SECURITY RULE:
+      // Direct client SDK read and write access is DENIED for all client requests.
+      // Credentials may ONLY be read or updated server-side via Firebase Admin SDK / Cloud Functions.
+      allow read, write: if false;
+    }
+
+    // --- Users Directory Profiles ---
+    match /users/{id} {
+      allow read: if isLoggedIn() && (id == request.auth.uid || isSystemAdmin() || (resource != null && resource.data.company_id == getCompanyId()));
+      allow create: if isLoggedIn() && (id == request.auth.uid || isSystemAdmin() || (isLoggedIn() && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') && request.resource.data.company_id == getCompanyId()));
+      allow update: if isLoggedIn() && (
+        isSystemAdmin() ||
+        (isLoggedIn() && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') && resource.data.company_id == getCompanyId() && request.resource.data.company_id == getCompanyId()) ||
+        (id == request.auth.uid && isUserSelfUpdateSafe())
+      );
+      allow delete: if isLoggedIn() && (isSystemAdmin() || (resource != null && resource.data.email.lower() == request.auth.token.email.lower()) || (isLoggedIn() && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') && resource.data.company_id == getCompanyId()));
+    }
+
+    // --- Roles & Permissions ---
+    match /roles/{id} {
+      allow read: if isLoggedIn();
+      allow write: if isSystemAdmin() || (isLoggedIn() && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') && (resource == null || resource.data.company_id == getCompanyId()) && (request.resource == null || request.resource.data.company_id == getCompanyId()));
+    }
+
+    match /Roles/{id} {
+      allow read: if isLoggedIn();
+      allow write: if isSystemAdmin() || (isLoggedIn() && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') && (resource == null || resource.data.company_id == getCompanyId()) && (request.resource == null || request.resource.data.company_id == getCompanyId()));
+    }
+
+    match /permissions/{id} {
+      allow read: if isLoggedIn();
+      allow write: if isSystemAdmin() || (isLoggedIn() && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') && (resource == null || resource.data.company_id == getCompanyId()) && (request.resource == null || request.resource.data.company_id == getCompanyId()));
+    }
+
+    match /Permissions/{id} {
+      allow read: if isLoggedIn();
+      allow write: if isSystemAdmin() || (isLoggedIn() && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') && (resource == null || resource.data.company_id == getCompanyId()) && (request.resource == null || request.resource.data.company_id == getCompanyId()));
+    }
+
+    // --- Branches ---
+    match /branches/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- Regions & Stations ---
+    match /regions/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /stations/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- Warehouses & Products ---
+    match /warehouses/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Storekeeper');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /products/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Storekeeper');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- Inventory & Stock Movements ---
+    match /inventory/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Storekeeper');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /inventory_balances/{companyId}/items/{docId} {
+      allow read: if isSystemAdmin() || (isLoggedIn() && getCompanyId() == companyId);
+      allow create: if (isSystemAdmin() || (isLoggedIn() && getCompanyId() == companyId && isSameCompanyWrite(request.resource.data, null))) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Storekeeper');
+      allow update: if (isSystemAdmin() || (isLoggedIn() && getCompanyId() == companyId && isSameCompanyWrite(request.resource.data, resource.data))) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Storekeeper');
+      allow delete: if (isSystemAdmin() || (isLoggedIn() && getCompanyId() == companyId)) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /stock_movements/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Storekeeper');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /inventory_ledger/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Storekeeper');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- Receipts, Issues, Returns & Transfers ---
+    match /receipts/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Storekeeper');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /issues/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Storekeeper');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /returns/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Storekeeper');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /transfers/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Storekeeper');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- Purchase & Sales Orders ---
+    match /purchase_orders/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Accountant');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /purchasing_workflow_configs/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /rfqs/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Accountant');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /vendor_quotations/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Accountant');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /sales_orders/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Accountant');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- Logistics: Vehicles & Drivers ---
+    match /vehicles/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /drivers/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /trips/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Driver' || (userDocExists() && ("permissions" in getUserData()) && (getUserData().permissions.create_trip == true || getUserData().permissions.manage_fleet == true)));
+      allow update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Driver' || (userDocExists() && ("permissions" in getUserData()) && (getUserData().permissions.approve_trip == true || getUserData().permissions.dispatch_trip == true || getUserData().permissions.manage_fleet == true)));
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || (userDocExists() && ("permissions" in getUserData()) && getUserData().permissions.manage_fleet == true));
+    }
+
+    // --- Fleet Module Collections (fleet_*) ---
+    match /fleet_vehicles_items/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || (userDocExists() && ("permissions" in getUserData()) && getUserData().permissions.manage_fleet == true));
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || (userDocExists() && ("permissions" in getUserData()) && getUserData().permissions.manage_fleet == true));
+    }
+
+    match /fleet_trips_items/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || (userDocExists() && ("permissions" in getUserData()) && (getUserData().permissions.create_trip == true || getUserData().permissions.manage_fleet == true)));
+      allow update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || (userDocExists() && ("permissions" in getUserData()) && (getUserData().permissions.approve_trip == true || getUserData().permissions.dispatch_trip == true || getUserData().permissions.manage_fleet == true || getUserData().permissions.execute_breakdown_decision == true || getUserData().permissions.create_emergency_trip == true || getUserData().permissions.execute_trip_tasks == true)));
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || (userDocExists() && ("permissions" in getUserData()) && getUserData().permissions.manage_fleet == true));
+    }
+
+    match /fleet_fuel_logs/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || (userDocExists() && ("permissions" in getUserData()) && getUserData().permissions.manage_fleet == true));
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /fleet_maintenance_logs/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || (userDocExists() && ("permissions" in getUserData()) && getUserData().permissions.manage_fleet == true));
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /fleet_inspections_records/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || (userDocExists() && ("permissions" in getUserData()) && (getUserData().permissions.execute_trip_tasks == true || getUserData().permissions.manage_fleet == true)));
+      allow update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || (userDocExists() && ("permissions" in getUserData()) && getUserData().permissions.manage_fleet == true));
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /fleet_learned_locations_items/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || (userDocExists() && ("permissions" in getUserData()) && (getUserData().permissions.execute_trip_tasks == true || getUserData().permissions.manage_fleet == true)));
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || (userDocExists() && ("permissions" in getUserData()) && getUserData().permissions.manage_fleet == true));
+    }
+
+    match /fleet_trip_chat_messages/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || (userDocExists() && ("permissions" in getUserData()) && (getUserData().permissions.execute_trip_tasks == true || getUserData().permissions.manage_fleet == true || getUserData().permissions.approve_trip == true || getUserData().permissions.dispatch_trip == true)));
+      allow update, delete: if false;
+    }
+
+    match /fleet_trip_tracks/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || (userDocExists() && ("permissions" in getUserData()) && (getUserData().permissions.execute_trip_tasks == true || getUserData().permissions.manage_fleet == true)));
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /fleet_vehicle_constraints/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || (userDocExists() && ("permissions" in getUserData()) && (getUserData().permissions.manage_vehicle_constraints == true || getUserData().permissions.manage_fleet == true)));
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || (userDocExists() && ("permissions" in getUserData()) && (getUserData().permissions.manage_vehicle_constraints == true || getUserData().permissions.manage_fleet == true)));
+    }
+
+    // --- Fuel, Maintenance & Expenses ---
+    match /fuel_logs/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Driver' || getUserRole() == 'Accountant');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /maintenance/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Accountant');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /expenses/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'Manager' || getUserRole() == 'Accountant');
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- Settings & Configurations ---
+    match /settings/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /config/{id} {
+      allow read: if isLoggedIn();
+      allow write: if isSystemAdmin() || (isLoggedIn() && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin'));
+    }
+
+    // --- Notifications ---
+    match /notifications/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data);
+    }
+
+    // --- Attachments ---
+    match /attachments/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow write: if isSameCompanyWrite(request.resource.data, resource.data);
+    }
+
+    // --- Audit Logs, Activity Logs & Logs (Immutable protection) ---
+    match /activity_logs/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create: if isSameCompanyWrite(request.resource.data, null);
+      allow update, delete: if false; // Strict modification protection
+    }
+
+    match /AuditLogs/{id} {
+      allow read: if isSameCompanyRead(resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+      allow create: if isSameCompanyWrite(request.resource.data, null);
+      allow update, delete: if false; // Strict modification protection
+    }
+
+    match /logs/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create: if isSameCompanyWrite(request.resource.data, null);
+      allow update, delete: if false; // Strict modification protection
+    }
+
+    // --- Contracting Module Collections ---
+    match /contracting_projects/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data);
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /contracting_boq_items/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data);
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /contracting_subcontractors/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data);
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /contracting_subcontracts/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data);
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /contracting_vouchers/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data);
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /contracting_workers/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data);
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /contracting_attendance/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data);
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    match /contracting_payouts/{id} {
+      allow read: if isSameCompanyRead(resource.data);
+      allow create, update: if isSameCompanyWrite(request.resource.data, resource.data);
+      allow delete: if isSameCompanyWrite(resource.data, resource.data) && (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin');
+    }
+
+    // --- Categories & System Meta ---
+    // Global shared taxonomy, no per-company data exists in this collection
+    match /categories/{id} {
+      allow read: if isLoggedIn();
+      allow write: if isSystemAdmin();
+    }
+
+    match /system_meta/{id} {
+      allow read: if true;
+      allow write: if isSystemAdmin();
+    }
+
+    // --- Unique Invoice Locks ---
+    match /unique_invoice_locks/{id} {
+      allow read: if isLoggedIn();
+      allow create: if isLoggedIn();
+      allow update, delete: if false; // Only allow creation of locks to prevent overrides!
+    }
+
+    // --- Signup Requests ---
+    match /signup_requests/{id} {
+      allow create: if request.resource.data.keys().hasAll(['email', 'full_name', 'company_id', 'status'])
+                    && request.resource.data.status == 'Pending'
+                    && request.resource.data.email is string
+                    && request.resource.data.full_name is string
+                    && request.resource.data.company_id is string;
+      allow read, update, delete: if isSystemAdmin() || (
+        isLoggedIn() && 
+        (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin') && 
+        (resource == null || resource.data.company_id == getCompanyId())
+      );
+    }
+
+    match /account_correction_requests/{id} {
+      allow create: if isLoggedIn()
+                    && request.resource.data.keys().hasAll(['targetEmail', 'targetUserId', 'correctionType', 'status', 'company_id'])
+                    && request.resource.data.status == 'Pending'
+                    && request.resource.data.targetEmail is string
+                    && request.resource.data.targetUserId is string
+                    && request.resource.data.company_id is string
+                    && request.resource.data.company_id != ""
+                    && request.resource.data.company_id == getCompanyId();
+      allow read, update, delete: if isSystemAdmin() || (
+        isLoggedIn() &&
+        (getUserRole() == 'Admin' || getUserRole() == 'SystemAdmin' || getUserRole() == 'RegionalManager') &&
+        (resource == null || resource.data.company_id == getCompanyId())
+      );
+    }
+
+    // --- Secure Platform Server Collections (Locked Down from client-side SDK) ---
+    match /password_reset_otps/{id} {
+      allow read, write: if false;
+    }
+
+    match /admin_login_otps/{id} {
+      allow read, write: if false;
+    }
+
+    match /system_config/{id} {
+      allow read, write: if false;
+    }
+  }
+}
