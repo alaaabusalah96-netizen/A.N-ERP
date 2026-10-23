@@ -6,6 +6,3 @@ coverage/
 *.log
 .env*
 !.env.example
-_an_erp_legacy_backup/
-.aistudio/
-

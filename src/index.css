@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+html, body {
+  overflow-x: hidden;
+  max-width: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* Global Print Configuration */
+@media print {
+  /* Hide all elements on the page */
+  body * {
+    visibility: hidden;
+    background-color: transparent !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  /* Show designated printable containers */
+  #voucher-sheet-printable, #voucher-sheet-printable *,
+  #reconciliation-sheet-printable, #reconciliation-sheet-printable * {
+    visibility: visible;
+  }
+  
+  /* Reset layout for the printed pages */
+  #voucher-sheet-printable, #reconciliation-sheet-printable {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: 100%;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 10px !important;
+    margin: 0 !important;
+    background-color: white !important;
+    color: black !important;
+  }
+
+  /* Force standard margins and hide headers/footers of the browser where possible */
+  @page {
+    margin: 1cm;
+  }
+}
+
+@keyframes bounce-subtle {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-bounce-subtle {
+  animation: bounce-subtle 3s ease-in-out infinite;
+}
+
+/* Ensure all inputs, textareas, and selects have explicit high-contrast text color based on their background */
+input, textarea, select {
+  color: #0f172a !important; /* Slate-900 */
+}
+
+/* When dark mode is active */
+.dark input, .dark textarea, .dark select {
+  color: #f8fafc !important; /* Slate-50 */
+}
+
+/* For inputs/textareas/selects that are styled with dark backgrounds explicitly */
+input[class*="bg-slate-"], input[class*="bg-gray-"], input[class*="bg-zinc-"],
+textarea[class*="bg-slate-"], textarea[class*="bg-gray-"], textarea[class*="bg-zinc-"],
+select[class*="bg-slate-"], select[class*="bg-gray-"], select[class*="bg-zinc-"] {
+  color: #f8fafc !important;
+}
+
+/* For inputs/textareas/selects with white/light backgrounds explicitly */
+input[class*="bg-white"], textarea[class*="bg-white"], select[class*="bg-white"],
+input[class*="bg-slate-50"], textarea[class*="bg-slate-50"], select[class*="bg-slate-50"],
+input[class*="bg-gray-50"], textarea[class*="bg-gray-50"], select[class*="bg-gray-50"] {
+  color: #0f172a !important;
+}

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>KEMIT ERP</title>
+    <meta name="description" content="KEMIT ERP is a secure, real-time enterprise resource planning, cash custody, and financial reconciliation system designed for Al-Futtaim Trading Co." />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#10b981" />
+    <link rel="icon" type="image/png" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <script>
+      // Diagnostic Error Catcher to prevent silent blank pages
+      window.addEventListener('error', function(e) {
+        var overlay = document.getElementById('diag-error-overlay');
+        if (!overlay) {
+          overlay = document.createElement('div');
+          overlay.id = 'diag-error-overlay';
+          overlay.style.position = 'fixed';
+          overlay.style.top = '0';
+          overlay.style.left = '0';
+          overlay.style.width = '100%';
+          overlay.style.height = '100%';
+          overlay.style.backgroundColor = '#991b1b';
+          overlay.style.color = '#fef2f2';
+          overlay.style.padding = '24px';
+          overlay.style.zIndex = '999999';
+          overlay.style.fontFamily = 'monospace';
+          overlay.style.overflow = 'auto';
+          overlay.style.boxSizing = 'border-box';
+          document.body.appendChild(overlay);
+        }
+        overlay.innerHTML = '<h2>🚨 Runtime Exception Caught:</h2>' +
+                            '<pre style="background: #7f1d1d; padding: 15px; border-radius: 8px; border: 1px solid #ef4444; white-space: pre-wrap;">' + 
+                            e.message + '\n' + e.filename + ':' + e.lineno + ':' + e.colno + '\n' + (e.error ? e.error.stack : '') + 
+                            '</pre>' +
+                            '<button onclick="localStorage.clear(); sessionStorage.clear(); location.reload();" style="margin-top: 20px; padding: 10px 20px; background: #b91c1c; border: 1px solid #fca5a5; color: white; cursor: pointer; border-radius: 4px;">Clear Session & Reload</button>';
+      });
+
+      window.addEventListener('unhandledrejection', function(e) {
+        var overlay = document.getElementById('diag-error-overlay');
+        if (!overlay) {
+          overlay = document.createElement('div');
+          overlay.id = 'diag-error-overlay';
+          overlay.style.position = 'fixed';
+          overlay.style.top = '0';
+          overlay.style.left = '0';
+          overlay.style.width = '100%';
+          overlay.style.height = '100%';
+          overlay.style.backgroundColor = '#991b1b';
+          overlay.style.color = '#fef2f2';
+          overlay.style.padding = '24px';
+          overlay.style.zIndex = '999999';
+          overlay.style.fontFamily = 'monospace';
+          overlay.style.overflow = 'auto';
+          overlay.style.boxSizing = 'border-box';
+          document.body.appendChild(overlay);
+        }
+        var msg = e.reason ? (e.reason.message || e.reason.toString()) : 'Unhandled rejection';
+        var stack = e.reason && e.reason.stack ? e.reason.stack : '';
+        overlay.innerHTML = '<h2>🚨 Unhandled Promise Rejection:</h2>' +
+                            '<pre style="background: #7f1d1d; padding: 15px; border-radius: 8px; border: 1px solid #ef4444; white-space: pre-wrap;">' + 
+                            msg + '\n' + stack + 
+                            '</pre>' +
+                            '<button onclick="localStorage.clear(); sessionStorage.clear(); location.reload();" style="margin-top: 20px; padding: 10px 20px; background: #b91c1c; border: 1px solid #fca5a5; color: white; cursor: pointer; border-radius: 4px;">Clear Session & Reload</button>';
+      });
+
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js')
+            .then(function(reg) {
+              console.log('PWA Service Worker registered from HTML:', reg.scope);
+            })
+            .catch(function(err) {
+              console.error('PWA Service Worker registration failed from HTML:', err);
+            });
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
