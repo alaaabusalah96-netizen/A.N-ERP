@@ -2751,14 +2751,30 @@ async function startServer() {
         hmr: process.env.ENABLE_HMR === "true",
         watch: process.env.ENABLE_HMR === "true" ? {} : null,
       },
-      appType: "spa",
+      appType: "custom",
     });
     app.use(vite.middlewares);
+    app.use(async (req: any, res: any, next: any) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return next();
+      const url = req.originalUrl || req.url || "";
+      if (url.startsWith("/api")) return next();
+      try {
+        const fs = await import("fs");
+        const pathMod = await import("path");
+        const indexPath = pathMod.join(process.cwd(), "index.html");
+        let template = fs.readFileSync(indexPath, "utf-8");
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ "Content-Type": "text/html" }).end(template);
+      } catch (e) {
+        vite.ssrFixStacktrace(e as Error);
+        next(e);
+      }
+    });
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 

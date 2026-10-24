@@ -50,26 +50,33 @@ export default function App() {
   const [hasPlatformOwner, setHasPlatformOwner] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!activeUser) {
-      let isMounted = true;
-      fetch('/api/auth/platform-status')
-        .then((res) => {
-          if (!res.ok) throw new Error('Status endpoint returned non-200');
-          return res.json();
-        })
-        .then((data) => {
-          if (isMounted) {
-            setHasPlatformOwner(data?.hasPlatformOwner ?? true);
-          }
-        })
-        .catch((err) => {
-          console.warn('Failed to check platform status, defaulting to Login screen:', err);
-          if (isMounted) {
-            setHasPlatformOwner(true);
-          }
-        });
-      return () => { isMounted = false; };
-    }
+    if (activeUser) return;
+    let isMounted = true;
+    const timer = window.setTimeout(() => {
+      if (isMounted) {
+        console.warn('platform-status timeout → Login');
+        setHasPlatformOwner((prev) => (prev === null ? true : prev));
+      }
+    }, 4000);
+    fetch('/api/auth/platform-status')
+      .then((res) => {
+        if (!res.ok) throw new Error('Status endpoint returned non-200');
+        return res.json();
+      })
+      .then((data) => {
+        if (isMounted) setHasPlatformOwner(data?.hasPlatformOwner ?? true);
+      })
+      .catch((err) => {
+        console.warn('Failed to check platform status, defaulting to Login screen:', err);
+        if (isMounted) setHasPlatformOwner(true);
+      })
+      .finally(() => {
+        window.clearTimeout(timer);
+      });
+    return () => {
+      isMounted = false;
+      window.clearTimeout(timer);
+    };
   }, [activeUser]);
 
   const [currentTab, setCurrentTab] = useState<string>(() => {

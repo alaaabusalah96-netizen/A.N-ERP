@@ -1,0 +1,168 @@
+# FIX-PREVIEW-BOOT-1 — White screen after HMR fix (LEAN)
+# HMR is already OFF. Preview still blank.
+# Harden boot: platform-status timeout, SPA HTML via Vite transform, ErrorBoundary.
+# No auth/merge business changes.
+
+## HARD RULES
+1. Do not change verify-credentials logic or /api/an routes.
+2. Stop at first failure. tsc wait >2 min → run tsc once, build, continue. No loop.
+3. One RESULTS REPORT at the end only.
+
+## PRECHECK
+- Report (do not skip): echo NODE_ENV; test -f dist/index.html && echo HAS_DIST || echo NO_DIST
+- Confirm HMR patch present: server createViteServer has `hmr: process.env.ENABLE_HMR === "true"`
+
+## STEP 3a — PATCH src/App.tsx (platform-status timeout)
+Replace the useEffect that fetches `/api/auth/platform-status` with:
+
+```tsx
+  useEffect(() => {
+    if (activeUser) return;
+    let isMounted = true;
+    const timer = window.setTimeout(() => {
+      if (isMounted && hasPlatformOwner === null) {
+        console.warn('platform-status timeout → Login');
+        setHasPlatformOwner(true);
+      }
+    }, 4000);
+    fetch('/api/auth/platform-status')
+      .then((res) => {
+        if (!res.ok) throw new Error('Status endpoint returned non-200');
+        return res.json();
+      })
+      .then((data) => {
+        if (isMounted) setHasPlatformOwner(data?.hasPlatformOwner ?? true);
+      })
+      .catch((err) => {
+        console.warn('Failed to check platform status, defaulting to Login screen:', err);
+        if (isMounted) setHasPlatformOwner(true);
+      })
+      .finally(() => {
+        window.clearTimeout(timer);
+      });
+    return () => {
+      isMounted = false;
+      window.clearTimeout(timer);
+    };
+  }, [activeUser]);
+```
+
+Note: if eslint complains about hasPlatformOwner in timeout closure, keep timeout-only setTrue without reading state:
+
+```tsx
+    const timer = window.setTimeout(() => {
+      if (isMounted) setHasPlatformOwner((prev) => (prev === null ? true : prev));
+    }, 4000);
+```
+
+## STEP 3b — PATCH server.ts Vite block
+Replace the entire non-production Vite section with:
+
+```javascript
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: {
+        middlewareMode: true,
+        hmr: process.env.ENABLE_HMR === "true",
+        watch: process.env.ENABLE_HMR === "true" ? {} : null,
+      },
+      appType: "custom",
+    });
+    app.use(vite.middlewares);
+    app.use(async (req: any, res: any, next: any) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return next();
+      const url = req.originalUrl || req.url || "";
+      if (url.startsWith("/api")) return next();
+      try {
+        const fs = await import("fs");
+        const pathMod = await import("path");
+        const indexPath = pathMod.join(process.cwd(), "index.html");
+        let template = fs.readFileSync(indexPath, "utf-8");
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ "Content-Type": "text/html" }).end(template);
+      } catch (e) {
+        vite.ssrFixStacktrace(e as Error);
+        next(e);
+      }
+    });
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  }
+```
+
+## STEP 3c — Error boundary (minimal)
+Create `src/components/BootErrorBoundary.tsx`:
+
+```tsx
+import React from 'react';
+
+type Props = { children: React.ReactNode };
+type State = { error: Error | null };
+
+export default class BootErrorBoundary extends React.Component<Props, State> {
+  state: State = { error: null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 24, fontFamily: 'sans-serif', direction: 'rtl' }}>
+          <h1>خطأ في تحميل الواجهة</h1>
+          <pre style={{ whiteSpace: 'pre-wrap', color: '#b91c1c' }}>
+            {this.state.error.message}
+          </pre>
+          <button type="button" onClick={() => window.location.reload()}>
+            إعادة التحميل
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+```
+
+In `src/main.tsx` (or `src/index.tsx`), wrap `<App />` with `<BootErrorBoundary>`.
+
+## STEP 8 — BUILD + RESTART
+```
+npx tsc --noEmit
+npm run build
+```
+Kill old server. Start:
+```
+npx tsx server.ts --port 3000 --host 0.0.0.0
+```
+
+## STEP 9 — VERIFY FROM SERVER LOGS / CURL
+```
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/
+curl -s http://127.0.0.1:3000/api/auth/platform-status
+```
+Expect: `/` → 200 HTML containing root div; platform-status → 200 JSON.
+
+## STEP 10
+Open Preview (hard refresh). Expect Login **or** Arabic error text from BootErrorBoundary (never infinite pure white without message).
+
+## COMMIT NOTE
+```
+fix(preview): SPA HTML fallback + platform-status timeout + boot error boundary
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+NODE_ENV: ...
+HAS_DIST: ...
+GET / status: ...
+platform-status: ...
+build: ...
+Preview: Login | ErrorBoundary message | still white
+Status: DONE | package: FIX-PREVIEW-BOOT-1
+===========================
+```

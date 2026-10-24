@@ -4,6 +4,7 @@ import App from './App.tsx';
 import './index.css';
 import { CustodyDB } from './db';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import BootErrorBoundary from './components/BootErrorBoundary';
 
 // Initialize remote Firebase database synchronization safely
 try {
@@ -78,7 +79,9 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <BootErrorBoundary>
+        <App />
+      </BootErrorBoundary>
     </ErrorBoundary>
   </StrictMode>,
 );
