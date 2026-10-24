@@ -2743,8 +2743,13 @@ async function startServer() {
     console.error("A.N core bridge failed to mount:", anErr);
   }
 
-  // Serve static assets and handle Vite middleware
-  if (process.env.NODE_ENV !== "production") {
+  // Studio Preview: SERVE_DIST=1 avoids @vite/client WebSocket entirely.
+  const serveDist =
+    process.env.SERVE_DIST === "1" ||
+    process.env.SERVE_DIST === "true" ||
+    process.env.NODE_ENV === "production";
+
+  if (!serveDist) {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -2773,9 +2778,13 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+    app.get("*", (req: any, res: any, next: any) => {
+      if ((req.originalUrl || req.url || "").startsWith("/api")) return next();
+      res.sendFile(path.join(distPath, "index.html"), (err: any) => {
+        if (err) next(err);
+      });
     });
+    console.log("Serving static dist/ (SERVE_DIST or production) — no Vite HMR client");
   }
 
   app.listen(PORT, "0.0.0.0", () => {

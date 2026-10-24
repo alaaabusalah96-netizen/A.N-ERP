@@ -1,0 +1,101 @@
+# FIX-PREVIEW-STATIC-1 — Serve dist in Studio (no @vite/client) LEAN
+# Evidence: GET / → 200 HTML that still injects /@vite/client → mobile Preview white/red.
+# platform-status OK. HAS_DIST=YES. Fix: prefer static dist when SERVE_DIST=1.
+
+## HARD RULES
+1. No auth/merge changes.
+2. Stop at first failure. One RESULTS REPORT at end.
+3. If tsc wait >2 min: tsc once, build, continue.
+
+## STEP 3 — PATCH server.ts
+Replace the whole block that chooses Vite vs dist with:
+
+```javascript
+  // Studio Preview: SERVE_DIST=1 avoids @vite/client WebSocket entirely.
+  const serveDist =
+    process.env.SERVE_DIST === "1" ||
+    process.env.SERVE_DIST === "true" ||
+    process.env.NODE_ENV === "production";
+
+  if (!serveDist) {
+    const vite = await createViteServer({
+      server: {
+        middlewareMode: true,
+        hmr: process.env.ENABLE_HMR === "true",
+        watch: process.env.ENABLE_HMR === "true" ? {} : null,
+      },
+      appType: "custom",
+    });
+    app.use(vite.middlewares);
+    app.use(async (req: any, res: any, next: any) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return next();
+      const url = req.originalUrl || req.url || "";
+      if (url.startsWith("/api")) return next();
+      try {
+        const fs = await import("fs");
+        const pathMod = await import("path");
+        const indexPath = pathMod.join(process.cwd(), "index.html");
+        let template = fs.readFileSync(indexPath, "utf-8");
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ "Content-Type": "text/html" }).end(template);
+      } catch (e) {
+        vite.ssrFixStacktrace(e as Error);
+        next(e);
+      }
+    });
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (req: any, res: any, next: any) => {
+      if ((req.originalUrl || req.url || "").startsWith("/api")) return next();
+      res.sendFile(path.join(distPath, "index.html"), (err: any) => {
+        if (err) next(err);
+      });
+    });
+    console.log("Serving static dist/ (SERVE_DIST or production) — no Vite HMR client");
+  }
+```
+
+## STEP 3b — .env.example
+```
+# Google AI Studio Preview: use built assets (no @vite/client)
+SERVE_DIST=1
+```
+
+## STEP 8
+```
+npm run build
+```
+Restart server **with**:
+```
+SERVE_DIST=1 npx tsx server.ts --port 3000 --host 0.0.0.0
+```
+
+## STEP 9 — MUST PASS
+```
+curl -s http://127.0.0.1:3000/ | head -c 400
+```
+Body must **NOT** contain `/@vite/client`.
+Should reference `/assets/...` from Vite build.
+
+```
+curl -s http://127.0.0.1:3000/api/auth/platform-status
+```
+→ 200 JSON
+
+## COMMIT
+```
+fix(preview): SERVE_DIST=1 serves production static assets without Vite client
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+SERVE_DIST: 1
+GET / contains @vite/client: YES/NO
+GET / contains /assets/: YES/NO
+platform-status: ...
+Preview: Login YES/NO
+Status: DONE | FIX-PREVIEW-STATIC-1
+===========================
+```
