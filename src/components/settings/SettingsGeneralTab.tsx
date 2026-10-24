@@ -6,6 +6,7 @@ import { Language, Theme, AppUser, Region, Station } from '../../types';
 import { CustodyDB } from '../../db';
 import CompanyBackendPanel from './CompanyBackendPanel';
 import AuthPolicyNote from './AuthPolicyNote';
+import AnCoreStatusPanel from './AnCoreStatusPanel';
 
 interface SettingsGeneralTabProps {
   language: Language;
@@ -83,6 +84,7 @@ export default function SettingsGeneralTab({
     <div className="grid gap-6 md:grid-cols-2 animate-fade-in">
       <CompanyBackendPanel language={language} />
       <AuthPolicyNote language={language} />
+      <AnCoreStatusPanel language={language} />
       {/* Card 1: General configuration */}
       <div className={`p-5 rounded-2xl border ${
         theme === 'dark' ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-slate-200 shadow-sm'
