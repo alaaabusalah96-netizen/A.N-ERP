@@ -2724,7 +2724,21 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted at /api/an/storage-status + /api/an/company-backend + /api/an/auth-policy");
+    app.get("/api/an/routes", async (_req: any, res: any) => {
+      try {
+        const { AN_ROUTE_CATALOG, AN_API_PREFIX, CF_RESERVED_PREFIXES } = await import("./src/lib/anApi");
+        res.json({
+          ok: true,
+          prefix: AN_API_PREFIX,
+          routes: AN_ROUTE_CATALOG,
+          reservedCustodyFlowPrefixes: CF_RESERVED_PREFIXES,
+          version: "7.2.0",
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }
