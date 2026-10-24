@@ -1,0 +1,265 @@
+# PACK: AN-MERGE-M1
+# TITLE: المرحلة 1 — حقن نواة A.N (an-core) + جسر + /api/an/storage-status
+# BASE: جذر CustodyFlow / kemit-erp (بعد استقرار Preview وإصلاح الشاشة البيضاء)
+# SCOPE: مرحلة 1 فقط من دستور الدمج — ممنوع 2–6
+# FORMAT: LEAN لـ Google AI Studio
+
+## إلزامي قبل أي أمر
+- نفّذ هذه المرحلة فقط. لا جسر بيانات كامل، لا تغيير Login/Firebase Auth، لا حذف شاشات.
+- لا تلمس Secrets ولا تحذف DATABASE_URL أو FIREBASE_*.
+- إذا بقيت على Wait / tsc / build أكثر من دقيقتين: لا تعد في حلقة. نفّذ tsc مرة وbuild مرة ثم أكمل أو أبلغ.
+- في الختام: كتلة RESULTS REPORT واحدة فقط قابلة للنسخ.
+
+## مرفقات مطلوبة في بيئة التنفيذ
+1) مشروع الجذر الحالي (CustodyFlow).
+2) ملف الأرشيف: **an-core-m1.zip** (يُرفع إلى جذر المشروع أو إلى `.phase_tmp/an-core-m1.zip`)
+   - SHA256 المتوقع: `b3b6f17d7748e2df11798362132ea7c1f8fbe61e50a4ec3e2769b9e7285a1c67`
+   - إن وُضع في الجذر: انقله إلى `.phase_tmp/an-core-m1.zip` قبل الاستخراج.
+
+## PRECHECK
+1) يوجد `package.json` واسم الحزمة `kemit-erp` (أو dependencies فيها firebase + express).
+2) يوجد `src/pages/Login.tsx` و `src/firebase.ts` و `server.ts`.
+3) **لا** يوجد `src/an-core` بعد (إن وُجد كاملًا مع StoragePort + route التخزين: اطبع ALREADY_DONE بعد verify).
+4) إن ناقص `an-core-m1.zip`: توقف واطلب رفعه — لا تختلق النواة.
+
+## الخطوات
+### 1) إعداد
+```bash
+mkdir -p .phase_tmp src/lib scripts
+```
+
+### 2) التحقق من الأرشيف
+```bash
+test -f .phase_tmp/an-core-m1.zip || test -f an-core-m1.zip
+# إن كان في الجذر:
+[ -f an-core-m1.zip ] && mv -f an-core-m1.zip .phase_tmp/an-core-m1.zip
+sha256sum .phase_tmp/an-core-m1.zip
+# يجب أن يطابق: b3b6f17d7748e2df11798362132ea7c1f8fbe61e50a4ec3e2769b9e7285a1c67
+```
+إن لم يطابق: توقف (ARCHIVE_HASH_FAIL).
+
+### 3) استخراج النواة
+```bash
+unzip -o .phase_tmp/an-core-m1.zip -d .
+# الناتج: src/an-core/...
+test -f src/an-core/storage/StoragePort.ts
+test -f src/an-core/storage/StorageRouter.ts
+```
+
+### 4) كتابة الملفات الجديدة (حرفيًا)
+
+#### 4.1 `src/lib/anBridge.ts`
+```typescript
+/**
+ * @file anBridge.ts
+ * @description Starter bridge between CustodyFlow UI and A.N core (src/an-core).
+ * Client-safe: imports ONLY types from an-core (no server code in the browser).
+ * Later phases wire dbSetDoc / login through here. Phase 1 = probe only.
+ */
+import type {
+  AdapterType,
+  BackendConfig,
+  IsolationLevel,
+  StorageResult,
+  TenantCompany,
+} from '../an-core/storage/StoragePort';
+
+export type { AdapterType, BackendConfig, IsolationLevel, StorageResult, TenantCompany };
+
+export type AuthDriver = 'firebase' | 'an-jwt';
+
+export const AN_CORE_VERSION = '7.2.0';
+
+export interface CompanyBackendSettings {
+  auth_driver: AuthDriver;
+  db_backend: AdapterType;
+}
+
+/** Defaults keep existing Firebase path — A.N core is opt-in per company. */
+export function getCompanyBackendSettings(
+  company: { auth_driver?: AuthDriver; db_backend?: AdapterType } | null | undefined
+): CompanyBackendSettings {
+  return {
+    auth_driver: company?.auth_driver ?? 'firebase',
+    db_backend: company?.db_backend ?? 'firebase',
+  };
+}
+
+/** Probes A.N core mounted on the server (GET /api/an/storage-status). */
+export async function getAnStorageStatus(): Promise<{
+  ok: boolean;
+  adapterName?: string;
+  tenants?: number;
+  version?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/an/storage-status');
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const data = await res.json();
+    return { ok: true, ...data };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'network error' };
+  }
+}
+```
+
+
+#### 4.2 `scripts/verifyMergeM1.ts`
+```typescript
+/**
+ * verifyMergeM1.ts — MERGE phase 1 gates (core inject only)
+ */
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const anCore = path.join(root, 'src/an-core');
+const port = path.join(anCore, 'storage/StoragePort.ts');
+const router = path.join(anCore, 'storage/StorageRouter.ts');
+const bridge = path.join(root, 'src/lib/anBridge.ts');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const types = fs.readFileSync(path.join(root, 'src/types.ts'), 'utf8');
+
+check('S1 src/an-core exists', fs.existsSync(anCore));
+check('S2 StoragePort.ts exists', fs.existsSync(port));
+check('S3 StorageRouter.ts exists', fs.existsSync(router));
+check('S4 anBridge.ts exists', fs.existsSync(bridge));
+check('S5 anBridge exports getAnStorageStatus', fs.readFileSync(bridge, 'utf8').includes('getAnStorageStatus'));
+check('S6 anBridge exports getCompanyBackendSettings', fs.readFileSync(bridge, 'utf8').includes('getCompanyBackendSettings'));
+check('S7 server mounts /api/an/storage-status', server.includes("/api/an/storage-status"));
+check('S8 server imports StorageRouter from an-core', /an-core\/storage\/StorageRouter/.test(server));
+check('S9 package has pg', !!pkg.dependencies?.pg);
+check('S10 package has argon2', !!pkg.dependencies?.argon2);
+check('S11 types has db_backend', types.includes('db_backend'));
+check('S12 types has auth_driver', types.includes('auth_driver'));
+check('S13 firebase dependency kept', !!pkg.dependencies?.firebase);
+check('S14 Login.tsx still present', fs.existsSync(path.join(root, 'src/pages/Login.tsx')));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+
+### 5) تعديل `src/types.ts`
+داخل `export interface Company` أضف قبل إغلاق الواجهة (إن لم تكن موجودة):
+
+```typescript
+  /** A.N merge: storage adapter for this company */
+  db_backend?: 'postgresql' | 'mysql' | 'mongodb' | 'firebase' | 'inmemory';
+  /** A.N merge: auth driver for this company */
+  auth_driver?: 'firebase' | 'an-jwt';
+```
+
+### 6) تعديل `package.json`
+أضف إلى `dependencies` (بدون حذف firebase أو أي تبعية موجودة):
+
+```json
+"argon2": "^0.45.1",
+"otplib": "^13.5.0",
+"qrcode": "^1.5.4",
+"pg": "^8.23.0",
+"mysql2": "^3.24.4",
+"mongodb": "^7.6.0"
+```
+
+أضف إلى `devDependencies`:
+
+```json
+"@types/pg": "^8.23.1",
+"@types/qrcode": "^1.5.5"
+```
+
+ثم إن لزم: `npm install` مرة واحدة (لا حلقة).
+
+### 7) تعديل `server.ts`
+قبل السطر الذي يبدأ بـ:
+`// Serve static assets and handle Vite middleware`
+
+أدرج حرفيًا:
+
+```typescript
+  // ===== A.N core bridge (MERGE-M1) =====
+  try {
+    const { StorageRouter } = await import("./src/an-core/storage/StorageRouter");
+    const anStorageRouter = new StorageRouter();
+    app.get("/api/an/storage-status", async (_req: any, res: any) => {
+      try {
+        const adapter = anStorageRouter.getDevInMemoryAdapter();
+        const tenantsResult = await adapter.listTenants();
+        const tenants = tenantsResult.success && Array.isArray(tenantsResult.data) ? tenantsResult.data.length : 0;
+        res.json({ ok: true, adapterName: adapter.adapterName, tenants, version: "7.2.0" });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted at /api/an/storage-status");
+  } catch (anErr) {
+    console.error("A.N core bridge failed to mount:", anErr);
+  }
+
+```
+
+إن وُجد المسار مسبقًا: لا تكرر الإدراج.
+
+### 8) تنظيف
+```bash
+rm -rf .phase_tmp
+```
+(لا تحذف `src/an-core`)
+
+### 9) تحقق
+```bash
+npx tsx scripts/verifyMergeM1.ts
+```
+المطلوب: Passed: 14 | Failed: 0
+
+### 10) بناء مرة واحدة
+```bash
+npx tsc --noEmit
+npm run build
+```
+- لا تكرر أكثر من مرة عند النجاح.
+- أخطاء tsc قديمة غير ناتجة عن هذه المرحلة: سجّلها ولا توسّع الإصلاح خارج النطاق ما لم تمنع build.
+- إن build نجح فالمرحلة تُقبل مع تسجيل ملاحظات tsc إن وُجدت.
+
+### 11) دخان اختياري
+- إن الخادم يعمل: `GET /api/an/storage-status` يُفضّل أن يرجع JSON فيه `ok: true` أو خطأ موضّح دون إسقاط السيرفر.
+- Login/Preview لا يزال يعمل (لا تكسر Firebase).
+
+## خارج النطاق (ممنوع)
+- تعديل `src/firebase.ts` لمسار بيانات مزدوج
+- استبدال Login بـ JWT
+- حذف `_an_erp_legacy_backup`
+- تنفيذ مراحل 2–6
+
+## RESULTS REPORT (اطبع فقط في النهاية)
+```
+===== RESULTS REPORT =====
+PHASE: AN-MERGE-M1
+an-core extracted: yes|no
+StoragePort: yes|no
+anBridge: yes|no
+/api/an/storage-status: yes|no
+types db_backend/auth_driver: yes|no
+deps pg+argon2: yes|no
+firebase kept: yes|no
+verifyMergeM1: Passed: N | Failed: N
+tsc: OK|FAIL|NOTES
+build: OK|FAIL
+Login/CF untouched: yes|no
+===========================
+```

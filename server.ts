@@ -2642,6 +2642,25 @@ async function startServer() {
 
 
 
+  // ===== A.N core bridge (MERGE-M1) =====
+  try {
+    const { StorageRouter } = await import("./src/an-core/storage/StorageRouter");
+    const anStorageRouter = new StorageRouter();
+    app.get("/api/an/storage-status", async (_req: any, res: any) => {
+      try {
+        const adapter = anStorageRouter.getDevInMemoryAdapter();
+        const tenantsResult = await adapter.listTenants();
+        const tenants = tenantsResult.success && Array.isArray(tenantsResult.data) ? tenantsResult.data.length : 0;
+        res.json({ ok: true, adapterName: adapter.adapterName, tenants, version: "7.2.0" });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted at /api/an/storage-status");
+  } catch (anErr) {
+    console.error("A.N core bridge failed to mount:", anErr);
+  }
+
   // Serve static assets and handle Vite middleware
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
