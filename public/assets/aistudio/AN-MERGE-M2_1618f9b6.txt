@@ -1,0 +1,579 @@
+# AN-MERGE-M2 — Company backend binding (LEAN for Google AI Studio)
+# Repo: CustodyFlow root (kemit-erp) + src/an-core from M1
+# Goal: Per-company db_backend / isolation_level / connection_ref persisted + validated.
+# Does NOT migrate live reads/writes off Firebase yet. Default remains firebase.
+# After apply: push to GitHub. Do not upload ZIP to chat.
+
+## HARD RULES
+1. Stop at first failure. No manual invent-fixes outside this file.
+2. Do not delete Firebase auth or Login.tsx.
+3. connection_ref = environment variable NAME only (e.g. DATABASE_URL), never raw secrets.
+4. If Wait for tsc > 2 minutes: run ONCE `npx tsc --noEmit` then `npm run build` then steps 9–12. Do not loop tsc.
+5. Print RESULTS REPORT as one copyable block only at the end.
+
+## PRECHECK
+- Confirm `src/an-core/storage/StorageRouter.ts` exists (M1). If missing → STOP NOT_READY_M1.
+- Confirm `src/lib/anBridge.ts` exists.
+- `npx tsc --noEmit` baseline errors count (record only; do not expand scope to fix unrelated errors unless build breaks).
+
+## STEP 3 — WRITE FILES (exact content)
+
+### 3.1 Overwrite `src/lib/anBridge.ts`
+```typescript
+/**
+ * @file anBridge.ts
+ * @description Bridge between CustodyFlow UI and A.N core (src/an-core).
+ * Client-safe: imports ONLY types from an-core (no server adapters in the browser).
+ * MERGE-M2: company backend binding (db_backend / isolation / connectionRef).
+ */
+import type {
+  AdapterType,
+  BackendConfig,
+  IsolationLevel,
+  StorageResult,
+  TenantCompany,
+} from '../an-core/storage/StoragePort';
+
+export type { AdapterType, BackendConfig, IsolationLevel, StorageResult, TenantCompany };
+
+export type AuthDriver = 'firebase' | 'an-jwt';
+
+export const AN_CORE_VERSION = '7.2.0';
+
+export const ALLOWED_DB_BACKENDS: AdapterType[] = [
+  'firebase',
+  'postgresql',
+  'mysql',
+  'mongodb',
+  'inmemory',
+];
+
+export const ALLOWED_ISOLATION: IsolationLevel[] = ['Shared', 'Dedicated'];
+
+export interface CompanyBackendSettings {
+  auth_driver: AuthDriver;
+  db_backend: AdapterType;
+  isolation_level: IsolationLevel;
+  /** Name of env/secret reference only — never raw credentials */
+  connection_ref: string;
+}
+
+type CompanyLike = {
+  id?: string;
+  auth_driver?: AuthDriver;
+  db_backend?: AdapterType;
+  isolation_level?: IsolationLevel;
+  connection_ref?: string;
+} | null | undefined;
+
+/** Defaults keep existing Firebase path — A.N SQL backends are opt-in per company. */
+export function getCompanyBackendSettings(company: CompanyLike): CompanyBackendSettings {
+  const db = company?.db_backend && ALLOWED_DB_BACKENDS.includes(company.db_backend)
+    ? company.db_backend
+    : 'firebase';
+  const isolation =
+    company?.isolation_level && ALLOWED_ISOLATION.includes(company.isolation_level)
+      ? company.isolation_level
+      : 'Shared';
+  let connection_ref = (company?.connection_ref || '').trim();
+  if (!connection_ref) {
+    if (db === 'postgresql') connection_ref = 'DATABASE_URL';
+    else if (db === 'mysql') connection_ref = 'MYSQL_URL';
+    else if (db === 'mongodb') connection_ref = 'MONGODB_URL';
+    else connection_ref = '';
+  }
+  return {
+    auth_driver: company?.auth_driver === 'an-jwt' ? 'an-jwt' : 'firebase',
+    db_backend: db,
+    isolation_level: isolation,
+    connection_ref,
+  };
+}
+
+export function validateCompanyBackendSettings(
+  settings: CompanyBackendSettings
+): { valid: boolean; errorAr?: string; errorEn?: string } {
+  if (!ALLOWED_DB_BACKENDS.includes(settings.db_backend)) {
+    return {
+      valid: false,
+      errorAr: 'نوع قاعدة البيانات غير مدعوم',
+      errorEn: 'Unsupported db_backend',
+    };
+  }
+  if (!ALLOWED_ISOLATION.includes(settings.isolation_level)) {
+    return {
+      valid: false,
+      errorAr: 'مستوى العزل غير صالح',
+      errorEn: 'Invalid isolation_level',
+    };
+  }
+  if (settings.auth_driver !== 'firebase' && settings.auth_driver !== 'an-jwt') {
+    return {
+      valid: false,
+      errorAr: 'محرك المصادقة غير صالح',
+      errorEn: 'Invalid auth_driver',
+    };
+  }
+  const needsRef =
+    settings.db_backend === 'postgresql' ||
+    settings.db_backend === 'mysql' ||
+    settings.db_backend === 'mongodb';
+  if (needsRef) {
+    const ref = (settings.connection_ref || '').trim();
+    if (!ref) {
+      return {
+        valid: false,
+        errorAr: 'يجب تحديد اسم مرجع الاتصال (مثل DATABASE_URL) وليس كلمة السر نفسها',
+        errorEn: 'connection_ref (env name) is required for SQL/document backends',
+      };
+    }
+    if (ref.includes('://') || ref.includes('password') || ref.length > 128) {
+      return {
+        valid: false,
+        errorAr: 'connection_ref يجب أن يكون اسم متغير بيئة فقط وليس سلسلة اتصال كاملة',
+        errorEn: 'connection_ref must be an env var name, not a raw connection string',
+      };
+    }
+  }
+  return { valid: true };
+}
+
+/** Maps company settings to A.N StoragePort BackendConfig (server-side use). */
+export function companyToBackendConfig(company: CompanyLike): BackendConfig {
+  const s = getCompanyBackendSettings(company);
+  return {
+    adapterType: s.db_backend,
+    connectionRef: s.connection_ref || 'DATABASE_URL',
+    isolationLevel: s.isolation_level,
+  };
+}
+
+/** Probes A.N core mounted on the server (GET /api/an/storage-status). */
+export async function getAnStorageStatus(): Promise<{
+  ok: boolean;
+  adapterName?: string;
+  tenants?: number;
+  version?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/an/storage-status');
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const data = await res.json();
+    return { ok: true, ...data };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'network error' };
+  }
+}
+
+/** Resolve backend binding for a company id (server validates + echoes config). */
+export async function resolveCompanyBackend(
+  companyId: string,
+  partial?: Partial<CompanyBackendSettings>
+): Promise<{ ok: boolean; settings?: CompanyBackendSettings; backendConfig?: BackendConfig; error?: string }> {
+  try {
+    const res = await fetch(`/api/an/company-backend/${encodeURIComponent(companyId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(partial || {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    return { ok: true, ...data };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'network error' };
+  }
+}
+
+```
+
+### 3.2 Create `src/components/settings/CompanyBackendPanel.tsx`
+```tsx
+/**
+ * CompanyBackendPanel — MERGE-M2
+ * Lets Admin/SystemAdmin set per-company db_backend + isolation + connection_ref.
+ * Persists via CustodyDB.updateCompany. Does NOT switch live traffic off Firebase
+ * until later merge phases; it stores the binding contract only.
+ */
+import React, { useEffect, useMemo, useState } from 'react';
+import { Database, Save, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Company, Language } from '../../types';
+import { CustodyDB } from '../../db';
+import {
+  ALLOWED_DB_BACKENDS,
+  ALLOWED_ISOLATION,
+  CompanyBackendSettings,
+  getCompanyBackendSettings,
+  validateCompanyBackendSettings,
+  resolveCompanyBackend,
+  type AdapterType,
+  type IsolationLevel,
+  type AuthDriver,
+} from '../../lib/anBridge';
+
+interface Props {
+  language: Language;
+  /** When empty, uses selected company from CustodyDB */
+  companyId?: string;
+}
+
+export default function CompanyBackendPanel({ language, companyId }: Props) {
+  const isRtl = language === 'ar';
+  const companies = CustodyDB.getCompanies();
+  const selectedId =
+    companyId ||
+    CustodyDB.getSelectedCompanyId() ||
+    (companies[0] && companies[0].id) ||
+    '';
+  const company: Company | undefined = companies.find((c) => c.id === selectedId);
+
+  const initial = useMemo(() => getCompanyBackendSettings(company), [company?.id, company?.db_backend, company?.auth_driver, company?.isolation_level, company?.connection_ref]);
+  const [authDriver, setAuthDriver] = useState<AuthDriver>(initial.auth_driver);
+  const [dbBackend, setDbBackend] = useState<AdapterType>(initial.db_backend);
+  const [isolation, setIsolation] = useState<IsolationLevel>(initial.isolation_level);
+  const [connectionRef, setConnectionRef] = useState(initial.connection_ref);
+  const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const s = getCompanyBackendSettings(company);
+    setAuthDriver(s.auth_driver);
+    setDbBackend(s.db_backend);
+    setIsolation(s.isolation_level);
+    setConnectionRef(s.connection_ref);
+    setMsg(null);
+  }, [selectedId]);
+
+  if (!company) {
+    return (
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-900/40 p-4 text-sm text-slate-500">
+        {isRtl ? 'لا توجد شركة محددة لربط قاعدة البيانات.' : 'No company selected for backend binding.'}
+      </div>
+    );
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+    const settings: CompanyBackendSettings = {
+      auth_driver: authDriver,
+      db_backend: dbBackend,
+      isolation_level: isolation,
+      connection_ref: connectionRef.trim(),
+    };
+    const v = validateCompanyBackendSettings(settings);
+    if (!v.valid) {
+      setMsg({ type: 'err', text: isRtl ? (v.errorAr || 'خطأ') : (v.errorEn || 'Invalid') });
+      return;
+    }
+    setBusy(true);
+    try {
+      const server = await resolveCompanyBackend(company!.id, settings);
+      if (!server.ok) {
+        setMsg({
+          type: 'err',
+          text: isRtl
+            ? `رفض الخادم الإعداد: ${server.error || 'unknown'}`
+            : `Server rejected settings: ${server.error || 'unknown'}`,
+        });
+        setBusy(false);
+        return;
+      }
+      const res = await CustodyDB.updateCompany(company!.id, {
+        auth_driver: settings.auth_driver,
+        db_backend: settings.db_backend,
+        isolation_level: settings.isolation_level,
+        connection_ref: settings.connection_ref,
+      });
+      if (!res.success) {
+        setMsg({
+          type: 'err',
+          text: res.error || (isRtl ? 'فشل الحفظ' : 'Save failed'),
+        });
+      } else {
+        setMsg({
+          type: 'ok',
+          text: isRtl
+            ? 'تم حفظ ربط قاعدة البيانات للشركة (الافتراضي firebase يبقى حتى تفعيل التشغيل لاحقاً).'
+            : 'Company backend binding saved (runtime stays on Firebase until a later phase enables the adapter).',
+        });
+      }
+    } catch (err: any) {
+      setMsg({ type: 'err', text: err?.message || String(err) });
+    }
+    setBusy(false);
+  }
+
+  const needsRef = dbBackend === 'postgresql' || dbBackend === 'mysql' || dbBackend === 'mongodb';
+
+  return (
+    <div className="rounded-2xl border border-indigo-500/20 bg-white/70 dark:bg-slate-900/50 p-4 md:col-span-2">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="h-9 w-9 rounded-xl bg-indigo-500/15 text-indigo-500 flex items-center justify-center">
+          <Database size={18} />
+        </div>
+        <div>
+          <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">
+            {isRtl ? 'ربط قاعدة بيانات الشركة' : 'Company database binding'}
+          </h3>
+          <p className="text-[11px] text-slate-500">
+            {company.name} · <span className="font-mono">{company.id}</span>
+          </p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSave} className="grid gap-3 md:grid-cols-2">
+        <label className="block text-xs font-bold text-slate-500">
+          {isRtl ? 'محرك المصادقة' : 'Auth driver'}
+          <select
+            className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
+            value={authDriver}
+            onChange={(e) => setAuthDriver(e.target.value as AuthDriver)}
+          >
+            <option value="firebase">firebase (default)</option>
+            <option value="an-jwt">an-jwt (A.N core — later phases)</option>
+          </select>
+        </label>
+
+        <label className="block text-xs font-bold text-slate-500">
+          {isRtl ? 'نوع قاعدة البيانات' : 'Database backend'}
+          <select
+            className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
+            value={dbBackend}
+            onChange={(e) => setDbBackend(e.target.value as AdapterType)}
+          >
+            {ALLOWED_DB_BACKENDS.map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block text-xs font-bold text-slate-500">
+          {isRtl ? 'مستوى العزل' : 'Isolation level'}
+          <select
+            className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm"
+            value={isolation}
+            onChange={(e) => setIsolation(e.target.value as IsolationLevel)}
+          >
+            {ALLOWED_ISOLATION.map((x) => (
+              <option key={x} value={x}>
+                {x}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block text-xs font-bold text-slate-500">
+          {isRtl ? 'مرجع الاتصال (اسم متغير البيئة فقط)' : 'Connection ref (env var name only)'}
+          <input
+            className="mt-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-sm font-mono"
+            value={connectionRef}
+            disabled={!needsRef}
+            placeholder={needsRef ? 'DATABASE_URL' : '—'}
+            onChange={(e) => setConnectionRef(e.target.value)}
+          />
+        </label>
+
+        <div className="md:col-span-2 flex flex-wrap items-center gap-3">
+          <button
+            type="submit"
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold px-4 py-2 disabled:opacity-50"
+          >
+            <Save size={16} />
+            {isRtl ? 'حفظ الربط' : 'Save binding'}
+          </button>
+          {msg && (
+            <span
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
+                msg.type === 'ok' ? 'text-emerald-600' : 'text-rose-500'
+              }`}
+            >
+              {msg.type === 'ok' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+              {msg.text}
+            </span>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+```
+
+### 3.3 Create `scripts/verifyMergeM2.ts`
+```typescript
+/**
+ * verifyMergeM2.ts — MERGE phase 2: company backend binding
+ */
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const bridgePath = path.join(root, 'src/lib/anBridge.ts');
+const panelPath = path.join(root, 'src/components/settings/CompanyBackendPanel.tsx');
+const typesPath = path.join(root, 'src/types.ts');
+const generalPath = path.join(root, 'src/components/settings/SettingsGeneralTab.tsx');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const bridge = fs.readFileSync(bridgePath, 'utf8');
+const types = fs.readFileSync(typesPath, 'utf8');
+const general = fs.readFileSync(generalPath, 'utf8');
+
+check('S1 anBridge exists', fs.existsSync(bridgePath));
+check('S2 validateCompanyBackendSettings exported', bridge.includes('validateCompanyBackendSettings'));
+check('S3 companyToBackendConfig exported', bridge.includes('companyToBackendConfig'));
+check('S4 resolveCompanyBackend exported', bridge.includes('resolveCompanyBackend'));
+check('S5 isolation_level in getCompanyBackendSettings', bridge.includes('isolation_level'));
+check('S6 CompanyBackendPanel exists', fs.existsSync(panelPath));
+check('S7 types has isolation_level', types.includes('isolation_level'));
+check('S8 types has connection_ref', types.includes('connection_ref'));
+check('S9 SettingsGeneralTab imports panel', general.includes('CompanyBackendPanel'));
+check('S10 SettingsGeneralTab renders panel', general.includes('<CompanyBackendPanel'));
+check('S11 server has /api/an/company-backend', server.includes('/api/an/company-backend'));
+check('S12 server still has storage-status', server.includes('/api/an/storage-status'));
+check('S13 an-core StorageRouter still present', fs.existsSync(path.join(root, 'src/an-core/storage/StorageRouter.ts')));
+check('S14 Login.tsx still present', fs.existsSync(path.join(root, 'src/pages/Login.tsx')));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+
+```
+
+## STEP 3b — PATCH types.ts
+In `export interface Company`, after the lines:
+```
+  auth_driver?: 'firebase' | 'an-jwt';
+```
+ensure these fields exist (add if missing):
+```
+  isolation_level?: 'Shared' | 'Dedicated';
+  connection_ref?: string;
+```
+If `db_backend` / `auth_driver` already present from M1, leave them.
+
+## STEP 3c — PATCH SettingsGeneralTab.tsx
+1. Add import after other imports:
+```
+import CompanyBackendPanel from './CompanyBackendPanel';
+```
+2. Immediately after the opening `<div className="grid gap-6 md:grid-cols-2 animate-fade-in">` insert:
+```
+      <CompanyBackendPanel language={'}language{'} />
+```
+
+## STEP 3d — PATCH server.ts
+Inside the MERGE-M1 block (after `app.get("/api/an/storage-status", ...)` and before `console.log("A.N core bridge mounted...`), add:
+
+```javascript
+    app.post("/api/an/company-backend/:companyId", async (req: any, res: any) => {
+      try {
+        const companyId = String(req.params.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const body = req.body || {};
+        const db_backend = body.db_backend || "firebase";
+        const auth_driver = body.auth_driver || "firebase";
+        const isolation_level = body.isolation_level || "Shared";
+        let connection_ref = typeof body.connection_ref === "string" ? body.connection_ref.trim() : "";
+        const allowedDb = ["postgresql", "mysql", "mongodb", "firebase", "inmemory"];
+        const allowedIso = ["Shared", "Dedicated"];
+        if (!allowedDb.includes(db_backend)) {
+          return res.status(400).json({ ok: false, error: "unsupported db_backend" });
+        }
+        if (!allowedIso.includes(isolation_level)) {
+          return res.status(400).json({ ok: false, error: "invalid isolation_level" });
+        }
+        if (auth_driver !== "firebase" && auth_driver !== "an-jwt") {
+          return res.status(400).json({ ok: false, error: "invalid auth_driver" });
+        }
+        const needsRef = db_backend === "postgresql" || db_backend === "mysql" || db_backend === "mongodb";
+        if (needsRef && !connection_ref) {
+          return res.status(400).json({ ok: false, error: "connection_ref required" });
+        }
+        if (connection_ref && (connection_ref.includes("://") || connection_ref.length > 128)) {
+          return res.status(400).json({ ok: false, error: "connection_ref must be env var name only" });
+        }
+        if (!connection_ref && db_backend === "postgresql") connection_ref = "DATABASE_URL";
+        const settings = { auth_driver, db_backend, isolation_level, connection_ref };
+        const backendConfig = {
+          adapterType: db_backend,
+          connectionRef: connection_ref || "DATABASE_URL",
+          isolationLevel: isolation_level,
+        };
+        const validation = anStorageRouter.validateBackendConfig(backendConfig);
+        if (!validation.valid && needsRef) {
+          return res.status(400).json({ ok: false, error: validation.errorDetailAr || "backend config invalid" });
+        }
+        res.json({ ok: true, companyId, settings, backendConfig, version: "7.2.0" });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+
+Also update the console.log line to mention company-backend:
+`console.log("A.N core bridge mounted at /api/an/storage-status + /api/an/company-backend");`
+
+## STEP 4–6
+No SUMS archive required if files written via exact overwrite as above.
+Verify presence:
+- src/lib/anBridge.ts
+- src/components/settings/CompanyBackendPanel.tsx
+- scripts/verifyMergeM2.ts
+- server route string `/api/an/company-backend`
+
+## STEP 8 — BUILD
+```
+npx tsc --noEmit
+npm run build
+```
+If tsc wait hangs > 2 min: run each once, continue.
+New errors only in files you touched → STOP and report.
+Pre-existing errors outside M2 files → note count, continue if build succeeds.
+
+## STEP 9 — VERIFY
+```
+npx tsx scripts/verifyMergeM2.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10 — REGRESSION
+```
+npx tsx scripts/verifyMergeM1.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 12 — HEALTH
+Start server if needed; `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/api/an/storage-status` or project port → prefer 200.
+Optional: POST company-backend with `{"db_backend":"firebase"}` → ok true.
+
+## STEP 13 — COMMIT NOTE (user pushes)
+```
+merge(m2): per-company db_backend isolation connection_ref binding UI + API
+```
+
+## RESULTS REPORT (print exactly this shape, one block)
+```
+===== RESULTS REPORT =====
+4-6) WRITE/PATCH: ...
+8) tsc: ... | build: ...
+9) verifyMergeM2: Passed: N | Failed: N
+10) verifyMergeM1: Passed: N | Failed: N
+12) storage-status HTTP: ...
+Status: DONE | package: AN-MERGE-M2
+===========================
+```

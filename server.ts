@@ -2656,7 +2656,50 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted at /api/an/storage-status");
+    app.post("/api/an/company-backend/:companyId", async (req: any, res: any) => {
+      try {
+        const companyId = String(req.params.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const body = req.body || {};
+        const db_backend = body.db_backend || "firebase";
+        const auth_driver = body.auth_driver || "firebase";
+        const isolation_level = body.isolation_level || "Shared";
+        let connection_ref = typeof body.connection_ref === "string" ? body.connection_ref.trim() : "";
+        const allowedDb = ["postgresql", "mysql", "mongodb", "firebase", "inmemory"];
+        const allowedIso = ["Shared", "Dedicated"];
+        if (!allowedDb.includes(db_backend)) {
+          return res.status(400).json({ ok: false, error: "unsupported db_backend" });
+        }
+        if (!allowedIso.includes(isolation_level)) {
+          return res.status(400).json({ ok: false, error: "invalid isolation_level" });
+        }
+        if (auth_driver !== "firebase" && auth_driver !== "an-jwt") {
+          return res.status(400).json({ ok: false, error: "invalid auth_driver" });
+        }
+        const needsRef = db_backend === "postgresql" || db_backend === "mysql" || db_backend === "mongodb";
+        if (needsRef && !connection_ref) {
+          return res.status(400).json({ ok: false, error: "connection_ref required" });
+        }
+        if (connection_ref && (connection_ref.includes("://") || connection_ref.length > 128)) {
+          return res.status(400).json({ ok: false, error: "connection_ref must be env var name only" });
+        }
+        if (!connection_ref && db_backend === "postgresql") connection_ref = "DATABASE_URL";
+        const settings = { auth_driver, db_backend, isolation_level, connection_ref };
+        const backendConfig = {
+          adapterType: db_backend,
+          connectionRef: connection_ref || "DATABASE_URL",
+          isolationLevel: isolation_level,
+        };
+        const validation = anStorageRouter.validateBackendConfig(backendConfig);
+        if (!validation.valid && needsRef) {
+          return res.status(400).json({ ok: false, error: validation.errorDetailAr || "backend config invalid" });
+        }
+        res.json({ ok: true, companyId, settings, backendConfig, version: "7.2.0" });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted at /api/an/storage-status + /api/an/company-backend");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }

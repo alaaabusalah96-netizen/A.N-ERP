@@ -24,6 +24,10 @@ export interface Company {
   db_backend?: 'postgresql' | 'mysql' | 'mongodb' | 'firebase' | 'inmemory';
   /** A.N merge: auth driver for this company */
   auth_driver?: 'firebase' | 'an-jwt';
+  /** A.N merge: isolation level for this company */
+  isolation_level?: 'Shared' | 'Dedicated';
+  /** A.N merge: connection reference for this company (env var name only) */
+  connection_ref?: string;
 }
 
 export interface UserPermissions {
