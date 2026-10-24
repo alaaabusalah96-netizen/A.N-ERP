@@ -1,0 +1,249 @@
+# AN-MERGE-M6 — Stabilize + freeze (LEAN final merge gate)
+# Docs freeze + verifyMergeAll + npm script. No auth rewrite. No dual UI.
+
+## HARD RULES
+1. Do not change Login.tsx auth flow.
+2. Do not add routes outside `/api/an` for A.N.
+3. Stop at first failure. If Wait for tsc > 2 min: tsc once → build → steps 9–12. No loop.
+4. One RESULTS REPORT block at the end only.
+
+## PRECHECK
+- M1–M5 files and routes present (storage-status, company-backend, auth-policy, routes, AnCoreStatusPanel).
+
+## STEP 3 — WRITE FILES
+
+### 3.1 Create `docs/MERGE_STATUS.md`
+```markdown
+# MERGE STATUS — A.N ERP × CustodyFlow (KEMIT)
+
+**Freeze date:** MERGE-M6  
+**Product root:** CustodyFlow / KEMIT UI + server  
+**A.N role:** `src/an-core` library + `/api/an/*` bridge (not a second app shell)
+
+## Phases
+
+| Phase | ID | Status | Summary |
+|-------|-----|--------|---------|
+| M1 | Core inject | DONE | `src/an-core`, `anBridge`, `GET /api/an/storage-status` |
+| M2 | Company backend | DONE | `db_backend` / `isolation_level` / `connection_ref` + panel |
+| M3 | Auth policy | DONE | Single path: firebase-session default; `AN_ENABLE_AN_JWT` gated |
+| M4 | API namespace | DONE | All A.N routes under `/api/an`; catalog `GET /api/an/routes` |
+| M5 | Settings UI | DONE | `AnCoreStatusPanel` in Settings only (no dual nav) |
+| M6 | Stabilize | DONE | `verifyMergeAll` + this freeze document |
+
+## Canonical rules (do not regress)
+
+1. **One login path:** `/api/auth/verify-credentials` + Firebase customToken unless `AN_ENABLE_AN_JWT=1` **and** company `auth_driver=an-jwt` (JWT login UI still not activated in M1–M6).
+2. **One API namespace for A.N:** only `/api/an/*`.
+3. **Per-company backend contract** is stored and validated; live SQL adapter cutover is a **future** phase, not silent.
+4. **No second product shell:** Settings panels only; no `AnLogin`, no competing sidebar tree for A.N modules.
+
+## Verify
+
+```bash
+npx tsx scripts/verifyMergeAll.ts
+```
+
+Optional chain:
+
+```bash
+npx tsx scripts/verifyMergeM1.ts
+npx tsx scripts/verifyMergeM2.ts
+npx tsx scripts/verifyMergeM3.ts
+npx tsx scripts/verifyMergeM4.ts
+npx tsx scripts/verifyMergeM5.ts
+```
+
+## Next (post-merge, not part of M6)
+
+- Operational PG role without BYPASSRLS on production `DATABASE_URL`
+- Optional dedicated DB per company when `isolation_level=Dedicated`
+- Gradual domain cutover (inventory/accounting) onto StorageRouter when ready
+
+```
+
+### 3.2 Create `scripts/verifyMergeAll.ts`
+```typescript
+/**
+ * verifyMergeAll.ts — MERGE-M6 final gate (structural)
+ * Confirms M1–M5 artifacts without starting the full app.
+ */
+import fs from 'fs';
+import path from 'path';
+import { spawnSync } from 'child_process';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+
+const requiredFiles = [
+  'src/an-core/storage/StoragePort.ts',
+  'src/lib/anBridge.ts',
+  'src/lib/authPolicy.ts',
+  'src/lib/anApi.ts',
+  'src/components/settings/CompanyBackendPanel.tsx',
+  'src/components/settings/AuthPolicyNote.tsx',
+  'src/components/settings/AnCoreStatusPanel.tsx',
+  'scripts/verifyMergeM1.ts',
+  'scripts/verifyMergeM2.ts',
+  'scripts/verifyMergeM3.ts',
+  'scripts/verifyMergeM4.ts',
+  'scripts/verifyMergeM5.ts',
+  'docs/MERGE_STATUS.md',
+];
+
+for (const rel of requiredFiles) {
+  check(`file:${rel}`, fs.existsSync(path.join(root, rel)));
+}
+
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+check('route:storage-status', server.includes('/api/an/storage-status'));
+check('route:company-backend', server.includes('/api/an/company-backend'));
+check('route:auth-policy', server.includes('/api/an/auth-policy'));
+check('route:routes', server.includes('/api/an/routes'));
+check('cf-login-intact', server.includes('/api/auth/verify-credentials'));
+
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+check('login-uses-cf', login.includes('/api/auth/verify-credentials'));
+check('no-an-login-page', !fs.existsSync(path.join(root, 'src/pages/AnLogin.tsx')));
+
+const general = fs.readFileSync(
+  path.join(root, 'src/components/settings/SettingsGeneralTab.tsx'),
+  'utf8'
+);
+check('settings:backend', general.includes('CompanyBackendPanel'));
+check('settings:auth', general.includes('AuthPolicyNote'));
+check('settings:status', general.includes('AnCoreStatusPanel'));
+
+// Sub-verifiers (must exit 0)
+const subs = [
+  'scripts/verifyMergeM1.ts',
+  'scripts/verifyMergeM2.ts',
+  'scripts/verifyMergeM3.ts',
+  'scripts/verifyMergeM4.ts',
+  'scripts/verifyMergeM5.ts',
+];
+for (const script of subs) {
+  const r = spawnSync('npx', ['tsx', script], { cwd: root, encoding: 'utf8', shell: false });
+  const ok = r.status === 0;
+  check(`sub:${path.basename(script)}`, ok, (r.stdout || r.stderr || '').split('\n').filter(l => l.includes('Failed')).pop() || `exit=${r.status}`);
+}
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+
+```
+
+### 3.3 Create `scripts/verifyMergeM6.ts`
+```typescript
+/**
+ * verifyMergeM6.ts — freeze docs + all-gate script presence
+ */
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const statusPath = path.join(root, 'docs/MERGE_STATUS.md');
+const allPath = path.join(root, 'scripts/verifyMergeAll.ts');
+const pkgPath = path.join(root, 'package.json');
+
+check('S1 MERGE_STATUS.md exists', fs.existsSync(statusPath));
+const status = fs.readFileSync(statusPath, 'utf8');
+check('S2 status lists M1–M6', ['M1', 'M2', 'M3', 'M4', 'M5', 'M6'].every((m) => status.includes(m)));
+check('S3 status says firebase-session default', status.includes('firebase-session') || status.includes('verify-credentials'));
+check('S4 verifyMergeAll.ts exists', fs.existsSync(allPath));
+const all = fs.readFileSync(allPath, 'utf8');
+check('S5 all-gate runs M1–M5 verifiers', all.includes('verifyMergeM5.ts'));
+check('S6 package.json exists', fs.existsSync(pkgPath));
+const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+check('S7 npm script verify:merge', !!(pkg.scripts && pkg.scripts['verify:merge']));
+check('S8 AnCoreStatusPanel still present', fs.existsSync(path.join(root, 'src/components/settings/AnCoreStatusPanel.tsx')));
+check('S9 anApi still present', fs.existsSync(path.join(root, 'src/lib/anApi.ts')));
+check('S10 authPolicy still present', fs.existsSync(path.join(root, 'src/lib/authPolicy.ts')));
+check('S11 Login still CF path', fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8').includes('/api/auth/verify-credentials'));
+check('S12 server has all four /api/an routes', (() => {
+  const s = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+  return ['/api/an/storage-status', '/api/an/company-backend', '/api/an/auth-policy', '/api/an/routes'].every((p) => s.includes(p));
+})());
+check('S13 no AnLogin page', !fs.existsSync(path.join(root, 'src/pages/AnLogin.tsx')));
+check('S14 MERGE_STATUS mentions post-merge ops', status.includes('BYPASSRLS') || status.includes('Dedicated'));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+
+```
+
+## STEP 3b — PATCH package.json
+Under `"scripts"`, add (keep existing scripts):
+```json
+"verify:merge": "tsx scripts/verifyMergeAll.ts"
+```
+If `tsx` is not a dependency, use:
+```json
+"verify:merge": "npx tsx scripts/verifyMergeAll.ts"
+```
+
+## STEP 8 — BUILD
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9 — VERIFY
+```
+npx tsx scripts/verifyMergeM6.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10 — FULL MERGE GATE
+```
+npx tsx scripts/verifyMergeAll.ts
+```
+or:
+```
+npm run verify:merge
+```
+Expect: Failed: 0 (includes nested M1–M5).
+
+## STEP 12 — SPOT CHECK
+- Settings still shows three A.N panels (backend, auth policy, core status).
+- GET `/api/an/routes` still 200.
+- Login still `/api/auth/verify-credentials`.
+
+## COMMIT NOTE
+```
+merge(m6): freeze merge status + verifyMergeAll final gate
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+3) WRITE/PATCH: ...
+8) tsc: ... | build: ...
+9) verifyMergeM6: Passed: N | Failed: N
+10) verifyMergeAll: Passed: N | Failed: N
+Status: DONE | package: AN-MERGE-M6 | MERGE COMPLETE
+===========================
+```
