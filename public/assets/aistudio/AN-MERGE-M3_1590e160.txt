@@ -1,0 +1,307 @@
+# AN-MERGE-M3 — Single auth path policy (LEAN for Google AI Studio)
+# After M1+M2. Prevents dual competing login stacks.
+# Default: CustodyFlow Firebase session remains the ONLY active login path.
+# an-jwt is documented and gated by AN_ENABLE_AN_JWT=1 (off by default). No full AN JWT login UI in this package.
+
+## HARD RULES
+1. Do not remove or replace `/api/auth/verify-credentials` or Login.tsx Firebase customToken flow.
+2. Do not implement a second parallel login form in this phase.
+3. Stop at first failure. No freeform refactors of server auth.
+4. If Wait for tsc > 2 minutes: run ONCE `npx tsc --noEmit` then `npm run build` then steps 9–12. Do not loop.
+5. Print one RESULTS REPORT block at the end only.
+
+## PRECHECK
+- `src/lib/anBridge.ts` has getCompanyBackendSettings (M2).
+- `src/pages/Login.tsx` contains `/api/auth/verify-credentials`.
+- Record baseline: `npx tsc --noEmit` error count (informational).
+
+## STEP 3 — WRITE FILES
+
+### 3.1 Create `src/lib/authPolicy.ts`
+```typescript
+/**
+ * @file authPolicy.ts
+ * @description MERGE-M3 — single auth policy for the merged product.
+ * Canonical rule: one login path at a time per deployment.
+ * Default = CustodyFlow Firebase session (/api/auth/verify-credentials + customToken).
+ * an-jwt (A.N TokenService) is opt-in only when AN_ENABLE_AN_JWT=1 AND company.auth_driver=an-jwt.
+ */
+import type { AuthDriver } from './anBridge';
+import { getCompanyBackendSettings } from './anBridge';
+
+export type AuthPathId = 'firebase-session' | 'an-jwt';
+
+export interface AuthPolicy {
+  /** Active path for this process / company resolution */
+  activePath: AuthPathId;
+  auth_driver: AuthDriver;
+  /** Server flag AN_ENABLE_AN_JWT===1 */
+  anJwtEnabled: boolean;
+  /** Human-readable reason */
+  reason: string;
+  reasonAr: string;
+}
+
+/** Client-side: env is not fully available; treat an-jwt as disabled until server says otherwise. */
+export function resolveAuthPolicyClient(company?: {
+  auth_driver?: AuthDriver;
+} | null): AuthPolicy {
+  const settings = getCompanyBackendSettings(company || null);
+  // Browser never activates an-jwt alone — server must enable it.
+  return {
+    activePath: 'firebase-session',
+    auth_driver: settings.auth_driver,
+    anJwtEnabled: false,
+    reason:
+      settings.auth_driver === 'an-jwt'
+        ? 'Company requests an-jwt, but client always uses firebase-session until server enables AN_ENABLE_AN_JWT.'
+        : 'Default firebase-session path (CustodyFlow verify-credentials).',
+    reasonAr:
+      settings.auth_driver === 'an-jwt'
+        ? 'الشركة مضبوطة على an-jwt، لكن العميل يستخدم مسار Firebase حتى يفعّل الخادم AN_ENABLE_AN_JWT.'
+        : 'المسار الافتراضي: جلسة Firebase (verify-credentials).',
+  };
+}
+
+export function resolveAuthPolicyServer(
+  company: { auth_driver?: AuthDriver } | null | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): AuthPolicy {
+  const settings = getCompanyBackendSettings(company || null);
+  const anJwtEnabled = env.AN_ENABLE_AN_JWT === '1' || env.AN_ENABLE_AN_JWT === 'true';
+  if (settings.auth_driver === 'an-jwt' && anJwtEnabled) {
+    return {
+      activePath: 'an-jwt',
+      auth_driver: 'an-jwt',
+      anJwtEnabled: true,
+      reason: 'AN_ENABLE_AN_JWT enabled and company.auth_driver=an-jwt.',
+      reasonAr: 'تم تفعيل AN_ENABLE_AN_JWT والشركة مضبوطة على an-jwt.',
+    };
+  }
+  return {
+    activePath: 'firebase-session',
+    auth_driver: settings.auth_driver,
+    anJwtEnabled,
+    reason: anJwtEnabled
+      ? 'AN_ENABLE_AN_JWT is on but company.auth_driver is not an-jwt; using firebase-session.'
+      : 'firebase-session is the only active login path (AN JWT gated off).',
+    reasonAr: anJwtEnabled
+      ? 'AN_ENABLE_AN_JWT مفعّل لكن الشركة ليست an-jwt؛ يُستخدم مسار Firebase.'
+      : 'مسار Firebase هو مسار الدخول النشط الوحيد (AN JWT مغلق).',
+  };
+}
+
+/** Login UI must not call a second parallel auth API while firebase-session is active. */
+export function assertSingleLoginPath(policy: AuthPolicy): void {
+  if (policy.activePath !== 'firebase-session' && policy.activePath !== 'an-jwt') {
+    throw new Error('Invalid auth path');
+  }
+}
+
+```
+
+### 3.2 Create `src/components/settings/AuthPolicyNote.tsx`
+```tsx
+/**
+ * AuthPolicyNote — MERGE-M3
+ * Explains the single active login path (Firebase by default).
+ */
+import React, { useEffect, useState } from 'react';
+import { Shield } from 'lucide-react';
+import { Language } from '../../types';
+import { resolveAuthPolicyClient, type AuthPolicy } from '../../lib/authPolicy';
+import { CustodyDB } from '../../db';
+
+export default function AuthPolicyNote({ language }: { language: Language }) {
+  const isRtl = language === 'ar';
+  const [policy, setPolicy] = useState<AuthPolicy>(() =>
+    resolveAuthPolicyClient(CustodyDB.getCompanies().find((c) => c.id === CustodyDB.getSelectedCompanyId()))
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/an/auth-policy', { credentials: 'include' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data?.policy) setPolicy(data.policy);
+      } catch {
+        /* keep client default */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 md:col-span-2 text-sm">
+      <div className="flex items-start gap-2">
+        <div className="h-9 w-9 rounded-xl bg-emerald-500/15 text-emerald-600 flex items-center justify-center shrink-0">
+          <Shield size={18} />
+        </div>
+        <div>
+          <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1">
+            {isRtl ? 'سياسة تسجيل الدخول (مسار واحد)' : 'Login policy (single path)'}
+          </h3>
+          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+            {isRtl ? policy.reasonAr : policy.reason}
+          </p>
+          <p className="mt-2 text-[11px] font-mono text-slate-500">
+            activePath={policy.activePath} · anJwtEnabled={String(policy.anJwtEnabled)} · driver={policy.auth_driver}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+```
+
+### 3.3 Create `scripts/verifyMergeM3.ts`
+```typescript
+/**
+ * verifyMergeM3.ts — single auth path policy
+ */
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const policyPath = path.join(root, 'src/lib/authPolicy.ts');
+const notePath = path.join(root, 'src/components/settings/AuthPolicyNote.tsx');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const general = fs.readFileSync(path.join(root, 'src/components/settings/SettingsGeneralTab.tsx'), 'utf8');
+const envEx = fs.existsSync(path.join(root, '.env.example'))
+  ? fs.readFileSync(path.join(root, '.env.example'), 'utf8')
+  : '';
+
+check('S1 authPolicy.ts exists', fs.existsSync(policyPath));
+const policy = fs.readFileSync(policyPath, 'utf8');
+check('S2 resolveAuthPolicyServer exported', policy.includes('resolveAuthPolicyServer'));
+check('S3 resolveAuthPolicyClient exported', policy.includes('resolveAuthPolicyClient'));
+check('S4 AN_ENABLE_AN_JWT gate', policy.includes('AN_ENABLE_AN_JWT'));
+check('S5 AuthPolicyNote exists', fs.existsSync(notePath));
+check('S6 SettingsGeneralTab imports AuthPolicyNote', general.includes('AuthPolicyNote'));
+check('S7 SettingsGeneralTab renders AuthPolicyNote', general.includes('<AuthPolicyNote'));
+check('S8 Login still uses verify-credentials', login.includes('/api/auth/verify-credentials'));
+check('S9 Login does not call an-jwt login URL', !/\/api\/an\/auth\/login/.test(login));
+check('S10 server has /api/an/auth-policy', server.includes('/api/an/auth-policy'));
+check('S11 server still has verify-credentials', server.includes('/api/auth/verify-credentials'));
+check('S12 company-backend route kept', server.includes('/api/an/company-backend'));
+check('S13 .env.example documents AN_ENABLE_AN_JWT', envEx.includes('AN_ENABLE_AN_JWT'));
+check('S14 Login.tsx still present', fs.existsSync(path.join(root, 'src/pages/Login.tsx')));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+
+```
+
+## STEP 3b — PATCH SettingsGeneralTab.tsx
+1. Add import:
+```
+import AuthPolicyNote from './AuthPolicyNote';
+```
+2. Right after `<CompanyBackendPanel language={'}language{'} />` insert:
+```
+      <AuthPolicyNote language={'}language{'} />
+```
+
+## STEP 3c — PATCH server.ts
+Inside the A.N core bridge try-block (same area as storage-status / company-backend), add:
+
+```javascript
+    app.get("/api/an/auth-policy", async (req: any, res: any) => {
+      try {
+        // Dynamic import keeps client bundle free of server policy helpers when unused
+        const { resolveAuthPolicyServer } = await import("./src/lib/authPolicy");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId : "";
+        // Policy is deployment-level; company driver only selects path when AN_ENABLE_AN_JWT is on.
+        const company = companyId ? { auth_driver: req.query.auth_driver } : null;
+        const policy = resolveAuthPolicyServer(
+          company && (req.query.auth_driver === "an-jwt" || req.query.auth_driver === "firebase")
+            ? { auth_driver: req.query.auth_driver }
+            : null
+        );
+        res.json({
+          ok: true,
+          policy,
+          loginEndpoint:
+            policy.activePath === "firebase-session"
+              ? "/api/auth/verify-credentials"
+              : "/api/auth/verify-credentials",
+          note: "an-jwt login endpoint is not activated in MERGE-M3; flag only reserves the path.",
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+
+Update the bridge console.log to include auth-policy:
+`console.log("A.N core bridge mounted at /api/an/storage-status + /api/an/company-backend + /api/an/auth-policy");`
+
+## STEP 3d — PATCH `.env.example`
+Append (if not already present):
+
+```
+# MERGE-M3: keep 0/false unless you intentionally activate A.N JWT path (not fully wired for login UI yet)
+AN_ENABLE_AN_JWT=0
+```
+
+## STEP 3e — LOGIN GUARD (minimal, optional comment only if easy)
+In `src/pages/Login.tsx` near the verify-credentials fetch, ensure there is NO call to `/api/an/auth/login`.
+Do not rewrite Login.tsx unless such a call exists (it should not).
+
+## STEP 8 — BUILD
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9 — VERIFY
+```
+npx tsx scripts/verifyMergeM3.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10 — REGRESSION
+```
+npx tsx scripts/verifyMergeM2.ts
+npx tsx scripts/verifyMergeM1.ts
+```
+Expect both Failed: 0
+
+## STEP 12 — HEALTH
+`GET /api/an/auth-policy` → 200 with activePath firebase-session when AN_ENABLE_AN_JWT is unset.
+`GET /api/an/storage-status` still ok.
+
+## COMMIT NOTE
+```
+merge(m3): single auth path policy — firebase-session default, an-jwt gated
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+3) WRITE/PATCH: ...
+8) tsc: ... | build: ...
+9) verifyMergeM3: Passed: N | Failed: N
+10) verifyMergeM2: ... | verifyMergeM1: ...
+12) auth-policy HTTP: ...
+Status: DONE | package: AN-MERGE-M3
+===========================
+```

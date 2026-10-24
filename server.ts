@@ -2699,7 +2699,32 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted at /api/an/storage-status + /api/an/company-backend");
+    app.get("/api/an/auth-policy", async (req: any, res: any) => {
+      try {
+        // Dynamic import keeps client bundle free of server policy helpers when unused
+        const { resolveAuthPolicyServer } = await import("./src/lib/authPolicy");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId : "";
+        // Policy is deployment-level; company driver only selects path when AN_ENABLE_AN_JWT is on.
+        const company = companyId ? { auth_driver: req.query.auth_driver } : null;
+        const policy = resolveAuthPolicyServer(
+          company && (req.query.auth_driver === "an-jwt" || req.query.auth_driver === "firebase")
+            ? { auth_driver: req.query.auth_driver }
+            : null
+        );
+        res.json({
+          ok: true,
+          policy,
+          loginEndpoint:
+            policy.activePath === "firebase-session"
+              ? "/api/auth/verify-credentials"
+              : "/api/auth/verify-credentials",
+          note: "an-jwt login endpoint is not activated in MERGE-M3; flag only reserves the path.",
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted at /api/an/storage-status + /api/an/company-backend + /api/an/auth-policy");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }
