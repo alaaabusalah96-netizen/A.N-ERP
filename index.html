@@ -41,6 +41,11 @@
       });
 
       window.addEventListener('unhandledrejection', function(e) {
+        var m = (e && e.reason && (e.reason.message || String(e.reason))) || '';
+        if (m.indexOf('WebSocket closed without opened') !== -1 || (m.indexOf('WebSocket') !== -1 && m.indexOf('vite') !== -1)) {
+          e.preventDefault();
+          return;
+        }
         var overlay = document.getElementById('diag-error-overlay');
         if (!overlay) {
           overlay = document.createElement('div');

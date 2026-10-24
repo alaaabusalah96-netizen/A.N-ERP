@@ -1,0 +1,106 @@
+# FIX-STUDIO-HMR-1 — Stabilize Google AI Studio Preview (LEAN)
+# Symptom: Unhandled Promise Rejection "WebSocket closed without opened" from @vite/client → red overlay → white screen.
+# Root: Vite HMR WebSocket cannot open behind Studio/Cloud Run proxy; rejection is unhandled.
+# Goal: Disable HMR by default in server middleware + harden client so Preview shows the app (Login).
+# Does NOT change auth, merge routes, or business logic.
+
+## HARD RULES
+1. Do not modify Login auth flow or /api/an routes.
+2. Stop at first failure. If Wait for tsc > 2 min: run tsc once, then build, then verify. No loop.
+3. One RESULTS REPORT block only at the end.
+
+## PRECHECK
+- `server.ts` uses `createViteServer({ server: { middlewareMode: true } })`.
+- `vite.config.ts` has `hmr: process.env.DISABLE_HMR !== 'true'` (HMR ON unless DISABLE_HMR=true).
+- Confirm: build OK and platform-status 200 already.
+
+## STEP 3 — PATCH vite.config.ts
+Replace the `server: { ... }` block with:
+
+```typescript
+    server: {
+      // Studio/Cloud: HMR WebSocket is unreliable → default OFF.
+      // Set ENABLE_HMR=true only on local desktop if you need hot reload.
+      hmr: process.env.ENABLE_HMR === 'true',
+      watch: process.env.ENABLE_HMR === 'true' ? {} : null,
+    },
+```
+
+## STEP 3b — PATCH server.ts (Vite middleware block)
+Find `createViteServer({` and ensure options disable HMR unless ENABLE_HMR=true:
+
+```javascript
+    const vite = await createViteServer({
+      server: {
+        middlewareMode: true,
+        hmr: process.env.ENABLE_HMR === "true",
+        watch: process.env.ENABLE_HMR === "true" ? {} : null,
+      },
+      appType: "custom",
+    });
+```
+
+Keep `app.use(vite.middlewares)` and the rest of static/SPA handling unchanged.
+
+## STEP 3c — PATCH index.html (or main entry if no index.html change allowed)
+If `index.html` exists at project root, add this script **before** the main module script (once only):
+
+```html
+    <script>
+      // Swallow Vite HMR socket failures in hosted Preview (Studio) so the app can render.
+      window.addEventListener('unhandledrejection', function (ev) {
+        var m = (ev && ev.reason && (ev.reason.message || String(ev.reason))) || '';
+        if (m.indexOf('WebSocket closed without opened') !== -1 || m.indexOf('WebSocket') !== -1 && m.indexOf('vite') !== -1) {
+          ev.preventDefault();
+        }
+      });
+    </script>
+```
+
+If `index.html` is generated only by Vite and hard to patch, skip 3c — steps 3+3b are enough when HMR is off.
+
+## STEP 3d — .env.example
+Append if missing:
+
+```
+# Google AI Studio / Cloud Preview: leave unset or 0. Local hot reload only: ENABLE_HMR=true
+# ENABLE_HMR=true
+```
+
+## STEP 8 — BUILD
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9 — RESTART SERVER
+Stop any old process. Start:
+
+```
+ENABLE_HMR=false npx tsx server.ts --port 3000 --host 0.0.0.0
+```
+
+(or plain `npx tsx server.ts` after the patch defaults HMR off)
+
+## STEP 10 — CHECKS
+- GET `/api/auth/platform-status` → 200
+- Open Preview → expect Login UI, **not** red WebSocket overlay
+- `npm run verify:merge` still Failed: 0 (optional)
+
+## COMMIT NOTE
+```
+fix(studio): disable Vite HMR by default for stable Preview
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+vite HMR default: OFF (ENABLE_HMR only)
+server createViteServer hmr: false unless ENABLE_HMR
+build: OK/FAIL
+platform-status: ...
+Preview: Login visible YES/NO
+verify:merge: ...
+Status: DONE | package: FIX-STUDIO-HMR-1
+===========================
+```
