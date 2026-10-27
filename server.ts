@@ -2714,6 +2714,27 @@ async function startServer() {
         }
         const { probeBackendBinding } = await import("./src/lib/anDataPlane");
         const probe = probeBackendBinding(settings);
+        let persisted = false;
+        let persistError: string | null = null;
+        try {
+          if (typeof adminDb !== "undefined" && adminDb) {
+            const payload = {
+              auth_driver,
+              db_backend,
+              isolation_level,
+              connection_ref: connection_ref || "",
+              an_backend_updated_at: new Date().toISOString(),
+              an_backend_version: "A4",
+            };
+            await adminDb.collection("companies").doc(companyId).set(payload, { merge: true });
+            persisted = true;
+          } else {
+            persistError = "adminDb_unavailable";
+          }
+        } catch (pe: any) {
+          persistError = pe?.message ? String(pe.message).slice(0, 160) : "persist_failed";
+          console.warn("company-backend persist:", persistError);
+        }
         res.json({
           ok: true,
           companyId,
@@ -2729,6 +2750,8 @@ async function startServer() {
             errorEn: probe.errorEn,
             errorAr: probe.errorAr,
           },
+          persisted,
+          persistError,
           version: "7.2.0",
         });
       } catch (err: any) {

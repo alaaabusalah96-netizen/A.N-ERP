@@ -1,0 +1,173 @@
+# AN-DATAPLANE-A4 — Persist company backend binding (LEAN)
+# Completes wave A: A1 env probe · A2 company probe · A3 live SQL · A4 save binding on company record.
+# POST /api/an/company-backend/:companyId merges db_backend fields into Firestore companies/{id} when adminDb is available.
+# GET company plane then reads real saved settings. No Login change. No Firestore cutover of operational modules.
+
+## HARD RULES
+1. Do not change Login or `/api/auth/verify-credentials`.
+2. Never write connection strings — only env var names in `connection_ref`.
+3. If adminDb unavailable: return `persisted: false` with reason; do not fail the whole process if validation already passed (still 200 with persisted false) OR 503 if you prefer strict — use **200 + persisted:false** for Studio offline.
+4. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- A1–A3 on tree: live-check route, probeCompanyPlane, anDataPlane.ts.
+- Current POST company-backend validates + probes but may **not** write to `companies` collection.
+
+## STEP 3 — PATCH `server.ts` only (POST `/api/an/company-backend/:companyId`)
+
+After successful validation and `probeBackendBinding(settings)`, **before** `res.json`:
+
+```javascript
+        let persisted = false;
+        let persistError: string | null = null;
+        try {
+          if (typeof adminDb !== "undefined" && adminDb) {
+            const payload = {
+              auth_driver,
+              db_backend,
+              isolation_level,
+              connection_ref: connection_ref || "",
+              an_backend_updated_at: new Date().toISOString(),
+              an_backend_version: "A4",
+            };
+            await adminDb.collection("companies").doc(companyId).set(payload, { merge: true });
+            persisted = true;
+          } else {
+            persistError = "adminDb_unavailable";
+          }
+        } catch (pe: any) {
+          persistError = pe?.message ? String(pe.message).slice(0, 160) : "persist_failed";
+          console.warn("company-backend persist:", persistError);
+        }
+```
+
+Include in `res.json` (keep existing fields):
+
+```javascript
+          persisted,
+          persistError,
+```
+
+Full success shape example:
+
+```javascript
+        res.json({
+          ok: true,
+          companyId,
+          settings,
+          backendConfig,
+          probe: { /* existing */ },
+          persisted,
+          persistError,
+          version: "7.2.0",
+        });
+```
+
+## STEP 3b — Optional helper comment in `src/lib/anDataPlane.ts` (top file comment only)
+Add one line to the file header:
+
+```typescript
+ * A4: company backend fields are persisted on Firestore companies/{id} via POST company-backend (merge).
+```
+
+No logic change required in anDataPlane if A2 already maps `db_backend` / `connection_ref` from records.
+
+## STEP 3c — PATCH `docs/MERGE_STATUS.md`
+```markdown
+| A4 | Persist company backend binding | DONE | POST company-backend merges auth_driver/db_backend/isolation/connection_ref onto companies/{id} |
+```
+
+Add rule:
+
+```markdown
+6. **DATAPLANE-A4:** backend binding fields may be stored on the company record (env ref names only). Operational KEMIT modules still use Firestore until a later cutover.
+```
+
+## STEP 3d — Create `scripts/verifyAnDataPlaneA4.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const plane = fs.readFileSync(path.join(root, 'src/lib/anDataPlane.ts'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+
+// Extract company-backend handler region (loose)
+const idx = server.indexOf('/api/an/company-backend/');
+const region = idx >= 0 ? server.slice(idx, idx + 4500) : '';
+
+check('S1 company-backend route exists', idx >= 0);
+check('S2 merge set on companies collection', region.includes('collection("companies")') && region.includes('.set('));
+check('S3 merge: true', region.includes('merge: true') || region.includes('merge:true'));
+check('S4 writes db_backend field', region.includes('db_backend'));
+check('S5 writes connection_ref field', region.includes('connection_ref'));
+check('S6 writes isolation_level', region.includes('isolation_level'));
+check('S7 persisted flag in response', region.includes('persisted'));
+check('S8 A3 live-check still present', server.includes('/api/an/data-plane/live-check'));
+check('S9 A2 company plane still present', server.includes('/api/an/data-plane/company/'));
+check('S10 MERGE_STATUS A4', statusDoc.includes('A4'));
+check('S11 Login unchanged', login.includes('/api/auth/verify-credentials'));
+check('S12 anDataPlane still has liveCheck', plane.includes('liveCheckBackend'));
+check('S13 no connection string write pattern :// in set payload region', !/set\(\s*\{[^}]*:\/\//.test(region));
+check('S14 verify A3 script exists', fs.existsSync(path.join(root, 'scripts/verifyAnDataPlaneA3.ts')));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9
+```
+npx tsx scripts/verifyAnDataPlaneA4.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10
+```
+npx tsx scripts/verifyAnDataPlaneA3.ts
+npx tsx scripts/verifyAnDataPlaneA2.ts
+```
+
+## STEP 12 (optional if adminDb online)
+```
+curl -s -X POST http://127.0.0.1:3000/api/an/company-backend/demo-co \
+  -H 'Content-Type: application/json' \
+  -d '{"db_backend":"postgresql","isolation_level":"Shared","connection_ref":"DATABASE_URL","auth_driver":"firebase"}'
+curl -s http://127.0.0.1:3000/api/an/data-plane/company/demo-co
+```
+Expect: POST shows `persisted: true|false`; GET reflects settings when persisted.
+
+## COMMIT NOTE
+```
+feat(a4): persist A.N backend binding fields on company documents
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnDataPlaneA4: Passed: N | Failed: N
+10) A3/A2: ...
+12) POST persisted: ...
+Status: DONE | package: AN-DATAPLANE-A4
+===========================
+```

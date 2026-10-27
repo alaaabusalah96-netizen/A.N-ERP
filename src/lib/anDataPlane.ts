@@ -1,6 +1,7 @@
 /**
  * @file anDataPlane.ts
  * @description AN-DATAPLANE-A1 — server-side A.N data plane helpers.
+ * A4: company backend fields are persisted on Firestore companies/{id} via POST company-backend (merge).
  * Resolves BackendConfig from company binding, checks env refs exist (never returns secrets),
  * and reports whether a non-memory adapter can be considered "wired" at process level.
  * Does NOT replace Firestore/KEMIT operational path.
