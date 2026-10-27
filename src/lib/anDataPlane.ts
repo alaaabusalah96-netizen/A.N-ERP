@@ -123,3 +123,73 @@ export function probeDefaultProcessPlane(env: NodeJS.ProcessEnv = process.env): 
     env
   );
 }
+
+export interface CompanyPlaneResult {
+  companyId: string;
+  companyFound: boolean;
+  companySource: 'firestore' | 'request-body' | 'process-default' | 'unavailable';
+  settings: {
+    auth_driver: string;
+    db_backend: string;
+    isolation_level: string;
+    connection_ref: string;
+  };
+  probe: DataPlaneProbe;
+}
+
+/** Map a loose company record (Firestore doc / body) into probe settings. */
+export function companyRecordToPartial(record: Record<string, unknown> | null | undefined): Partial<CompanyBackendSettings> {
+  if (!record) return {};
+  const out: Partial<CompanyBackendSettings> = {};
+  const auth = record.auth_driver;
+  const db = record.db_backend;
+  const iso = record.isolation_level;
+  const ref = record.connection_ref;
+  if (auth === 'firebase' || auth === 'an-jwt') out.auth_driver = auth;
+  if (
+    db === 'postgresql' ||
+    db === 'mysql' ||
+    db === 'mongodb' ||
+    db === 'firebase' ||
+    db === 'inmemory'
+  ) {
+    out.db_backend = db;
+  }
+  if (iso === 'Shared' || iso === 'Dedicated') out.isolation_level = iso;
+  if (typeof ref === 'string') out.connection_ref = ref;
+  return out;
+}
+
+export function probeCompanyPlane(
+  companyId: string,
+  record: Record<string, unknown> | null | undefined,
+  source: CompanyPlaneResult['companySource'],
+  env: NodeJS.ProcessEnv = process.env
+): CompanyPlaneResult {
+  const partial = companyRecordToPartial(record);
+  const hasBinding =
+    partial.db_backend != null ||
+    partial.connection_ref != null ||
+    partial.isolation_level != null ||
+    partial.auth_driver != null;
+  const probe = hasBinding
+    ? probeBackendBinding(partial, env)
+    : probeDefaultProcessPlane(env);
+  const settings = getCompanyBackendSettings({
+    id: companyId,
+    ...partial,
+  } as any);
+  return {
+    companyId,
+    companyFound: source === 'firestore' || source === 'request-body',
+    companySource: hasBinding ? source : source === 'firestore' && !hasBinding ? 'firestore' : source,
+    settings: {
+      auth_driver: settings.auth_driver,
+      db_backend: settings.db_backend,
+      isolation_level: settings.isolation_level,
+      connection_ref: settings.connection_ref,
+    },
+    probe,
+  };
+}
+

@@ -1,0 +1,268 @@
+# AN-DATAPLANE-A2 — Company-scoped data plane probe (LEAN)
+# Builds on A1. Loads saved company backend fields (when available) and probes env wiring.
+# Does NOT cut Firestore, does NOT open SQL pools yet (A3), does NOT change Login.
+
+## HARD RULES
+1. No changes to Login or `/api/auth/verify-credentials`.
+2. Never return raw connection strings or secret values.
+3. If Firestore adminDb is offline, return explicit `companySource: "unavailable"` + process defaults — do not crash.
+4. Stop at first failure. tsc wait >2 min → tsc once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- A1 present: `src/lib/anDataPlane.ts`, `GET /api/an/data-plane/status`.
+- `POST /api/an/company-backend/:companyId` exists.
+
+## STEP 3 — PATCH `src/lib/anDataPlane.ts`
+Append these exports at end of file (keep existing code):
+
+```typescript
+export interface CompanyPlaneResult {
+  companyId: string;
+  companyFound: boolean;
+  companySource: 'firestore' | 'request-body' | 'process-default' | 'unavailable';
+  settings: {
+    auth_driver: string;
+    db_backend: string;
+    isolation_level: string;
+    connection_ref: string;
+  };
+  probe: DataPlaneProbe;
+}
+
+/** Map a loose company record (Firestore doc / body) into probe settings. */
+export function companyRecordToPartial(record: Record<string, unknown> | null | undefined): Partial<CompanyBackendSettings> {
+  if (!record) return {};
+  const out: Partial<CompanyBackendSettings> = {};
+  const auth = record.auth_driver;
+  const db = record.db_backend;
+  const iso = record.isolation_level;
+  const ref = record.connection_ref;
+  if (auth === 'firebase' || auth === 'an-jwt') out.auth_driver = auth;
+  if (
+    db === 'postgresql' ||
+    db === 'mysql' ||
+    db === 'mongodb' ||
+    db === 'firebase' ||
+    db === 'inmemory'
+  ) {
+    out.db_backend = db;
+  }
+  if (iso === 'Shared' || iso === 'Dedicated') out.isolation_level = iso;
+  if (typeof ref === 'string') out.connection_ref = ref;
+  return out;
+}
+
+export function probeCompanyPlane(
+  companyId: string,
+  record: Record<string, unknown> | null | undefined,
+  source: CompanyPlaneResult['companySource'],
+  env: NodeJS.ProcessEnv = process.env
+): CompanyPlaneResult {
+  const partial = companyRecordToPartial(record);
+  const hasBinding =
+    partial.db_backend != null ||
+    partial.connection_ref != null ||
+    partial.isolation_level != null ||
+    partial.auth_driver != null;
+  const probe = hasBinding
+    ? probeBackendBinding(partial, env)
+    : probeDefaultProcessPlane(env);
+  const settings = getCompanyBackendSettings({
+    id: companyId,
+    ...partial,
+  } as any);
+  return {
+    companyId,
+    companyFound: source === 'firestore' || source === 'request-body',
+    companySource: hasBinding ? source : source === 'firestore' && !hasBinding ? 'firestore' : source,
+    settings: {
+      auth_driver: settings.auth_driver,
+      db_backend: settings.db_backend,
+      isolation_level: settings.isolation_level,
+      connection_ref: settings.connection_ref,
+    },
+    probe,
+  };
+}
+```
+
+If TypeScript complains about `getCompanyBackendSettings` + `id`, pass only partial fields:
+
+```typescript
+  const settings = getCompanyBackendSettings(partial as any);
+```
+
+## STEP 3b — PATCH `server.ts`
+
+### B1 — After `GET /api/an/data-plane/status` handler, add:
+
+```javascript
+    app.get("/api/an/data-plane/company/:companyId", async (req: any, res: any) => {
+      try {
+        const companyId = String(req.params.companyId || "").trim();
+        if (!companyId) {
+          return res.status(400).json({ ok: false, error: "companyId required" });
+        }
+        const { probeCompanyPlane } = await import("./src/lib/anDataPlane");
+        let record: Record<string, unknown> | null = null;
+        let source: "firestore" | "unavailable" = "unavailable";
+        try {
+          if (typeof adminDb !== "undefined" && adminDb) {
+            const snap = await adminDb.collection("companies").doc(companyId).get();
+            if (snap.exists) {
+              record = snap.data() as Record<string, unknown>;
+              source = "firestore";
+            } else {
+              source = "firestore";
+              record = null;
+            }
+          }
+        } catch (readErr: any) {
+          console.warn("data-plane company read:", readErr?.message || readErr);
+          source = "unavailable";
+          record = null;
+        }
+        const result = probeCompanyPlane(companyId, record, source === "unavailable" ? "unavailable" : "firestore");
+        res.json({
+          ok: result.probe.ok,
+          plane: "an-data-plane-a2",
+          companyId: result.companyId,
+          companyFound: !!(record && source === "firestore"),
+          companySource: result.companySource,
+          settings: result.settings,
+          probe: {
+            adapterType: result.probe.adapterType,
+            isolationLevel: result.probe.isolationLevel,
+            connectionRef: result.probe.connectionRef,
+            envRefPresent: result.probe.envRefPresent,
+            requiresEnvRef: result.probe.requiresEnvRef,
+            certifiedNote: result.probe.certifiedNote,
+            errorAr: result.probe.errorAr,
+            errorEn: result.probe.errorEn,
+          },
+          firestoreOperationalPath: "unchanged",
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+
+### B2 — Enrich `POST /api/an/company-backend/:companyId` success JSON
+Where the handler currently returns `ok: true` with `settings` / `backendConfig`, also attach:
+
+```javascript
+        const { probeBackendBinding } = await import("./src/lib/anDataPlane");
+        const probe = probeBackendBinding(settings);
+        // include in res.json:
+        // probe: { adapterType, isolationLevel, connectionRef, envRefPresent, requiresEnvRef, certifiedNote, errorEn, errorAr }
+```
+
+Do not remove existing response fields.
+
+### B3 — console.log add `data-plane/company/:id`
+
+## STEP 3c — PATCH `src/lib/anApi.ts`
+Append catalog entry:
+
+```typescript
+  {
+    method: 'GET',
+    path: '/api/an/data-plane/company/:companyId',
+    phase: 'A2',
+    purpose: 'Probe data plane using saved company backend fields (no secrets returned)',
+  },
+```
+
+## STEP 3d — PATCH `docs/MERGE_STATUS.md`
+Add row:
+
+```markdown
+| A2 | Company-scoped plane probe | DONE | `GET /api/an/data-plane/company/:id` + probe on company-backend POST |
+```
+
+## STEP 3e — Create `scripts/verifyAnDataPlaneA2.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const plane = fs.readFileSync(path.join(root, 'src/lib/anDataPlane.ts'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const api = fs.readFileSync(path.join(root, 'src/lib/anApi.ts'), 'utf8');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+
+check('S1 probeCompanyPlane exported', plane.includes('probeCompanyPlane'));
+check('S2 companyRecordToPartial exported', plane.includes('companyRecordToPartial'));
+check('S3 server has data-plane/company route', server.includes('/api/an/data-plane/company/'));
+check('S4 server still has data-plane/status', server.includes('/api/an/data-plane/status'));
+check('S5 company-backend still present', server.includes('/api/an/company-backend'));
+check('S6 catalog has company plane path', api.includes('/api/an/data-plane/company/:companyId'));
+check('S7 MERGE_STATUS mentions A2', statusDoc.includes('A2'));
+check('S8 Login unchanged path', login.includes('/api/auth/verify-credentials'));
+check('S9 no secret URI logging helpers', !plane.includes('password='));
+check('S10 A1 functions still present', plane.includes('probeDefaultProcessPlane'));
+check('S11 adminDb company read referenced', server.includes('collection("companies")') && server.includes('data-plane/company'));
+check('S12 verify A1 script still exists', fs.existsSync(path.join(root, 'scripts/verifyAnDataPlaneA1.ts')));
+check('S13 anBridge present', fs.existsSync(path.join(root, 'src/lib/anBridge.ts')));
+check('S14 firestoreOperationalPath string in server response path', server.includes('firestoreOperationalPath'));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8 — BUILD
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9
+```
+npx tsx scripts/verifyAnDataPlaneA2.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10
+```
+npx tsx scripts/verifyAnDataPlaneA1.ts
+```
+Failed: 0
+
+## STEP 12
+```
+curl -s http://127.0.0.1:3000/api/an/data-plane/company/test-company-id
+curl -s http://127.0.0.1:3000/api/an/data-plane/status
+```
+JSON must not contain `postgres://` or raw passwords.
+
+## COMMIT NOTE
+```
+feat(a2): company-scoped A.N data plane probe from saved backend fields
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+3) WRITE/PATCH: ...
+8) tsc: ... | build: ...
+9) verifyAnDataPlaneA2: Passed: N | Failed: N
+10) verifyAnDataPlaneA1: ...
+12) company plane HTTP: ...
+Status: DONE | package: AN-DATAPLANE-A2
+===========================
+```

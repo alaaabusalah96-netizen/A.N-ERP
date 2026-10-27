@@ -15,6 +15,7 @@
 | M5 | Settings UI | DONE | `AnCoreStatusPanel` in Settings only (no dual nav) |
 | M6 | Stabilize | DONE | `verifyMergeAll` + this freeze document |
 | A1 | Data plane env probe | DONE | `anDataPlane` + `GET /api/an/data-plane/status` (no Firestore cutover) |
+| A2 | Company-scoped plane probe | DONE | `GET /api/an/data-plane/company/:id` + probe on company-backend POST |
 
 ## Canonical rules (do not regress)
 

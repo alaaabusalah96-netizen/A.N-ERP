@@ -38,6 +38,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'A1',
     purpose: 'Process-level A.N data plane probe (env ref presence, no secrets)',
   },
+  {
+    method: 'GET',
+    path: '/api/an/data-plane/company/:companyId',
+    phase: 'A2',
+    purpose: 'Probe data plane using saved company backend fields (no secrets returned)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];

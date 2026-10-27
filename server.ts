@@ -2712,7 +2712,25 @@ async function startServer() {
         if (!validation.valid && needsRef) {
           return res.status(400).json({ ok: false, error: validation.errorDetailAr || "backend config invalid" });
         }
-        res.json({ ok: true, companyId, settings, backendConfig, version: "7.2.0" });
+        const { probeBackendBinding } = await import("./src/lib/anDataPlane");
+        const probe = probeBackendBinding(settings);
+        res.json({
+          ok: true,
+          companyId,
+          settings,
+          backendConfig,
+          probe: {
+            adapterType: probe.adapterType,
+            isolationLevel: probe.isolationLevel,
+            connectionRef: probe.connectionRef,
+            envRefPresent: probe.envRefPresent,
+            requiresEnvRef: probe.requiresEnvRef,
+            certifiedNote: probe.certifiedNote,
+            errorEn: probe.errorEn,
+            errorAr: probe.errorAr,
+          },
+          version: "7.2.0",
+        });
       } catch (err: any) {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
@@ -2792,7 +2810,56 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status");
+    app.get("/api/an/data-plane/company/:companyId", async (req: any, res: any) => {
+      try {
+        const companyId = String(req.params.companyId || "").trim();
+        if (!companyId) {
+          return res.status(400).json({ ok: false, error: "companyId required" });
+        }
+        const { probeCompanyPlane } = await import("./src/lib/anDataPlane");
+        let record: Record<string, unknown> | null = null;
+        let source: "firestore" | "unavailable" = "unavailable";
+        try {
+          if (typeof adminDb !== "undefined" && adminDb) {
+            const snap = await adminDb.collection("companies").doc(companyId).get();
+            if (snap.exists) {
+              record = snap.data() as Record<string, unknown>;
+              source = "firestore";
+            } else {
+              source = "firestore";
+              record = null;
+            }
+          }
+        } catch (readErr: any) {
+          console.warn("data-plane company read:", readErr?.message || readErr);
+          source = "unavailable";
+          record = null;
+        }
+        const result = probeCompanyPlane(companyId, record, source === "unavailable" ? "unavailable" : "firestore");
+        res.json({
+          ok: result.probe.ok,
+          plane: "an-data-plane-a2",
+          companyId: result.companyId,
+          companyFound: !!(record && source === "firestore"),
+          companySource: result.companySource,
+          settings: result.settings,
+          probe: {
+            adapterType: result.probe.adapterType,
+            isolationLevel: result.probe.isolationLevel,
+            connectionRef: result.probe.connectionRef,
+            envRefPresent: result.probe.envRefPresent,
+            requiresEnvRef: result.probe.requiresEnvRef,
+            certifiedNote: result.probe.certifiedNote,
+            errorAr: result.probe.errorAr,
+            errorEn: result.probe.errorEn,
+          },
+          firestoreOperationalPath: "unchanged",
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }
