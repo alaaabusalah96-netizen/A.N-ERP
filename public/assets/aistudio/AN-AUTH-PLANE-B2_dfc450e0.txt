@@ -1,0 +1,207 @@
+# AN-AUTH-PLANE-B2 — UI: CompanyBackendPanel reflects server plane (LEAN)
+# After B1 session-plane API. Wire settings panel to show persisted + session-plane probe after save.
+# Does NOT change Login. Does NOT cut Firestore operational modules.
+
+## HARD RULES
+1. No Login / auth route changes.
+2. Client must call only `/api/an/*` for plane status (via anBridge helpers).
+3. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- B1: `src/lib/anSessionPlane.ts`, `GET /api/an/session-plane`
+- A4: POST company-backend returns `persisted`
+- `CompanyBackendPanel.tsx` uses `resolveCompanyBackend` from anBridge
+
+## STEP 3 — PATCH `src/lib/anBridge.ts`
+Append after `resolveCompanyBackend` (or near other fetch helpers):
+
+```typescript
+export interface SessionPlaneClientResult {
+  ok: boolean;
+  companyId?: string;
+  settings?: CompanyBackendSettings;
+  probe?: {
+    ok?: boolean;
+    adapterType?: string;
+    isolationLevel?: string;
+    connectionRef?: string;
+    envRefPresent?: boolean;
+    certifiedNote?: string;
+    errorEn?: string;
+  };
+  auth?: { activePath?: string; auth_driver?: string; reasonAr?: string };
+  live?: { ok?: boolean; detail?: string; latencyMs?: number; skipped?: boolean } | null;
+  loginPath?: string;
+  error?: string;
+}
+
+/** B1 client: GET /api/an/session-plane */
+export async function fetchSessionPlane(
+  companyId?: string,
+  opts?: { live?: boolean }
+): Promise<SessionPlaneClientResult> {
+  try {
+    const q = new URLSearchParams();
+    if (companyId) q.set('companyId', companyId);
+    if (opts?.live) q.set('live', '1');
+    const qs = q.toString();
+    const res = await fetch(`/api/an/session-plane${qs ? `?${qs}` : ''}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: data?.error || res.statusText };
+    }
+    return {
+      ok: !!data.ok,
+      companyId: data.companyId,
+      settings: data.settings,
+      probe: data.probe,
+      auth: data.auth,
+      live: data.live ?? null,
+      loginPath: data.loginPath,
+    };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+```
+
+Also ensure `resolveCompanyBackend` parses `persisted` from JSON if not already — return type can stay loose (`any` fields on result object). If the function returns only `{ ok, error }`, extend return to include `persisted?: boolean` and `probe?: unknown` from `data`.
+
+Find `resolveCompanyBackend` and ensure successful path returns something like:
+
+```typescript
+    return {
+      ok: true,
+      ...data,
+      persisted: data.persisted,
+    };
+```
+
+## STEP 3b — PATCH `src/components/settings/CompanyBackendPanel.tsx`
+
+1. Import `fetchSessionPlane` from anBridge.
+2. Add state:
+
+```typescript
+  const [planeInfo, setPlaneInfo] = useState<string | null>(null);
+```
+
+3. After successful `resolveCompanyBackend` + `CustodyDB.updateCompany`, call:
+
+```typescript
+      const plane = await fetchSessionPlane(company!.id, { live: false });
+      const persistedBit =
+        typeof (server as any).persisted === 'boolean'
+          ? (server as any).persisted
+            ? isRtl
+              ? 'حُفظ على الخادم'
+              : 'Server persisted'
+            : isRtl
+              ? 'لم يُحفظ على الخادم'
+              : 'Not persisted on server'
+          : '';
+      const probeBit = plane.probe
+        ? `${plane.probe.adapterType || ''} / env:${plane.probe.envRefPresent ? 'yes' : 'no'}`
+        : '';
+      setPlaneInfo(
+        [persistedBit, probeBit, plane.auth?.activePath ? `auth:${plane.auth.activePath}` : '']
+          .filter(Boolean)
+          .join(' · ')
+      );
+      setMsg({
+        type: 'ok',
+        text: isRtl ? 'تم حفظ ربط قاعدة البيانات' : 'Backend binding saved',
+      });
+```
+
+4. In JSX under the form messages, show planeInfo:
+
+```tsx
+          {planeInfo && (
+            <p className="md:col-span-2 text-[11px] font-mono text-slate-500 dark:text-slate-400 break-all">
+              {planeInfo}
+            </p>
+          )}
+```
+
+5. Optional: on company change `useEffect`, clear planeInfo.
+
+## STEP 3c — PATCH `docs/MERGE_STATUS.md`
+```markdown
+| B2 | Settings panel session-plane feedback | DONE | CompanyBackendPanel shows persisted + session-plane probe after save |
+```
+
+## STEP 3d — Create `scripts/verifyAnAuthPlaneB2.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const bridge = fs.readFileSync(path.join(root, 'src/lib/anBridge.ts'), 'utf8');
+const panel = fs.readFileSync(path.join(root, 'src/components/settings/CompanyBackendPanel.tsx'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+
+check('S1 fetchSessionPlane in anBridge', bridge.includes('fetchSessionPlane'));
+check('S2 fetch calls session-plane', bridge.includes('/api/an/session-plane'));
+check('S3 panel imports fetchSessionPlane', panel.includes('fetchSessionPlane'));
+check('S4 panel calls fetchSessionPlane', panel.includes('fetchSessionPlane('));
+check('S5 panel shows planeInfo', panel.includes('planeInfo'));
+check('S6 panel still uses resolveCompanyBackend', panel.includes('resolveCompanyBackend'));
+check('S7 MERGE_STATUS B2', statusDoc.includes('B2'));
+check('S8 Login unchanged', login.includes('/api/auth/verify-credentials'));
+check('S9 session-plane route still on server', server.includes('/api/an/session-plane'));
+check('S10 B1 module still exists', fs.existsSync(path.join(root, 'src/lib/anSessionPlane.ts')));
+check('S11 A4 persist still on server', server.includes('an_backend_version'));
+check('S12 no second login API in panel', !panel.includes('verify-credentials'));
+check('S13 CustodyDB.updateCompany still used', panel.includes('updateCompany'));
+check('S14 verify B1 exists', fs.existsSync(path.join(root, 'scripts/verifyAnAuthPlaneB1.ts')));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9
+```
+npx tsx scripts/verifyAnAuthPlaneB2.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10
+```
+npx tsx scripts/verifyAnAuthPlaneB1.ts
+```
+
+## COMMIT NOTE
+```
+feat(b2): CompanyBackendPanel shows session-plane status after save
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnAuthPlaneB2: Passed: N | Failed: N
+10) B1: ...
+Status: DONE | package: AN-AUTH-PLANE-B2
+===========================
+```

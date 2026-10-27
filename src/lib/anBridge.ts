@@ -148,7 +148,15 @@ export async function getAnStorageStatus(): Promise<{
 export async function resolveCompanyBackend(
   companyId: string,
   partial?: Partial<CompanyBackendSettings>
-): Promise<{ ok: boolean; settings?: CompanyBackendSettings; backendConfig?: BackendConfig; error?: string }> {
+): Promise<{
+  ok: boolean;
+  settings?: CompanyBackendSettings;
+  backendConfig?: BackendConfig;
+  persisted?: boolean;
+  persistError?: string | null;
+  probe?: any;
+  error?: string;
+}> {
   try {
     const res = await fetch(`/api/an/company-backend/${encodeURIComponent(companyId)}`, {
       method: 'POST',
@@ -158,8 +166,61 @@ export async function resolveCompanyBackend(
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
-    return { ok: true, ...data };
+    return {
+      ok: true,
+      ...data,
+      persisted: data.persisted,
+    };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'network error' };
   }
 }
+
+export interface SessionPlaneClientResult {
+  ok: boolean;
+  companyId?: string;
+  settings?: CompanyBackendSettings;
+  probe?: {
+    ok?: boolean;
+    adapterType?: string;
+    isolationLevel?: string;
+    connectionRef?: string;
+    envRefPresent?: boolean;
+    certifiedNote?: string;
+    errorEn?: string;
+  };
+  auth?: { activePath?: string; auth_driver?: string; reasonAr?: string };
+  live?: { ok?: boolean; detail?: string; latencyMs?: number; skipped?: boolean } | null;
+  loginPath?: string;
+  error?: string;
+}
+
+/** B1 client: GET /api/an/session-plane */
+export async function fetchSessionPlane(
+  companyId?: string,
+  opts?: { live?: boolean }
+): Promise<SessionPlaneClientResult> {
+  try {
+    const q = new URLSearchParams();
+    if (companyId) q.set('companyId', companyId);
+    if (opts?.live) q.set('live', '1');
+    const qs = q.toString();
+    const res = await fetch(`/api/an/session-plane${qs ? `?${qs}` : ''}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: data?.error || res.statusText };
+    }
+    return {
+      ok: !!data.ok,
+      companyId: data.companyId,
+      settings: data.settings,
+      probe: data.probe,
+      auth: data.auth,
+      live: data.live ?? null,
+      loginPath: data.loginPath,
+    };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+

@@ -15,6 +15,7 @@ import {
   getCompanyBackendSettings,
   validateCompanyBackendSettings,
   resolveCompanyBackend,
+  fetchSessionPlane,
   type AdapterType,
   type IsolationLevel,
   type AuthDriver,
@@ -42,6 +43,7 @@ export default function CompanyBackendPanel({ language, companyId }: Props) {
   const [isolation, setIsolation] = useState<IsolationLevel>(initial.isolation_level);
   const [connectionRef, setConnectionRef] = useState(initial.connection_ref);
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [planeInfo, setPlaneInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -51,6 +53,7 @@ export default function CompanyBackendPanel({ language, companyId }: Props) {
     setIsolation(s.isolation_level);
     setConnectionRef(s.connection_ref);
     setMsg(null);
+    setPlaneInfo(null);
   }, [selectedId]);
 
   if (!company) {
@@ -100,11 +103,28 @@ export default function CompanyBackendPanel({ language, companyId }: Props) {
           text: res.error || (isRtl ? 'فشل الحفظ' : 'Save failed'),
         });
       } else {
+        const plane = await fetchSessionPlane(company!.id, { live: false });
+        const persistedBit =
+          typeof (server as any).persisted === 'boolean'
+            ? (server as any).persisted
+              ? isRtl
+                ? 'حُفظ على الخادم'
+                : 'Server persisted'
+              : isRtl
+                ? 'لم يُحفظ على الخادم'
+                : 'Not persisted on server'
+            : '';
+        const probeBit = plane.probe
+          ? `${plane.probe.adapterType || ''} / env:${plane.probe.envRefPresent ? 'yes' : 'no'}`
+          : '';
+        setPlaneInfo(
+          [persistedBit, probeBit, plane.auth?.activePath ? `auth:${plane.auth.activePath}` : '']
+            .filter(Boolean)
+            .join(' · ')
+        );
         setMsg({
           type: 'ok',
-          text: isRtl
-            ? 'تم حفظ ربط قاعدة البيانات للشركة (الافتراضي firebase يبقى حتى تفعيل التشغيل لاحقاً).'
-            : 'Company backend binding saved (runtime stays on Firebase until a later phase enables the adapter).',
+          text: isRtl ? 'تم حفظ ربط قاعدة البيانات' : 'Backend binding saved',
         });
       }
     } catch (err: any) {
@@ -203,6 +223,11 @@ export default function CompanyBackendPanel({ language, companyId }: Props) {
               {msg.type === 'ok' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
               {msg.text}
             </span>
+          )}
+          {planeInfo && (
+            <p className="md:col-span-2 text-[11px] font-mono text-slate-500 dark:text-slate-400 break-all">
+              {planeInfo}
+            </p>
           )}
         </div>
       </form>
