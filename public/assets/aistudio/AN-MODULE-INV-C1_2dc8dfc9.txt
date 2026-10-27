@@ -1,0 +1,243 @@
+# AN-MODULE-INV-C1 — Read-only A.N inventory summary API (LEAN)
+# Starts wave C (module plane). Exposes GET /api/an/inventory/summary only.
+# Does NOT switch KEMIT Inventory.tsx off CustodyDB. Does NOT change Login.
+
+## HARD RULES
+1. Read-only. No stock posts, no writes to inventory in this package.
+2. KEMIT `src/pages/Inventory.tsx` must remain on CustodyDB (no import of an-core inventory service into the page).
+3. Never return secrets. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- Wave A+B done (data-plane + session-plane).
+- `StorageRouter` has `getDevInMemoryAdapter` and `getPrimaryAdapter`.
+- StoragePort has `listWarehouses` / `listStockItems`.
+
+## STEP 3 — Create `src/lib/anInventoryRead.ts`
+
+```typescript
+/**
+ * AN-MODULE-INV-C1 — read-only inventory summary via A.N StorageRouter adapters.
+ */
+import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import { probeDefaultProcessPlane, probeBackendBinding, type DataPlaneProbe } from './anDataPlane';
+
+export interface InventorySummaryResult {
+  ok: boolean;
+  source: 'an-postgresql' | 'an-inmemory' | 'unwired';
+  tenantId: string;
+  warehouseCount: number | null;
+  itemCount: number | null;
+  probe: Pick<DataPlaneProbe, 'adapterType' | 'envRefPresent' | 'certifiedNote' | 'ok'>;
+  detail: string;
+  detailAr: string;
+  kemitInventoryPage: 'unchanged-custodydb';
+}
+
+export async function readInventorySummary(
+  router: StorageRouter,
+  opts?: { companyId?: string; env?: NodeJS.ProcessEnv }
+): Promise<InventorySummaryResult> {
+  const env = opts?.env || process.env;
+  const tenantId = (opts?.companyId || 'default').trim() || 'default';
+  const probe = probeDefaultProcessPlane(env);
+
+  const base = {
+    tenantId,
+    probe: {
+      adapterType: probe.adapterType,
+      envRefPresent: probe.envRefPresent,
+      certifiedNote: probe.certifiedNote,
+      ok: probe.ok,
+    },
+    kemitInventoryPage: 'unchanged-custodydb' as const,
+  };
+
+  // Prefer postgresql primary when env wired
+  if (probe.adapterType === 'postgresql' && probe.ok && probe.envRefPresent) {
+    try {
+      const adapter = router.getPrimaryAdapter();
+      const wh = await adapter.listWarehouses(tenantId);
+      const items = await adapter.listStockItems(tenantId);
+      const warehouseCount = wh.success && Array.isArray(wh.data) ? wh.data.length : null;
+      const itemCount = items.success && Array.isArray(items.data) ? items.data.length : null;
+      return {
+        ...base,
+        ok: !!(wh.success || items.success),
+        source: 'an-postgresql',
+        warehouseCount,
+        itemCount,
+        detail: 'primary_adapter_list_ok',
+        detailAr: 'قراءة عبر محول PostgreSQL الأساسي',
+      };
+    } catch (e: any) {
+      const msg = (e?.message || String(e)).replace(/postgres(ql)?:\/\/[^\s]+/gi, '[redacted]').slice(0, 160);
+      return {
+        ...base,
+        ok: false,
+        source: 'unwired',
+        warehouseCount: null,
+        itemCount: null,
+        detail: `pg_read_failed:${msg}`,
+        detailAr: `فشلت قراءة PostgreSQL: ${msg}`,
+      };
+    }
+  }
+
+  // Fallback: in-memory adapter (dev / no DATABASE_URL)
+  try {
+    const mem = router.getDevInMemoryAdapter();
+    const wh = await mem.listWarehouses(tenantId);
+    const items = await mem.listStockItems(tenantId);
+    return {
+      ...base,
+      ok: true,
+      source: 'an-inmemory',
+      warehouseCount: wh.success && Array.isArray(wh.data) ? wh.data.length : 0,
+      itemCount: items.success && Array.isArray(items.data) ? items.data.length : 0,
+      detail: 'inmemory_list_ok',
+      detailAr: 'قراءة عبر محول الذاكرة (لا يوجد DATABASE_URL أو غير PostgreSQL)',
+    };
+  } catch (e: any) {
+    return {
+      ...base,
+      ok: false,
+      source: 'unwired',
+      warehouseCount: null,
+      itemCount: null,
+      detail: e?.message || 'inmemory_failed',
+      detailAr: 'فشل محول الذاكرة',
+    };
+  }
+}
+```
+
+If `listStockItems` / `listWarehouses` signatures differ slightly, adapt to the actual StoragePort methods (same names as in StoragePort.ts).
+
+## STEP 3b — PATCH `server.ts`
+Inside A.N bridge, after session-plane (same `anStorageRouter` instance):
+
+```javascript
+    app.get("/api/an/inventory/summary", async (req: any, res: any) => {
+      try {
+        const { readInventorySummary } = await import("./src/lib/anInventoryRead");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "";
+        const summary = await readInventorySummary(anStorageRouter, {
+          companyId: companyId || "default",
+        });
+        res.json({
+          ok: summary.ok,
+          plane: "an-module-inv-c1",
+          source: summary.source,
+          tenantId: summary.tenantId,
+          warehouseCount: summary.warehouseCount,
+          itemCount: summary.itemCount,
+          probe: summary.probe,
+          detail: summary.detail,
+          detailAr: summary.detailAr,
+          kemitInventoryPage: summary.kemitInventoryPage,
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+
+Update console.log to include `inventory/summary`.
+
+## STEP 3c — PATCH `src/lib/anApi.ts`
+```typescript
+  {
+    method: 'GET',
+    path: '/api/an/inventory/summary',
+    phase: 'C1',
+    purpose: 'Read-only A.N inventory counts via StorageRouter (KEMIT Inventory page unchanged)',
+  },
+```
+
+## STEP 3d — PATCH `docs/MERGE_STATUS.md`
+```markdown
+| C1 | Inventory read summary (A.N) | DONE | GET /api/an/inventory/summary — read-only; Inventory.tsx still CustodyDB |
+```
+
+## STEP 3e — Create `scripts/verifyAnModuleInvC1.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const readPath = path.join(root, 'src/lib/anInventoryRead.ts');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const api = fs.readFileSync(path.join(root, 'src/lib/anApi.ts'), 'utf8');
+const invPage = fs.readFileSync(path.join(root, 'src/pages/Inventory.tsx'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+
+check('S1 anInventoryRead.ts exists', fs.existsSync(readPath));
+const body = fs.readFileSync(readPath, 'utf8');
+check('S2 readInventorySummary exported', body.includes('readInventorySummary'));
+check('S3 uses listWarehouses', body.includes('listWarehouses'));
+check('S4 kemit page unchanged flag', body.includes('unchanged-custodydb'));
+check('S5 server route inventory/summary', server.includes('/api/an/inventory/summary'));
+check('S6 catalog entry', api.includes('/api/an/inventory/summary'));
+check('S7 MERGE_STATUS C1', statusDoc.includes('C1'));
+check('S8 Inventory.tsx still CustodyDB', invPage.includes('CustodyDB'));
+check('S9 Inventory.tsx does not import anInventoryRead', !invPage.includes('anInventoryRead'));
+check('S10 Login unchanged', login.includes('/api/auth/verify-credentials'));
+check('S11 no stock post in anInventoryRead', !body.includes('postStock') && !body.includes('PostStock'));
+check('S12 B3 status panel still exists', fs.existsSync(path.join(root, 'src/components/settings/AnCoreStatusPanel.tsx')));
+check('S13 redaction or safe errors', body.includes('[redacted]') || body.includes('pg_read_failed'));
+check('S14 session-plane still present', server.includes('/api/an/session-plane'));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9
+```
+npx tsx scripts/verifyAnModuleInvC1.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10
+```
+npx tsx scripts/verifyAnAuthPlaneB3.ts
+```
+
+## STEP 12
+```
+curl -s "http://127.0.0.1:3000/api/an/inventory/summary"
+```
+
+## COMMIT NOTE
+```
+feat(c1): read-only A.N inventory summary API via StorageRouter
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnModuleInvC1: Passed: N | Failed: N
+10) B3: ...
+12) inventory/summary: source=... warehouses=... items=...
+Status: DONE | package: AN-MODULE-INV-C1
+===========================
+```

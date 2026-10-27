@@ -21,6 +21,7 @@
 | B1 | Session/company plane context | DONE | `GET /api/an/session-plane?companyId=&live=` (auth policy + probe; login unchanged) |
 | B2 | Settings panel session-plane feedback | DONE | CompanyBackendPanel shows persisted + session-plane probe after save |
 | B3 | Status panel plane + live | DONE | AnCoreStatusPanel shows session-plane + live-check summary |
+| C1 | Inventory read summary (A.N) | DONE | GET /api/an/inventory/summary — read-only; Inventory.tsx still CustodyDB |
 
 ## Canonical rules (do not regress)
 

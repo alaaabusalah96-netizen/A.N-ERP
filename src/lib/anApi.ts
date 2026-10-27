@@ -56,6 +56,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'B1',
     purpose: 'Auth policy + company data-plane probe for a companyId (optional live=1)',
   },
+  {
+    method: 'GET',
+    path: '/api/an/inventory/summary',
+    phase: 'C1',
+    purpose: 'Read-only A.N inventory counts via StorageRouter (KEMIT Inventory page unchanged)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];

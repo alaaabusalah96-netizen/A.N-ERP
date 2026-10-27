@@ -2994,7 +2994,30 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane");
+    app.get("/api/an/inventory/summary", async (req: any, res: any) => {
+      try {
+        const { readInventorySummary } = await import("./src/lib/anInventoryRead");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "";
+        const summary = await readInventorySummary(anStorageRouter, {
+          companyId: companyId || "default",
+        });
+        res.json({
+          ok: summary.ok,
+          plane: "an-module-inv-c1",
+          source: summary.source,
+          tenantId: summary.tenantId,
+          warehouseCount: summary.warehouseCount,
+          itemCount: summary.itemCount,
+          probe: summary.probe,
+          detail: summary.detail,
+          detailAr: summary.detailAr,
+          kemitInventoryPage: summary.kemitInventoryPage,
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }
