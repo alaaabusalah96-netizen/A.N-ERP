@@ -1,0 +1,156 @@
+# AN-MODULE-OVERVIEW-C5 — Unified A.N modules overview API (LEAN)
+# Aggregates inventory + accounting + purchasing read summaries into one endpoint.
+# Closes wave C read-only surface. Does NOT switch any KEMIT page off CustodyDB.
+
+## HARD RULES
+1. Read-only aggregation only. No writes.
+2. Do not modify Inventory.tsx / Accounting.tsx / Purchasing.tsx data sources.
+3. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- C1–C4 present: anInventoryRead, anAccountingRead, anPurchasingRead, three /summary routes.
+
+## STEP 3 — Create `src/lib/anModulesOverview.ts`
+
+```typescript
+/**
+ * AN-MODULE-OVERVIEW-C5 — aggregate read-only module summaries.
+ */
+import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import { readInventorySummary } from './anInventoryRead';
+import { readAccountingSummary } from './anAccountingRead';
+import { readPurchasingSummary } from './anPurchasingRead';
+
+export async function readModulesOverview(
+  router: StorageRouter,
+  opts?: { companyId?: string; env?: NodeJS.ProcessEnv }
+) {
+  const companyId = opts?.companyId || 'default';
+  const env = opts?.env;
+  const [inventory, accounting, purchasing] = await Promise.all([
+    readInventorySummary(router, { companyId, env }),
+    readAccountingSummary(router, { companyId, env }),
+    readPurchasingSummary(router, { companyId, env }),
+  ]);
+  const ok = inventory.ok || accounting.ok || purchasing.ok;
+  return {
+    ok,
+    plane: 'an-module-overview-c5' as const,
+    companyId,
+    inventory: {
+      ok: inventory.ok,
+      source: inventory.source,
+      warehouseCount: inventory.warehouseCount,
+      itemCount: inventory.itemCount,
+    },
+    accounting: {
+      ok: accounting.ok,
+      source: accounting.source,
+      accountCount: accounting.accountCount,
+      journalCount: accounting.journalCount,
+    },
+    purchasing: {
+      ok: purchasing.ok,
+      source: purchasing.source,
+      purchaseOrderCount: purchasing.purchaseOrderCount,
+      goodsReceiptCount: purchasing.goodsReceiptCount,
+      purchaseRequestCount: purchasing.purchaseRequestCount,
+    },
+    kemitPages: {
+      inventory: 'unchanged-custodydb',
+      accounting: 'unchanged-custodydb',
+      purchasing: 'unchanged-custodydb',
+    },
+  };
+}
+```
+
+## STEP 3b — PATCH `server.ts`
+```javascript
+    app.get("/api/an/modules/overview", async (req: any, res: any) => {
+      try {
+        const { readModulesOverview } = await import("./src/lib/anModulesOverview");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "";
+        const overview = await readModulesOverview(anStorageRouter, {
+          companyId: companyId || "default",
+        });
+        res.json(overview);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+console.log include `modules/overview`.
+
+## STEP 3c — `anApi.ts`
+```typescript
+  {
+    method: 'GET',
+    path: '/api/an/modules/overview',
+    phase: 'C5',
+    purpose: 'Aggregate read-only inventory+accounting+purchasing summaries',
+  },
+```
+
+## STEP 3d — `anBridge.ts`
+```typescript
+export async function fetchModulesOverview(companyId?: string): Promise<any> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/modules/overview${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return data;
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+```
+
+## STEP 3e — `AnCoreStatusPanel.tsx`
+Import `fetchModulesOverview`. In `load()`, call it once; you may **replace** the three separate inv/acc/pur fetches with overview only **or** keep them and add a compact overview line. Preferred: use overview for the three cards to reduce requests:
+
+- If panel currently calls fetchInventorySummary + fetchAccountingSummary + fetchPurchasingSummary, switch to single `fetchModulesOverview()` and map fields into existing cards.
+
+## STEP 3f — `docs/MERGE_STATUS.md`
+```markdown
+| C5 | Modules overview aggregate | DONE | GET /api/an/modules/overview — wave C read-only surface complete; KEMIT pages unchanged |
+```
+
+Add note under rules:
+```markdown
+7. **Wave C:** A.N exposes read-only module summaries only. Operational KEMIT screens remain on Firestore/CustodyDB until an approved cutover package.
+```
+
+## STEP 3g — `scripts/verifyAnModuleOverviewC5.ts`
+14 checks:
+- anModulesOverview.ts + readModulesOverview
+- route modules/overview
+- catalog C5
+- fetchModulesOverview in bridge
+- panel references modules/overview OR fetchModulesOverview
+- MERGE_STATUS C5
+- Inventory/Accounting/Purchasing pages still CustodyDB
+- C1–C4 routes still present
+- Login unchanged
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnModuleOverviewC5.ts
+npx tsx scripts/verifyAnModulePurC4.ts
+```
+
+## COMMIT NOTE
+```
+feat(c5): aggregate A.N modules overview read-only API
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnModuleOverviewC5: Passed: N | Failed: N
+10) C4: ...
+Status: DONE | package: AN-MODULE-OVERVIEW-C5
+===========================
+```

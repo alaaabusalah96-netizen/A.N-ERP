@@ -3064,7 +3064,19 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary");
+    app.get("/api/an/modules/overview", async (req: any, res: any) => {
+      try {
+        const { readModulesOverview } = await import("./src/lib/anModulesOverview");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "";
+        const overview = await readModulesOverview(anStorageRouter, {
+          companyId: companyId || "default",
+        });
+        res.json(overview);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }

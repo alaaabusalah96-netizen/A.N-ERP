@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, RefreshCw, Network } from 'lucide-react';
 import { Language } from '../../types';
-import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary, fetchPurchasingSummary } from '../../lib/anBridge';
+import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary, fetchPurchasingSummary, fetchModulesOverview } from '../../lib/anBridge';
 import { AN_API_PREFIX } from '../../lib/anApi';
 
 type RouteRow = { method: string; path: string; phase: string; purpose: string };
@@ -76,31 +76,32 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
           ? `${sp.live.ok ? 'live-ok' : 'live-fail'}:${sp.live.detail || ''}`
           : 'live-skipped',
       });
-      const inv = await fetchInventorySummary();
-      setInvSummary({
-        ok: inv.ok,
-        source: inv.source,
-        warehouses: inv.warehouseCount == null ? '—' : String(inv.warehouseCount),
-        items: inv.itemCount == null ? '—' : String(inv.itemCount),
-        detail: inv.detailAr || inv.detail || inv.error,
-      });
-      const acc = await fetchAccountingSummary();
-      setAccSummary({
-        ok: acc.ok,
-        source: acc.source,
-        accounts: acc.accountCount == null ? '—' : String(acc.accountCount),
-        journals: acc.journalCount == null ? '—' : String(acc.journalCount),
-        detail: acc.detailAr || acc.detail || acc.error,
-      });
-      const pur = await fetchPurchasingSummary();
-      setPurSummary({
-        ok: pur.ok,
-        source: pur.source,
-        po: pur.purchaseOrderCount == null ? '—' : String(pur.purchaseOrderCount),
-        gr: pur.goodsReceiptCount == null ? '—' : String(pur.goodsReceiptCount),
-        pr: pur.purchaseRequestCount == null ? '—' : String(pur.purchaseRequestCount),
-        detail: pur.detailAr || pur.detail || pur.error,
-      });
+      const overview = await fetchModulesOverview();
+      if (overview?.inventory) {
+        setInvSummary({
+          ok: overview.inventory.ok,
+          source: overview.inventory.source,
+          warehouses: overview.inventory.warehouseCount == null ? '—' : String(overview.inventory.warehouseCount),
+          items: overview.inventory.itemCount == null ? '—' : String(overview.inventory.itemCount),
+        });
+      }
+      if (overview?.accounting) {
+        setAccSummary({
+          ok: overview.accounting.ok,
+          source: overview.accounting.source,
+          accounts: overview.accounting.accountCount == null ? '—' : String(overview.accounting.accountCount),
+          journals: overview.accounting.journalCount == null ? '—' : String(overview.accounting.journalCount),
+        });
+      }
+      if (overview?.purchasing) {
+        setPurSummary({
+          ok: overview.purchasing.ok,
+          source: overview.purchasing.source,
+          po: overview.purchasing.purchaseOrderCount == null ? '—' : String(overview.purchasing.purchaseOrderCount),
+          gr: overview.purchasing.goodsReceiptCount == null ? '—' : String(overview.purchasing.goodsReceiptCount),
+          pr: overview.purchasing.purchaseRequestCount == null ? '—' : String(overview.purchasing.purchaseRequestCount),
+        });
+      }
     } catch (e: any) {
       setErr(e?.message || String(e));
     }

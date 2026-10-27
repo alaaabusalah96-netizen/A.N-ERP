@@ -313,5 +313,17 @@ export async function fetchPurchasingSummary(companyId?: string): Promise<Purcha
   }
 }
 
+export async function fetchModulesOverview(companyId?: string): Promise<any> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/modules/overview${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return data;
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
 
 

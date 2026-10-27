@@ -25,6 +25,7 @@
 | C2 | Inventory summary in status panel | DONE | AnCoreStatusPanel fetches /api/an/inventory/summary (Inventory.tsx unchanged) |
 | C3 | Accounting read summary | DONE | GET /api/an/accounting/summary + status panel; Accounting.tsx unchanged |
 | C4 | Purchasing read summary | DONE | GET /api/an/purchasing/summary + status panel; Purchasing.tsx unchanged |
+| C5 | Modules overview aggregate | DONE | GET /api/an/modules/overview — wave C read-only surface complete; KEMIT pages unchanged |
 
 ## Canonical rules (do not regress)
 
@@ -34,6 +35,7 @@
 4. **No second product shell:** Settings panels only; no `AnLogin`, no competing sidebar tree for A.N modules.
 5. **DATAPLANE-A1:** process-level BackendConfig/env probe only; KEMIT Firestore remains operational login/data path until a later approved cutover phase.
 6. **DATAPLANE-A4:** backend binding fields may be stored on the company record (env ref names only). Operational KEMIT modules still use Firestore until a later cutover.
+7. **Wave C:** A.N exposes read-only module summaries only. Operational KEMIT screens remain on Firestore/CustodyDB until an approved cutover package.
 
 ## Verify
 
