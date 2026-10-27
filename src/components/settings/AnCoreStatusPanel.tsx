@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, RefreshCw, Network } from 'lucide-react';
 import { Language } from '../../types';
-import { getAnStorageStatus, AN_CORE_VERSION } from '../../lib/anBridge';
+import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane } from '../../lib/anBridge';
 import { AN_API_PREFIX } from '../../lib/anApi';
 
 type RouteRow = { method: string; path: string; phase: string; purpose: string };
@@ -22,6 +22,13 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
     error?: string;
   } | null>(null);
   const [routes, setRoutes] = useState<RouteRow[]>([]);
+  const [sessionPlane, setSessionPlane] = useState<{
+    ok?: boolean;
+    adapter?: string;
+    envRef?: string;
+    authPath?: string;
+    liveDetail?: string;
+  } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -37,6 +44,16 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
       } else {
         setRoutes([]);
       }
+      const sp = await fetchSessionPlane(undefined, { live: true });
+      setSessionPlane({
+        ok: sp.ok,
+        adapter: sp.probe?.adapterType,
+        envRef: sp.probe?.envRefPresent ? 'present' : 'missing',
+        authPath: sp.auth?.activePath,
+        liveDetail: sp.live
+          ? `${sp.live.ok ? 'live-ok' : 'live-fail'}:${sp.live.detail || ''}`
+          : 'live-skipped',
+      });
     } catch (e: any) {
       setErr(e?.message || String(e));
     }
@@ -106,6 +123,22 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
               ? `${routes.length} مسار مسجّل — لا تكرار مع /api/auth أو /api/admin`
               : `${routes.length} registered — no overlap with /api/auth or /api/admin`}
           </p>
+        </div>
+        <div className="rounded-xl border border-slate-200/80 dark:border-slate-700 p-3 text-xs md:col-span-2">
+          <div className="font-bold text-slate-500 mb-1">
+            {isRtl ? 'مستوى البيانات / الجلسة' : 'Data / session plane'}
+          </div>
+          {sessionPlane == null ? (
+            <span className="text-slate-400">…</span>
+          ) : (
+            <ul className="space-y-0.5 text-slate-700 dark:text-slate-200 font-mono">
+              <li>ok={String(!!sessionPlane.ok)}</li>
+              <li>auth={sessionPlane.authPath || '—'}</li>
+              <li>adapter={sessionPlane.adapter || '—'}</li>
+              <li>envRef={sessionPlane.envRef || '—'}</li>
+              <li>live={sessionPlane.liveDetail || '—'}</li>
+            </ul>
+          )}
         </div>
       </div>
 

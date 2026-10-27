@@ -1,0 +1,156 @@
+# AN-AUTH-PLANE-B3 — AnCoreStatusPanel: session-plane + live-check (LEAN)
+# Completes wave B UI surface. Status panel loads session-plane and optional live-check.
+# Does NOT change Login. Does NOT cut Firestore modules.
+
+## HARD RULES
+1. No Login changes.
+2. Use existing helpers (`fetchSessionPlane`, storage status). Live check via GET `/api/an/data-plane/live-check` or fetchSessionPlane(..., { live: true }).
+3. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- B2: `fetchSessionPlane` in anBridge; CompanyBackendPanel uses it.
+- AnCoreStatusPanel exists and uses `getAnStorageStatus`.
+
+## STEP 3 — PATCH `src/components/settings/AnCoreStatusPanel.tsx`
+
+1. Import `fetchSessionPlane` from `../../lib/anBridge`.
+
+2. Add state:
+
+```typescript
+  const [sessionPlane, setSessionPlane] = useState<{
+    ok?: boolean;
+    adapter?: string;
+    envRef?: string;
+    authPath?: string;
+    liveDetail?: string;
+  } | null>(null);
+```
+
+3. Inside `load()`, after storage/routes, add:
+
+```typescript
+      const sp = await fetchSessionPlane(undefined, { live: true });
+      setSessionPlane({
+        ok: sp.ok,
+        adapter: sp.probe?.adapterType,
+        envRef: sp.probe?.envRefPresent ? 'present' : 'missing',
+        authPath: sp.auth?.activePath,
+        liveDetail: sp.live
+          ? `${sp.live.ok ? 'live-ok' : 'live-fail'}:${sp.live.detail || ''}`
+          : 'live-skipped',
+      });
+```
+
+If `fetchSessionPlane` without companyId is enough (process default), keep it. Optionally later pass company from CustodyDB — not required in B3.
+
+4. UI: add a third card in the grid (or new row) showing:
+
+- auth path  
+- process adapter  
+- env ref  
+- live detail  
+
+Arabic/English labels consistent with the panel.
+
+Example block:
+
+```tsx
+        <div className="rounded-xl border border-slate-200/80 dark:border-slate-700 p-3 text-xs md:col-span-2">
+          <div className="font-bold text-slate-500 mb-1">
+            {isRtl ? 'مستوى البيانات / الجلسة' : 'Data / session plane'}
+          </div>
+          {sessionPlane == null ? (
+            <span className="text-slate-400">…</span>
+          ) : (
+            <ul className="space-y-0.5 text-slate-700 dark:text-slate-200 font-mono">
+              <li>ok={String(!!sessionPlane.ok)}</li>
+              <li>auth={sessionPlane.authPath || '—'}</li>
+              <li>adapter={sessionPlane.adapter || '—'}</li>
+              <li>envRef={sessionPlane.envRef || '—'}</li>
+              <li>live={sessionPlane.liveDetail || '—'}</li>
+            </ul>
+          )}
+        </div>
+```
+
+Adjust grid to `md:grid-cols-2` so the new block spans full width under storage/routes.
+
+## STEP 3b — PATCH `docs/MERGE_STATUS.md`
+```markdown
+| B3 | Status panel plane + live | DONE | AnCoreStatusPanel shows session-plane + live-check summary |
+```
+
+## STEP 3c — Create `scripts/verifyAnAuthPlaneB3.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const panel = fs.readFileSync(path.join(root, 'src/components/settings/AnCoreStatusPanel.tsx'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+const bridge = fs.readFileSync(path.join(root, 'src/lib/anBridge.ts'), 'utf8');
+
+check('S1 panel imports fetchSessionPlane', panel.includes('fetchSessionPlane'));
+check('S2 panel calls fetchSessionPlane', panel.includes('fetchSessionPlane('));
+check('S3 live true option', panel.includes('live: true') || panel.includes('live:true'));
+check('S4 sessionPlane state', panel.includes('sessionPlane'));
+check('S5 displays auth path or live', panel.includes('authPath') || panel.includes('liveDetail'));
+check('S6 still loads storage status', panel.includes('getAnStorageStatus'));
+check('S7 still loads routes', panel.includes('/routes'));
+check('S8 MERGE_STATUS B3', statusDoc.includes('B3'));
+check('S9 Login unchanged', login.includes('/api/auth/verify-credentials'));
+check('S10 fetchSessionPlane still in bridge', bridge.includes('fetchSessionPlane'));
+check('S11 B2 panel still has planeInfo', fs.readFileSync(path.join(root, 'src/components/settings/CompanyBackendPanel.tsx'), 'utf8').includes('planeInfo'));
+check('S12 no verify-credentials in status panel', !panel.includes('verify-credentials'));
+check('S13 verify B2 exists', fs.existsSync(path.join(root, 'scripts/verifyAnAuthPlaneB2.ts')));
+check('S14 AnCoreStatusPanel file exists', fs.existsSync(path.join(root, 'src/components/settings/AnCoreStatusPanel.tsx')));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9
+```
+npx tsx scripts/verifyAnAuthPlaneB3.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10
+```
+npx tsx scripts/verifyAnAuthPlaneB2.ts
+```
+
+## COMMIT NOTE
+```
+feat(b3): AnCoreStatusPanel shows session-plane and live-check
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnAuthPlaneB3: Passed: N | Failed: N
+10) B2: ...
+Status: DONE | package: AN-AUTH-PLANE-B3
+===========================
+```
