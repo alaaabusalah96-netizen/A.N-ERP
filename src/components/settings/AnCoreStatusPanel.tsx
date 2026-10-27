@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, RefreshCw, Network } from 'lucide-react';
 import { Language } from '../../types';
-import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary } from '../../lib/anBridge';
+import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary } from '../../lib/anBridge';
 import { AN_API_PREFIX } from '../../lib/anApi';
 
 type RouteRow = { method: string; path: string; phase: string; purpose: string };
@@ -34,6 +34,13 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
     source?: string;
     warehouses?: string;
     items?: string;
+    detail?: string;
+  } | null>(null);
+  const [accSummary, setAccSummary] = useState<{
+    ok?: boolean;
+    source?: string;
+    accounts?: string;
+    journals?: string;
     detail?: string;
   } | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -68,6 +75,14 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
         warehouses: inv.warehouseCount == null ? '—' : String(inv.warehouseCount),
         items: inv.itemCount == null ? '—' : String(inv.itemCount),
         detail: inv.detailAr || inv.detail || inv.error,
+      });
+      const acc = await fetchAccountingSummary();
+      setAccSummary({
+        ok: acc.ok,
+        source: acc.source,
+        accounts: acc.accountCount == null ? '—' : String(acc.accountCount),
+        journals: acc.journalCount == null ? '—' : String(acc.journalCount),
+        detail: acc.detailAr || acc.detail || acc.error,
       });
     } catch (e: any) {
       setErr(e?.message || String(e));
@@ -174,6 +189,27 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
             {isRtl
               ? 'شاشة المخزون التشغيلية ما زالت على CustodyDB/Firestore'
               : 'Operational Inventory page still uses CustodyDB/Firestore'}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200/80 dark:border-slate-700 p-3 text-xs md:col-span-2">
+          <div className="font-bold text-slate-500 mb-1">
+            {isRtl ? 'ملخص المحاسبة A.N (قراءة فقط)' : 'A.N accounting summary (read-only)'}
+          </div>
+          {accSummary == null ? (
+            <span className="text-slate-400">…</span>
+          ) : (
+            <ul className="space-y-0.5 text-slate-700 dark:text-slate-200 font-mono">
+              <li>ok={String(!!accSummary.ok)}</li>
+              <li>source={accSummary.source || '—'}</li>
+              <li>accounts={accSummary.accounts || '—'}</li>
+              <li>journals={accSummary.journals || '—'}</li>
+              <li className="whitespace-normal">{accSummary.detail || '—'}</li>
+            </ul>
+          )}
+          <p className="mt-2 text-[10px] text-slate-400">
+            {isRtl
+              ? 'شاشة المحاسبة التشغيلية ما زالت على CustodyDB/Firestore'
+              : 'Operational Accounting page still uses CustodyDB/Firestore'}
           </p>
         </div>
       </div>

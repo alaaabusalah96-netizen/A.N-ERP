@@ -62,6 +62,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'C1',
     purpose: 'Read-only A.N inventory counts via StorageRouter (KEMIT Inventory page unchanged)',
   },
+  {
+    method: 'GET',
+    path: '/api/an/accounting/summary',
+    phase: 'C3',
+    purpose: 'Read-only A.N account/journal counts (Accounting.tsx still CustodyDB)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];

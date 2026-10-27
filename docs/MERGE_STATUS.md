@@ -23,6 +23,7 @@
 | B3 | Status panel plane + live | DONE | AnCoreStatusPanel shows session-plane + live-check summary |
 | C1 | Inventory read summary (A.N) | DONE | GET /api/an/inventory/summary — read-only; Inventory.tsx still CustodyDB |
 | C2 | Inventory summary in status panel | DONE | AnCoreStatusPanel fetches /api/an/inventory/summary (Inventory.tsx unchanged) |
+| C3 | Accounting read summary | DONE | GET /api/an/accounting/summary + status panel; Accounting.tsx unchanged |
 
 ## Canonical rules (do not regress)
 

@@ -253,4 +253,34 @@ export async function fetchInventorySummary(companyId?: string): Promise<Invento
   }
 }
 
+export interface AccountingSummaryClient {
+  ok: boolean;
+  source?: string;
+  accountCount?: number | null;
+  journalCount?: number | null;
+  detail?: string;
+  detailAr?: string;
+  error?: string;
+}
+
+export async function fetchAccountingSummary(companyId?: string): Promise<AccountingSummaryClient> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/accounting/summary${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return {
+      ok: !!data.ok,
+      source: data.source,
+      accountCount: data.accountCount,
+      journalCount: data.journalCount,
+      detail: data.detail,
+      detailAr: data.detailAr,
+    };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+
 

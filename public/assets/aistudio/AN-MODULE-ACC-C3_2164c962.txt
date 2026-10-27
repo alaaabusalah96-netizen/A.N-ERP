@@ -1,0 +1,286 @@
+# AN-MODULE-ACC-C3 — Read-only A.N accounting summary API + status panel (LEAN)
+# Wave C continues: parallel to inventory C1/C2 for accounting.
+# Does NOT modify Accounting.tsx. Does NOT change Login.
+
+## HARD RULES
+1. Read-only. No journal posts.
+2. `src/pages/Accounting.tsx` must remain on CustodyDB (no anAccountingRead import there).
+3. Never return secrets. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- C1/C2 inventory path works.
+- StoragePort has `listAccounts?` and/or `listJournalEntries`.
+
+## STEP 3 — Create `src/lib/anAccountingRead.ts`
+
+```typescript
+/**
+ * AN-MODULE-ACC-C3 — read-only accounting summary via A.N StorageRouter.
+ */
+import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import { probeDefaultProcessPlane, type DataPlaneProbe } from './anDataPlane';
+
+export interface AccountingSummaryResult {
+  ok: boolean;
+  source: 'an-postgresql' | 'an-inmemory' | 'unwired';
+  tenantId: string;
+  accountCount: number | null;
+  journalCount: number | null;
+  probe: Pick<DataPlaneProbe, 'adapterType' | 'envRefPresent' | 'certifiedNote' | 'ok'>;
+  detail: string;
+  detailAr: string;
+  kemitAccountingPage: 'unchanged-custodydb';
+}
+
+async function countFromAdapter(adapter: any, tenantId: string): Promise<{
+  accountCount: number | null;
+  journalCount: number | null;
+  ok: boolean;
+}> {
+  let accountCount: number | null = null;
+  let journalCount: number | null = null;
+  let ok = false;
+  if (typeof adapter.listAccounts === 'function') {
+    const acc = await adapter.listAccounts(tenantId);
+    if (acc?.success && Array.isArray(acc.data)) {
+      accountCount = acc.data.length;
+      ok = true;
+    }
+  }
+  if (typeof adapter.listJournalEntries === 'function') {
+    const j = await adapter.listJournalEntries(tenantId);
+    if (j?.success && Array.isArray(j.data)) {
+      journalCount = j.data.length;
+      ok = true;
+    }
+  }
+  return { accountCount, journalCount, ok };
+}
+
+export async function readAccountingSummary(
+  router: StorageRouter,
+  opts?: { companyId?: string; env?: NodeJS.ProcessEnv }
+): Promise<AccountingSummaryResult> {
+  const env = opts?.env || process.env;
+  const tenantId = (opts?.companyId || 'default').trim() || 'default';
+  const probe = probeDefaultProcessPlane(env);
+  const base = {
+    tenantId,
+    probe: {
+      adapterType: probe.adapterType,
+      envRefPresent: probe.envRefPresent,
+      certifiedNote: probe.certifiedNote,
+      ok: probe.ok,
+    },
+    kemitAccountingPage: 'unchanged-custodydb' as const,
+  };
+
+  if (probe.adapterType === 'postgresql' && probe.ok && probe.envRefPresent) {
+    try {
+      const adapter = router.getPrimaryAdapter();
+      const counts = await countFromAdapter(adapter, tenantId);
+      return {
+        ...base,
+        ok: counts.ok,
+        source: 'an-postgresql',
+        accountCount: counts.accountCount,
+        journalCount: counts.journalCount,
+        detail: 'primary_adapter_accounting_list',
+        detailAr: 'قراءة محاسبة عبر محول PostgreSQL',
+      };
+    } catch (e: any) {
+      const msg = (e?.message || String(e)).replace(/postgres(ql)?:\/\/[^\s]+/gi, '[redacted]').slice(0, 160);
+      return {
+        ...base,
+        ok: false,
+        source: 'unwired',
+        accountCount: null,
+        journalCount: null,
+        detail: `pg_read_failed:${msg}`,
+        detailAr: `فشل قراءة المحاسبة: ${msg}`,
+      };
+    }
+  }
+
+  try {
+    const mem = router.getDevInMemoryAdapter();
+    const counts = await countFromAdapter(mem, tenantId);
+    return {
+      ...base,
+      ok: true,
+      source: 'an-inmemory',
+      accountCount: counts.accountCount ?? 0,
+      journalCount: counts.journalCount ?? 0,
+      detail: 'inmemory_accounting_list',
+      detailAr: 'قراءة محاسبة عبر محول الذاكرة',
+    };
+  } catch (e: any) {
+    return {
+      ...base,
+      ok: false,
+      source: 'unwired',
+      accountCount: null,
+      journalCount: null,
+      detail: e?.message || 'inmemory_failed',
+      detailAr: 'فشل محول الذاكرة',
+    };
+  }
+}
+```
+
+## STEP 3b — PATCH `server.ts`
+```javascript
+    app.get("/api/an/accounting/summary", async (req: any, res: any) => {
+      try {
+        const { readAccountingSummary } = await import("./src/lib/anAccountingRead");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "";
+        const summary = await readAccountingSummary(anStorageRouter, {
+          companyId: companyId || "default",
+        });
+        res.json({
+          ok: summary.ok,
+          plane: "an-module-acc-c3",
+          source: summary.source,
+          tenantId: summary.tenantId,
+          accountCount: summary.accountCount,
+          journalCount: summary.journalCount,
+          probe: summary.probe,
+          detail: summary.detail,
+          detailAr: summary.detailAr,
+          kemitAccountingPage: summary.kemitAccountingPage,
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+Update console.log to include `accounting/summary`.
+
+## STEP 3c — PATCH `src/lib/anApi.ts`
+```typescript
+  {
+    method: 'GET',
+    path: '/api/an/accounting/summary',
+    phase: 'C3',
+    purpose: 'Read-only A.N account/journal counts (Accounting.tsx still CustodyDB)',
+  },
+```
+
+## STEP 3d — PATCH `src/lib/anBridge.ts`
+```typescript
+export interface AccountingSummaryClient {
+  ok: boolean;
+  source?: string;
+  accountCount?: number | null;
+  journalCount?: number | null;
+  detail?: string;
+  detailAr?: string;
+  error?: string;
+}
+
+export async function fetchAccountingSummary(companyId?: string): Promise<AccountingSummaryClient> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/accounting/summary${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return {
+      ok: !!data.ok,
+      source: data.source,
+      accountCount: data.accountCount,
+      journalCount: data.journalCount,
+      detail: data.detail,
+      detailAr: data.detailAr,
+    };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+```
+
+## STEP 3e — PATCH `AnCoreStatusPanel.tsx`
+Import `fetchAccountingSummary`. Load in `load()` and show a card similar to inventory (accounts / journals / source). Note that Accounting page stays on CustodyDB.
+
+## STEP 3f — PATCH `docs/MERGE_STATUS.md`
+```markdown
+| C3 | Accounting read summary | DONE | GET /api/an/accounting/summary + status panel; Accounting.tsx unchanged |
+```
+
+## STEP 3g — Create `scripts/verifyAnModuleAccC3.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const readPath = path.join(root, 'src/lib/anAccountingRead.ts');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const api = fs.readFileSync(path.join(root, 'src/lib/anApi.ts'), 'utf8');
+const bridge = fs.readFileSync(path.join(root, 'src/lib/anBridge.ts'), 'utf8');
+const panel = fs.readFileSync(path.join(root, 'src/components/settings/AnCoreStatusPanel.tsx'), 'utf8');
+const accPage = fs.readFileSync(path.join(root, 'src/pages/Accounting.tsx'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+
+check('S1 anAccountingRead exists', fs.existsSync(readPath));
+const body = fs.readFileSync(readPath, 'utf8');
+check('S2 readAccountingSummary', body.includes('readAccountingSummary'));
+check('S3 listJournalEntries or listAccounts', body.includes('listJournalEntries') || body.includes('listAccounts'));
+check('S4 server route', server.includes('/api/an/accounting/summary'));
+check('S5 catalog', api.includes('/api/an/accounting/summary'));
+check('S6 fetchAccountingSummary bridge', bridge.includes('fetchAccountingSummary'));
+check('S7 panel uses fetchAccountingSummary', panel.includes('fetchAccountingSummary'));
+check('S8 MERGE_STATUS C3', statusDoc.includes('C3'));
+check('S9 Accounting.tsx CustodyDB', accPage.includes('CustodyDB'));
+check('S10 Accounting.tsx no anAccountingRead', !accPage.includes('anAccountingRead'));
+check('S11 Login unchanged', login.includes('/api/auth/verify-credentials'));
+check('S12 inventory summary still present', server.includes('/api/an/inventory/summary'));
+check('S13 kemitAccountingPage flag', body.includes('unchanged-custodydb'));
+check('S14 no journal post in read module', !body.includes('postJournal') && !body.includes('PostJournal'));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9
+```
+npx tsx scripts/verifyAnModuleAccC3.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10
+```
+npx tsx scripts/verifyAnModuleInvC2.ts
+```
+
+## COMMIT NOTE
+```
+feat(c3): read-only A.N accounting summary API and status panel
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnModuleAccC3: Passed: N | Failed: N
+10) C2: ...
+Status: DONE | package: AN-MODULE-ACC-C3
+===========================
+```
