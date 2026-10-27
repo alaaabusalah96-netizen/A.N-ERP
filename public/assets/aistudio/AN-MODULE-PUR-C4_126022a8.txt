@@ -1,0 +1,241 @@
+# AN-MODULE-PUR-C4 — Read-only A.N purchasing summary API + status panel (LEAN)
+# Wave C: inventory C1–C2, accounting C3, purchasing C4.
+# Does NOT modify Purchasing.tsx. Does NOT change Login.
+
+## HARD RULES
+1. Read-only. No PO/GR posts.
+2. `src/pages/Purchasing.tsx` stays on CustodyDB.
+3. Never return secrets. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- C3 accounting path present.
+- StoragePort: `listPurchaseOrders`, `listGoodsReceipts` (optional `listPurchaseRequests`).
+
+## STEP 3 — Create `src/lib/anPurchasingRead.ts`
+
+```typescript
+/**
+ * AN-MODULE-PUR-C4 — read-only purchasing summary via A.N StorageRouter.
+ */
+import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import { probeDefaultProcessPlane, type DataPlaneProbe } from './anDataPlane';
+
+export interface PurchasingSummaryResult {
+  ok: boolean;
+  source: 'an-postgresql' | 'an-inmemory' | 'unwired';
+  tenantId: string;
+  purchaseOrderCount: number | null;
+  goodsReceiptCount: number | null;
+  purchaseRequestCount: number | null;
+  probe: Pick<DataPlaneProbe, 'adapterType' | 'envRefPresent' | 'certifiedNote' | 'ok'>;
+  detail: string;
+  detailAr: string;
+  kemitPurchasingPage: 'unchanged-custodydb';
+}
+
+async function countFromAdapter(adapter: any, tenantId: string) {
+  let purchaseOrderCount: number | null = null;
+  let goodsReceiptCount: number | null = null;
+  let purchaseRequestCount: number | null = null;
+  let ok = false;
+  if (typeof adapter.listPurchaseOrders === 'function') {
+    const r = await adapter.listPurchaseOrders(tenantId);
+    if (r?.success && Array.isArray(r.data)) {
+      purchaseOrderCount = r.data.length;
+      ok = true;
+    }
+  }
+  if (typeof adapter.listGoodsReceipts === 'function') {
+    const r = await adapter.listGoodsReceipts(tenantId);
+    if (r?.success && Array.isArray(r.data)) {
+      goodsReceiptCount = r.data.length;
+      ok = true;
+    }
+  }
+  if (typeof adapter.listPurchaseRequests === 'function') {
+    const r = await adapter.listPurchaseRequests(tenantId);
+    if (r?.success && Array.isArray(r.data)) {
+      purchaseRequestCount = r.data.length;
+      ok = true;
+    }
+  }
+  return { purchaseOrderCount, goodsReceiptCount, purchaseRequestCount, ok };
+}
+
+export async function readPurchasingSummary(
+  router: StorageRouter,
+  opts?: { companyId?: string; env?: NodeJS.ProcessEnv }
+): Promise<PurchasingSummaryResult> {
+  const env = opts?.env || process.env;
+  const tenantId = (opts?.companyId || 'default').trim() || 'default';
+  const probe = probeDefaultProcessPlane(env);
+  const base = {
+    tenantId,
+    probe: {
+      adapterType: probe.adapterType,
+      envRefPresent: probe.envRefPresent,
+      certifiedNote: probe.certifiedNote,
+      ok: probe.ok,
+    },
+    kemitPurchasingPage: 'unchanged-custodydb' as const,
+  };
+
+  if (probe.adapterType === 'postgresql' && probe.ok && probe.envRefPresent) {
+    try {
+      const adapter = router.getPrimaryAdapter();
+      const c = await countFromAdapter(adapter, tenantId);
+      return {
+        ...base,
+        ok: c.ok,
+        source: 'an-postgresql',
+        purchaseOrderCount: c.purchaseOrderCount,
+        goodsReceiptCount: c.goodsReceiptCount,
+        purchaseRequestCount: c.purchaseRequestCount,
+        detail: 'primary_adapter_purchasing_list',
+        detailAr: 'قراءة مشتريات عبر محول PostgreSQL',
+      };
+    } catch (e: any) {
+      const msg = (e?.message || String(e)).replace(/postgres(ql)?:\/\/[^\s]+/gi, '[redacted]').slice(0, 160);
+      return {
+        ...base,
+        ok: false,
+        source: 'unwired',
+        purchaseOrderCount: null,
+        goodsReceiptCount: null,
+        purchaseRequestCount: null,
+        detail: `pg_read_failed:${msg}`,
+        detailAr: `فشل قراءة المشتريات: ${msg}`,
+      };
+    }
+  }
+
+  try {
+    const mem = router.getDevInMemoryAdapter();
+    const c = await countFromAdapter(mem, tenantId);
+    return {
+      ...base,
+      ok: true,
+      source: 'an-inmemory',
+      purchaseOrderCount: c.purchaseOrderCount ?? 0,
+      goodsReceiptCount: c.goodsReceiptCount ?? 0,
+      purchaseRequestCount: c.purchaseRequestCount ?? 0,
+      detail: 'inmemory_purchasing_list',
+      detailAr: 'قراءة مشتريات عبر محول الذاكرة',
+    };
+  } catch (e: any) {
+    return {
+      ...base,
+      ok: false,
+      source: 'unwired',
+      purchaseOrderCount: null,
+      goodsReceiptCount: null,
+      purchaseRequestCount: null,
+      detail: e?.message || 'inmemory_failed',
+      detailAr: 'فشل محول الذاكرة',
+    };
+  }
+}
+```
+
+## STEP 3b — PATCH `server.ts`
+```javascript
+    app.get("/api/an/purchasing/summary", async (req: any, res: any) => {
+      try {
+        const { readPurchasingSummary } = await import("./src/lib/anPurchasingRead");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "";
+        const summary = await readPurchasingSummary(anStorageRouter, {
+          companyId: companyId || "default",
+        });
+        res.json({
+          ok: summary.ok,
+          plane: "an-module-pur-c4",
+          source: summary.source,
+          tenantId: summary.tenantId,
+          purchaseOrderCount: summary.purchaseOrderCount,
+          goodsReceiptCount: summary.goodsReceiptCount,
+          purchaseRequestCount: summary.purchaseRequestCount,
+          probe: summary.probe,
+          detail: summary.detail,
+          detailAr: summary.detailAr,
+          kemitPurchasingPage: summary.kemitPurchasingPage,
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+console.log include `purchasing/summary`.
+
+## STEP 3c — `anApi.ts` catalog
+```typescript
+  {
+    method: 'GET',
+    path: '/api/an/purchasing/summary',
+    phase: 'C4',
+    purpose: 'Read-only A.N PO/GR counts (Purchasing.tsx still CustodyDB)',
+  },
+```
+
+## STEP 3d — `anBridge.ts`
+```typescript
+export async function fetchPurchasingSummary(companyId?: string): Promise<{
+  ok: boolean;
+  source?: string;
+  purchaseOrderCount?: number | null;
+  goodsReceiptCount?: number | null;
+  purchaseRequestCount?: number | null;
+  detail?: string;
+  detailAr?: string;
+  error?: string;
+}> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/purchasing/summary${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return {
+      ok: !!data.ok,
+      source: data.source,
+      purchaseOrderCount: data.purchaseOrderCount,
+      goodsReceiptCount: data.goodsReceiptCount,
+      purchaseRequestCount: data.purchaseRequestCount,
+      detail: data.detail,
+      detailAr: data.detailAr,
+    };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+```
+
+## STEP 3e — `AnCoreStatusPanel.tsx`
+Import `fetchPurchasingSummary`, load in `load()`, show card (PO / GR / PR counts + source). Note Purchasing page remains CustodyDB.
+
+## STEP 3f — `docs/MERGE_STATUS.md`
+```markdown
+| C4 | Purchasing read summary | DONE | GET /api/an/purchasing/summary + status panel; Purchasing.tsx unchanged |
+```
+
+## STEP 3g — `scripts/verifyAnModulePurC4.ts`
+14 checks: anPurchasingRead exists, route, catalog, bridge, panel, Purchasing.tsx CustodyDB, no write methods, C3 still present, Login unchanged, MERGE C4, etc.
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnModulePurC4.ts
+npx tsx scripts/verifyAnModuleAccC3.ts
+```
+
+## COMMIT NOTE
+```
+feat(c4): read-only A.N purchasing summary API and status panel
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnModulePurC4: Passed: N | Failed: N
+10) C3: ...
+Status: DONE | package: AN-MODULE-PUR-C4
+===========================
+```

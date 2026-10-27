@@ -282,5 +282,36 @@ export async function fetchAccountingSummary(companyId?: string): Promise<Accoun
   }
 }
 
+export interface PurchasingSummaryClient {
+  ok: boolean;
+  source?: string;
+  purchaseOrderCount?: number | null;
+  goodsReceiptCount?: number | null;
+  purchaseRequestCount?: number | null;
+  detail?: string;
+  detailAr?: string;
+  error?: string;
+}
+
+export async function fetchPurchasingSummary(companyId?: string): Promise<PurchasingSummaryClient> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/purchasing/summary${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return {
+      ok: !!data.ok,
+      source: data.source,
+      purchaseOrderCount: data.purchaseOrderCount,
+      goodsReceiptCount: data.goodsReceiptCount,
+      purchaseRequestCount: data.purchaseRequestCount,
+      detail: data.detail,
+      detailAr: data.detailAr,
+    };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
 
 

@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, RefreshCw, Network } from 'lucide-react';
 import { Language } from '../../types';
-import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary } from '../../lib/anBridge';
+import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary, fetchPurchasingSummary } from '../../lib/anBridge';
 import { AN_API_PREFIX } from '../../lib/anApi';
 
 type RouteRow = { method: string; path: string; phase: string; purpose: string };
@@ -41,6 +41,14 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
     source?: string;
     accounts?: string;
     journals?: string;
+    detail?: string;
+  } | null>(null);
+  const [purSummary, setPurSummary] = useState<{
+    ok?: boolean;
+    source?: string;
+    po?: string;
+    gr?: string;
+    pr?: string;
     detail?: string;
   } | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -83,6 +91,15 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
         accounts: acc.accountCount == null ? '—' : String(acc.accountCount),
         journals: acc.journalCount == null ? '—' : String(acc.journalCount),
         detail: acc.detailAr || acc.detail || acc.error,
+      });
+      const pur = await fetchPurchasingSummary();
+      setPurSummary({
+        ok: pur.ok,
+        source: pur.source,
+        po: pur.purchaseOrderCount == null ? '—' : String(pur.purchaseOrderCount),
+        gr: pur.goodsReceiptCount == null ? '—' : String(pur.goodsReceiptCount),
+        pr: pur.purchaseRequestCount == null ? '—' : String(pur.purchaseRequestCount),
+        detail: pur.detailAr || pur.detail || pur.error,
       });
     } catch (e: any) {
       setErr(e?.message || String(e));
@@ -210,6 +227,28 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
             {isRtl
               ? 'شاشة المحاسبة التشغيلية ما زالت على CustodyDB/Firestore'
               : 'Operational Accounting page still uses CustodyDB/Firestore'}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200/80 dark:border-slate-700 p-3 text-xs md:col-span-2">
+          <div className="font-bold text-slate-500 mb-1">
+            {isRtl ? 'ملخص المشتريات A.N (قراءة فقط)' : 'A.N purchasing summary (read-only)'}
+          </div>
+          {purSummary == null ? (
+            <span className="text-slate-400">…</span>
+          ) : (
+            <ul className="space-y-0.5 text-slate-700 dark:text-slate-200 font-mono">
+              <li>ok={String(!!purSummary.ok)}</li>
+              <li>source={purSummary.source || '—'}</li>
+              <li>po={purSummary.po || '—'}</li>
+              <li>gr={purSummary.gr || '—'}</li>
+              <li>pr={purSummary.pr || '—'}</li>
+              <li className="whitespace-normal">{purSummary.detail || '—'}</li>
+            </ul>
+          )}
+          <p className="mt-2 text-[10px] text-slate-400">
+            {isRtl
+              ? 'شاشة المشتريات التشغيلية ما زالت على CustodyDB/Firestore'
+              : 'Operational Purchasing page still uses CustodyDB/Firestore'}
           </p>
         </div>
       </div>

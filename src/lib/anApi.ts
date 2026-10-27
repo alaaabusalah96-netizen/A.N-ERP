@@ -68,6 +68,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'C3',
     purpose: 'Read-only A.N account/journal counts (Accounting.tsx still CustodyDB)',
   },
+  {
+    method: 'GET',
+    path: '/api/an/purchasing/summary',
+    phase: 'C4',
+    purpose: 'Read-only A.N PO/GR counts (Purchasing.tsx still CustodyDB)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];
