@@ -104,6 +104,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'E2',
     purpose: 'Dual-path operator runbook metadata (no migration)',
   },
+  {
+    method: 'GET',
+    path: '/api/an/migrate/inventory/dry-run',
+    phase: 'F1',
+    purpose: 'Inventory migration dry-run report (no SQL writes)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];

@@ -31,6 +31,7 @@
 | D3 | Migration readiness gates | DONE | GET /api/an/migration/readiness — migrateAuthorized=false always in D3 |
 | E1 | Plane structural gate A1–D3 | DONE | scripts/verifyAnPlaneAll.ts + npm run verify:an-plane |
 | E2 | Dual-path operator runbook | DONE | docs/ops/DUAL_PATH_RUNBOOK.md + GET /api/an/ops/runbook |
+| F1 | Inventory migrate dry-run | DONE | GET /api/an/migrate/inventory/dry-run — report only, writesPerformed=false |
 
 ## Canonical rules (do not regress)
 
@@ -44,6 +45,7 @@
 8. **SHADOW-D1:** System is dual-path until an explicit cutover package sets cutoverApproved and migrates data.
 9. **READY-D3:** Readiness API never sets migrateAuthorized or cutoverApproved true. Migration requires a later dedicated package series.
 10. **GATE-E1:** Run `npm run verify:an-plane` after plane packages. Does not authorize migration or cutover.
+11. **MIGRATE-DRY-F1:** Full merge continues. F1 is report-only. Write migrate requires F2+ and AN_MIGRATE_WRITES=1.
 
 ## Verify
 

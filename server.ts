@@ -3116,7 +3116,58 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook");
+    app.get("/api/an/migrate/inventory/dry-run", async (req: any, res: any) => {
+      try {
+        const { buildInventoryMigrateDryRun } = await import("./src/lib/anMigrateInventoryDry");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "default";
+        const countKemit = async (cid: string) => {
+          if (typeof adminDb === "undefined" || !adminDb) {
+            return { warehouseCount: null, productCount: null, detail: "adminDb_unavailable" };
+          }
+          // Best-effort counts; collection names may vary — never throw out
+          let warehouseCount: number | null = null;
+          let productCount: number | null = null;
+          const details: string[] = [];
+          try {
+            const wh = await adminDb.collection("warehouses").where("company_id", "==", cid).get();
+            warehouseCount = wh.size;
+          } catch (e: any) {
+            details.push("warehouses:" + (e?.message || "err"));
+            try {
+              const wh2 = await adminDb.collection("warehouses").limit(500).get();
+              warehouseCount = wh2.docs.filter((d: any) => (d.data() || {}).company_id === cid).length;
+            } catch {
+              warehouseCount = null;
+            }
+          }
+          try {
+            const pr = await adminDb.collection("products").where("company_id", "==", cid).get();
+            productCount = pr.size;
+          } catch (e: any) {
+            details.push("products:" + (e?.message || "err"));
+            try {
+              const pr2 = await adminDb.collection("products").limit(500).get();
+              productCount = pr2.docs.filter((d: any) => (d.data() || {}).company_id === cid).length;
+            } catch {
+              productCount = null;
+            }
+          }
+          return {
+            warehouseCount,
+            productCount,
+            detail: details.join(";") || "ok",
+          };
+        };
+        const report = await buildInventoryMigrateDryRun(anStorageRouter, {
+          companyId,
+          countKemit,
+        });
+        res.json(report);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }

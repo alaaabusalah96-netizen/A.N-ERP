@@ -371,5 +371,17 @@ export async function fetchOpsRunbook(): Promise<any> {
   }
 }
 
+export async function fetchInventoryMigrateDryRun(companyId?: string): Promise<any> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/migrate/inventory/dry-run${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return data;
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
 
 
