@@ -348,5 +348,17 @@ export async function fetchEntityMap(): Promise<any> {
   }
 }
 
+export async function fetchMigrationReadiness(companyId?: string): Promise<any> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/migration/readiness${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return data;
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
 
 

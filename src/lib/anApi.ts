@@ -92,6 +92,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'D2',
     purpose: 'Static KEMIT→A.N entity mapping catalog for migration planning',
   },
+  {
+    method: 'GET',
+    path: '/api/an/migration/readiness',
+    phase: 'D3',
+    purpose: 'Migration readiness gates (never authorizes migrate in D3)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];

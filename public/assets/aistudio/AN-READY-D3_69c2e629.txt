@@ -1,0 +1,207 @@
+# AN-READY-D3 — Migration readiness checklist API (LEAN)
+# Wave D: answers "are we allowed to migrate yet?" with explicit FAIL/WAIT gates.
+# Does NOT migrate data. Does NOT set cutoverApproved=true. Does NOT change Login or KEMIT pages.
+
+## HARD RULES
+1. cutoverApproved must remain false in all code this package touches.
+2. No Firestore→SQL document copy.
+3. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- D1 shadow/status, D2 map/entities, A3 live-check, C5 modules/overview.
+
+## STEP 3 — Create `src/lib/anMigrationReadiness.ts`
+
+```typescript
+/**
+ * AN-READY-D3 — compute migration readiness without performing migration.
+ */
+import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import { probeDefaultProcessPlane, liveCheckDefaultProcess } from './anDataPlane';
+import { listEntityMap } from './anEntityMap';
+import { readModulesOverview } from './anModulesOverview';
+import { resolveAuthPolicyServer } from './authPolicy';
+
+export type GateVerdict = 'PASS' | 'WAIT' | 'FAIL';
+
+export interface ReadyGate {
+  id: string;
+  verdict: GateVerdict;
+  detail: string;
+  detailAr: string;
+}
+
+export async function buildMigrationReadiness(
+  router: StorageRouter,
+  opts?: { companyId?: string; env?: NodeJS.ProcessEnv }
+) {
+  const env = opts?.env || process.env;
+  const companyId = (opts?.companyId || 'default').trim() || 'default';
+  const processPlane = probeDefaultProcessPlane(env);
+  const live = await liveCheckDefaultProcess(env);
+  const map = listEntityMap();
+  const modules = await readModulesOverview(router, { companyId, env });
+  const auth = resolveAuthPolicyServer({ auth_driver: 'firebase' }, env);
+
+  const gates: ReadyGate[] = [];
+
+  gates.push({
+    id: 'G1_DUAL_PATH_DECLARED',
+    verdict: 'PASS',
+    detail: 'Shadow dual-path is declared; cutoverApproved stays false',
+    detailAr: 'المسار المزدوج معلن؛ cutoverApproved ما زال false',
+  });
+
+  gates.push({
+    id: 'G2_LOGIN_FIREBASE',
+    verdict: auth.activePath === 'firebase-session' ? 'PASS' : 'WAIT',
+    detail: `activePath=${auth.activePath}`,
+    detailAr: `مسار الدخول=${auth.activePath}`,
+  });
+
+  gates.push({
+    id: 'G3_PROCESS_PLANE',
+    verdict: processPlane.ok ? 'PASS' : 'WAIT',
+    detail: processPlane.certifiedNote,
+    detailAr: processPlane.errorAr || processPlane.certifiedNote,
+  });
+
+  gates.push({
+    id: 'G4_LIVE_SQL',
+    verdict: live.live.ok ? 'PASS' : live.live.skipped ? 'WAIT' : 'WAIT',
+    detail: live.live.detail,
+    detailAr: live.live.detailAr,
+  });
+
+  gates.push({
+    id: 'G5_ENTITY_MAP',
+    verdict: map.counts.mappedRead >= 3 ? 'PASS' : 'WAIT',
+    detail: `mappedRead=${map.counts.mappedRead} deferred=${map.counts.deferred}`,
+    detailAr: `mapped-read=${map.counts.mappedRead} مؤجل=${map.counts.deferred}`,
+  });
+
+  gates.push({
+    id: 'G6_AN_MODULE_READS',
+    verdict: modules.ok ? 'PASS' : 'WAIT',
+    detail: 'modules overview reachable',
+    detailAr: 'ملخص الوحدات متاح',
+  });
+
+  gates.push({
+    id: 'G7_NO_CUTOVER_FLAG',
+    verdict: 'PASS',
+    detail: 'cutoverApproved must remain false until dedicated cutover package',
+    detailAr: 'يُمنع تفعيل القطع إلا بحزمة cutover صريحة لاحقة',
+  });
+
+  // Hard rule: readiness never becomes GO_MIGRATE in D3
+  const hasFail = gates.some((g) => g.verdict === 'FAIL');
+  const hasWait = gates.some((g) => g.verdict === 'WAIT');
+  const readiness: 'NOT_READY' | 'BLOCKED' = hasFail ? 'BLOCKED' : 'NOT_READY';
+
+  return {
+    ok: true,
+    plane: 'an-ready-d3' as const,
+    readiness,
+    /** Explicit: D3 never authorizes migration */
+    migrateAuthorized: false,
+    cutoverApproved: false,
+    dualPath: true,
+    companyId,
+    gates,
+    summary: {
+      pass: gates.filter((g) => g.verdict === 'PASS').length,
+      wait: gates.filter((g) => g.verdict === 'WAIT').length,
+      fail: gates.filter((g) => g.verdict === 'FAIL').length,
+    },
+    nextStepAr:
+      'لا ترحيل الآن. عالج بوابات WAIT (خصوصًا G4_LIVE_SQL إن لزم DATABASE_URL)، ثم حزم ترحيل تجريبي لاحقة.',
+    nextStepEn:
+      'No migration now. Resolve WAIT gates (especially live SQL if needed), then later dry-run migrate packages.',
+  };
+}
+```
+
+## STEP 3b — PATCH `server.ts`
+```javascript
+    app.get("/api/an/migration/readiness", async (req: any, res: any) => {
+      try {
+        const { buildMigrationReadiness } = await import("./src/lib/anMigrationReadiness");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "";
+        const result = await buildMigrationReadiness(anStorageRouter, {
+          companyId: companyId || "default",
+        });
+        res.json(result);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+console.log include `migration/readiness`.
+
+## STEP 3c — `anApi.ts`
+```typescript
+  {
+    method: 'GET',
+    path: '/api/an/migration/readiness',
+    phase: 'D3',
+    purpose: 'Migration readiness gates (never authorizes migrate in D3)',
+  },
+```
+
+## STEP 3d — `anBridge.ts`
+```typescript
+export async function fetchMigrationReadiness(companyId?: string): Promise<any> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/migration/readiness${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return data;
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+```
+
+## STEP 3e — `AnCoreStatusPanel.tsx`
+Load readiness; show `readiness`, `migrateAuthorized`, and `summary.pass/wait/fail`.
+
+## STEP 3f — `docs/MERGE_STATUS.md`
+```markdown
+| D3 | Migration readiness gates | DONE | GET /api/an/migration/readiness — migrateAuthorized=false always in D3 |
+```
+
+```markdown
+9. **READY-D3:** Readiness API never sets migrateAuthorized or cutoverApproved true. Migration requires a later dedicated package series.
+```
+
+## STEP 3g — `scripts/verifyAnReadyD3.ts`
+14 checks including:
+- migrateAuthorized false in source
+- cutoverApproved false
+- route present
+- no "migrateAuthorized: true"
+- map + shadow still present
+- Login + CustodyDB pages unchanged
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnReadyD3.ts
+npx tsx scripts/verifyAnMapD2.ts
+```
+
+## COMMIT NOTE
+```
+feat(d3): migration readiness checklist API (no migrate authorize)
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnReadyD3: Passed: N | Failed: N
+10) D2: ...
+Status: DONE | package: AN-READY-D3
+===========================
+```

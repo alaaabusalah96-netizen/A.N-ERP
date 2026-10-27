@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, RefreshCw, Network } from 'lucide-react';
 import { Language } from '../../types';
-import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary, fetchPurchasingSummary, fetchModulesOverview, fetchShadowStatus, fetchEntityMap } from '../../lib/anBridge';
+import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary, fetchPurchasingSummary, fetchModulesOverview, fetchShadowStatus, fetchEntityMap, fetchMigrationReadiness } from '../../lib/anBridge';
 import { AN_API_PREFIX } from '../../lib/anApi';
 
 type RouteRow = { method: string; path: string; phase: string; purpose: string };
@@ -61,6 +61,13 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
     kemitOnly?: number;
     deferred?: number;
     total?: number;
+  } | null>(null);
+  const [readiness, setReadiness] = useState<{
+    readiness?: string;
+    migrateAuthorized?: boolean;
+    pass?: number;
+    wait?: number;
+    fail?: number;
   } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -124,6 +131,16 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
       const map = await fetchEntityMap();
       if (map?.counts) {
         setMapCounts(map.counts);
+      }
+      const ready = await fetchMigrationReadiness();
+      if (ready) {
+        setReadiness({
+          readiness: ready.readiness,
+          migrateAuthorized: !!ready.migrateAuthorized,
+          pass: ready.summary?.pass,
+          wait: ready.summary?.wait,
+          fail: ready.summary?.fail,
+        });
       }
     } catch (e: any) {
       setErr(e?.message || String(e));
@@ -304,6 +321,25 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
             {isRtl
               ? 'كتالوج تخطيط للترحيل المستقبلي — بدون نقل بيانات الآن'
               : 'Catalog for future migration planning — no live data copy'}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200/80 dark:border-slate-700 p-3 text-xs md:col-span-2">
+          <div className="font-bold text-slate-500 mb-1">
+            {isRtl ? 'جاهزية الترحيل (D3)' : 'Migration readiness (D3)'}
+          </div>
+          {readiness == null ? (
+            <span className="text-slate-400">…</span>
+          ) : (
+            <ul className="space-y-0.5 text-slate-700 dark:text-slate-200 font-mono">
+              <li>readiness={readiness.readiness || '—'}</li>
+              <li>migrateAuthorized={String(readiness.migrateAuthorized)}</li>
+              <li>gates={readiness.pass ?? 0} PASS · {readiness.wait ?? 0} WAIT · {readiness.fail ?? 0} FAIL</li>
+            </ul>
+          )}
+          <p className="mt-2 text-[10px] text-slate-400">
+            {isRtl
+              ? 'D3 تقيّم الجاهزية فقط — يُمنع تفويض الترحيل أو القطع في هذه المرحلة'
+              : 'D3 evaluates readiness only — migration authorization is blocked in D3'}
           </p>
         </div>
       </div>
