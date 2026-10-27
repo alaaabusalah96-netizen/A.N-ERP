@@ -1,0 +1,150 @@
+# AN-SHADOW-D1 — Dual-path shadow status (LEAN)
+# Starts wave D (prep toward migration/cutover). Declares dual-path state explicitly:
+# KEMIT Firestore = operational UI; A.N = read-only plane + module summaries.
+# No data migration. No page cutover. No Login change.
+
+## HARD RULES
+1. Do not migrate data or delete Firestore usage.
+2. Do not change Inventory/Accounting/Purchasing/Login pages.
+3. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- C5: `GET /api/an/modules/overview` and `readModulesOverview` exist.
+
+## STEP 3 — Create `src/lib/anShadowStatus.ts`
+
+```typescript
+/**
+ * AN-SHADOW-D1 — explicit dual-path status for merge governance.
+ */
+import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import { probeDefaultProcessPlane } from './anDataPlane';
+import { readModulesOverview } from './anModulesOverview';
+import { resolveAuthPolicyServer } from './authPolicy';
+
+export async function buildShadowStatus(
+  router: StorageRouter,
+  opts?: { companyId?: string; env?: NodeJS.ProcessEnv }
+) {
+  const env = opts?.env || process.env;
+  const companyId = (opts?.companyId || 'default').trim() || 'default';
+  const processPlane = probeDefaultProcessPlane(env);
+  const auth = resolveAuthPolicyServer({ auth_driver: 'firebase' }, env);
+  const modules = await readModulesOverview(router, { companyId, env });
+
+  return {
+    ok: true,
+    plane: 'an-shadow-d1' as const,
+    dualPath: true,
+    cutoverApproved: false,
+    operational: {
+      uiShell: 'kemit-custodyflow',
+      loginPath: '/api/auth/verify-credentials',
+      authPath: auth.activePath,
+      dataStore: 'firestore',
+      noteAr: 'الشاشات التشغيلية تعتمد Firestore/CustodyDB',
+      noteEn: 'Operational screens use Firestore/CustodyDB',
+    },
+    anReadPlane: {
+      processPlane: {
+        ok: processPlane.ok,
+        adapterType: processPlane.adapterType,
+        envRefPresent: processPlane.envRefPresent,
+        certifiedNote: processPlane.certifiedNote,
+      },
+      modules,
+      noteAr: 'طبقة A.N للقراءة/الربط فقط في هذه المرحلة',
+      noteEn: 'A.N is read/bind plane only at this stage',
+    },
+    nextGates: [
+      'Do not cut Firestore until migration dry-run passes',
+      'Module write path on A.N requires dedicated packages after D-wave',
+      'Login remains firebase-session until explicit auth cutover',
+    ],
+  };
+}
+```
+
+## STEP 3b — PATCH `server.ts`
+```javascript
+    app.get("/api/an/shadow/status", async (req: any, res: any) => {
+      try {
+        const { buildShadowStatus } = await import("./src/lib/anShadowStatus");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "";
+        const status = await buildShadowStatus(anStorageRouter, {
+          companyId: companyId || "default",
+        });
+        res.json(status);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+console.log include `shadow/status`.
+
+## STEP 3c — `anApi.ts`
+```typescript
+  {
+    method: 'GET',
+    path: '/api/an/shadow/status',
+    phase: 'D1',
+    purpose: 'Dual-path shadow status (KEMIT operational + A.N read plane)',
+  },
+```
+
+## STEP 3d — `anBridge.ts`
+```typescript
+export async function fetchShadowStatus(companyId?: string): Promise<any> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/shadow/status${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return data;
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+```
+
+## STEP 3e — `AnCoreStatusPanel.tsx`
+Import `fetchShadowStatus`. In `load()`, fetch once and show a small banner:
+
+- dualPath: true  
+- operational.dataStore: firestore  
+- cutoverApproved: false  
+
+Arabic/English one-liner.
+
+## STEP 3f — `docs/MERGE_STATUS.md`
+```markdown
+| D1 | Dual-path shadow status | DONE | GET /api/an/shadow/status — KEMIT operational, A.N read-only, cutoverApproved=false |
+```
+
+```markdown
+8. **SHADOW-D1:** System is dual-path until an explicit cutover package sets cutoverApproved and migrates data.
+```
+
+## STEP 3g — `scripts/verifyAnShadowD1.ts`
+14 checks: anShadowStatus, route, catalog D1, fetchShadowStatus, panel, cutoverApproved false in source, dualPath true, modules/overview still present, Login unchanged, three KEMIT pages CustodyDB, MERGE D1, no migration scripts writing data, C5 overview still imported, verify C5 exists.
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnShadowD1.ts
+npx tsx scripts/verifyAnModuleOverviewC5.ts
+```
+
+## COMMIT NOTE
+```
+feat(d1): dual-path shadow status endpoint for merge governance
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnShadowD1: Passed: N | Failed: N
+10) C5: ...
+Status: DONE | package: AN-SHADOW-D1
+===========================
+```

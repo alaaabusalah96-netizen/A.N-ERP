@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, RefreshCw, Network } from 'lucide-react';
 import { Language } from '../../types';
-import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary, fetchPurchasingSummary, fetchModulesOverview } from '../../lib/anBridge';
+import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary, fetchPurchasingSummary, fetchModulesOverview, fetchShadowStatus } from '../../lib/anBridge';
 import { AN_API_PREFIX } from '../../lib/anApi';
 
 type RouteRow = { method: string; path: string; phase: string; purpose: string };
@@ -50,6 +50,11 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
     gr?: string;
     pr?: string;
     detail?: string;
+  } | null>(null);
+  const [shadowStatus, setShadowStatus] = useState<{
+    dualPath?: boolean;
+    dataStore?: string;
+    cutoverApproved?: boolean;
   } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -102,6 +107,14 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
           pr: overview.purchasing.purchaseRequestCount == null ? '—' : String(overview.purchasing.purchaseRequestCount),
         });
       }
+      const shadow = await fetchShadowStatus();
+      if (shadow) {
+        setShadowStatus({
+          dualPath: !!shadow.dualPath,
+          dataStore: shadow.operational?.dataStore,
+          cutoverApproved: !!shadow.cutoverApproved,
+        });
+      }
     } catch (e: any) {
       setErr(e?.message || String(e));
     }
@@ -138,6 +151,17 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
           {isRtl ? 'تحديث' : 'Refresh'}
         </button>
       </div>
+
+      {shadowStatus && (
+        <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/20 p-2.5 text-xs text-amber-800 dark:text-amber-300 font-mono flex items-center justify-between">
+          <span>
+            dualPath={String(shadowStatus.dualPath)} · operational={shadowStatus.dataStore || 'firestore'} · cutoverApproved={String(shadowStatus.cutoverApproved)}
+          </span>
+          <span className="text-[10px] font-sans opacity-80">
+            {isRtl ? 'المسار المزدوج نشط (KEMIT للتشغيل · A.N للقراءة)' : 'Dual-path active (KEMIT operational · A.N read)'}
+          </span>
+        </div>
+      )}
 
       {err && (
         <p className="text-xs text-rose-500 mb-2">{err}</p>

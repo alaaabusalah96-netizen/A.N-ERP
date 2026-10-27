@@ -80,6 +80,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'C5',
     purpose: 'Aggregate read-only inventory+accounting+purchasing summaries',
   },
+  {
+    method: 'GET',
+    path: '/api/an/shadow/status',
+    phase: 'D1',
+    purpose: 'Dual-path shadow status (KEMIT operational + A.N read plane)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];
