@@ -86,6 +86,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'D1',
     purpose: 'Dual-path shadow status (KEMIT operational + A.N read plane)',
   },
+  {
+    method: 'GET',
+    path: '/api/an/map/entities',
+    phase: 'D2',
+    purpose: 'Static KEMIT→A.N entity mapping catalog for migration planning',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];

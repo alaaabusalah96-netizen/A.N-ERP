@@ -1,0 +1,182 @@
+# AN-MAP-D2 — KEMIT→A.N entity mapping catalog (LEAN)
+# Wave D prep: static mapping of operational domains for future migration.
+# No data movement. No page cutover. No Login change.
+
+## HARD RULES
+1. Mapping is documentation/runtime catalog only — do not copy/move Firestore documents.
+2. cutoverApproved remains false (do not flip it in this package).
+3. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- D1: `/api/an/shadow/status`, `anShadowStatus.ts`.
+
+## STEP 3 — Create `src/lib/anEntityMap.ts`
+
+```typescript
+/**
+ * AN-MAP-D2 — static entity mapping catalog (KEMIT operational → A.N StoragePort).
+ * Used for migration planning only in this phase.
+ */
+export type MapStatus = 'mapped-read' | 'kemit-only' | 'an-only' | 'deferred';
+
+export interface EntityMapRow {
+  id: string;
+  domain: string;
+  kemitStore: string;
+  anEntity: string;
+  status: MapStatus;
+  notesAr: string;
+  notesEn: string;
+}
+
+export const AN_ENTITY_MAP: EntityMapRow[] = [
+  {
+    id: 'auth-session',
+    domain: 'identity',
+    kemitStore: 'Firestore users + /api/auth/verify-credentials',
+    anEntity: 'TokenService / users (gated)',
+    status: 'kemit-only',
+    notesAr: 'مسار الدخول التشغيلي Firebase حتى حزمة قطع صريحة',
+    notesEn: 'Operational login stays Firebase until explicit cutover',
+  },
+  {
+    id: 'company-backend',
+    domain: 'platform',
+    kemitStore: 'companies/{id} fields auth_driver/db_backend/...',
+    anEntity: 'BackendConfig via StorageRouter',
+    status: 'mapped-read',
+    notesAr: 'الربط محفوظ ويُفحص (A2–A4) دون تحويل التشغيل',
+    notesEn: 'Binding stored and probed; traffic not switched',
+  },
+  {
+    id: 'inventory-stock',
+    domain: 'inventory',
+    kemitStore: 'CustodyDB inventory collections',
+    anEntity: 'Warehouse / StockItem / WarehouseStock',
+    status: 'mapped-read',
+    notesAr: 'ملخص قراءة A.N فقط؛ الشاشة على KEMIT',
+    notesEn: 'A.N read summary only; UI on KEMIT',
+  },
+  {
+    id: 'accounting-journals',
+    domain: 'accounting',
+    kemitStore: 'CustodyDB accounting collections',
+    anEntity: 'Account / JournalEntry',
+    status: 'mapped-read',
+    notesAr: 'ملخص قراءة A.N فقط',
+    notesEn: 'A.N read summary only',
+  },
+  {
+    id: 'purchasing-po',
+    domain: 'purchasing',
+    kemitStore: 'CustodyDB purchasing collections',
+    anEntity: 'PurchaseOrder / GoodsReceipt',
+    status: 'mapped-read',
+    notesAr: 'ملخص قراءة A.N فقط',
+    notesEn: 'A.N read summary only',
+  },
+  {
+    id: 'custody-cash',
+    domain: 'custody',
+    kemitStore: 'KEMIT custody flows (primary product surface)',
+    anEntity: 'CashCustody* (an-core present)',
+    status: 'deferred',
+    notesAr: 'العهدة تبقى KEMIT أولوية؛ ترحيل لاحق بحذر',
+    notesEn: 'Custody stays KEMIT-first; later careful migration',
+  },
+  {
+    id: 'hr-payroll',
+    domain: 'hr',
+    kemitStore: 'may be partial/absent in shell',
+    anEntity: 'HR modules in an-core (if present)',
+    status: 'deferred',
+    notesAr: 'خارج نطاق القراءة الحالي',
+    notesEn: 'Out of current read-plane scope',
+  },
+];
+
+export function listEntityMap() {
+  return {
+    ok: true,
+    plane: 'an-map-d2' as const,
+    cutoverApproved: false,
+    dualPath: true,
+    rows: AN_ENTITY_MAP,
+    counts: {
+      total: AN_ENTITY_MAP.length,
+      mappedRead: AN_ENTITY_MAP.filter((r) => r.status === 'mapped-read').length,
+      kemitOnly: AN_ENTITY_MAP.filter((r) => r.status === 'kemit-only').length,
+      deferred: AN_ENTITY_MAP.filter((r) => r.status === 'deferred').length,
+    },
+  };
+}
+```
+
+## STEP 3b — PATCH `server.ts`
+```javascript
+    app.get("/api/an/map/entities", async (_req: any, res: any) => {
+      try {
+        const { listEntityMap } = await import("./src/lib/anEntityMap");
+        res.json(listEntityMap());
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+console.log include `map/entities`.
+
+## STEP 3c — `anApi.ts`
+```typescript
+  {
+    method: 'GET',
+    path: '/api/an/map/entities',
+    phase: 'D2',
+    purpose: 'Static KEMIT→A.N entity mapping catalog for migration planning',
+  },
+```
+
+## STEP 3d — `anBridge.ts`
+```typescript
+export async function fetchEntityMap(): Promise<any> {
+  try {
+    const res = await fetch('/api/an/map/entities');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return data;
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+```
+
+## STEP 3e — `AnCoreStatusPanel.tsx`
+Fetch `fetchEntityMap` in load (or lazy). Show counts line: `mappedRead / kemitOnly / deferred` without dumping full table (optional expand later).
+
+## STEP 3f — `docs/MERGE_STATUS.md`
+```markdown
+| D2 | Entity mapping catalog | DONE | GET /api/an/map/entities — static KEMIT→A.N map; no data migration |
+```
+
+## STEP 3g — `scripts/verifyAnMapD2.ts`
+14 checks: anEntityMap, AN_ENTITY_MAP, listEntityMap, route, catalog D2, fetchEntityMap, panel uses fetchEntityMap or map/entities, cutoverApproved false in map module, shadow/status still present, Login unchanged, Inventory still CustodyDB, MERGE D2, no write/migrate function in anEntityMap, verify D1 exists.
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnMapD2.ts
+npx tsx scripts/verifyAnShadowD1.ts
+```
+
+## COMMIT NOTE
+```
+feat(d2): KEMIT to A.N entity mapping catalog for migration planning
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnMapD2: Passed: N | Failed: N
+10) D1: ...
+Status: DONE | package: AN-MAP-D2
+===========================
+```

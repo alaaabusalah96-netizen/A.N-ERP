@@ -337,5 +337,16 @@ export async function fetchShadowStatus(companyId?: string): Promise<any> {
   }
 }
 
+export async function fetchEntityMap(): Promise<any> {
+  try {
+    const res = await fetch('/api/an/map/entities');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return data;
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
 
 

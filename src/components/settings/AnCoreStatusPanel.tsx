@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, RefreshCw, Network } from 'lucide-react';
 import { Language } from '../../types';
-import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary, fetchPurchasingSummary, fetchModulesOverview, fetchShadowStatus } from '../../lib/anBridge';
+import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary, fetchPurchasingSummary, fetchModulesOverview, fetchShadowStatus, fetchEntityMap } from '../../lib/anBridge';
 import { AN_API_PREFIX } from '../../lib/anApi';
 
 type RouteRow = { method: string; path: string; phase: string; purpose: string };
@@ -55,6 +55,12 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
     dualPath?: boolean;
     dataStore?: string;
     cutoverApproved?: boolean;
+  } | null>(null);
+  const [mapCounts, setMapCounts] = useState<{
+    mappedRead?: number;
+    kemitOnly?: number;
+    deferred?: number;
+    total?: number;
   } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -114,6 +120,10 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
           dataStore: shadow.operational?.dataStore,
           cutoverApproved: !!shadow.cutoverApproved,
         });
+      }
+      const map = await fetchEntityMap();
+      if (map?.counts) {
+        setMapCounts(map.counts);
       }
     } catch (e: any) {
       setErr(e?.message || String(e));
@@ -274,6 +284,26 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
             {isRtl
               ? 'شاشة المشتريات التشغيلية ما زالت على CustodyDB/Firestore'
               : 'Operational Purchasing page still uses CustodyDB/Firestore'}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200/80 dark:border-slate-700 p-3 text-xs md:col-span-2">
+          <div className="font-bold text-slate-500 mb-1">
+            {isRtl ? 'خريطة الكيانات KEMIT → A.N (D2)' : 'KEMIT → A.N entity mapping (D2)'}
+          </div>
+          {mapCounts == null ? (
+            <span className="text-slate-400">…</span>
+          ) : (
+            <ul className="space-y-0.5 text-slate-700 dark:text-slate-200 font-mono">
+              <li>mappedRead={mapCounts.mappedRead ?? 0}</li>
+              <li>kemitOnly={mapCounts.kemitOnly ?? 0}</li>
+              <li>deferred={mapCounts.deferred ?? 0}</li>
+              <li>total={mapCounts.total ?? 0}</li>
+            </ul>
+          )}
+          <p className="mt-2 text-[10px] text-slate-400">
+            {isRtl
+              ? 'كتالوج تخطيط للترحيل المستقبلي — بدون نقل بيانات الآن'
+              : 'Catalog for future migration planning — no live data copy'}
           </p>
         </div>
       </div>

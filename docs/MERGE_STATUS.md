@@ -27,6 +27,7 @@
 | C4 | Purchasing read summary | DONE | GET /api/an/purchasing/summary + status panel; Purchasing.tsx unchanged |
 | C5 | Modules overview aggregate | DONE | GET /api/an/modules/overview — wave C read-only surface complete; KEMIT pages unchanged |
 | D1 | Dual-path shadow status | DONE | GET /api/an/shadow/status — KEMIT operational, A.N read-only, cutoverApproved=false |
+| D2 | Entity mapping catalog | DONE | GET /api/an/map/entities — static KEMIT→A.N map; no data migration |
 
 ## Canonical rules (do not regress)
 
