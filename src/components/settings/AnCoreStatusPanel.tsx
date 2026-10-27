@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, RefreshCw, Network } from 'lucide-react';
 import { Language } from '../../types';
-import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary, fetchPurchasingSummary, fetchModulesOverview, fetchShadowStatus, fetchEntityMap, fetchMigrationReadiness } from '../../lib/anBridge';
+import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary, fetchAccountingSummary, fetchPurchasingSummary, fetchModulesOverview, fetchShadowStatus, fetchEntityMap, fetchMigrationReadiness, fetchOpsRunbook } from '../../lib/anBridge';
 import { AN_API_PREFIX } from '../../lib/anApi';
 
 type RouteRow = { method: string; path: string; phase: string; purpose: string };
@@ -69,6 +69,7 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
     wait?: number;
     fail?: number;
   } | null>(null);
+  const [runbook, setRunbook] = useState<{ docPath?: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -141,6 +142,10 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
           wait: ready.summary?.wait,
           fail: ready.summary?.fail,
         });
+      }
+      const rb = await fetchOpsRunbook();
+      if (rb?.docPath) {
+        setRunbook({ docPath: rb.docPath });
       }
     } catch (e: any) {
       setErr(e?.message || String(e));
@@ -342,6 +347,13 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
               : 'D3 evaluates readiness only — migration authorization is blocked in D3'}
           </p>
         </div>
+        {runbook && (
+          <div className="rounded-xl border border-slate-200/80 dark:border-slate-700 p-3 text-xs md:col-span-4 bg-slate-50 dark:bg-slate-800">
+            <a href={`/${runbook.docPath}`} target="_blank" className="text-violet-600 dark:text-violet-400 font-bold hover:underline">
+              {isRtl ? '📄 افتح دليل العمليات (Runbook)' : '📄 Open Dual-path Runbook'}
+            </a>
+          </div>
+        )}
       </div>
 
       {routes.length > 0 && (

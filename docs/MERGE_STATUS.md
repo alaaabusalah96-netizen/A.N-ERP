@@ -30,6 +30,7 @@
 | D2 | Entity mapping catalog | DONE | GET /api/an/map/entities — static KEMIT→A.N map; no data migration |
 | D3 | Migration readiness gates | DONE | GET /api/an/migration/readiness — migrateAuthorized=false always in D3 |
 | E1 | Plane structural gate A1–D3 | DONE | scripts/verifyAnPlaneAll.ts + npm run verify:an-plane |
+| E2 | Dual-path operator runbook | DONE | docs/ops/DUAL_PATH_RUNBOOK.md + GET /api/an/ops/runbook |
 
 ## Canonical rules (do not regress)
 

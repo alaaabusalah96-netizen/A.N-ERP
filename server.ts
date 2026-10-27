@@ -3108,7 +3108,15 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness");
+    app.get("/api/an/ops/runbook", async (_req: any, res: any) => {
+      try {
+        const { getDualPathRunbook } = await import("./src/lib/anOpsRunbook");
+        res.json(getDualPathRunbook());
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }

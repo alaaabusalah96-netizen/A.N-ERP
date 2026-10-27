@@ -360,5 +360,16 @@ export async function fetchMigrationReadiness(companyId?: string): Promise<any> 
   }
 }
 
+export async function fetchOpsRunbook(): Promise<any> {
+  try {
+    const res = await fetch('/api/an/ops/runbook');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return data;
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
 
 

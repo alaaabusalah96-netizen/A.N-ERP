@@ -98,6 +98,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'D3',
     purpose: 'Migration readiness gates (never authorizes migrate in D3)',
   },
+  {
+    method: 'GET',
+    path: '/api/an/ops/runbook',
+    phase: 'E2',
+    purpose: 'Dual-path operator runbook metadata (no migration)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];
