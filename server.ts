@@ -2859,7 +2859,53 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id");
+    app.get("/api/an/data-plane/live-check", async (req: any, res: any) => {
+      try {
+        const { liveCheckDefaultProcess, liveCheckBackend } = await import("./src/lib/anDataPlane");
+        const q = req.query || {};
+        const hasOverride =
+          typeof q.db_backend === "string" ||
+          typeof q.connection_ref === "string";
+        let live;
+        let probeMeta = null;
+        if (hasOverride) {
+          live = await liveCheckBackend({
+            db_backend: q.db_backend,
+            connection_ref: q.connection_ref,
+            isolation_level: q.isolation_level,
+            auth_driver: q.auth_driver,
+          });
+        } else {
+          const both = await liveCheckDefaultProcess(process.env);
+          live = both.live;
+          probeMeta = {
+            adapterType: both.probe.adapterType,
+            envRefPresent: both.probe.envRefPresent,
+            certifiedNote: both.probe.certifiedNote,
+          };
+        }
+        res.json({
+          ok: live.ok,
+          plane: "an-data-plane-a3",
+          live: {
+            attempted: live.attempted,
+            skipped: live.skipped,
+            ok: live.ok,
+            adapterType: live.adapterType,
+            connectionRef: live.connectionRef,
+            latencyMs: live.latencyMs,
+            detail: live.detail,
+            detailAr: live.detailAr,
+          },
+          probeMeta,
+          firestoreOperationalPath: "unchanged",
+          loginPath: "/api/auth/verify-credentials",
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }

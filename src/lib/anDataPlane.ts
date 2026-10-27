@@ -193,3 +193,141 @@ export function probeCompanyPlane(
   };
 }
 
+export interface LiveCheckResult {
+  attempted: boolean;
+  skipped: boolean;
+  ok: boolean;
+  adapterType: AdapterType;
+  connectionRef: string;
+  latencyMs?: number;
+  detail: string;
+  detailAr: string;
+}
+
+/**
+ * Live probe: postgresql uses pg Client + SELECT 1.
+ * mysql/mongodb: report not_implemented_in_a3 (no fake success).
+ * firebase/inmemory: skipped.
+ */
+export async function liveCheckBackend(
+  partial?: Partial<CompanyBackendSettings>,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<LiveCheckResult> {
+  const probe = probeBackendBinding(partial, env);
+  const adapterType = probe.adapterType;
+  const connectionRef = probe.connectionRef;
+
+  if (adapterType === 'firebase' || adapterType === 'inmemory') {
+    return {
+      attempted: false,
+      skipped: true,
+      ok: true,
+      adapterType,
+      connectionRef,
+      detail: 'skipped_non_sql_adapter',
+      detailAr: 'تم التخطي: المحول ليس SQL مباشر في A3',
+    };
+  }
+
+  if (!probe.ok || (probe.requiresEnvRef && !probe.envRefPresent)) {
+    return {
+      attempted: false,
+      skipped: false,
+      ok: false,
+      adapterType,
+      connectionRef,
+      detail: probe.certifiedNote || 'env_not_ready',
+      detailAr: probe.errorAr || 'البيئة غير جاهزة للفحص الحي',
+    };
+  }
+
+  if (adapterType === 'mysql' || adapterType === 'mongodb') {
+    return {
+      attempted: false,
+      skipped: false,
+      ok: false,
+      adapterType,
+      connectionRef,
+      detail: 'live_check_not_implemented_a3',
+      detailAr: 'الفحص الحي لـ mysql/mongodb غير مفعّل في A3',
+    };
+  }
+
+  // postgresql
+  const conn = env[connectionRef];
+  if (!conn || !String(conn).trim()) {
+    return {
+      attempted: false,
+      skipped: false,
+      ok: false,
+      adapterType,
+      connectionRef,
+      detail: 'env_ref_empty',
+      detailAr: 'مرجع الاتصال فارغ',
+    };
+  }
+
+  const started = Date.now();
+  try {
+    const pg = await import('pg');
+    const client = new pg.Client({
+      connectionString: String(conn),
+      connectionTimeoutMillis: 5000,
+      statement_timeout: 5000,
+    });
+    try {
+      await client.connect();
+      await client.query('SELECT 1 AS ok');
+      const latencyMs = Date.now() - started;
+      return {
+        attempted: true,
+        skipped: false,
+        ok: true,
+        adapterType: 'postgresql',
+        connectionRef,
+        latencyMs,
+        detail: 'select_1_ok',
+        detailAr: 'نجح SELECT 1',
+      };
+    } finally {
+      try {
+        await client.end();
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch (e: any) {
+    const latencyMs = Date.now() - started;
+    const msg = typeof e?.message === 'string' ? e.message : 'connect_failed';
+    // Strip potential credential fragments from driver messages
+    const safe = msg.replace(/postgres(ql)?:\/\/[^\s]+/gi, '[redacted]').slice(0, 180);
+    return {
+      attempted: true,
+      skipped: false,
+      ok: false,
+      adapterType: 'postgresql',
+      connectionRef,
+      latencyMs,
+      detail: `connect_failed:${safe}`,
+      detailAr: `فشل الاتصال: ${safe}`,
+    };
+  }
+}
+
+export async function liveCheckDefaultProcess(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<{ probe: DataPlaneProbe; live: LiveCheckResult }> {
+  const probe = probeDefaultProcessPlane(env);
+  const live = await liveCheckBackend(
+    {
+      db_backend: probe.adapterType,
+      isolation_level: probe.isolationLevel,
+      connection_ref: probe.connectionRef === '(none)' ? '' : probe.connectionRef,
+      auth_driver: 'firebase',
+    },
+    env
+  );
+  return { probe, live };
+}
+
+

@@ -44,6 +44,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'A2',
     purpose: 'Probe data plane using saved company backend fields (no secrets returned)',
   },
+  {
+    method: 'GET',
+    path: '/api/an/data-plane/live-check',
+    phase: 'A3',
+    purpose: 'Short-lived live SQL connectivity probe (SELECT 1) without exposing secrets',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];

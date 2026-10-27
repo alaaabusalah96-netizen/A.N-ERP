@@ -16,6 +16,7 @@
 | M6 | Stabilize | DONE | `verifyMergeAll` + this freeze document |
 | A1 | Data plane env probe | DONE | `anDataPlane` + `GET /api/an/data-plane/status` (no Firestore cutover) |
 | A2 | Company-scoped plane probe | DONE | `GET /api/an/data-plane/company/:id` + probe on company-backend POST |
+| A3 | Live SQL connectivity probe | DONE | `GET /api/an/data-plane/live-check` (pg SELECT 1; no schema migrate; Firestore unchanged) |
 
 ## Canonical rules (do not regress)
 

@@ -1,0 +1,313 @@
+# AN-DATAPLANE-A3 — Live connectivity check for wired adapters (LEAN)
+# After A1 (env probe) + A2 (company-scoped probe).
+# Opens a short-lived SQL probe when env ref is present. Never returns secrets.
+# Does NOT cut Firestore, does NOT migrate schema, does NOT change Login.
+
+## HARD RULES
+1. No Login / `/api/auth/*` changes.
+2. Never log or respond with connection strings, passwords, or full env values.
+3. Live check timeout ≤ 5 seconds. Always close client/pool used for probe.
+4. If adapter is firebase/inmemory: return skipped (not an error).
+5. Stop at first failure. tsc >2 min wait → tsc once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- A1+A2 present: `anDataPlane.ts`, `/api/an/data-plane/status`, `/api/an/data-plane/company/:id`.
+- Dependency `pg` already in package.json.
+
+## STEP 3 — APPEND to `src/lib/anDataPlane.ts`
+
+```typescript
+export interface LiveCheckResult {
+  attempted: boolean;
+  skipped: boolean;
+  ok: boolean;
+  adapterType: AdapterType;
+  connectionRef: string;
+  latencyMs?: number;
+  detail: string;
+  detailAr: string;
+}
+
+/**
+ * Live probe: postgresql uses pg Client + SELECT 1.
+ * mysql/mongodb: report not_implemented_in_a3 (no fake success).
+ * firebase/inmemory: skipped.
+ */
+export async function liveCheckBackend(
+  partial?: Partial<CompanyBackendSettings>,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<LiveCheckResult> {
+  const probe = probeBackendBinding(partial, env);
+  const adapterType = probe.adapterType;
+  const connectionRef = probe.connectionRef;
+
+  if (adapterType === 'firebase' || adapterType === 'inmemory') {
+    return {
+      attempted: false,
+      skipped: true,
+      ok: true,
+      adapterType,
+      connectionRef,
+      detail: 'skipped_non_sql_adapter',
+      detailAr: 'تم التخطي: المحول ليس SQL مباشر في A3',
+    };
+  }
+
+  if (!probe.ok || (probe.requiresEnvRef && !probe.envRefPresent)) {
+    return {
+      attempted: false,
+      skipped: false,
+      ok: false,
+      adapterType,
+      connectionRef,
+      detail: probe.certifiedNote || 'env_not_ready',
+      detailAr: probe.errorAr || 'البيئة غير جاهزة للفحص الحي',
+    };
+  }
+
+  if (adapterType === 'mysql' || adapterType === 'mongodb') {
+    return {
+      attempted: false,
+      skipped: false,
+      ok: false,
+      adapterType,
+      connectionRef,
+      detail: 'live_check_not_implemented_a3',
+      detailAr: 'الفحص الحي لـ mysql/mongodb غير مفعّل في A3',
+    };
+  }
+
+  // postgresql
+  const conn = env[connectionRef];
+  if (!conn || !String(conn).trim()) {
+    return {
+      attempted: false,
+      skipped: false,
+      ok: false,
+      adapterType,
+      connectionRef,
+      detail: 'env_ref_empty',
+      detailAr: 'مرجع الاتصال فارغ',
+    };
+  }
+
+  const started = Date.now();
+  try {
+    const pg = await import('pg');
+    const client = new pg.Client({
+      connectionString: String(conn),
+      connectionTimeoutMillis: 5000,
+      statement_timeout: 5000,
+    });
+    try {
+      await client.connect();
+      await client.query('SELECT 1 AS ok');
+      const latencyMs = Date.now() - started;
+      return {
+        attempted: true,
+        skipped: false,
+        ok: true,
+        adapterType: 'postgresql',
+        connectionRef,
+        latencyMs,
+        detail: 'select_1_ok',
+        detailAr: 'نجح SELECT 1',
+      };
+    } finally {
+      try {
+        await client.end();
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch (e: any) {
+    const latencyMs = Date.now() - started;
+    const msg = typeof e?.message === 'string' ? e.message : 'connect_failed';
+    // Strip potential credential fragments from driver messages
+    const safe = msg.replace(/postgres(ql)?:\/\/[^\s]+/gi, '[redacted]').slice(0, 180);
+    return {
+      attempted: true,
+      skipped: false,
+      ok: false,
+      adapterType: 'postgresql',
+      connectionRef,
+      latencyMs,
+      detail: `connect_failed:${safe}`,
+      detailAr: `فشل الاتصال: ${safe}`,
+    };
+  }
+}
+
+export async function liveCheckDefaultProcess(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<{ probe: DataPlaneProbe; live: LiveCheckResult }> {
+  const probe = probeDefaultProcessPlane(env);
+  const live = await liveCheckBackend(
+    {
+      db_backend: probe.adapterType,
+      isolation_level: probe.isolationLevel,
+      connection_ref: probe.connectionRef === '(none)' ? '' : probe.connectionRef,
+      auth_driver: 'firebase',
+    },
+    env
+  );
+  return { probe, live };
+}
+```
+
+## STEP 3b — PATCH `server.ts`
+Register inside A.N bridge try-block:
+
+```javascript
+    app.get("/api/an/data-plane/live-check", async (req: any, res: any) => {
+      try {
+        const { liveCheckDefaultProcess, liveCheckBackend } = await import("./src/lib/anDataPlane");
+        const q = req.query || {};
+        const hasOverride =
+          typeof q.db_backend === "string" ||
+          typeof q.connection_ref === "string";
+        let live;
+        let probeMeta = null;
+        if (hasOverride) {
+          live = await liveCheckBackend({
+            db_backend: q.db_backend,
+            connection_ref: q.connection_ref,
+            isolation_level: q.isolation_level,
+            auth_driver: q.auth_driver,
+          });
+        } else {
+          const both = await liveCheckDefaultProcess(process.env);
+          live = both.live;
+          probeMeta = {
+            adapterType: both.probe.adapterType,
+            envRefPresent: both.probe.envRefPresent,
+            certifiedNote: both.probe.certifiedNote,
+          };
+        }
+        res.json({
+          ok: live.ok,
+          plane: "an-data-plane-a3",
+          live: {
+            attempted: live.attempted,
+            skipped: live.skipped,
+            ok: live.ok,
+            adapterType: live.adapterType,
+            connectionRef: live.connectionRef,
+            latencyMs: live.latencyMs,
+            detail: live.detail,
+            detailAr: live.detailAr,
+          },
+          probeMeta,
+          firestoreOperationalPath: "unchanged",
+          loginPath: "/api/auth/verify-credentials",
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+
+Update console.log to include `data-plane/live-check`.
+
+## STEP 3c — PATCH `src/lib/anApi.ts`
+Append:
+
+```typescript
+  {
+    method: 'GET',
+    path: '/api/an/data-plane/live-check',
+    phase: 'A3',
+    purpose: 'Short-lived live SQL connectivity probe (SELECT 1) without exposing secrets',
+  },
+```
+
+## STEP 3d — PATCH `docs/MERGE_STATUS.md`
+```markdown
+| A3 | Live SQL connectivity probe | DONE | `GET /api/an/data-plane/live-check` (pg SELECT 1; no schema migrate; Firestore unchanged) |
+```
+
+## STEP 3e — Create `scripts/verifyAnDataPlaneA3.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const plane = fs.readFileSync(path.join(root, 'src/lib/anDataPlane.ts'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const api = fs.readFileSync(path.join(root, 'src/lib/anApi.ts'), 'utf8');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+
+check('S1 liveCheckBackend exported', plane.includes('liveCheckBackend'));
+check('S2 liveCheckDefaultProcess exported', plane.includes('liveCheckDefaultProcess'));
+check('S3 uses SELECT 1', plane.includes('SELECT 1'));
+check('S4 redacts postgres URIs in errors', plane.includes('[redacted]'));
+check('S5 server has live-check route', server.includes('/api/an/data-plane/live-check'));
+check('S6 A1 status route kept', server.includes('/api/an/data-plane/status'));
+check('S7 A2 company route kept', server.includes('/api/an/data-plane/company/'));
+check('S8 catalog has live-check', api.includes('/api/an/data-plane/live-check'));
+check('S9 MERGE_STATUS A3', statusDoc.includes('A3'));
+check('S10 Login path unchanged', login.includes('/api/auth/verify-credentials'));
+check('S11 client.end in finally', plane.includes('client.end'));
+check('S12 timeout 5000', plane.includes('5000'));
+check('S13 verify A2 exists', fs.existsSync(path.join(root, 'scripts/verifyAnDataPlaneA2.ts')));
+check('S14 firestore unchanged note in handler', server.includes('firestoreOperationalPath'));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9
+```
+npx tsx scripts/verifyAnDataPlaneA3.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10
+```
+npx tsx scripts/verifyAnDataPlaneA2.ts
+npx tsx scripts/verifyAnDataPlaneA1.ts
+```
+
+## STEP 12
+```
+curl -s http://127.0.0.1:3000/api/an/data-plane/live-check
+```
+- If `DATABASE_URL` set and reachable: `live.ok: true`, `detail: select_1_ok`
+- If missing: `ok: false` with env note — still valid package outcome
+- Body must not contain `postgres://`
+
+## COMMIT NOTE
+```
+feat(a3): live postgresql connectivity probe via data-plane/live-check
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnDataPlaneA3: Passed: N | Failed: N
+10) A2/A1: ...
+12) live-check: ok=... detail=... latencyMs=...
+Secrets leaked in JSON: NO
+Status: DONE | package: AN-DATAPLANE-A3
+===========================
+```
