@@ -2928,7 +2928,73 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check");
+    app.get("/api/an/session-plane", async (req: any, res: any) => {
+      try {
+        const { buildSessionPlane } = await import("./src/lib/anSessionPlane");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "";
+        const runLive = req.query.live === "1" || req.query.live === "true";
+        let record: Record<string, unknown> | null = null;
+        let companySource: "firestore" | "process-default" | "unavailable" = "process-default";
+        if (companyId) {
+          try {
+            if (typeof adminDb !== "undefined" && adminDb) {
+              const snap = await adminDb.collection("companies").doc(companyId).get();
+              if (snap.exists) {
+                record = snap.data() as Record<string, unknown>;
+                companySource = "firestore";
+              } else {
+                companySource = "firestore";
+                record = null;
+              }
+            } else {
+              companySource = "unavailable";
+            }
+          } catch (e: any) {
+            console.warn("session-plane company read:", e?.message || e);
+            companySource = "unavailable";
+          }
+        }
+        const result = await buildSessionPlane({
+          companyId: companyId || "process",
+          companyRecord: record,
+          companySource: companyId ? companySource : "process-default",
+          runLive,
+        });
+        res.json({
+          ok: result.ok,
+          plane: "an-auth-plane-b1",
+          companyId: result.companyId,
+          auth: result.auth,
+          settings: result.companyPlane.settings,
+          probe: {
+            ok: result.companyPlane.probe.ok,
+            adapterType: result.companyPlane.probe.adapterType,
+            isolationLevel: result.companyPlane.probe.isolationLevel,
+            connectionRef: result.companyPlane.probe.connectionRef,
+            envRefPresent: result.companyPlane.probe.envRefPresent,
+            requiresEnvRef: result.companyPlane.probe.requiresEnvRef,
+            certifiedNote: result.companyPlane.probe.certifiedNote,
+            errorEn: result.companyPlane.probe.errorEn,
+          },
+          live: result.live
+            ? {
+                attempted: result.live.attempted,
+                skipped: result.live.skipped,
+                ok: result.live.ok,
+                adapterType: result.live.adapterType,
+                connectionRef: result.live.connectionRef,
+                latencyMs: result.live.latencyMs,
+                detail: result.live.detail,
+              }
+            : null,
+          loginPath: result.loginPath,
+          firestoreOperationalPath: result.firestoreOperationalPath,
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }

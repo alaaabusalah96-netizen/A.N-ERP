@@ -1,0 +1,249 @@
+# AN-AUTH-PLANE-B1 — Session/company context over A.N data plane (LEAN)
+# Wave B starts after data-plane A1–A4.
+# Adds one endpoint that combines: auth policy + company backend probe (+ optional live flag).
+# Does NOT change Login, does NOT enable an-jwt, does NOT cut Firestore modules.
+
+## HARD RULES
+1. Login path remains `/api/auth/verify-credentials` only.
+2. Never return secrets or connection strings.
+3. Optional `?live=1` may call liveCheckBackend (A3); default off to keep endpoint fast.
+4. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- A4: POST company-backend persists fields; A3 live-check exists; authPolicy.ts exists.
+
+## STEP 3 — Create `src/lib/anSessionPlane.ts`
+
+```typescript
+/**
+ * AN-AUTH-PLANE-B1 — combine auth policy + company data-plane probe for UI/server callers.
+ */
+import { resolveAuthPolicyServer } from './authPolicy';
+import {
+  probeCompanyPlane,
+  liveCheckBackend,
+  type CompanyPlaneResult,
+  type LiveCheckResult,
+} from './anDataPlane';
+import type { AuthPolicy } from './authPolicy';
+
+export interface SessionPlaneResult {
+  ok: boolean;
+  companyId: string;
+  auth: AuthPolicy;
+  companyPlane: CompanyPlaneResult;
+  live?: LiveCheckResult;
+  loginPath: string;
+  firestoreOperationalPath: 'unchanged';
+}
+
+export async function buildSessionPlane(input: {
+  companyId: string;
+  companyRecord?: Record<string, unknown> | null;
+  companySource?: CompanyPlaneResult['companySource'];
+  runLive?: boolean;
+  env?: NodeJS.ProcessEnv;
+}): Promise<SessionPlaneResult> {
+  const env = input.env || process.env;
+  const companyId = (input.companyId || '').trim() || 'unknown';
+  const source = input.companySource || (input.companyRecord ? 'firestore' : 'process-default');
+  const companyPlane = probeCompanyPlane(companyId, input.companyRecord || null, source, env);
+  const auth = resolveAuthPolicyServer(
+    { auth_driver: companyPlane.settings.auth_driver as 'firebase' | 'an-jwt' },
+    env
+  );
+  let live: LiveCheckResult | undefined;
+  if (input.runLive) {
+    live = await liveCheckBackend(
+      {
+        db_backend: companyPlane.settings.db_backend as any,
+        isolation_level: companyPlane.settings.isolation_level as any,
+        connection_ref: companyPlane.settings.connection_ref,
+        auth_driver: companyPlane.settings.auth_driver as any,
+      },
+      env
+    );
+  }
+  return {
+    ok: companyPlane.probe.ok && auth.activePath === 'firebase-session',
+    companyId,
+    auth,
+    companyPlane,
+    live,
+    loginPath: '/api/auth/verify-credentials',
+    firestoreOperationalPath: 'unchanged',
+  };
+}
+```
+
+## STEP 3b — PATCH `server.ts`
+Inside A.N bridge try-block, add:
+
+```javascript
+    app.get("/api/an/session-plane", async (req: any, res: any) => {
+      try {
+        const { buildSessionPlane } = await import("./src/lib/anSessionPlane");
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "";
+        const runLive = req.query.live === "1" || req.query.live === "true";
+        let record: Record<string, unknown> | null = null;
+        let companySource: "firestore" | "process-default" | "unavailable" = "process-default";
+        if (companyId) {
+          try {
+            if (typeof adminDb !== "undefined" && adminDb) {
+              const snap = await adminDb.collection("companies").doc(companyId).get();
+              if (snap.exists) {
+                record = snap.data() as Record<string, unknown>;
+                companySource = "firestore";
+              } else {
+                companySource = "firestore";
+                record = null;
+              }
+            } else {
+              companySource = "unavailable";
+            }
+          } catch (e: any) {
+            console.warn("session-plane company read:", e?.message || e);
+            companySource = "unavailable";
+          }
+        }
+        const result = await buildSessionPlane({
+          companyId: companyId || "process",
+          companyRecord: record,
+          companySource: companyId ? companySource : "process-default",
+          runLive,
+        });
+        res.json({
+          ok: result.ok,
+          plane: "an-auth-plane-b1",
+          companyId: result.companyId,
+          auth: result.auth,
+          settings: result.companyPlane.settings,
+          probe: {
+            ok: result.companyPlane.probe.ok,
+            adapterType: result.companyPlane.probe.adapterType,
+            isolationLevel: result.companyPlane.probe.isolationLevel,
+            connectionRef: result.companyPlane.probe.connectionRef,
+            envRefPresent: result.companyPlane.probe.envRefPresent,
+            requiresEnvRef: result.companyPlane.probe.requiresEnvRef,
+            certifiedNote: result.companyPlane.probe.certifiedNote,
+            errorEn: result.companyPlane.probe.errorEn,
+          },
+          live: result.live
+            ? {
+                attempted: result.live.attempted,
+                skipped: result.live.skipped,
+                ok: result.live.ok,
+                adapterType: result.live.adapterType,
+                connectionRef: result.live.connectionRef,
+                latencyMs: result.live.latencyMs,
+                detail: result.live.detail,
+              }
+            : null,
+          loginPath: result.loginPath,
+          firestoreOperationalPath: result.firestoreOperationalPath,
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+
+Update bridge console.log to include `session-plane`.
+
+## STEP 3c — PATCH `src/lib/anApi.ts`
+```typescript
+  {
+    method: 'GET',
+    path: '/api/an/session-plane',
+    phase: 'B1',
+    purpose: 'Auth policy + company data-plane probe for a companyId (optional live=1)',
+  },
+```
+
+## STEP 3d — PATCH `docs/MERGE_STATUS.md`
+```markdown
+| B1 | Session/company plane context | DONE | `GET /api/an/session-plane?companyId=&live=` (auth policy + probe; login unchanged) |
+```
+
+## STEP 3e — Create `scripts/verifyAnAuthPlaneB1.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const sp = path.join(root, 'src/lib/anSessionPlane.ts');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const api = fs.readFileSync(path.join(root, 'src/lib/anApi.ts'), 'utf8');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+
+check('S1 anSessionPlane.ts exists', fs.existsSync(sp));
+const body = fs.readFileSync(sp, 'utf8');
+check('S2 buildSessionPlane exported', body.includes('buildSessionPlane'));
+check('S3 uses resolveAuthPolicyServer', body.includes('resolveAuthPolicyServer'));
+check('S4 uses probeCompanyPlane', body.includes('probeCompanyPlane'));
+check('S5 server has /api/an/session-plane', server.includes('/api/an/session-plane'));
+check('S6 catalog entry', api.includes('/api/an/session-plane'));
+check('S7 MERGE_STATUS B1', statusDoc.includes('B1'));
+check('S8 Login still verify-credentials', login.includes('/api/auth/verify-credentials'));
+check('S9 A4 persist still present', server.includes('an_backend_version'));
+check('S10 live-check still present', server.includes('/api/an/data-plane/live-check'));
+check('S11 optional live via query', server.includes('runLive') || server.includes('live === "1"'));
+check('S12 loginPath constant in module', body.includes('/api/auth/verify-credentials'));
+check('S13 firestoreOperationalPath unchanged', body.includes("firestoreOperationalPath: 'unchanged'") || body.includes('firestoreOperationalPath: "unchanged"'));
+check('S14 no AnLogin page', !fs.existsSync(path.join(root, 'src/pages/AnLogin.tsx')));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9
+```
+npx tsx scripts/verifyAnAuthPlaneB1.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10
+```
+npx tsx scripts/verifyAnDataPlaneA4.ts
+```
+
+## STEP 12
+```
+curl -s "http://127.0.0.1:3000/api/an/session-plane"
+curl -s "http://127.0.0.1:3000/api/an/session-plane?companyId=demo-co"
+```
+
+## COMMIT NOTE
+```
+feat(b1): session-plane endpoint combines auth policy and company data plane
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnAuthPlaneB1: Passed: N | Failed: N
+10) A4 regression: ...
+12) session-plane: ...
+Status: DONE | package: AN-AUTH-PLANE-B1
+===========================
+```
