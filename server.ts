@@ -2651,7 +2651,25 @@ async function startServer() {
         const adapter = anStorageRouter.getDevInMemoryAdapter();
         const tenantsResult = await adapter.listTenants();
         const tenants = tenantsResult.success && Array.isArray(tenantsResult.data) ? tenantsResult.data.length : 0;
-        res.json({ ok: true, adapterName: adapter.adapterName, tenants, version: "7.2.0" });
+        const { probeDefaultProcessPlane } = await import("./src/lib/anDataPlane");
+        const processPlane = probeDefaultProcessPlane(process.env);
+        res.json({
+          ok: true,
+          adapterName: adapter.adapterName,
+          tenants,
+          version: "7.2.0",
+          processPlane: {
+            ok: processPlane.ok,
+            adapterType: processPlane.adapterType,
+            isolationLevel: processPlane.isolationLevel,
+            connectionRef: processPlane.connectionRef,
+            envRefPresent: processPlane.envRefPresent,
+            requiresEnvRef: processPlane.requiresEnvRef,
+            certifiedNote: processPlane.certifiedNote,
+            errorEn: processPlane.errorEn,
+          },
+          note: "dev adapter listed above; processPlane is env-level wiring only — Firestore login unchanged",
+        });
       } catch (err: any) {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
@@ -2738,7 +2756,43 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes");
+    app.get("/api/an/data-plane/status", async (req: any, res: any) => {
+      try {
+        const { probeDefaultProcessPlane, probeBackendBinding } = await import("./src/lib/anDataPlane");
+        const q = req.query || {};
+        const hasOverride =
+          typeof q.db_backend === "string" ||
+          typeof q.connection_ref === "string" ||
+          typeof q.isolation_level === "string";
+        const probe = hasOverride
+          ? probeBackendBinding({
+              db_backend: q.db_backend,
+              connection_ref: q.connection_ref,
+              isolation_level: q.isolation_level,
+              auth_driver: q.auth_driver,
+            })
+          : probeDefaultProcessPlane(process.env);
+        res.json({
+          ok: probe.ok,
+          plane: "an-data-plane-a1",
+          probe: {
+            adapterType: probe.adapterType,
+            isolationLevel: probe.isolationLevel,
+            connectionRef: probe.connectionRef,
+            envRefPresent: probe.envRefPresent,
+            requiresEnvRef: probe.requiresEnvRef,
+            certifiedNote: probe.certifiedNote,
+            errorAr: probe.errorAr,
+            errorEn: probe.errorEn,
+          },
+          firestoreOperationalPath: "unchanged",
+          loginPath: "/api/auth/verify-credentials",
+        });
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }

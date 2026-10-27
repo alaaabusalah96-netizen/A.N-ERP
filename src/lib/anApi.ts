@@ -32,6 +32,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'M4',
     purpose: 'List A.N API catalog (this registry)',
   },
+  {
+    method: 'GET',
+    path: '/api/an/data-plane/status',
+    phase: 'A1',
+    purpose: 'Process-level A.N data plane probe (env ref presence, no secrets)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];

@@ -14,6 +14,7 @@
 | M4 | API namespace | DONE | All A.N routes under `/api/an`; catalog `GET /api/an/routes` |
 | M5 | Settings UI | DONE | `AnCoreStatusPanel` in Settings only (no dual nav) |
 | M6 | Stabilize | DONE | `verifyMergeAll` + this freeze document |
+| A1 | Data plane env probe | DONE | `anDataPlane` + `GET /api/an/data-plane/status` (no Firestore cutover) |
 
 ## Canonical rules (do not regress)
 
@@ -21,6 +22,7 @@
 2. **One API namespace for A.N:** only `/api/an/*`.
 3. **Per-company backend contract** is stored and validated; live SQL adapter cutover is a **future** phase, not silent.
 4. **No second product shell:** Settings panels only; no `AnLogin`, no competing sidebar tree for A.N modules.
+5. **DATAPLANE-A1:** process-level BackendConfig/env probe only; KEMIT Firestore remains operational login/data path until a later approved cutover phase.
 
 ## Verify
 
