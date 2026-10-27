@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, RefreshCw, Network } from 'lucide-react';
 import { Language } from '../../types';
-import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane } from '../../lib/anBridge';
+import { getAnStorageStatus, AN_CORE_VERSION, fetchSessionPlane, fetchInventorySummary } from '../../lib/anBridge';
 import { AN_API_PREFIX } from '../../lib/anApi';
 
 type RouteRow = { method: string; path: string; phase: string; purpose: string };
@@ -28,6 +28,13 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
     envRef?: string;
     authPath?: string;
     liveDetail?: string;
+  } | null>(null);
+  const [invSummary, setInvSummary] = useState<{
+    ok?: boolean;
+    source?: string;
+    warehouses?: string;
+    items?: string;
+    detail?: string;
   } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -53,6 +60,14 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
         liveDetail: sp.live
           ? `${sp.live.ok ? 'live-ok' : 'live-fail'}:${sp.live.detail || ''}`
           : 'live-skipped',
+      });
+      const inv = await fetchInventorySummary();
+      setInvSummary({
+        ok: inv.ok,
+        source: inv.source,
+        warehouses: inv.warehouseCount == null ? '—' : String(inv.warehouseCount),
+        items: inv.itemCount == null ? '—' : String(inv.itemCount),
+        detail: inv.detailAr || inv.detail || inv.error,
       });
     } catch (e: any) {
       setErr(e?.message || String(e));
@@ -139,6 +154,27 @@ export default function AnCoreStatusPanel({ language }: { language: Language }) 
               <li>live={sessionPlane.liveDetail || '—'}</li>
             </ul>
           )}
+        </div>
+        <div className="rounded-xl border border-slate-200/80 dark:border-slate-700 p-3 text-xs md:col-span-2">
+          <div className="font-bold text-slate-500 mb-1">
+            {isRtl ? 'ملخص مخزون A.N (قراءة فقط)' : 'A.N inventory summary (read-only)'}
+          </div>
+          {invSummary == null ? (
+            <span className="text-slate-400">…</span>
+          ) : (
+            <ul className="space-y-0.5 text-slate-700 dark:text-slate-200 font-mono">
+              <li>ok={String(!!invSummary.ok)}</li>
+              <li>source={invSummary.source || '—'}</li>
+              <li>warehouses={invSummary.warehouses || '—'}</li>
+              <li>items={invSummary.items || '—'}</li>
+              <li className="whitespace-normal">{invSummary.detail || '—'}</li>
+            </ul>
+          )}
+          <p className="mt-2 text-[10px] text-slate-400">
+            {isRtl
+              ? 'شاشة المخزون التشغيلية ما زالت على CustodyDB/Firestore'
+              : 'Operational Inventory page still uses CustodyDB/Firestore'}
+          </p>
         </div>
       </div>
 

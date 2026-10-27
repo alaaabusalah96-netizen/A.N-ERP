@@ -224,3 +224,33 @@ export async function fetchSessionPlane(
   }
 }
 
+export interface InventorySummaryClient {
+  ok: boolean;
+  source?: string;
+  warehouseCount?: number | null;
+  itemCount?: number | null;
+  detail?: string;
+  detailAr?: string;
+  error?: string;
+}
+
+export async function fetchInventorySummary(companyId?: string): Promise<InventorySummaryClient> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/inventory/summary${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return {
+      ok: !!data.ok,
+      source: data.source,
+      warehouseCount: data.warehouseCount,
+      itemCount: data.itemCount,
+      detail: data.detail,
+      detailAr: data.detailAr,
+    };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+

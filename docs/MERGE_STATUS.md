@@ -22,6 +22,7 @@
 | B2 | Settings panel session-plane feedback | DONE | CompanyBackendPanel shows persisted + session-plane probe after save |
 | B3 | Status panel plane + live | DONE | AnCoreStatusPanel shows session-plane + live-check summary |
 | C1 | Inventory read summary (A.N) | DONE | GET /api/an/inventory/summary — read-only; Inventory.tsx still CustodyDB |
+| C2 | Inventory summary in status panel | DONE | AnCoreStatusPanel fetches /api/an/inventory/summary (Inventory.tsx unchanged) |
 
 ## Canonical rules (do not regress)
 

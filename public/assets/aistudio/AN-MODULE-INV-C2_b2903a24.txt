@@ -1,0 +1,179 @@
+# AN-MODULE-INV-C2 — Status panel shows A.N inventory summary (LEAN)
+# After C1 API. Wire AnCoreStatusPanel to GET /api/an/inventory/summary.
+# Does NOT modify Inventory.tsx. Does NOT change Login.
+
+## HARD RULES
+1. `src/pages/Inventory.tsx` must still use CustodyDB only.
+2. No stock writes. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- C1: `anInventoryRead.ts`, `/api/an/inventory/summary`, verifyAnModuleInvC1.
+
+## STEP 3 — PATCH `src/lib/anBridge.ts`
+Append:
+
+```typescript
+export interface InventorySummaryClient {
+  ok: boolean;
+  source?: string;
+  warehouseCount?: number | null;
+  itemCount?: number | null;
+  detail?: string;
+  detailAr?: string;
+  error?: string;
+}
+
+export async function fetchInventorySummary(companyId?: string): Promise<InventorySummaryClient> {
+  try {
+    const q = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/an/inventory/summary${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || res.statusText };
+    return {
+      ok: !!data.ok,
+      source: data.source,
+      warehouseCount: data.warehouseCount,
+      itemCount: data.itemCount,
+      detail: data.detail,
+      detailAr: data.detailAr,
+    };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+```
+
+## STEP 3b — PATCH `src/components/settings/AnCoreStatusPanel.tsx`
+
+1. Import `fetchInventorySummary` from anBridge.
+2. State:
+
+```typescript
+  const [invSummary, setInvSummary] = useState<{
+    ok?: boolean;
+    source?: string;
+    warehouses?: string;
+    items?: string;
+    detail?: string;
+  } | null>(null);
+```
+
+3. In `load()`, after session plane:
+
+```typescript
+      const inv = await fetchInventorySummary();
+      setInvSummary({
+        ok: inv.ok,
+        source: inv.source,
+        warehouses: inv.warehouseCount == null ? '—' : String(inv.warehouseCount),
+        items: inv.itemCount == null ? '—' : String(inv.itemCount),
+        detail: inv.detailAr || inv.detail || inv.error,
+      });
+```
+
+4. UI card:
+
+```tsx
+        <div className="rounded-xl border border-slate-200/80 dark:border-slate-700 p-3 text-xs md:col-span-2">
+          <div className="font-bold text-slate-500 mb-1">
+            {isRtl ? 'ملخص مخزون A.N (قراءة فقط)' : 'A.N inventory summary (read-only)'}
+          </div>
+          {invSummary == null ? (
+            <span className="text-slate-400">…</span>
+          ) : (
+            <ul className="space-y-0.5 text-slate-700 dark:text-slate-200 font-mono">
+              <li>ok={String(!!invSummary.ok)}</li>
+              <li>source={invSummary.source || '—'}</li>
+              <li>warehouses={invSummary.warehouses || '—'}</li>
+              <li>items={invSummary.items || '—'}</li>
+              <li className="whitespace-normal">{invSummary.detail || '—'}</li>
+            </ul>
+          )}
+          <p className="mt-2 text-[10px] text-slate-400">
+            {isRtl
+              ? 'شاشة المخزون التشغيلية ما زالت على CustodyDB/Firestore'
+              : 'Operational Inventory page still uses CustodyDB/Firestore'}
+          </p>
+        </div>
+```
+
+## STEP 3c — PATCH `docs/MERGE_STATUS.md`
+```markdown
+| C2 | Inventory summary in status panel | DONE | AnCoreStatusPanel fetches /api/an/inventory/summary (Inventory.tsx unchanged) |
+```
+
+## STEP 3d — Create `scripts/verifyAnModuleInvC2.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const bridge = fs.readFileSync(path.join(root, 'src/lib/anBridge.ts'), 'utf8');
+const panel = fs.readFileSync(path.join(root, 'src/components/settings/AnCoreStatusPanel.tsx'), 'utf8');
+const invPage = fs.readFileSync(path.join(root, 'src/pages/Inventory.tsx'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+
+check('S1 fetchInventorySummary in bridge', bridge.includes('fetchInventorySummary'));
+check('S2 fetch path inventory/summary', bridge.includes('/api/an/inventory/summary'));
+check('S3 panel imports fetchInventorySummary', panel.includes('fetchInventorySummary'));
+check('S4 panel calls fetchInventorySummary', panel.includes('fetchInventorySummary('));
+check('S5 invSummary state', panel.includes('invSummary'));
+check('S6 C1 route still on server', server.includes('/api/an/inventory/summary'));
+check('S7 MERGE_STATUS C2', statusDoc.includes('C2'));
+check('S8 Inventory.tsx still CustodyDB', invPage.includes('CustodyDB'));
+check('S9 Inventory.tsx no anInventoryRead', !invPage.includes('anInventoryRead'));
+check('S10 Login unchanged', login.includes('/api/auth/verify-credentials'));
+check('S11 still session plane in panel', panel.includes('fetchSessionPlane'));
+check('S12 kemit note in panel', panel.includes('CustodyDB') || panel.includes('Firestore'));
+check('S13 verify C1 exists', fs.existsSync(path.join(root, 'scripts/verifyAnModuleInvC1.ts')));
+check('S14 anInventoryRead still exists', fs.existsSync(path.join(root, 'src/lib/anInventoryRead.ts')));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9
+```
+npx tsx scripts/verifyAnModuleInvC2.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10
+```
+npx tsx scripts/verifyAnModuleInvC1.ts
+```
+
+## COMMIT NOTE
+```
+feat(c2): show A.N inventory summary on AnCoreStatusPanel
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnModuleInvC2: Passed: N | Failed: N
+10) C1: ...
+Status: DONE | package: AN-MODULE-INV-C2
+===========================
+```
