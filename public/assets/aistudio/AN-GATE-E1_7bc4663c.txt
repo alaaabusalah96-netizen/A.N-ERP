@@ -1,0 +1,206 @@
+# AN-GATE-E1 — Full plane structural gate A1–D3 (LEAN)
+# Wave E starts: governance gate script covering data-plane + modules + shadow/map/ready.
+# Does NOT migrate. Does NOT cutover. Does NOT change Login.
+
+## HARD RULES
+1. Gate is structural (files/routes/strings) + optional sub-verify spawn like verifyMergeAll.
+2. migrateAuthorized / cutoverApproved must still be false in readiness/shadow sources.
+3. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- D3 readiness route exists; C5 overview; verifyMergeAll still passes M1–M5.
+
+## STEP 3 — Create `scripts/verifyAnPlaneAll.ts`
+
+```typescript
+/**
+ * verifyAnPlaneAll.ts — AN-GATE-E1 structural gate for A1–D3 plane packages.
+ */
+import fs from 'fs';
+import path from 'path';
+import { spawnSync } from 'child_process';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const api = fs.readFileSync(path.join(root, 'src/lib/anApi.ts'), 'utf8');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+
+const requiredFiles = [
+  'src/lib/anDataPlane.ts',
+  'src/lib/anSessionPlane.ts',
+  'src/lib/anInventoryRead.ts',
+  'src/lib/anAccountingRead.ts',
+  'src/lib/anPurchasingRead.ts',
+  'src/lib/anModulesOverview.ts',
+  'src/lib/anShadowStatus.ts',
+  'src/lib/anEntityMap.ts',
+  'src/lib/anMigrationReadiness.ts',
+];
+for (const rel of requiredFiles) {
+  check(`file:${rel}`, fs.existsSync(path.join(root, rel)));
+}
+
+const routes = [
+  '/api/an/data-plane/status',
+  '/api/an/data-plane/company/',
+  '/api/an/data-plane/live-check',
+  '/api/an/session-plane',
+  '/api/an/inventory/summary',
+  '/api/an/accounting/summary',
+  '/api/an/purchasing/summary',
+  '/api/an/modules/overview',
+  '/api/an/shadow/status',
+  '/api/an/map/entities',
+  '/api/an/migration/readiness',
+];
+for (const r of routes) {
+  check(`route:${r}`, server.includes(r));
+  check(`catalog:${r}`, api.includes(r));
+}
+
+check('login-intact', login.includes('/api/auth/verify-credentials'));
+check('no-an-login-page', !fs.existsSync(path.join(root, 'src/pages/AnLogin.tsx')));
+
+const inv = fs.readFileSync(path.join(root, 'src/pages/Inventory.tsx'), 'utf8');
+const acc = fs.readFileSync(path.join(root, 'src/pages/Accounting.tsx'), 'utf8');
+const pur = fs.readFileSync(path.join(root, 'src/pages/Purchasing.tsx'), 'utf8');
+check('kemit-inv-custody', inv.includes('CustodyDB'));
+check('kemit-acc-custody', acc.includes('CustodyDB'));
+check('kemit-pur-custody', pur.includes('CustodyDB'));
+
+const ready = fs.readFileSync(path.join(root, 'src/lib/anMigrationReadiness.ts'), 'utf8');
+const shadow = fs.readFileSync(path.join(root, 'src/lib/anShadowStatus.ts'), 'utf8');
+check('ready-no-migrate-auth', ready.includes('migrateAuthorized: false'));
+check('ready-no-cutover', ready.includes('cutoverApproved: false'));
+check('shadow-no-cutover', shadow.includes('cutoverApproved: false'));
+check('status-doc-d3', statusDoc.includes('D3'));
+check('status-doc-c5', statusDoc.includes('C5'));
+
+const subs = [
+  'scripts/verifyAnDataPlaneA1.ts',
+  'scripts/verifyAnDataPlaneA4.ts',
+  'scripts/verifyAnAuthPlaneB3.ts',
+  'scripts/verifyAnModuleOverviewC5.ts',
+  'scripts/verifyAnShadowD1.ts',
+  'scripts/verifyAnMapD2.ts',
+  'scripts/verifyAnReadyD3.ts',
+];
+for (const script of subs) {
+  const exists = fs.existsSync(path.join(root, script));
+  check(`sub-exists:${path.basename(script)}`, exists);
+  if (!exists) continue;
+  const r = spawnSync('npx', ['tsx', script], { cwd: root, encoding: 'utf8', shell: false });
+  check(`sub-run:${path.basename(script)}`, r.status === 0, `exit=${r.status}`);
+}
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 3b — PATCH `package.json` scripts (if scripts section exists)
+Add:
+```json
+"verify:an-plane": "tsx scripts/verifyAnPlaneAll.ts"
+```
+Keep existing `verify:merge`.
+
+## STEP 3c — PATCH `docs/MERGE_STATUS.md`
+```markdown
+| E1 | Plane structural gate A1–D3 | DONE | scripts/verifyAnPlaneAll.ts + npm run verify:an-plane |
+```
+
+```markdown
+10. **GATE-E1:** Run `npm run verify:an-plane` after plane packages. Does not authorize migration or cutover.
+```
+
+## STEP 3d — Create `scripts/verifyAnGateE1.ts` (meta check on the gate)
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const gate = path.join(root, 'scripts/verifyAnPlaneAll.ts');
+check('S1 verifyAnPlaneAll exists', fs.existsSync(gate));
+const body = fs.readFileSync(gate, 'utf8');
+check('S2 includes migration readiness route', body.includes('/api/an/migration/readiness'));
+check('S3 includes modules overview', body.includes('/api/an/modules/overview'));
+check('S4 includes shadow status', body.includes('/api/an/shadow/status'));
+check('S5 checks migrateAuthorized false', body.includes('migrateAuthorized: false'));
+check('S6 checks cutover false', body.includes('cutoverApproved: false'));
+check('S7 spawns sub verifiers', body.includes('spawnSync'));
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+check('S8 verify:an-plane script', !!(pkg.scripts && pkg.scripts['verify:an-plane']));
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+check('S9 MERGE_STATUS E1', statusDoc.includes('E1'));
+check('S10 Login file still CF path', fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8').includes('/api/auth/verify-credentials'));
+check('S11 readiness module exists', fs.existsSync(path.join(root, 'src/lib/anMigrationReadiness.ts')));
+check('S12 map module exists', fs.existsSync(path.join(root, 'src/lib/anEntityMap.ts')));
+check('S13 D1 verify exists', fs.existsSync(path.join(root, 'scripts/verifyAnShadowD1.ts')));
+check('S14 no cutover flip in gate', !body.includes('cutoverApproved: true'));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9
+```
+npx tsx scripts/verifyAnGateE1.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10
+```
+npx tsx scripts/verifyAnPlaneAll.ts
+```
+Expect: Failed: 0 (may take longer due to sub-spawns)
+
+## STEP 11 (optional)
+```
+npx tsx scripts/verifyMergeAll.ts
+```
+
+## COMMIT NOTE
+```
+feat(e1): structural verifyAnPlaneAll gate for A1–D3 packages
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnGateE1: Passed: N | Failed: N
+10) verifyAnPlaneAll: Passed: N | Failed: N
+Status: DONE | package: AN-GATE-E1
+===========================
+```

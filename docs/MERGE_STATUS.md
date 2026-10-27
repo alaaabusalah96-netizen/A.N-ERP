@@ -29,6 +29,7 @@
 | D1 | Dual-path shadow status | DONE | GET /api/an/shadow/status — KEMIT operational, A.N read-only, cutoverApproved=false |
 | D2 | Entity mapping catalog | DONE | GET /api/an/map/entities — static KEMIT→A.N map; no data migration |
 | D3 | Migration readiness gates | DONE | GET /api/an/migration/readiness — migrateAuthorized=false always in D3 |
+| E1 | Plane structural gate A1–D3 | DONE | scripts/verifyAnPlaneAll.ts + npm run verify:an-plane |
 
 ## Canonical rules (do not regress)
 
@@ -41,6 +42,7 @@
 7. **Wave C:** A.N exposes read-only module summaries only. Operational KEMIT screens remain on Firestore/CustodyDB until an approved cutover package.
 8. **SHADOW-D1:** System is dual-path until an explicit cutover package sets cutoverApproved and migrates data.
 9. **READY-D3:** Readiness API never sets migrateAuthorized or cutoverApproved true. Migration requires a later dedicated package series.
+10. **GATE-E1:** Run `npm run verify:an-plane` after plane packages. Does not authorize migration or cutover.
 
 ## Verify
 
