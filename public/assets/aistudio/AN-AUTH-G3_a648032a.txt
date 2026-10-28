@@ -1,0 +1,193 @@
+# AN-AUTH-G3 — Login UI dual path (A.N when flag on) (LEAN)
+# When GET /api/an/auth/login-target returns anLoginFlag=true, Login can use POST /api/an/auth/login.
+# Default when flag off: unchanged Firebase verify-credentials only.
+# Does NOT delete Firebase path. Does NOT set cutoverApproved.
+
+## HARD RULES
+1. If login-target fetch fails or anLoginFlag is false → behavior identical to pre-G3 (Firebase only).
+2. When anLoginFlag true, offer mode toggle: «A.N» | «Firebase» (labels AR/EN). Default mode = **an**.
+3. Never remove `/api/auth/verify-credentials` branch.
+4. Do not store password. Access/refresh tokens may be stored in sessionStorage keys `an_access_token` / `an_refresh_token` only.
+5. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- G2: POST `/api/an/auth/login` exists.
+- Login.tsx uses verify-credentials.
+
+## STEP 3 — PATCH `src/pages/Login.tsx`
+
+### 3a — State additions (near other useState)
+```typescript
+  const [loginMode, setLoginMode] = useState<'firebase' | 'an'>('firebase');
+  const [anLoginAvailable, setAnLoginAvailable] = useState(false);
+  const [tenantId, setTenantId] = useState('default');
+```
+
+### 3b — useEffect on mount
+```typescript
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/an/auth/login-target');
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && data?.anLoginFlag === true) {
+          setAnLoginAvailable(true);
+          setLoginMode('an');
+        }
+      } catch {
+        /* keep firebase-only */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+```
+
+### 3c — In handleSubmit, branch at start after preventDefault / clear error:
+
+If `loginMode === 'an' && anLoginAvailable`:
+
+```typescript
+      setLoading(true);
+      try {
+        const res = await fetch('/api/an/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: email.trim(),
+            password,
+            tenantId: tenantId.trim() || 'default',
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.ok) {
+          throw new Error(
+            data?.messageAr && isRtl
+              ? data.messageAr
+              : data?.message || data?.error || (isRtl ? 'فشل دخول A.N' : 'A.N login failed')
+          );
+        }
+        if (data.accessToken) {
+          try {
+            sessionStorage.setItem('an_access_token', data.accessToken);
+            if (data.refreshToken) sessionStorage.setItem('an_refresh_token', data.refreshToken);
+          } catch { /* ignore */ }
+        }
+        const roleRaw = String(data.user?.role || '');
+        const role =
+          /system|super|platform/i.test(roleRaw) ? 'SystemAdmin' :
+          /admin/i.test(roleRaw) ? 'Admin' : 'StationAdmin';
+        const appUser: AppUser = {
+          id: data.user.id,
+          email: data.user.username,
+          full_name: data.user.fullName || data.user.username,
+          name: data.user.fullName || data.user.username,
+          role: role as any,
+          permissions: {},
+          company_id: data.user.tenantId,
+          tenantId: data.user.tenantId,
+          is_active: true,
+          must_change_password: !!data.user.requiresPasswordChange,
+        };
+        onLoginSuccess(appUser);
+      } catch (err: any) {
+        setError(err?.message || (isRtl ? 'فشل الدخول' : 'Login failed'));
+      } finally {
+        setLoading(false);
+      }
+      return;
+```
+
+Else: **keep existing Firebase verify-credentials flow unchanged**.
+
+### 3d — UI: when `anLoginAvailable`, show a small segmented control above the form:
+
+- AR: «دخول A.N» / «دخول Firebase»
+- EN: «A.N login» / «Firebase login»
+
+When mode is `an`, optionally show tenantId input (label AR: «معرّف الشركة/المستأجر»).
+
+Email field label when an mode can stay as username/email.
+
+### 3e — Do not import anAuthLoginTarget into the client.
+
+## STEP 3b — `docs/MERGE_STATUS.md`
+```markdown
+| G3 | Login UI dual path | DONE | Login.tsx uses A.N POST when anLoginFlag; Firebase path retained |
+```
+
+```markdown
+18. **AUTH-G3:** UI may call A.N login when AN_ENABLE_AN_LOGIN is on (login-target.anLoginFlag). Firebase path remains available.
+```
+
+## STEP 3c — `scripts/verifyAnAuthG3.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+
+check('S1 login-target fetch in Login', login.includes('/api/an/auth/login-target'));
+check('S2 an auth login POST in Login', login.includes('/api/an/auth/login'));
+check('S3 verify-credentials retained', login.includes('/api/auth/verify-credentials'));
+check('S4 loginMode an|firebase', login.includes("'an'") && login.includes('firebase'));
+check('S5 anLoginFlag check', login.includes('anLoginFlag'));
+check('S6 sessionStorage an_access_token', login.includes('an_access_token'));
+check('S7 server an login route', server.includes('/api/an/auth/login'));
+check('S8 server verify-credentials', server.includes('/api/auth/verify-credentials'));
+check('S9 MERGE G3', statusDoc.includes('G3'));
+check('S10 no cutoverApproved true in Login', !login.includes('cutoverApproved: true'));
+check('S11 onLoginSuccess still used', login.includes('onLoginSuccess'));
+check('S12 tenantId for an path', login.includes('tenantId'));
+check('S13 G2 module still present', fs.existsSync(path.join(root, 'src/lib/anAuthLogin.ts')));
+check('S14 Firebase customToken path still in file', login.includes('signInWithCustomToken') || login.includes('customToken'));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnAuthG3.ts
+npx tsx scripts/verifyAnAuthG2.ts
+```
+
+## OPERATOR
+```
+AN_ENABLE_AN_LOGIN=1
+JWT_SECRET=...
+# Login screen shows A.N mode; needs user with passwordHash on A.N storage
+```
+
+## COMMIT NOTE
+```
+feat(g3): Login UI dual path for A.N when AN_ENABLE_AN_LOGIN
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnAuthG3: Passed: N | Failed: N
+Firebase path retained: YES
+Status: DONE | package: AN-AUTH-G3
+===========================
+```

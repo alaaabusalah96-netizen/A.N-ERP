@@ -39,6 +39,7 @@
 | DEC1 | Approved decisions freeze | DONE | docs/MERGE_DECISIONS.md — INV=A.N engine, CUSTODY=KEMIT, AUTH=A.N target |
 | G1 | A.N login target status | DONE | GET /api/an/auth/login-target — target=an-style; interim=firebase |
 | G2 | A.N credential login API | DONE | POST /api/an/auth/login gated by AN_ENABLE_AN_LOGIN; Login.tsx still Firebase |
+| G3 | Login UI dual path | DONE | Login.tsx uses A.N POST when anLoginFlag; Firebase path retained |
 
 ## Canonical rules (do not regress)
 
@@ -59,6 +60,7 @@
 15. See `docs/MERGE_DECISIONS.md` for the binding decision matrix.
 16. **AUTH-G1:** Target login is A.N-style per MERGE_DECISIONS. Interim path remains Firebase until G2+ cutover packages.
 17. **AUTH-G2:** A.N login API exists behind AN_ENABLE_AN_LOGIN. Product UI login remains Firebase until G3+.
+18. **AUTH-G3:** UI may call A.N login when AN_ENABLE_AN_LOGIN is on (login-target.anLoginFlag). Firebase path remains available.
 
 ## Verify
 

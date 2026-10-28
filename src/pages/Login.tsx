@@ -24,6 +24,28 @@ export default function Login({
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loginMode, setLoginMode] = useState<'firebase' | 'an'>('firebase');
+  const [anLoginAvailable, setAnLoginAvailable] = useState(false);
+  const [tenantId, setTenantId] = useState('default');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/an/auth/login-target');
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && data?.anLoginFlag === true) {
+          setAnLoginAvailable(true);
+          setLoginMode('an');
+        }
+      } catch {
+        /* keep firebase-only */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,6 +55,57 @@ export default function Login({
     const cleanPassword = password.trim();
     if (!cleanEmail || !cleanPassword) {
       setError(isRtl ? 'يرجى إدخال البريد الإلكتروني وكلمة السر' : 'Please enter both email and password');
+      return;
+    }
+
+    if (loginMode === 'an' && anLoginAvailable) {
+      setLoading(true);
+      try {
+        const res = await fetch('/api/an/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: cleanEmail,
+            password: cleanPassword,
+            tenantId: tenantId.trim() || 'default',
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.ok) {
+          throw new Error(
+            data?.messageAr && isRtl
+              ? data.messageAr
+              : data?.message || data?.error || (isRtl ? 'فشل دخول A.N' : 'A.N login failed')
+          );
+        }
+        if (data.accessToken) {
+          try {
+            sessionStorage.setItem('an_access_token', data.accessToken);
+            if (data.refreshToken) sessionStorage.setItem('an_refresh_token', data.refreshToken);
+          } catch { /* ignore */ }
+        }
+        const roleRaw = String(data.user?.role || '');
+        const role =
+          /system|super|platform/i.test(roleRaw) ? 'SystemAdmin' :
+          /admin/i.test(roleRaw) ? 'Admin' : 'StationAdmin';
+        const appUser: AppUser = {
+          id: data.user.id,
+          email: data.user.username,
+          full_name: data.user.fullName || data.user.username,
+          name: data.user.fullName || data.user.username,
+          role: role as any,
+          permissions: {},
+          company_id: data.user.tenantId,
+          tenantId: data.user.tenantId,
+          is_active: true,
+          must_change_password: !!data.user.requiresPasswordChange,
+        };
+        onLoginSuccess(appUser);
+      } catch (err: any) {
+        setError(err?.message || (isRtl ? 'فشل الدخول' : 'Login failed'));
+      } finally {
+        setLoading(false);
+      }
       return;
     }
 
@@ -133,6 +206,34 @@ export default function Login({
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white dark:bg-slate-800 py-8 px-4 shadow-xl sm:rounded-2xl sm:px-10 border border-slate-200/80 dark:border-slate-700/80">
+          {/* Dual path mode toggle when anLoginAvailable */}
+          {anLoginAvailable && (
+            <div className="mb-6 flex rounded-lg p-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setLoginMode('an')}
+                className={`flex-1 py-1.5 rounded-md transition-all ${
+                  loginMode === 'an'
+                    ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-xs font-bold'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                {isRtl ? 'دخول A.N' : 'A.N login'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setLoginMode('firebase')}
+                className={`flex-1 py-1.5 rounded-md transition-all ${
+                  loginMode === 'firebase'
+                    ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-xs font-bold'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                {isRtl ? 'دخول Firebase' : 'Firebase login'}
+              </button>
+            </div>
+          )}
+
           <form className="space-y-6" onSubmit={handleSubmit}>
             {error && (
               <div className="p-3 text-sm text-red-700 bg-red-50 dark:bg-red-900/30 dark:text-red-300 rounded-lg border border-red-200 dark:border-red-800 text-center font-medium">
@@ -140,20 +241,38 @@ export default function Login({
               </div>
             )}
 
+            {loginMode === 'an' && anLoginAvailable && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                  {isRtl ? 'معرّف الشركة / المستأجر' : 'Company / Tenant ID'}
+                </label>
+                <input
+                  type="text"
+                  value={tenantId}
+                  onChange={(e) => setTenantId(e.target.value)}
+                  placeholder="default"
+                  className="block w-full px-3 py-2 sm:text-sm border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 dark:bg-slate-900 dark:text-white"
+                  disabled={loading}
+                />
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                {isRtl ? 'البريد الإلكتروني' : 'Email Address'}
+                {loginMode === 'an'
+                  ? (isRtl ? 'اسم المستخدم / البريد' : 'Username / Email')
+                  : (isRtl ? 'البريد الإلكتروني' : 'Email Address')}
               </label>
               <div className="relative rounded-md shadow-xs">
                 <div className="absolute inset-y-0 ltr:left-0 rtl:right-0 ltr:pl-3 rtl:pr-3 flex items-center pointer-events-none text-slate-400">
                   <Mail className="h-5 w-5" />
                 </div>
                 <input
-                  type="email"
+                  type={loginMode === 'an' ? 'text' : 'email'}
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="user@company.com"
+                  placeholder={loginMode === 'an' ? 'username' : 'user@company.com'}
                   className="block w-full ltr:pl-10 rtl:pr-10 py-2.5 sm:text-sm border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 dark:bg-slate-900 dark:text-white"
                   disabled={loading}
                 />
