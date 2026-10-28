@@ -47,6 +47,7 @@ import InventoryDocumentsTab from '../components/inventory/InventoryDocumentsTab
 import InventoryReportsTab from '../components/inventory/InventoryReportsTab';
 import InventoryWarehousesTab from '../components/inventory/InventoryWarehousesTab';
 import InventorySettingsTab from '../components/inventory/InventorySettingsTab';
+import AnInventoryReadStrip from '../components/inventory/AnInventoryReadStrip';
 
 interface InventoryProps {
   language: 'en' | 'ar';
@@ -347,6 +348,12 @@ export default function Inventory({ language, theme }: InventoryProps) {
           </button>
         )}
       </div>
+
+      {/* A.N Inventory Read Strip */}
+      <AnInventoryReadStrip
+        language={language}
+        companyId={activeUser?.company_id || activeUser?.tenantId}
+      />
 
       {/* Sub tabs (Documents vs Reports vs Warehouses) */}
       {!isFormOpen && !selectedDocId && (

@@ -1,0 +1,137 @@
+# AN-INV-UI-READ-1 — Inventory page A.N read strip (LEAN)
+# Per D-INV: start re-wiring UI toward A.N engine with **read-only** surface on Inventory page.
+# Does NOT replace InventoryModule/CustodyDB document flows. Does NOT write stock.
+
+## HARD RULES
+1. Do not remove `InventoryModule` or CustodyDB calls from documents/warehouses tabs.
+2. A.N data is display-only (summary counts + source label).
+3. If `/api/an/inventory/summary` fails, show error text — do not break the rest of the page.
+4. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- G4 done; `fetchInventorySummary` in anBridge; Inventory.tsx exists.
+- DEC1 D-INV approved.
+
+## STEP 3 — Create `src/components/inventory/AnInventoryReadStrip.tsx`
+
+```tsx
+import React, { useEffect, useState } from 'react';
+import { fetchInventorySummary } from '../../lib/anBridge';
+
+export default function AnInventoryReadStrip(props: {
+  language: 'en' | 'ar';
+  companyId?: string;
+}) {
+  const isRtl = props.language === 'ar';
+  const [loading, setLoading] = useState(true);
+  const [summary, setSummary] = useState<any>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const s = await fetchInventorySummary(props.companyId);
+      if (!cancelled) {
+        setSummary(s);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [props.companyId]);
+
+  return (
+    <div
+      className="mb-4 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/80 dark:bg-emerald-950/30 px-3 py-2 text-sm text-slate-700 dark:text-slate-200"
+      dir={isRtl ? 'rtl' : 'ltr'}
+    >
+      <div className="font-medium text-emerald-800 dark:text-emerald-300">
+        {isRtl ? 'طبقة قراءة A.N (المخزون)' : 'A.N inventory read plane'}
+      </div>
+      {loading ? (
+        <div className="opacity-70">{isRtl ? 'جاري التحميل…' : 'Loading…'}</div>
+      ) : summary?.ok ? (
+        <ul className="mt-1 flex flex-wrap gap-3 text-xs">
+          <li>ok={String(!!summary.ok)}</li>
+          <li>source={summary.source || '—'}</li>
+          <li>
+            {isRtl ? 'مستودعات' : 'warehouses'}={summary.warehouses ?? summary.warehouseCount ?? '—'}
+          </li>
+          <li>
+            {isRtl ? 'أصناف' : 'items'}={summary.items ?? summary.itemCount ?? '—'}
+          </li>
+        </ul>
+      ) : (
+        <div className="text-amber-700 dark:text-amber-300 text-xs mt-1">
+          {summary?.error || summary?.detail || (isRtl ? 'تعذر قراءة ملخص A.N' : 'A.N summary unavailable')}
+        </div>
+      )}
+      <div className="text-[11px] opacity-70 mt-1">
+        {isRtl
+          ? 'التشغيل اليومي للمستندات ما زال على KEMIT/CustodyDB حتى حزم الكتابة/القطع.'
+          : 'Operational documents still use KEMIT/CustodyDB until write/cutover packages.'}
+      </div>
+    </div>
+  );
+}
+```
+
+## STEP 3b — PATCH `src/pages/Inventory.tsx`
+1. Import `AnInventoryReadStrip`.
+2. Near top of main render (above tabs), render:
+```tsx
+      <AnInventoryReadStrip
+        language={language}
+        companyId={activeUser?.company_id || activeUser?.tenantId}
+      />
+```
+
+Do not wrap/remove existing tabs.
+
+## STEP 3c — `docs/MERGE_STATUS.md`
+```markdown
+| INV-R1 | Inventory A.N read strip | DONE | AnInventoryReadStrip on Inventory.tsx; CustodyDB flows unchanged |
+```
+
+```markdown
+20. **INV-UI-READ-1:** Inventory page shows A.N read summary only. Document posting remains KEMIT until INV write/cutover packages.
+```
+
+## STEP 3d — `scripts/verifyAnInvUiRead1.ts`
+14 checks:
+- AnInventoryReadStrip.tsx exists
+- fetchInventorySummary import in strip
+- Inventory.tsx imports AnInventoryReadStrip
+- Inventory.tsx still imports InventoryModule
+- CustodyDB still referenced in Inventory.tsx
+- strip does not call save/post stock
+- MERGE INV-R1 or INV-UI-READ
+- anBridge fetchInventorySummary exists
+- server inventory/summary route still present
+- Login still has an or firebase paths
+- D-INV still in MERGE_DECISIONS
+- no cutoverApproved true in strip
+- documents tab components still imported
+- language prop used
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnInvUiRead1.ts
+npx tsx scripts/verifyAnAuthG4.ts
+```
+
+## COMMIT NOTE
+```
+feat(inv-r1): A.N inventory read strip on Inventory page
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnInvUiRead1: Passed: N | Failed: N
+CustodyDB inventory flows: retained
+Status: DONE | package: AN-INV-UI-READ-1
+===========================
+```

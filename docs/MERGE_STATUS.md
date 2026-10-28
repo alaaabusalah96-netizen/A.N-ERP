@@ -41,6 +41,7 @@
 | G2 | A.N credential login API | DONE | POST /api/an/auth/login gated by AN_ENABLE_AN_LOGIN; Login.tsx still Firebase |
 | G3 | Login UI dual path | DONE | Login.tsx uses A.N POST when anLoginFlag; Firebase path retained |
 | G4 | Prefer A.N login UI | DONE | A.N-only UI when AN_ENABLE_AN_LOGIN; Firebase toggle needs AN_ALLOW_FIREBASE_LOGIN |
+| INV-R1 | Inventory A.N read strip | DONE | AnInventoryReadStrip on Inventory.tsx; CustodyDB flows unchanged |
 
 ## Canonical rules (do not regress)
 
@@ -63,6 +64,7 @@
 17. **AUTH-G2:** A.N login API exists behind AN_ENABLE_AN_LOGIN. Product UI login remains Firebase until G3+.
 18. **AUTH-G3:** UI may call A.N login when AN_ENABLE_AN_LOGIN is on (login-target.anLoginFlag). Firebase path remains available.
 19. **AUTH-G4:** With AN_ENABLE_AN_LOGIN, UI prefers A.N-only. Firebase login UI requires AN_ALLOW_FIREBASE_LOGIN=1. Server Firebase route remains.
+20. **INV-UI-READ-1:** Inventory page shows A.N read summary only. Document posting remains KEMIT until INV write/cutover packages.
 
 ## Verify
 
