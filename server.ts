@@ -3167,7 +3167,48 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run");
+    app.post("/api/an/migrate/inventory/warehouses", async (req: any, res: any) => {
+      try {
+        const { migrateWarehousesToAn } = await import("./src/lib/anMigrateInventoryWrite");
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) {
+          return res.status(400).json({ ok: false, error: "companyId required" });
+        }
+        let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+        if (!rows) {
+          // Load from Firestore when adminDb available
+          rows = [];
+          if (typeof adminDb !== "undefined" && adminDb) {
+            try {
+              const snap = await adminDb.collection("warehouses").where("company_id", "==", companyId).get();
+              rows = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+            } catch (e: any) {
+              try {
+                const snap2 = await adminDb.collection("warehouses").limit(500).get();
+                rows = snap2.docs
+                  .map((d: any) => ({ id: d.id, ...d.data() }))
+                  .filter((r: any) => r.company_id === companyId);
+              } catch (e2: any) {
+                return res.status(500).json({
+                  ok: false,
+                  error: "failed_to_load_kemit_warehouses",
+                  detail: e2?.message || e?.message,
+                });
+              }
+            }
+          }
+        }
+        const result = await migrateWarehousesToAn(anStorageRouter, {
+          companyId,
+          rows: rows || [],
+        });
+        const status = result.writesEnabled ? 200 : 403;
+        res.status(status).json(result);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }

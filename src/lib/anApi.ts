@@ -110,6 +110,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'F1',
     purpose: 'Inventory migration dry-run report (no SQL writes)',
   },
+  {
+    method: 'POST',
+    path: '/api/an/migrate/inventory/warehouses',
+    phase: 'F2',
+    purpose: 'Gated warehouse migrate into A.N (requires AN_MIGRATE_WRITES=1)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];
