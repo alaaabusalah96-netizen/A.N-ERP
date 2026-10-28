@@ -116,6 +116,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'F2',
     purpose: 'Gated warehouse migrate into A.N (requires AN_MIGRATE_WRITES=1)',
   },
+  {
+    method: 'POST',
+    path: '/api/an/migrate/inventory/items',
+    phase: 'F3',
+    purpose: 'Gated stock item migrate into A.N (AN_MIGRATE_WRITES=1)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];

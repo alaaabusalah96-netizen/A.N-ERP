@@ -3208,7 +3208,37 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses");
+    app.post("/api/an/migrate/inventory/items", async (req: any, res: any) => {
+      try {
+        const { migrateStockItemsToAn } = await import("./src/lib/anMigrateInventoryItems");
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+        if (!rows) {
+          rows = [];
+          if (typeof adminDb !== "undefined" && adminDb) {
+            try {
+              const snap = await adminDb.collection("products").where("company_id", "==", companyId).get();
+              rows = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+            } catch {
+              try {
+                const snap2 = await adminDb.collection("products").limit(500).get();
+                rows = snap2.docs
+                  .map((d: any) => ({ id: d.id, ...d.data() }))
+                  .filter((r: any) => r.company_id === companyId);
+              } catch (e: any) {
+                return res.status(500).json({ ok: false, error: "failed_to_load_products", detail: e?.message });
+              }
+            }
+          }
+        }
+        const result = await migrateStockItemsToAn(anStorageRouter, { companyId, rows: rows || [] });
+        res.status(result.writesEnabled ? 200 : 403).json(result);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses + migrate/inventory/items");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }

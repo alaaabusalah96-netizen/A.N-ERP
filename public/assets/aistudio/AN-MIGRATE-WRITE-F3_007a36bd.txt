@@ -1,0 +1,285 @@
+# AN-MIGRATE-WRITE-F3 — Inventory stock items write migrate (gated) (LEAN)
+# After F2 warehouses. Upserts StockItem into A.N primary adapter when AN_MIGRATE_WRITES=1.
+# Does NOT migrate warehouse balances. Does NOT switch Inventory.tsx. cutoverApproved stays false.
+
+## HARD RULES
+1. Require `AN_MIGRATE_WRITES=1|true` or return 403 / writesPerformed=false.
+2. Require postgresql process plane ready (same as F2).
+3. Idempotent on item id: skip if already in listStockItems.
+4. Default account codes if missing: inventory `1105`, cogs `5101`, adj expense `5209`, adj gain `4203` (standard COA style used in prior A.N fixes — adjust only if codebase constants differ).
+5. Inventory.tsx remains CustodyDB. Login unchanged.
+6. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- F2: `anMigrateInventoryWrite.ts`, POST warehouses.
+- StoragePort: `saveStockItem`, `listStockItems`.
+
+## STEP 3 — APPEND to `src/lib/anMigrateInventoryWrite.ts`
+(or create `src/lib/anMigrateInventoryItems.ts` if file is large — either OK; prefer **new file** `src/lib/anMigrateInventoryItems.ts` for clarity)
+
+```typescript
+/**
+ * AN-MIGRATE-WRITE-F3 — gated stock item upsert into A.N storage.
+ */
+import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import type { StockItem } from '../an-core/storage/StoragePort';
+import { probeDefaultProcessPlane } from './anDataPlane';
+
+const DEFAULT_INV = '1105';
+const DEFAULT_COGS = '5101';
+const DEFAULT_ADJ_EXP = '5209';
+const DEFAULT_ADJ_GAIN = '4203';
+
+export interface KemitProductRaw {
+  id?: string;
+  company_id?: string;
+  code?: string;
+  itemCode?: string;
+  sku?: string;
+  name?: string;
+  nameAr?: string;
+  name_ar?: string;
+  nameEn?: string;
+  category?: string;
+  uom?: string;
+  unit?: string;
+  barcode?: string;
+  isActive?: boolean;
+  is_active?: boolean;
+  valuationMethod?: string;
+  standardCost?: number;
+  averageCost?: number;
+  sellingPrice?: number;
+  reorderPoint?: number;
+  [key: string]: unknown;
+}
+
+export function mapKemitProductToAn(
+  raw: KemitProductRaw,
+  companyId: string,
+  nowIso: string
+): StockItem {
+  const id = String(raw.id || '').trim() || `item-${companyId}-${String(raw.code || raw.sku || 'x')}`;
+  const itemCode = String(raw.itemCode || raw.code || raw.sku || id).slice(0, 64);
+  const nameAr = String(raw.nameAr || raw.name_ar || raw.name || itemCode).trim() || itemCode;
+  const vmRaw = String(raw.valuationMethod || 'WEIGHTED_AVERAGE').toUpperCase();
+  const valuationMethod =
+    vmRaw === 'FIFO' || vmRaw === 'SPECIFIC_LOT' || vmRaw === 'STANDARD_COST'
+      ? (vmRaw as StockItem['valuationMethod'])
+      : 'WEIGHTED_AVERAGE';
+
+  return {
+    id,
+    tenantId: companyId,
+    companyId,
+    itemCode,
+    barcode: raw.barcode ? String(raw.barcode) : undefined,
+    nameAr,
+    nameEn: raw.nameEn ? String(raw.nameEn) : undefined,
+    category: String(raw.category || 'general'),
+    uom: String(raw.uom || raw.unit || 'unit'),
+    inventoryAccountCode: DEFAULT_INV,
+    cogsAccountCode: DEFAULT_COGS,
+    adjustmentExpenseAccountCode: DEFAULT_ADJ_EXP,
+    adjustmentGainAccountCode: DEFAULT_ADJ_GAIN,
+    valuationMethod,
+    standardCost: Number(raw.standardCost || 0) || 0,
+    averageCost: Number(raw.averageCost || 0) || 0,
+    sellingPrice: Number(raw.sellingPrice || 0) || 0,
+    reorderPoint: Number(raw.reorderPoint || 0) || 0,
+    minStockLevel: 0,
+    maxStockLevel: 0,
+    trackBatch: false,
+    trackSerial: false,
+    isActive: raw.isActive !== false && raw.is_active !== false,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+}
+
+export interface ItemMigrateResult {
+  ok: boolean;
+  plane: 'an-migrate-write-f3';
+  writesEnabled: boolean;
+  writesPerformed: boolean;
+  cutoverApproved: false;
+  companyId: string;
+  attempted: number;
+  inserted: number;
+  skippedExisting: number;
+  failed: number;
+  errors: string[];
+  detail: string;
+  detailAr: string;
+}
+
+export async function migrateStockItemsToAn(
+  router: StorageRouter,
+  opts: { companyId: string; rows: KemitProductRaw[]; env?: NodeJS.ProcessEnv }
+): Promise<ItemMigrateResult> {
+  const env = opts.env || process.env;
+  const companyId = opts.companyId.trim() || 'default';
+  const writesEnabled = env.AN_MIGRATE_WRITES === '1' || env.AN_MIGRATE_WRITES === 'true';
+  const base = {
+    plane: 'an-migrate-write-f3' as const,
+    writesEnabled,
+    cutoverApproved: false as const,
+    companyId,
+  };
+
+  if (!writesEnabled) {
+    return {
+      ...base,
+      ok: false,
+      writesPerformed: false,
+      attempted: 0,
+      inserted: 0,
+      skippedExisting: 0,
+      failed: 0,
+      errors: ['AN_MIGRATE_WRITES not enabled'],
+      detail: 'writes_disabled',
+      detailAr: 'الكتابة معطّلة — AN_MIGRATE_WRITES=1',
+    };
+  }
+
+  const plane = probeDefaultProcessPlane(env);
+  if (!(plane.adapterType === 'postgresql' && plane.ok && plane.envRefPresent)) {
+    return {
+      ...base,
+      ok: false,
+      writesPerformed: false,
+      attempted: 0,
+      inserted: 0,
+      skippedExisting: 0,
+      failed: 0,
+      errors: ['postgresql env not ready'],
+      detail: plane.certifiedNote,
+      detailAr: plane.errorAr || 'PostgreSQL غير جاهز',
+    };
+  }
+
+  const adapter = router.getPrimaryAdapter();
+  const existing = await adapter.listStockItems(companyId);
+  const existingIds = new Set(
+    existing.success && Array.isArray(existing.data) ? existing.data.map((i) => i.id) : []
+  );
+  const nowIso = new Date().toISOString();
+  let inserted = 0;
+  let skippedExisting = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const raw of opts.rows) {
+    const mapped = mapKemitProductToAn(raw, companyId, nowIso);
+    if (existingIds.has(mapped.id)) {
+      skippedExisting++;
+      continue;
+    }
+    try {
+      const res = await adapter.saveStockItem(companyId, mapped, `migrate-item-${mapped.id}`);
+      if (res.success) {
+        inserted++;
+        existingIds.add(mapped.id);
+      } else {
+        failed++;
+        errors.push(`${mapped.id}:${res.error || 'save_failed'}`);
+      }
+    } catch (e: any) {
+      failed++;
+      errors.push(`${mapped.id}:${(e?.message || String(e)).slice(0, 120)}`);
+    }
+  }
+
+  return {
+    ...base,
+    ok: failed === 0,
+    writesPerformed: inserted > 0,
+    attempted: opts.rows.length,
+    inserted,
+    skippedExisting,
+    failed,
+    errors: errors.slice(0, 20),
+    detail: 'stock_items_migrate_done',
+    detailAr: 'انتهى ترحيل الأصناف (إن وُجدت)',
+  };
+}
+```
+
+## STEP 3b — PATCH `server.ts`
+```javascript
+    app.post("/api/an/migrate/inventory/items", async (req: any, res: any) => {
+      try {
+        const { migrateStockItemsToAn } = await import("./src/lib/anMigrateInventoryItems");
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+        if (!rows) {
+          rows = [];
+          if (typeof adminDb !== "undefined" && adminDb) {
+            try {
+              const snap = await adminDb.collection("products").where("company_id", "==", companyId).get();
+              rows = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+            } catch {
+              try {
+                const snap2 = await adminDb.collection("products").limit(500).get();
+                rows = snap2.docs
+                  .map((d: any) => ({ id: d.id, ...d.data() }))
+                  .filter((r: any) => r.company_id === companyId);
+              } catch (e: any) {
+                return res.status(500).json({ ok: false, error: "failed_to_load_products", detail: e?.message });
+              }
+            }
+          }
+        }
+        const result = await migrateStockItemsToAn(anStorageRouter, { companyId, rows: rows || [] });
+        res.status(result.writesEnabled ? 200 : 403).json(result);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+console.log include `migrate/inventory/items`.
+
+## STEP 3c — `anApi.ts`
+```typescript
+  {
+    method: 'POST',
+    path: '/api/an/migrate/inventory/items',
+    phase: 'F3',
+    purpose: 'Gated stock item migrate into A.N (AN_MIGRATE_WRITES=1)',
+  },
+```
+
+## STEP 3d — `docs/MERGE_STATUS.md`
+```markdown
+| F3 | Stock items write migrate (gated) | DONE | POST /api/an/migrate/inventory/items; balances+UI later |
+```
+
+## STEP 3e — `scripts/verifyAnMigrateWriteF3.ts`
+14 checks: file, migrateStockItemsToAn, mapKemitProductToAn, AN_MIGRATE_WRITES gate, route, catalog, F2 warehouses route still present, Inventory CustodyDB, Login intact, cutover false, no WarehouseStock write in this module, MERGE F3, saveStockItem, default account codes present.
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnMigrateWriteF3.ts
+npx tsx scripts/verifyAnMigrateWriteF2.ts
+```
+
+## OPERATOR
+```
+AN_MIGRATE_WRITES=1
+curl -s -X POST .../api/an/migrate/inventory/items -H 'Content-Type: application/json' -d '{"companyId":"..."}'
+```
+
+## COMMIT NOTE
+```
+feat(f3): gated stock item migrate to A.N primary adapter
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnMigrateWriteF3: Passed: N | Failed: N
+Status: DONE | package: AN-MIGRATE-WRITE-F3
+===========================
+```

@@ -33,6 +33,7 @@
 | E2 | Dual-path operator runbook | DONE | docs/ops/DUAL_PATH_RUNBOOK.md + GET /api/an/ops/runbook |
 | F1 | Inventory migrate dry-run | DONE | GET /api/an/migrate/inventory/dry-run — report only, writesPerformed=false |
 | F2 | Warehouse write migrate (gated) | DONE | POST /api/an/migrate/inventory/warehouses requires AN_MIGRATE_WRITES=1; UI unchanged |
+| F3 | Stock items write migrate (gated) | DONE | POST /api/an/migrate/inventory/items; balances+UI later |
 
 ## Canonical rules (do not regress)
 
