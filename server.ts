@@ -3322,6 +3322,19 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
+    try {
+      const { runPlatformAdminBootstrapOnStart } = await import("./src/lib/anPlatformBootstrap");
+      const boot = await runPlatformAdminBootstrapOnStart(anStorageRouter, process.env);
+      if (!boot.ran) {
+        console.log("[AN-AUTH-G5] platform bootstrap skipped:", boot.outcome);
+      } else if (boot.outcome === "created" || boot.outcome === "already_exists" || boot.outcome === "migrated_synced" || boot.outcome === "migrated_created") {
+        console.log("[AN-AUTH-G5] platform bootstrap:", boot.outcome);
+      } else {
+        console.warn("[AN-AUTH-G5] platform bootstrap issue:", boot.outcome, boot.code || "", boot.message || "");
+      }
+    } catch (bootErr: any) {
+      console.warn("[AN-AUTH-G5] platform bootstrap error:", bootErr?.message || bootErr);
+    }
     console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses + migrate/inventory/items + migrate/inventory/balances + migrate/accounting/accounts + auth/login-target + auth/login");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
