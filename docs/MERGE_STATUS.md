@@ -35,10 +35,12 @@
 | F2 | Warehouse write migrate (gated) | DONE | POST /api/an/migrate/inventory/warehouses requires AN_MIGRATE_WRITES=1; UI unchanged |
 | F3 | Stock items write migrate (gated) | DONE | POST /api/an/migrate/inventory/items; balances+UI later |
 | F4 | Opening balances write migrate (gated) | DONE | POST /api/an/migrate/inventory/balances via RECEIPT; UI unchanged |
+| F5 | COA accounts write migrate (gated) | DONE | POST /api/an/migrate/accounting/accounts; journals+UI later |
+| DEC1 | Approved decisions freeze | DONE | docs/MERGE_DECISIONS.md — INV=A.N engine, CUSTODY=KEMIT, AUTH=A.N target |
 
 ## Canonical rules (do not regress)
 
-1. **One login path:** `/api/auth/verify-credentials` + Firebase customToken unless `AN_ENABLE_AN_JWT=1` **and** company `auth_driver=an-jwt` (JWT login UI still not activated in M1–M6).
+1. **Login (interim vs target):** Interim operational path remains `/api/auth/verify-credentials` (Firebase) so the app stays usable. **Target login is A.N-style auth** per `docs/MERGE_DECISIONS.md`. Do not remove Firebase until a dedicated G-series package passes.
 2. **One API namespace for A.N:** only `/api/an/*`.
 3. **Per-company backend contract** is stored and validated; live SQL adapter cutover is a **future** phase, not silent.
 4. **No second product shell:** Settings panels only; no `AnLogin`, no competing sidebar tree for A.N modules.
@@ -51,6 +53,8 @@
 11. **MIGRATE-DRY-F1:** Full merge continues. F1 is report-only. Write migrate requires F2+ and AN_MIGRATE_WRITES=1.
 12. **MIGRATE-WRITE-F2:** Warehouse SQL upsert only when AN_MIGRATE_WRITES=1. Stock balances and UI cutover are later packages.
 13. **MIGRATE-WRITE-F4:** Opening stock only through atomic RECEIPT. Re-run is idempotent when qty already > 0.
+14. **DECISIONS-1:** Inventory target engine = A.N; Custody stays KEMIT; **Login target = A.N-style auth** (Firebase is interim only until G-series cutover).
+15. See `docs/MERGE_DECISIONS.md` for the binding decision matrix.
 
 ## Verify
 

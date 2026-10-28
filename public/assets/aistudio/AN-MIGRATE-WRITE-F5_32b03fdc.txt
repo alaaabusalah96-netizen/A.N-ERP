@@ -1,0 +1,262 @@
+# AN-MIGRATE-WRITE-F5 — Chart of accounts write migrate (gated) (LEAN)
+# Inventory write path F2–F4 done. F5 migrates Account rows into A.N via saveAccount.
+# Requires AN_MIGRATE_WRITES=1. Does NOT post journals. Does NOT switch Accounting.tsx.
+
+## HARD RULES
+1. AN_MIGRATE_WRITES=1|true or 403 / no writes.
+2. PostgreSQL process plane ready.
+3. Idempotent on account code: skip if code already in listAccounts.
+4. Accounting.tsx stays CustodyDB. Login unchanged. cutoverApproved false.
+5. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- F4 balances route exists.
+- StoragePort: saveAccount, listAccounts?.
+
+## STEP 3 — Create `src/lib/anMigrateAccounts.ts`
+
+```typescript
+/**
+ * AN-MIGRATE-WRITE-F5 — gated chart-of-accounts upsert into A.N storage.
+ */
+import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import type { Account } from '../an-core/storage/StoragePort';
+import { probeDefaultProcessPlane } from './anDataPlane';
+
+export interface KemitAccountRaw {
+  id?: string;
+  code?: string;
+  account_code?: string;
+  company_id?: string;
+  name?: string;
+  nameAr?: string;
+  name_ar?: string;
+  nameEn?: string;
+  type?: string;
+  account_type?: string;
+  nature?: string;
+  isActive?: boolean;
+  is_active?: boolean;
+  [key: string]: unknown;
+}
+
+function mapType(raw: string | undefined): Account['type'] {
+  const t = String(raw || '').toUpperCase();
+  if (t.includes('LIAB') || t === 'L') return 'LIABILITY';
+  if (t.includes('EQUITY') || t.includes('CAPITAL')) return 'EQUITY';
+  if (t.includes('REV') || t.includes('INCOME')) return 'REVENUE';
+  if (t.includes('EXP')) return 'EXPENSE';
+  if (t.includes('ASSET') || t === 'A') return 'ASSET';
+  // digit heuristics: 1 asset, 2 liability, 3 equity, 4 revenue, 5 expense
+  if (t.startsWith('2')) return 'LIABILITY';
+  if (t.startsWith('3')) return 'EQUITY';
+  if (t.startsWith('4')) return 'REVENUE';
+  if (t.startsWith('5') || t.startsWith('6')) return 'EXPENSE';
+  return 'ASSET';
+}
+
+export function mapKemitAccountToAn(raw: KemitAccountRaw, companyId: string): Account {
+  const code = String(raw.code || raw.account_code || raw.id || '').trim();
+  const nameAr = String(raw.nameAr || raw.name_ar || raw.name || code).trim() || code;
+  return {
+    code,
+    tenantId: companyId,
+    nameAr,
+    nameEn: raw.nameEn ? String(raw.nameEn) : undefined,
+    type: mapType(raw.type || raw.account_type || code),
+    nature:
+      String(raw.nature || '').toUpperCase() === 'CREDIT' ? 'CREDIT' : 'DEBIT',
+    isActive: raw.isActive !== false && raw.is_active !== false,
+    status: 'ACTIVE',
+  };
+}
+
+export interface AccountMigrateResult {
+  ok: boolean;
+  plane: 'an-migrate-write-f5';
+  writesEnabled: boolean;
+  writesPerformed: boolean;
+  cutoverApproved: false;
+  companyId: string;
+  attempted: number;
+  inserted: number;
+  skippedExisting: number;
+  failed: number;
+  errors: string[];
+  detail: string;
+  detailAr: string;
+}
+
+export async function migrateAccountsToAn(
+  router: StorageRouter,
+  opts: { companyId: string; rows: KemitAccountRaw[]; env?: NodeJS.ProcessEnv }
+): Promise<AccountMigrateResult> {
+  const env = opts.env || process.env;
+  const companyId = opts.companyId.trim() || 'default';
+  const writesEnabled = env.AN_MIGRATE_WRITES === '1' || env.AN_MIGRATE_WRITES === 'true';
+  const base = {
+    plane: 'an-migrate-write-f5' as const,
+    writesEnabled,
+    cutoverApproved: false as const,
+    companyId,
+  };
+
+  if (!writesEnabled) {
+    return {
+      ...base,
+      ok: false,
+      writesPerformed: false,
+      attempted: 0,
+      inserted: 0,
+      skippedExisting: 0,
+      failed: 0,
+      errors: ['AN_MIGRATE_WRITES not enabled'],
+      detail: 'writes_disabled',
+      detailAr: 'الكتابة معطّلة',
+    };
+  }
+
+  const plane = probeDefaultProcessPlane(env);
+  if (!(plane.adapterType === 'postgresql' && plane.ok && plane.envRefPresent)) {
+    return {
+      ...base,
+      ok: false,
+      writesPerformed: false,
+      attempted: 0,
+      inserted: 0,
+      skippedExisting: 0,
+      failed: 0,
+      errors: ['postgresql env not ready'],
+      detail: plane.certifiedNote,
+      detailAr: plane.errorAr || 'PostgreSQL غير جاهز',
+    };
+  }
+
+  const adapter = router.getPrimaryAdapter();
+  let existingCodes = new Set<string>();
+  if (typeof adapter.listAccounts === 'function') {
+    const listed = await adapter.listAccounts(companyId);
+    if (listed.success && Array.isArray(listed.data)) {
+      existingCodes = new Set(listed.data.map((a) => a.code));
+    }
+  }
+
+  let inserted = 0;
+  let skippedExisting = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const raw of opts.rows) {
+    const mapped = mapKemitAccountToAn(raw, companyId);
+    if (!mapped.code) {
+      failed++;
+      errors.push('missing_code');
+      continue;
+    }
+    if (existingCodes.has(mapped.code)) {
+      skippedExisting++;
+      continue;
+    }
+    try {
+      const res = await adapter.saveAccount(
+        companyId,
+        mapped,
+        `migrate-acc-${mapped.code}`
+      );
+      if (res.success) {
+        inserted++;
+        existingCodes.add(mapped.code);
+      } else {
+        failed++;
+        errors.push(`${mapped.code}:${res.error || 'save_failed'}`);
+      }
+    } catch (e: any) {
+      failed++;
+      errors.push(`${mapped.code}:${(e?.message || String(e)).slice(0, 120)}`);
+    }
+  }
+
+  return {
+    ...base,
+    ok: failed === 0,
+    writesPerformed: inserted > 0,
+    attempted: opts.rows.length,
+    inserted,
+    skippedExisting,
+    failed,
+    errors: errors.slice(0, 20),
+    detail: 'accounts_migrate_done',
+    detailAr: 'انتهى ترحيل دليل الحسابات (إن وُجد)',
+  };
+}
+```
+
+## STEP 3b — PATCH `server.ts`
+```javascript
+    app.post("/api/an/migrate/accounting/accounts", async (req: any, res: any) => {
+      try {
+        const { migrateAccountsToAn } = await import("./src/lib/anMigrateAccounts");
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+        if (!rows) {
+          rows = [];
+          if (typeof adminDb !== "undefined" && adminDb) {
+            const cols = ["accounts", "chart_of_accounts", "coa"];
+            for (const col of cols) {
+              try {
+                const snap = await adminDb.collection(col).where("company_id", "==", companyId).limit(2000).get();
+                if (!snap.empty) {
+                  rows = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+                  break;
+                }
+              } catch { /* next */ }
+            }
+          }
+        }
+        const result = await migrateAccountsToAn(anStorageRouter, { companyId, rows: rows || [] });
+        res.status(result.writesEnabled ? 200 : 403).json(result);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+console.log include `migrate/accounting/accounts`.
+
+## STEP 3c — `anApi.ts`
+```typescript
+  {
+    method: 'POST',
+    path: '/api/an/migrate/accounting/accounts',
+    phase: 'F5',
+    purpose: 'Gated chart-of-accounts migrate (AN_MIGRATE_WRITES=1)',
+  },
+```
+
+## STEP 3d — `docs/MERGE_STATUS.md`
+```markdown
+| F5 | COA accounts write migrate (gated) | DONE | POST /api/an/migrate/accounting/accounts; journals+UI later |
+```
+
+## STEP 3e — `scripts/verifyAnMigrateWriteF5.ts`
+14 checks: anMigrateAccounts, migrateAccountsToAn, AN_MIGRATE_WRITES, saveAccount, route, catalog, F4 still present, Accounting.tsx CustodyDB, Login, cutover false, MERGE F5, mapKemitAccountToAn, no journal post, listAccounts usage.
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnMigrateWriteF5.ts
+npx tsx scripts/verifyAnMigrateWriteF4.ts
+```
+
+## COMMIT NOTE
+```
+feat(f5): gated chart-of-accounts migrate to A.N
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnMigrateWriteF5: Passed: N | Failed: N
+Status: DONE | package: AN-MIGRATE-WRITE-F5
+===========================
+```

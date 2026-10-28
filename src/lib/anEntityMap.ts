@@ -21,8 +21,8 @@ export const AN_ENTITY_MAP: EntityMapRow[] = [
     kemitStore: 'Firestore users + /api/auth/verify-credentials',
     anEntity: 'TokenService / users (gated)',
     status: 'kemit-only',
-    notesAr: 'مسار الدخول التشغيلي Firebase حتى حزمة قطع صريحة',
-    notesEn: 'Operational login stays Firebase until explicit cutover',
+    notesAr: 'التشغيل الآن Firebase؛ الهدف المعتمد دخول بأسلوب A.N (حزم G لاحقًا)',
+    notesEn: 'Operational Firebase now; approved target is A.N-style login (G-series later)',
   },
   {
     id: 'company-backend',

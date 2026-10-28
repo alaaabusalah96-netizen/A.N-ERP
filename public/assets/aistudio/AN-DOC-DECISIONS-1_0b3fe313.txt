@@ -1,0 +1,155 @@
+# AN-DOC-DECISIONS-1 — Approved product decisions freeze (LEAN)
+# Documents the three approved merge decisions (inventory engine, custody, login target).
+# Documentation + catalog only. No Login route change in this package. No cutover.
+
+## HARD RULES
+1. Do NOT change Login.tsx or `/api/auth/verify-credentials` behavior in this package.
+2. Do NOT set cutoverApproved or migrateAuthorized to true.
+3. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- `docs/MERGE_STATUS.md` exists.
+
+## STEP 3 — Create `docs/MERGE_DECISIONS.md`
+
+Write this file **exactly** (UTF-8):
+
+```markdown
+# MERGE DECISIONS — Approved (AN-DOC-DECISIONS-1)
+
+**Status:** APPROVED  
+**Date:** 2026-10-28  
+**Scope:** Product direction for A.N ERP × KEMIT unified merge
+
+## Decision matrix (binding)
+
+| ID | Domain | Decision | Source of truth (target) | Notes |
+|----|--------|----------|--------------------------|-------|
+| D-INV | Inventory | A.N engine + re-wire KEMIT UI gradually | A.N StoragePort / InventoryService / stock atomic APIs | KEMIT screens remain until INV-UI cutover packages |
+| D-CUSTODY | Custody / cash / stations | Keep KEMIT operational implementation | KEMIT CustodyDB flows | Do not force early SQL migrate of custody |
+| D-AUTH | Login / session | **Target = A.N-style auth** (not Firebase as final) | A.N user/password/session (TokenService path) | Current firebase-session remains interim until G-series auth packages |
+
+## Explicit non-goals of this document package
+- Does not activate A.N login UI yet
+- Does not disable Firebase login yet
+- Does not switch Inventory.tsx off CustodyDB yet
+
+## Implementation order (after this freeze)
+1. **G-series:** introduce A.N login path behind flag; dual-run; then cut Firebase login
+2. **INV-UI series:** read then write inventory via A.N; then drop CustodyDB for stock
+3. Custody stays KEMIT unless a later explicit decision reverses D-CUSTODY
+
+## Canonical statements
+1. Inventory business rules and stock posting target the A.N engine.
+2. Custody remains KEMIT-first.
+3. Final login experience must match A.N ERP (server-side session/password model), not remain Firebase-only permanently.
+```
+
+## STEP 3b — PATCH `docs/MERGE_STATUS.md`
+
+### B1 — Add phase row in the phases table:
+```markdown
+| DEC1 | Approved decisions freeze | DONE | docs/MERGE_DECISIONS.md — INV=A.N engine, CUSTODY=KEMIT, AUTH=A.N target |
+```
+
+### B2 — Append under Canonical rules:
+```markdown
+14. **DECISIONS-1:** Inventory target engine = A.N; Custody stays KEMIT; **Login target = A.N-style auth** (Firebase is interim only until G-series cutover).
+15. See `docs/MERGE_DECISIONS.md` for the binding decision matrix.
+```
+
+### B3 — Update rule 1 carefully (replace the old "One login path" firebase-only wording) with:
+
+```markdown
+1. **Login (interim vs target):** Interim operational path remains `/api/auth/verify-credentials` (Firebase) so the app stays usable. **Target login is A.N-style auth** per `docs/MERGE_DECISIONS.md`. Do not remove Firebase until a dedicated G-series package passes.
+```
+
+## STEP 3c — PATCH `src/lib/anEntityMap.ts` (auth-session row only)
+Update the `auth-session` row notes to reflect target A.N login:
+
+- `status`: keep `kemit-only` **or** change to `deferred` with notes that target is A.N (preferred: status stays `kemit-only` for operational now, notes updated).
+
+Set:
+```typescript
+    notesAr: 'التشغيل الآن Firebase؛ الهدف المعتمد دخول بأسلوب A.N (حزم G لاحقًا)',
+    notesEn: 'Operational Firebase now; approved target is A.N-style login (G-series later)',
+```
+
+## STEP 3d — PATCH `src/lib/anApi.ts` (optional catalog note — skip if no static doc route)
+No new HTTP route required. If you prefer discovery, add nothing.
+
+## STEP 3e — Create `scripts/verifyAnDocDecisions1.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const decPath = path.join(root, 'docs/MERGE_DECISIONS.md');
+const statusPath = path.join(root, 'docs/MERGE_STATUS.md');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+const mapPath = path.join(root, 'src/lib/anEntityMap.ts');
+
+check('S1 MERGE_DECISIONS.md exists', fs.existsSync(decPath));
+const dec = fs.readFileSync(decPath, 'utf8');
+check('S2 D-INV present', dec.includes('D-INV'));
+check('S3 D-CUSTODY present', dec.includes('D-CUSTODY'));
+check('S4 D-AUTH present', dec.includes('D-AUTH'));
+check('S5 A.N engine inventory', /A\.N engine|محرك/.test(dec) || dec.includes('A.N'));
+check('S6 custody KEMIT', /KEMIT/i.test(dec) && /CUSTODY|Custody|عهدة/i.test(dec));
+check('S7 auth target A.N', /A\.N-style auth|دخول بأسلوب A\.N|TokenService/i.test(dec));
+check('S8 MERGE_STATUS DEC1 or DECISIONS', fs.readFileSync(statusPath, 'utf8').includes('DEC1') || fs.readFileSync(statusPath, 'utf8').includes('DECISIONS-1'));
+check('S9 Login.tsx still verify-credentials', login.includes('/api/auth/verify-credentials'));
+check('S10 no cutoverApproved true in decisions', !dec.includes('cutoverApproved: true'));
+check('S11 implementation order G-series', /G-series|G series|حزم G/i.test(dec));
+check('S12 entity map notes updated', fs.existsSync(mapPath) && /A\.N-style login|أسلوب A\.N/i.test(fs.readFileSync(mapPath, 'utf8')));
+check('S13 decisions file says APPROVED', /APPROVED/i.test(dec));
+check('S14 Firebase interim mentioned', /interim|مؤقت|Firebase/i.test(dec));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8
+```
+npx tsc --noEmit
+npm run build
+```
+
+## STEP 9
+```
+npx tsx scripts/verifyAnDocDecisions1.ts
+```
+Expect: Passed: 14 | Failed: 0
+
+## STEP 10
+```
+npx tsx scripts/verifyAnShadowD1.ts
+```
+(or skip if slow; Login must still be CF path)
+
+## COMMIT NOTE
+```
+docs(dec1): freeze approved decisions — INV=A.N, CUSTODY=KEMIT, AUTH=A.N target
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnDocDecisions1: Passed: N | Failed: N
+Login unchanged: YES
+Status: DONE | package: AN-DOC-DECISIONS-1
+===========================
+```
