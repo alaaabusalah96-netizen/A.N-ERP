@@ -1,0 +1,338 @@
+# AN-AUTH-G2 — A.N credential verify + token issue (flag-gated) (LEAN)
+# Adds POST /api/an/auth/login using an-core User + argon2 + TokenService.
+# Requires AN_ENABLE_AN_LOGIN=1. Does NOT change Login.tsx (Firebase remains UI path).
+# Does NOT remove /api/auth/verify-credentials.
+
+## HARD RULES
+1. If AN_ENABLE_AN_LOGIN is not 1/true → HTTP 403, no password check.
+2. Login.tsx must still use verify-credentials only.
+3. Never log password. Never return passwordHash.
+4. JWT_SECRET required when flag on; else 503 with clear code.
+5. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- G1 login-target route exists.
+- TokenService, getUserByUsername on StoragePort, argon2 available (platformAdminBootstrap uses it).
+
+## STEP 3 — Create `src/lib/anAuthLogin.ts`
+
+```typescript
+/**
+ * AN-AUTH-G2 — server-side A.N-style password verify + access/refresh issue.
+ */
+import argon2 from 'argon2';
+import crypto from 'crypto';
+import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import { TokenService } from '../an-core/auth/TokenService';
+import { resolveAnLoginFlag } from './anAuthLoginTarget';
+
+export interface AnLoginBody {
+  username?: string;
+  password?: string;
+  tenantId?: string;
+}
+
+export interface AnLoginOk {
+  ok: true;
+  plane: 'an-auth-g2';
+  user: {
+    id: string;
+    username: string;
+    fullName: string;
+    role: string;
+    tenantId: string;
+    requiresPasswordChange?: boolean;
+  };
+  accessToken: string;
+  refreshToken: string;
+  sessionId: string;
+  familyId: string;
+  tokenType: 'Bearer';
+  expiresInSec: number;
+}
+
+export interface AnLoginErr {
+  ok: false;
+  plane: 'an-auth-g2';
+  code: string;
+  message: string;
+  messageAr: string;
+  httpStatus: number;
+}
+
+export async function anStyleLogin(
+  router: StorageRouter,
+  body: AnLoginBody,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<AnLoginOk | AnLoginErr> {
+  if (!resolveAnLoginFlag(env)) {
+    return {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'an_login_disabled',
+      message: 'AN_ENABLE_AN_LOGIN is not enabled',
+      messageAr: 'مسار دخول A.N غير مفعّل (AN_ENABLE_AN_LOGIN)',
+      httpStatus: 403,
+    };
+  }
+
+  if (!env.JWT_SECRET || !String(env.JWT_SECRET).trim()) {
+    return {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'jwt_secret_missing',
+      message: 'JWT_SECRET is required for A.N login',
+      messageAr: 'JWT_SECRET مطلوب لدخول A.N',
+      httpStatus: 503,
+    };
+  }
+
+  const username = String(body.username || '').trim();
+  const password = String(body.password || '');
+  const tenantId = String(body.tenantId || 'default').trim() || 'default';
+
+  if (!username || !password) {
+    return {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'missing_credentials',
+      message: 'username and password required',
+      messageAr: 'اسم المستخدم وكلمة المرور مطلوبان',
+      httpStatus: 400,
+    };
+  }
+
+  const adapter = router.getPrimaryAdapter();
+  let userRes;
+  try {
+    userRes = await adapter.getUserByUsername(tenantId, username);
+  } catch (e: any) {
+    return {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'storage_error',
+      message: (e?.message || 'storage_error').slice(0, 160),
+      messageAr: 'فشل قراءة المستخدم من التخزين',
+      httpStatus: 500,
+    };
+  }
+
+  if (!userRes?.success || !userRes.data) {
+    return {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'invalid_credentials',
+      message: 'Invalid username or password',
+      messageAr: 'اسم المستخدم أو كلمة المرور غير صحيحة',
+      httpStatus: 401,
+    };
+  }
+
+  const user = userRes.data;
+  if (user.status === 'INACTIVE') {
+    return {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'user_inactive',
+      message: 'User is inactive',
+      messageAr: 'المستخدم غير نشط',
+      httpStatus: 403,
+    };
+  }
+
+  const hash = user.passwordHash || '';
+  if (!hash) {
+    return {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'password_not_set',
+      message: 'User has no password hash',
+      messageAr: 'لا توجد كلمة مرور مخزّنة لهذا المستخدم',
+      httpStatus: 401,
+    };
+  }
+
+  let match = false;
+  try {
+    match = await argon2.verify(hash, password);
+  } catch {
+    match = false;
+  }
+  if (!match) {
+    return {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'invalid_credentials',
+      message: 'Invalid username or password',
+      messageAr: 'اسم المستخدم أو كلمة المرور غير صحيحة',
+      httpStatus: 401,
+    };
+  }
+
+  const tokens = new TokenService(adapter);
+  const sessionId = `sess-${crypto.randomUUID()}`;
+  let familyId: string;
+  let refreshToken: string;
+  try {
+    const fam = await tokens.createRefreshTokenFamily(user.id, tenantId, sessionId);
+    familyId = fam.familyId;
+    refreshToken = fam.refreshToken;
+  } catch (e: any) {
+    return {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'token_family_failed',
+      message: (e?.message || 'token_family_failed').slice(0, 160),
+      messageAr: 'فشل إنشاء عائلة التوكن',
+      httpStatus: 500,
+    };
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = tokens.generateAccessToken({
+      userId: user.id,
+      tenantId: user.tenantId || tenantId,
+      role: user.role || 'user',
+      sessionId,
+      familyId,
+    });
+  } catch (e: any) {
+    return {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'access_token_failed',
+      message: (e?.message || 'access_token_failed').slice(0, 160),
+      messageAr: 'فشل إصدار توكن الوصول',
+      httpStatus: 500,
+    };
+  }
+
+  return {
+    ok: true,
+    plane: 'an-auth-g2',
+    user: {
+      id: user.id,
+      username: user.username,
+      fullName: user.fullName || user.username,
+      role: user.role,
+      tenantId: user.tenantId || tenantId,
+      requiresPasswordChange: !!user.requiresPasswordChange,
+    },
+    accessToken,
+    refreshToken,
+    sessionId,
+    familyId,
+    tokenType: 'Bearer',
+    expiresInSec: 15 * 60,
+  };
+}
+```
+
+Verify `createRefreshTokenFamily` signature in TokenService — if argument order differs, match the real method:
+
+```typescript
+// From TokenService — adjust call to exact signature:
+public async createRefreshTokenFamily(
+  userId: string,
+  tenantId: string,
+  sessionId: string,
+): Promise<{ familyId: string; refreshToken: string }>
+```
+
+If the file uses different parameter order, fix the call only (do not invent new TokenService API).
+
+## STEP 3b — PATCH `server.ts`
+```javascript
+    app.post("/api/an/auth/login", async (req: any, res: any) => {
+      try {
+        const { anStyleLogin } = await import("./src/lib/anAuthLogin");
+        const result = await anStyleLogin(anStorageRouter, {
+          username: req.body?.username,
+          password: req.body?.password,
+          tenantId: req.body?.tenantId,
+        });
+        if (!result.ok) {
+          return res.status(result.httpStatus).json(result);
+        }
+        return res.status(200).json(result);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+console.log include `auth/login`.
+
+## STEP 3c — `anApi.ts`
+```typescript
+  {
+    method: 'POST',
+    path: '/api/an/auth/login',
+    phase: 'G2',
+    purpose: 'A.N-style password login (requires AN_ENABLE_AN_LOGIN=1); UI still Firebase',
+  },
+```
+
+## STEP 3d — `.env.example`
+```
+AN_ENABLE_AN_LOGIN=0
+JWT_SECRET=
+```
+
+## STEP 3e — `docs/MERGE_STATUS.md`
+```markdown
+| G2 | A.N credential login API | DONE | POST /api/an/auth/login gated by AN_ENABLE_AN_LOGIN; Login.tsx still Firebase |
+```
+
+```markdown
+17. **AUTH-G2:** A.N login API exists behind AN_ENABLE_AN_LOGIN. Product UI login remains Firebase until G3+.
+```
+
+## STEP 3f — Update G1 status nextPackage note in `anAuthLoginTarget.ts` optional: nextPackage `'G3'`.
+
+## STEP 3g — `scripts/verifyAnAuthG2.ts`
+14 checks:
+- anAuthLogin.ts exists
+- anStyleLogin
+- argon2.verify usage
+- TokenService import
+- AN_ENABLE_AN_LOGIN gate
+- route POST auth/login
+- catalog
+- Login.tsx still verify-credentials
+- verify-credentials still on server
+- JWT_SECRET handling
+- no passwordHash in success user payload fields in source (`passwordHash` must not appear in returned user object builder)
+- MERGE G2
+- G1 login-target still present
+- cutover not approved in module
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnAuthG2.ts
+npx tsx scripts/verifyAnAuthG1.ts
+```
+
+## OPERATOR (manual test later)
+```
+AN_ENABLE_AN_LOGIN=1
+JWT_SECRET=long-random
+# User must exist on A.N storage with argon2 passwordHash (e.g. platform admin bootstrap)
+curl -s -X POST .../api/an/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"...","password":"...","tenantId":"default"}'
+```
+
+## COMMIT NOTE
+```
+feat(g2): gated A.N-style password login API (UI still Firebase)
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnAuthG2: Passed: N | Failed: N
+Login.tsx Firebase path: YES
+Status: DONE | package: AN-AUTH-G2
+===========================
+```

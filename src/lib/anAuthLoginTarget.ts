@@ -22,7 +22,7 @@ export interface AnLoginTargetStatus {
     platformAdminBootstrapPresent: boolean;
     permissionMatrixPresent: boolean;
   };
-  nextPackage: 'G2';
+  nextPackage: 'G2' | 'G3';
   noteEn: string;
   noteAr: string;
   cutoverApproved: false;
@@ -63,7 +63,7 @@ export function buildAnLoginTargetStatus(
       platformAdminBootstrapPresent,
       permissionMatrixPresent,
     },
-    nextPackage: 'G2',
+    nextPackage: 'G3',
     noteEn:
       'G1 status only. Firebase login remains operational. G2 will add A.N credential verify endpoint behind flags.',
     noteAr:

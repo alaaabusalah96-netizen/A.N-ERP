@@ -140,6 +140,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'G1',
     purpose: 'A.N login target status (interim Firebase still operational)',
   },
+  {
+    method: 'POST',
+    path: '/api/an/auth/login',
+    phase: 'G2',
+    purpose: 'A.N-style password login (requires AN_ENABLE_AN_LOGIN=1); UI still Firebase',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];

@@ -3306,7 +3306,23 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses + migrate/inventory/items + migrate/inventory/balances + migrate/accounting/accounts + auth/login-target");
+    app.post("/api/an/auth/login", async (req: any, res: any) => {
+      try {
+        const { anStyleLogin } = await import("./src/lib/anAuthLogin");
+        const result = await anStyleLogin(anStorageRouter, {
+          username: req.body?.username,
+          password: req.body?.password,
+          tenantId: req.body?.tenantId,
+        });
+        if (!result.ok) {
+          return res.status(result.httpStatus).json(result);
+        }
+        return res.status(200).json(result);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses + migrate/inventory/items + migrate/inventory/balances + migrate/accounting/accounts + auth/login-target + auth/login");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }
