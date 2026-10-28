@@ -4,9 +4,16 @@
  * Canonical rule: one login path at a time per deployment.
  * Default = CustodyFlow Firebase session (/api/auth/verify-credentials + customToken).
  * an-jwt (A.N TokenService) is opt-in only when AN_ENABLE_AN_JWT=1 AND company.auth_driver=an-jwt.
+ * DEC1/G1: Product **target** login is A.N-style (session/password/JWT via an-core).
+ * Interim operational path remains firebase-session until G-series cutover.
+ * Flag AN_ENABLE_AN_LOGIN marks program intent; it does not alone switch the UI in G1.
  */
 import type { AuthDriver } from './anBridge';
 import { getCompanyBackendSettings } from './anBridge';
+
+export function getLoginTargetLabel(): 'an-style-session' {
+  return 'an-style-session';
+}
 
 export type AuthPathId = 'firebase-session' | 'an-jwt';
 

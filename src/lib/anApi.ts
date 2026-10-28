@@ -134,6 +134,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'F5',
     purpose: 'Gated chart-of-accounts migrate (AN_MIGRATE_WRITES=1)',
   },
+  {
+    method: 'GET',
+    path: '/api/an/auth/login-target',
+    phase: 'G1',
+    purpose: 'A.N login target status (interim Firebase still operational)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];

@@ -37,6 +37,7 @@
 | F4 | Opening balances write migrate (gated) | DONE | POST /api/an/migrate/inventory/balances via RECEIPT; UI unchanged |
 | F5 | COA accounts write migrate (gated) | DONE | POST /api/an/migrate/accounting/accounts; journals+UI later |
 | DEC1 | Approved decisions freeze | DONE | docs/MERGE_DECISIONS.md — INV=A.N engine, CUSTODY=KEMIT, AUTH=A.N target |
+| G1 | A.N login target status | DONE | GET /api/an/auth/login-target — target=an-style; interim=firebase |
 
 ## Canonical rules (do not regress)
 
@@ -55,6 +56,7 @@
 13. **MIGRATE-WRITE-F4:** Opening stock only through atomic RECEIPT. Re-run is idempotent when qty already > 0.
 14. **DECISIONS-1:** Inventory target engine = A.N; Custody stays KEMIT; **Login target = A.N-style auth** (Firebase is interim only until G-series cutover).
 15. See `docs/MERGE_DECISIONS.md` for the binding decision matrix.
+16. **AUTH-G1:** Target login is A.N-style per MERGE_DECISIONS. Interim path remains Firebase until G2+ cutover packages.
 
 ## Verify
 

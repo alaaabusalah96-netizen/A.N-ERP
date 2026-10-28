@@ -1,0 +1,216 @@
+# AN-AUTH-G1 — A.N login target path (flag + status API) (LEAN)
+# After DEC1: target login = A.N-style. G1 exposes policy/status only.
+# Does NOT switch Login.tsx. Does NOT remove Firebase. Does NOT issue AN tokens yet (G2).
+
+## HARD RULES
+1. Login.tsx must still call `/api/auth/verify-credentials`.
+2. Do not delete or disable Firebase routes.
+3. `AN_ENABLE_AN_LOGIN=1` only **signals readiness intent** in G1; it must NOT force UI to A.N login alone.
+4. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- `docs/MERGE_DECISIONS.md` has D-AUTH.
+- `src/an-core/auth/TokenService.ts` exists.
+- `src/lib/authPolicy.ts` exists.
+
+## STEP 3 — Create `src/lib/anAuthLoginTarget.ts`
+
+```typescript
+/**
+ * AN-AUTH-G1 — describe A.N login target vs interim Firebase path.
+ */
+import fs from 'fs';
+import path from 'path';
+import { resolveAuthPolicyServer, type AuthPolicy } from './authPolicy';
+
+export interface AnLoginTargetStatus {
+  ok: boolean;
+  plane: 'an-auth-g1';
+  /** Approved product target */
+  target: 'an-style-session';
+  /** What the live app uses today */
+  interimOperational: 'firebase-session';
+  /** Env flag: intent to build/enable A.N login series */
+  anLoginFlag: boolean;
+  /** Legacy JWT flag from M3 */
+  anJwtFlag: boolean;
+  interimAuth: AuthPolicy;
+  capabilities: {
+    tokenServicePresent: boolean;
+    platformAdminBootstrapPresent: boolean;
+    permissionMatrixPresent: boolean;
+  };
+  nextPackage: 'G2';
+  noteEn: string;
+  noteAr: string;
+  cutoverApproved: false;
+}
+
+export function resolveAnLoginFlag(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.AN_ENABLE_AN_LOGIN === '1' || env.AN_ENABLE_AN_LOGIN === 'true';
+}
+
+export function buildAnLoginTargetStatus(
+  env: NodeJS.ProcessEnv = process.env,
+  rootDir: string = process.cwd()
+): AnLoginTargetStatus {
+  const anLoginFlag = resolveAnLoginFlag(env);
+  const anJwtFlag = env.AN_ENABLE_AN_JWT === '1' || env.AN_ENABLE_AN_JWT === 'true';
+  const interimAuth = resolveAuthPolicyServer(null, env);
+
+  const tokenServicePresent = fs.existsSync(
+    path.join(rootDir, 'src/an-core/auth/TokenService.ts')
+  );
+  const platformAdminBootstrapPresent = fs.existsSync(
+    path.join(rootDir, 'src/an-core/auth/platformAdminBootstrap.ts')
+  );
+  const permissionMatrixPresent = fs.existsSync(
+    path.join(rootDir, 'src/an-core/auth/PermissionMatrix.ts')
+  );
+
+  return {
+    ok: true,
+    plane: 'an-auth-g1',
+    target: 'an-style-session',
+    interimOperational: 'firebase-session',
+    anLoginFlag,
+    anJwtFlag,
+    interimAuth,
+    capabilities: {
+      tokenServicePresent,
+      platformAdminBootstrapPresent,
+      permissionMatrixPresent,
+    },
+    nextPackage: 'G2',
+    noteEn:
+      'G1 status only. Firebase login remains operational. G2 will add A.N credential verify endpoint behind flags.',
+    noteAr:
+      'G1 حالة فقط. دخول Firebase ما زال تشغيليًا. G2 يضيف مسار تحقق بيانات A.N خلف الأعلام.',
+    cutoverApproved: false,
+  };
+}
+```
+
+Note: if bundling `fs` in client is a risk, keep this module **server-only** (imported only from `server.ts`). Do not import it from React components.
+
+## STEP 3b — PATCH `src/lib/authPolicy.ts`
+Extend documentation at top:
+
+```typescript
+ * DEC1/G1: Product **target** login is A.N-style (session/password/JWT via an-core).
+ * Interim operational path remains firebase-session until G-series cutover.
+ * Flag AN_ENABLE_AN_LOGIN marks program intent; it does not alone switch the UI in G1.
+```
+
+Optionally export:
+```typescript
+export function getLoginTargetLabel(): 'an-style-session' {
+  return 'an-style-session';
+}
+```
+
+## STEP 3c — PATCH `server.ts`
+Inside A.N bridge:
+```javascript
+    app.get("/api/an/auth/login-target", async (_req: any, res: any) => {
+      try {
+        const { buildAnLoginTargetStatus } = await import("./src/lib/anAuthLoginTarget");
+        res.json(buildAnLoginTargetStatus(process.env, process.cwd()));
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+console.log include `auth/login-target`.
+
+## STEP 3d — `anApi.ts` catalog
+```typescript
+  {
+    method: 'GET',
+    path: '/api/an/auth/login-target',
+    phase: 'G1',
+    purpose: 'A.N login target status (interim Firebase still operational)',
+  },
+```
+
+## STEP 3e — `.env.example`
+```
+# G1: intent flag for A.N login program (does not cut Firebase by itself)
+AN_ENABLE_AN_LOGIN=0
+```
+
+## STEP 3f — `docs/MERGE_STATUS.md`
+```markdown
+| G1 | A.N login target status | DONE | GET /api/an/auth/login-target — target=an-style; interim=firebase |
+```
+
+```markdown
+16. **AUTH-G1:** Target login is A.N-style per MERGE_DECISIONS. Interim path remains Firebase until G2+ cutover packages.
+```
+
+## STEP 3g — `scripts/verifyAnAuthG1.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const mod = path.join(root, 'src/lib/anAuthLoginTarget.ts');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const api = fs.readFileSync(path.join(root, 'src/lib/anApi.ts'), 'utf8');
+const login = fs.readFileSync(path.join(root, 'src/pages/Login.tsx'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+const dec = fs.readFileSync(path.join(root, 'docs/MERGE_DECISIONS.md'), 'utf8');
+
+check('S1 anAuthLoginTarget exists', fs.existsSync(mod));
+const body = fs.readFileSync(mod, 'utf8');
+check('S2 buildAnLoginTargetStatus', body.includes('buildAnLoginTargetStatus'));
+check('S3 target an-style-session', body.includes('an-style-session'));
+check('S4 interim firebase-session', body.includes('firebase-session'));
+check('S5 AN_ENABLE_AN_LOGIN flag helper', body.includes('AN_ENABLE_AN_LOGIN'));
+check('S6 server route login-target', server.includes('/api/an/auth/login-target'));
+check('S7 catalog entry', api.includes('/api/an/auth/login-target'));
+check('S8 Login still CF path', login.includes('/api/auth/verify-credentials'));
+check('S9 MERGE_STATUS G1', statusDoc.includes('G1'));
+check('S10 decisions D-AUTH still present', dec.includes('D-AUTH'));
+check('S11 cutoverApproved false in module', body.includes('cutoverApproved: false'));
+check('S12 TokenService still on disk', fs.existsSync(path.join(root, 'src/an-core/auth/TokenService.ts')));
+check('S13 no Login.tsx import of anAuthLoginTarget', !login.includes('anAuthLoginTarget'));
+check('S14 verify-credentials route still on server', server.includes('/api/auth/verify-credentials'));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnAuthG1.ts
+npx tsx scripts/verifyAnDocDecisions1.ts
+```
+
+## COMMIT NOTE
+```
+feat(g1): A.N login target status API (Firebase interim unchanged)
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnAuthG1: Passed: N | Failed: N
+Login unchanged: YES
+Status: DONE | package: AN-AUTH-G1
+===========================
+```
