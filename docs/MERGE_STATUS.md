@@ -34,6 +34,7 @@
 | F1 | Inventory migrate dry-run | DONE | GET /api/an/migrate/inventory/dry-run — report only, writesPerformed=false |
 | F2 | Warehouse write migrate (gated) | DONE | POST /api/an/migrate/inventory/warehouses requires AN_MIGRATE_WRITES=1; UI unchanged |
 | F3 | Stock items write migrate (gated) | DONE | POST /api/an/migrate/inventory/items; balances+UI later |
+| F4 | Opening balances write migrate (gated) | DONE | POST /api/an/migrate/inventory/balances via RECEIPT; UI unchanged |
 
 ## Canonical rules (do not regress)
 
@@ -49,6 +50,7 @@
 10. **GATE-E1:** Run `npm run verify:an-plane` after plane packages. Does not authorize migration or cutover.
 11. **MIGRATE-DRY-F1:** Full merge continues. F1 is report-only. Write migrate requires F2+ and AN_MIGRATE_WRITES=1.
 12. **MIGRATE-WRITE-F2:** Warehouse SQL upsert only when AN_MIGRATE_WRITES=1. Stock balances and UI cutover are later packages.
+13. **MIGRATE-WRITE-F4:** Opening stock only through atomic RECEIPT. Re-run is idempotent when qty already > 0.
 
 ## Verify
 

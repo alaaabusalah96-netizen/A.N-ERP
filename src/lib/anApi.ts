@@ -122,6 +122,12 @@ export const AN_ROUTE_CATALOG = [
     phase: 'F3',
     purpose: 'Gated stock item migrate into A.N (AN_MIGRATE_WRITES=1)',
   },
+  {
+    method: 'POST',
+    path: '/api/an/migrate/inventory/balances',
+    phase: 'F4',
+    purpose: 'Gated opening stock migrate via RECEIPT (AN_MIGRATE_WRITES=1)',
+  },
 ] as const;
 
 export type AnRouteEntry = (typeof AN_ROUTE_CATALOG)[number];
