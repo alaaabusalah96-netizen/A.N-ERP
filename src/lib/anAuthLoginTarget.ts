@@ -22,7 +22,8 @@ export interface AnLoginTargetStatus {
     platformAdminBootstrapPresent: boolean;
     permissionMatrixPresent: boolean;
   };
-  nextPackage: 'G2' | 'G3';
+  allowFirebaseLogin: boolean; // AN_ALLOW_FIREBASE_LOGIN=1|true
+  nextPackage: 'G2' | 'G3' | 'G4' | 'G5';
   noteEn: string;
   noteAr: string;
   cutoverApproved: false;
@@ -38,6 +39,8 @@ export function buildAnLoginTargetStatus(
 ): AnLoginTargetStatus {
   const anLoginFlag = resolveAnLoginFlag(env);
   const anJwtFlag = env.AN_ENABLE_AN_JWT === '1' || env.AN_ENABLE_AN_JWT === 'true';
+  const allowFirebaseLogin =
+    env.AN_ALLOW_FIREBASE_LOGIN === '1' || env.AN_ALLOW_FIREBASE_LOGIN === 'true';
   const interimAuth = resolveAuthPolicyServer(null, env);
 
   const tokenServicePresent = fs.existsSync(
@@ -57,17 +60,18 @@ export function buildAnLoginTargetStatus(
     interimOperational: 'firebase-session',
     anLoginFlag,
     anJwtFlag,
+    allowFirebaseLogin,
     interimAuth,
     capabilities: {
       tokenServicePresent,
       platformAdminBootstrapPresent,
       permissionMatrixPresent,
     },
-    nextPackage: 'G3',
+    nextPackage: 'G5',
     noteEn:
-      'G1 status only. Firebase login remains operational. G2 will add A.N credential verify endpoint behind flags.',
+      'G4: Prefer A.N login UI when AN_ENABLE_AN_LOGIN=1; Firebase login UI requires AN_ALLOW_FIREBASE_LOGIN=1. Server Firebase routes remain.',
     noteAr:
-      'G1 حالة فقط. دخول Firebase ما زال تشغيليًا. G2 يضيف مسار تحقق بيانات A.N خلف الأعلام.',
+      'G4: تفضيل واجهة دخول A.N عند تفعيل AN_ENABLE_AN_LOGIN؛ يتطلب إظهار خيار Firebase تفعيل AN_ALLOW_FIREBASE_LOGIN=1. مسارات Firebase على الخادم باقية.',
     cutoverApproved: false,
   };
 }

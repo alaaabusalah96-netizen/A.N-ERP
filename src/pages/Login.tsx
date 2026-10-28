@@ -26,6 +26,7 @@ export default function Login({
   const [error, setError] = useState<string | null>(null);
   const [loginMode, setLoginMode] = useState<'firebase' | 'an'>('firebase');
   const [anLoginAvailable, setAnLoginAvailable] = useState(false);
+  const [firebaseEscapeAllowed, setFirebaseEscapeAllowed] = useState(false);
   const [tenantId, setTenantId] = useState('default');
 
   React.useEffect(() => {
@@ -37,6 +38,8 @@ export default function Login({
         if (!cancelled && data?.anLoginFlag === true) {
           setAnLoginAvailable(true);
           setLoginMode('an');
+          // G4: hide Firebase toggle unless allowFirebaseLogin
+          setFirebaseEscapeAllowed(data?.allowFirebaseLogin === true);
         }
       } catch {
         /* keep firebase-only */
@@ -206,8 +209,8 @@ export default function Login({
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white dark:bg-slate-800 py-8 px-4 shadow-xl sm:rounded-2xl sm:px-10 border border-slate-200/80 dark:border-slate-700/80">
-          {/* Dual path mode toggle when anLoginAvailable */}
-          {anLoginAvailable && (
+          {/* Dual path mode toggle when anLoginAvailable and firebaseEscapeAllowed */}
+          {anLoginAvailable && firebaseEscapeAllowed && (
             <div className="mb-6 flex rounded-lg p-1 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-medium">
               <button
                 type="button"

@@ -40,6 +40,7 @@
 | G1 | A.N login target status | DONE | GET /api/an/auth/login-target — target=an-style; interim=firebase |
 | G2 | A.N credential login API | DONE | POST /api/an/auth/login gated by AN_ENABLE_AN_LOGIN; Login.tsx still Firebase |
 | G3 | Login UI dual path | DONE | Login.tsx uses A.N POST when anLoginFlag; Firebase path retained |
+| G4 | Prefer A.N login UI | DONE | A.N-only UI when AN_ENABLE_AN_LOGIN; Firebase toggle needs AN_ALLOW_FIREBASE_LOGIN |
 
 ## Canonical rules (do not regress)
 
@@ -61,6 +62,7 @@
 16. **AUTH-G1:** Target login is A.N-style per MERGE_DECISIONS. Interim path remains Firebase until G2+ cutover packages.
 17. **AUTH-G2:** A.N login API exists behind AN_ENABLE_AN_LOGIN. Product UI login remains Firebase until G3+.
 18. **AUTH-G3:** UI may call A.N login when AN_ENABLE_AN_LOGIN is on (login-target.anLoginFlag). Firebase path remains available.
+19. **AUTH-G4:** With AN_ENABLE_AN_LOGIN, UI prefers A.N-only. Firebase login UI requires AN_ALLOW_FIREBASE_LOGIN=1. Server Firebase route remains.
 
 ## Verify
 

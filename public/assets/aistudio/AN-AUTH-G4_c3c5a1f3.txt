@@ -1,0 +1,114 @@
+# AN-AUTH-G4 — Prefer A.N login UI; Firebase only with escape flag (LEAN)
+# When AN_ENABLE_AN_LOGIN=1, Login UI defaults to A.N-only unless AN_ALLOW_FIREBASE_LOGIN=1.
+# Server Firebase routes stay. No cutoverApproved. Does not delete verify-credentials.
+
+## HARD RULES
+1. Server must still serve `/api/auth/verify-credentials`.
+2. If `AN_ENABLE_AN_LOGIN` is off → Login behavior stays Firebase-only (pre-G3).
+3. If `AN_ENABLE_AN_LOGIN` on and `AN_ALLOW_FIREBASE_LOGIN` off → UI shows **A.N only** (no Firebase toggle).
+4. If both on → dual toggle remains (G3 behavior).
+5. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- G3 Login has loginMode + anLoginFlag + both fetch paths.
+
+## STEP 3 — PATCH `src/lib/anAuthLoginTarget.ts`
+
+Add to status object:
+```typescript
+  allowFirebaseLogin: boolean; // AN_ALLOW_FIREBASE_LOGIN=1|true
+```
+
+In `buildAnLoginTargetStatus`:
+```typescript
+  const allowFirebaseLogin =
+    env.AN_ALLOW_FIREBASE_LOGIN === '1' || env.AN_ALLOW_FIREBASE_LOGIN === 'true';
+```
+Include `allowFirebaseLogin` in returned JSON.
+Update noteEn/noteAr to mention G4 prefer-A.N UI rule.
+Set `nextPackage: 'G5'`.
+
+## STEP 3b — PATCH `src/pages/Login.tsx`
+
+When processing login-target response:
+```typescript
+        if (!cancelled && data?.anLoginFlag === true) {
+          setAnLoginAvailable(true);
+          setLoginMode('an');
+          // G4: hide Firebase toggle unless allowFirebaseLogin
+          setFirebaseEscapeAllowed(data?.allowFirebaseLogin === true);
+        }
+```
+
+Add state:
+```typescript
+  const [firebaseEscapeAllowed, setFirebaseEscapeAllowed] = useState(false);
+```
+
+Toggle UI: show Firebase button **only if** `anLoginAvailable && firebaseEscapeAllowed`.
+
+If `anLoginAvailable && !firebaseEscapeAllowed`: force `loginMode` to `'an'` (useEffect or when setting available).
+
+## STEP 3c — `.env.example`
+```
+AN_ENABLE_AN_LOGIN=0
+AN_ALLOW_FIREBASE_LOGIN=0
+JWT_SECRET=
+```
+
+## STEP 3d — `docs/MERGE_STATUS.md`
+```markdown
+| G4 | Prefer A.N login UI | DONE | A.N-only UI when AN_ENABLE_AN_LOGIN; Firebase toggle needs AN_ALLOW_FIREBASE_LOGIN |
+```
+
+```markdown
+19. **AUTH-G4:** With AN_ENABLE_AN_LOGIN, UI prefers A.N-only. Firebase login UI requires AN_ALLOW_FIREBASE_LOGIN=1. Server Firebase route remains.
+```
+
+## STEP 3e — `scripts/verifyAnAuthG4.ts`
+14 checks:
+- allowFirebaseLogin in anAuthLoginTarget
+- AN_ALLOW_FIREBASE_LOGIN string
+- Login references allowFirebaseLogin or firebaseEscapeAllowed
+- Login still has verify-credentials
+- Login still has /api/an/auth/login
+- MERGE G4
+- .env.example mentions AN_ALLOW_FIREBASE_LOGIN if present
+- server verify-credentials
+- server an auth login
+- G3 dual paths still in Login source
+- cutover false
+- nextPackage G5 or notes G4
+- anLoginFlag still used
+- Login does not delete signInWithCustomToken branch
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnAuthG4.ts
+npx tsx scripts/verifyAnAuthG3.ts
+```
+
+## OPERATOR
+```
+# Production-like A.N login UX:
+AN_ENABLE_AN_LOGIN=1
+AN_ALLOW_FIREBASE_LOGIN=0
+JWT_SECRET=...
+
+# Emergency dual:
+AN_ALLOW_FIREBASE_LOGIN=1
+```
+
+## COMMIT NOTE
+```
+feat(g4): prefer A.N login UI; Firebase toggle behind escape flag
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnAuthG4: Passed: N | Failed: N
+Status: DONE | package: AN-AUTH-G4
+===========================
+```
