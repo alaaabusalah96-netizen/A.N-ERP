@@ -67,6 +67,8 @@ export function resolveCompanyStorageAdapter(
   options?: {
     loadStatus?: CompanyLoadResult['status'] | CompanyLoadResult;
     failClosed?: boolean;
+    /** Write paths: company config must be 'loaded' unless an explicit backend is present. */
+    requireLoaded?: boolean;
   }
 ): CompanyAdapterResolution {
   const failClosed =
@@ -97,8 +99,17 @@ export function resolveCompanyStorageAdapter(
     !!(merged.db_backend || merged.isolation_level || merged.connection_ref);
 
   if (!hasExplicit) {
-    if (loadStatus === 'error' && failClosed) {
-      throw new Error('ADAPTER_COMPANY_LOAD_FAILED');
+    // Gap (a): company config could not even be read (no admin db) -> unknown, not "shared".
+    if (failClosed && loadStatus === 'skipped') {
+      throw new Error(
+        'ADAPTER_COMPANY_CONFIG_UNAVAILABLE: company config cannot be read; refusing silent primary'
+      );
+    }
+    // Gap (b): write paths need a real company document (or an explicit backend).
+    if (options?.requireLoaded === true && loadStatus !== 'loaded') {
+      throw new Error(
+        'ADAPTER_COMPANY_NOT_LOADED: write path requires an existing company config; refusing silent primary'
+      );
     }
     const adapter = router.getPrimaryAdapter();
     const docMeta =

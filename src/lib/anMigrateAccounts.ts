@@ -53,6 +53,8 @@ export function mapKemitAccountToAn(raw: KemitAccountRaw, companyId: string): Ac
   };
 }
 
+import { rowIdempotencyKey } from './anMigrateIdempotency';
+
 export interface AccountMigrateResult {
   ok: boolean;
   plane: 'an-migrate-write-f5';
@@ -64,6 +66,9 @@ export interface AccountMigrateResult {
   inserted: number;
   skippedExisting: number;
   failed: number;
+  created: number;
+  skipped: number;
+  idempotencyKey?: string;
   errors: string[];
   detail: string;
   detailAr: string;
@@ -71,7 +76,7 @@ export interface AccountMigrateResult {
 
 export async function migrateAccountsToAn(
   router: StorageRouter,
-  opts: { companyId: string; rows: KemitAccountRaw[]; env?: NodeJS.ProcessEnv; adapter?: StoragePort }
+  opts: { companyId: string; rows: KemitAccountRaw[]; env?: NodeJS.ProcessEnv; adapter?: StoragePort; batchIdempotencyKey?: string }
 ): Promise<AccountMigrateResult> {
   const env = opts.env || process.env;
   const companyId = opts.companyId.trim() || 'default';
@@ -81,6 +86,7 @@ export async function migrateAccountsToAn(
     writesEnabled,
     cutoverApproved: false as const,
     companyId,
+    idempotencyKey: opts.batchIdempotencyKey,
   };
 
   if (!writesEnabled) {
@@ -92,6 +98,8 @@ export async function migrateAccountsToAn(
       inserted: 0,
       skippedExisting: 0,
       failed: 0,
+      created: 0,
+      skipped: 0,
       errors: ['AN_MIGRATE_WRITES not enabled'],
       detail: 'writes_disabled',
       detailAr: 'الكتابة معطّلة',
@@ -108,6 +116,8 @@ export async function migrateAccountsToAn(
       inserted: 0,
       skippedExisting: 0,
       failed: 0,
+      created: 0,
+      skipped: 0,
       errors: ['postgresql env not ready'],
       detail: plane.certifiedNote,
       detailAr: plane.errorAr || 'PostgreSQL غير جاهز',
@@ -141,10 +151,13 @@ export async function migrateAccountsToAn(
       continue;
     }
     try {
+      const key = opts.batchIdempotencyKey
+        ? rowIdempotencyKey(opts.batchIdempotencyKey, mapped.code)
+        : `migrate-acc-${mapped.code}`;
       const res = await adapter.saveAccount(
         companyId,
         mapped,
-        `migrate-acc-${mapped.code}`
+        key
       );
       if (res.success) {
         inserted++;
@@ -167,6 +180,8 @@ export async function migrateAccountsToAn(
     inserted,
     skippedExisting,
     failed,
+    created: inserted,
+    skipped: skippedExisting,
     errors: errors.slice(0, 20),
     detail: 'accounts_migrate_done',
     detailAr: 'انتهى ترحيل دليل الحسابات (إن وُجد)',

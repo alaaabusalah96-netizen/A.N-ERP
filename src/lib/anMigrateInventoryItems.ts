@@ -77,6 +77,8 @@ export function mapKemitProductToAn(
   };
 }
 
+import { rowIdempotencyKey } from './anMigrateIdempotency';
+
 export interface ItemMigrateResult {
   ok: boolean;
   plane: 'an-migrate-write-f3';
@@ -88,6 +90,9 @@ export interface ItemMigrateResult {
   inserted: number;
   skippedExisting: number;
   failed: number;
+  created: number;
+  skipped: number;
+  idempotencyKey?: string;
   errors: string[];
   detail: string;
   detailAr: string;
@@ -95,7 +100,7 @@ export interface ItemMigrateResult {
 
 export async function migrateStockItemsToAn(
   router: StorageRouter,
-  opts: { companyId: string; rows: KemitProductRaw[]; env?: NodeJS.ProcessEnv; adapter?: StoragePort }
+  opts: { companyId: string; rows: KemitProductRaw[]; env?: NodeJS.ProcessEnv; adapter?: StoragePort; batchIdempotencyKey?: string }
 ): Promise<ItemMigrateResult> {
   const env = opts.env || process.env;
   const companyId = opts.companyId.trim() || 'default';
@@ -105,6 +110,7 @@ export async function migrateStockItemsToAn(
     writesEnabled,
     cutoverApproved: false as const,
     companyId,
+    idempotencyKey: opts.batchIdempotencyKey,
   };
 
   if (!writesEnabled) {
@@ -116,6 +122,8 @@ export async function migrateStockItemsToAn(
       inserted: 0,
       skippedExisting: 0,
       failed: 0,
+      created: 0,
+      skipped: 0,
       errors: ['AN_MIGRATE_WRITES not enabled'],
       detail: 'writes_disabled',
       detailAr: 'الكتابة معطّلة — AN_MIGRATE_WRITES=1',
@@ -132,6 +140,8 @@ export async function migrateStockItemsToAn(
       inserted: 0,
       skippedExisting: 0,
       failed: 0,
+      created: 0,
+      skipped: 0,
       errors: ['postgresql env not ready'],
       detail: plane.certifiedNote,
       detailAr: plane.errorAr || 'PostgreSQL غير جاهز',
@@ -157,7 +167,10 @@ export async function migrateStockItemsToAn(
       continue;
     }
     try {
-      const res = await adapter.saveStockItem(companyId, mapped, `migrate-item-${mapped.id}`);
+      const key = opts.batchIdempotencyKey
+        ? rowIdempotencyKey(opts.batchIdempotencyKey, mapped.id)
+        : `migrate-item-${mapped.id}`;
+      const res = await adapter.saveStockItem(companyId, mapped, key);
       if (res.success) {
         inserted++;
         existingIds.add(mapped.id);
@@ -179,6 +192,8 @@ export async function migrateStockItemsToAn(
     inserted,
     skippedExisting,
     failed,
+    created: inserted,
+    skipped: skippedExisting,
     errors: errors.slice(0, 20),
     detail: 'stock_items_migrate_done',
     detailAr: 'انتهى ترحيل الأصناف (إن وُجدت)',

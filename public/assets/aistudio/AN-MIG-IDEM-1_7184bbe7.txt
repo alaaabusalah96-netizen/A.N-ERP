@@ -1,0 +1,154 @@
+# AN-MIG-IDEM-1 — Migrate batch idempotency key + safe replay (LEAN)
+# Evaluation #4: prevent duplicate corruption on migrate retry.
+# Warehouses/items already skip existing ids; strengthen with required Idempotency-Key
+# on write migrate POSTs and stable response fields (created/skipped/failed).
+# Balances use postStockDocumentAtomic idempotency — require key end-to-end.
+# Does NOT enable AN_MIGRATE_WRITES. Does NOT cut UI.
+
+## HARD RULES
+1. POST migrate warehouses/items/balances/accounts require header `Idempotency-Key` OR body.idempotencyKey (non-empty, max 128).
+2. Missing key → 400 `idempotency_key_required`.
+3. Do not remove existing per-row skip-if-exists behavior.
+4. Response must include: `idempotencyKey`, `created`, `skipped`, `failed` (numbers) when applicable.
+5. requireAnMigrateOperator + company scope + fail-closed remain first.
+6. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- ADP-RT1 DONE
+- migrate write modules exist
+- SEC-MIG1 + SCOPE + FC1 in place
+
+## STEP 3 — Create `src/lib/anMigrateIdempotency.ts`
+
+```typescript
+/**
+ * AN-MIG-IDEM-1 — batch idempotency key helpers for migrate writes.
+ */
+export function extractIdempotencyKey(req: {
+  headers?: Record<string, unknown>;
+  body?: any;
+}): string {
+  const h =
+    (req.headers?.['idempotency-key'] as string) ||
+    (req.headers?.['Idempotency-Key'] as string) ||
+    '';
+  const fromHeader = String(h || '').trim();
+  if (fromHeader) return fromHeader.slice(0, 128);
+  const fromBody = String(req.body?.idempotencyKey || '').trim();
+  return fromBody.slice(0, 128);
+}
+
+export function requireIdempotencyKey(key: string): {
+  ok: true;
+  key: string;
+} | {
+  ok: false;
+  status: 400;
+  code: string;
+  message: string;
+  messageAr: string;
+} {
+  if (!key) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'idempotency_key_required',
+      message: 'Idempotency-Key header or body.idempotencyKey required',
+      messageAr: 'مفتاح عدم التكرار مطلوب لإعادة المحاولة الآمنة',
+    };
+  }
+  return { ok: true, key };
+}
+
+/** Stable per-row key: batchKey + entity id */
+export function rowIdempotencyKey(batchKey: string, entityId: string): string {
+  return `${batchKey}:${entityId}`.slice(0, 160);
+}
+```
+
+## STEP 3b — Patch migrate write helpers (warehouses/items/accounts)
+
+Where `saveWarehouse` / save item uses a key, prefer:
+```typescript
+const key = rowIdempotencyKey(batchIdempotencyKey, mapped.id);
+```
+Pass `batchIdempotencyKey` from server into migrate functions as new optional/required arg.
+
+Example signature extension:
+```typescript
+export async function migrateWarehousesToAn(
+  router: StorageRouter,
+  opts: { companyId: string; rows: ...; adapter?: StoragePort; batchIdempotencyKey: string }
+)
+```
+
+Keep skip-if-exists; on skip increment `skipped`; on create `created`; on error `failed`.
+
+## STEP 3c — Patch balances migrate
+Ensure each opening balance post uses:
+`idempotencyKey = rowIdempotencyKey(batchKey, warehouseId + ':' + itemId)`  
+so replay does not double stock.
+
+## STEP 3d — `server.ts` each POST migrate handler after auth/scope/adapter:
+
+```javascript
+        const { extractIdempotencyKey, requireIdempotencyKey } = await import("./src/lib/anMigrateIdempotency");
+        const rawKey = extractIdempotencyKey(req);
+        const keyCheck = requireIdempotencyKey(rawKey);
+        if (!keyCheck.ok) {
+          return res.status(keyCheck.status).json({
+            ok: false,
+            code: keyCheck.code,
+            message: keyCheck.message,
+            messageAr: keyCheck.messageAr,
+          });
+        }
+```
+
+Pass `batchIdempotencyKey: keyCheck.key` into migrate* calls.
+Include `idempotencyKey: keyCheck.key` in JSON response.
+
+## STEP 3e — MERGE_STATUS
+```markdown
+| MIG-IDEM1 | Migrate batch idempotency | DONE | Idempotency-Key required on migrate POSTs; row keys stable for replay |
+```
+```markdown
+31. **MIG-IDEM-1:** Write migrate routes require Idempotency-Key; per-row keys prevent duplicate stock/master on retry.
+```
+
+## STEP 3f — `scripts/verifyAnMigIdem1.ts`
+14 checks:
+- anMigrateIdempotency.ts exists
+- extractIdempotencyKey / requireIdempotencyKey / rowIdempotencyKey
+- server includes idempotency_key_required
+- server extractIdempotencyKey or Idempotency-Key
+- warehouses POST path references batchIdempotencyKey or idempotency
+- items/balances/accounts similarly (count >= 3)
+- existingIds or skip still in write module
+- requireAnMigrateOperator still
+- assertUserCanAccessCompany still
+- adapter_company_load_failed still
+- MERGE MIG-IDEM
+- AN_MIGRATE_WRITES still gated
+- dry-run GET does not require idempotency key (optional: check dry-run handler lacks requireIdempotencyKey)
+- pilot receipt still has its own key if present
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnMigIdem1.ts
+npx tsx scripts/verifyAnAdapterRouteTest1.ts
+```
+
+## COMMIT NOTE
+```
+fix(mig-idem1): require idempotency key on migrate write POSTs
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnMigIdem1: Passed: N | Failed: N
+Status: DONE | package: AN-MIG-IDEM-1
+===========================
+```

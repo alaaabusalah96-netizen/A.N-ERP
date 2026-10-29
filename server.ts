@@ -3340,10 +3340,21 @@ async function startServer() {
             companyId,
             companyLike,
             bodyBackend,
-            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env), requireLoaded: true }
           );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const { extractIdempotencyKey, requireIdempotencyKey } = await import("./src/lib/anMigrateIdempotency");
+        const rawKey = extractIdempotencyKey(req);
+        const keyCheck: any = requireIdempotencyKey(rawKey);
+        if (!keyCheck.ok) {
+          return res.status(keyCheck.status).json({
+            ok: false,
+            code: keyCheck.code || "idempotency_key_required",
+            message: keyCheck.message,
+            messageAr: keyCheck.messageAr,
+          });
         }
         const { migrateWarehousesToAn } = await import("./src/lib/anMigrateInventoryWrite");
         let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
@@ -3374,10 +3385,12 @@ async function startServer() {
           companyId,
           rows: rows || [],
           adapter: resolved.adapter,
+          batchIdempotencyKey: keyCheck.key,
         });
         const status = result.writesEnabled ? 200 : 403;
         res.status(status).json({
           ...result,
+          idempotencyKey: keyCheck.key,
           adapterResolution: {
             source: resolved.source,
             adapterType: resolved.adapterType,
@@ -3422,10 +3435,21 @@ async function startServer() {
             companyId,
             companyLike,
             bodyBackend,
-            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env), requireLoaded: true }
           );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const { extractIdempotencyKey, requireIdempotencyKey } = await import("./src/lib/anMigrateIdempotency");
+        const rawKey = extractIdempotencyKey(req);
+        const keyCheck: any = requireIdempotencyKey(rawKey);
+        if (!keyCheck.ok) {
+          return res.status(keyCheck.status).json({
+            ok: false,
+            code: keyCheck.code || "idempotency_key_required",
+            message: keyCheck.message,
+            messageAr: keyCheck.messageAr,
+          });
         }
         const { migrateStockItemsToAn } = await import("./src/lib/anMigrateInventoryItems");
         let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
@@ -3451,9 +3475,11 @@ async function startServer() {
           companyId,
           rows: rows || [],
           adapter: resolved.adapter,
+          batchIdempotencyKey: keyCheck.key,
         });
         res.status(result.writesEnabled ? 200 : 403).json({
           ...result,
+          idempotencyKey: keyCheck.key,
           adapterResolution: {
             source: resolved.source,
             adapterType: resolved.adapterType,
@@ -3498,10 +3524,21 @@ async function startServer() {
             companyId,
             companyLike,
             bodyBackend,
-            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env), requireLoaded: true }
           );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const { extractIdempotencyKey, requireIdempotencyKey } = await import("./src/lib/anMigrateIdempotency");
+        const rawKey = extractIdempotencyKey(req);
+        const keyCheck: any = requireIdempotencyKey(rawKey);
+        if (!keyCheck.ok) {
+          return res.status(keyCheck.status).json({
+            ok: false,
+            code: keyCheck.code || "idempotency_key_required",
+            message: keyCheck.message,
+            messageAr: keyCheck.messageAr,
+          });
         }
         const { migrateOpeningBalancesToAn } = await import("./src/lib/anMigrateInventoryBalances");
         let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
@@ -3527,9 +3564,11 @@ async function startServer() {
           companyId,
           rows: rows || [],
           adapter: resolved.adapter,
+          batchIdempotencyKey: keyCheck.key,
         });
         res.status(result.writesEnabled ? 200 : 403).json({
           ...result,
+          idempotencyKey: keyCheck.key,
           adapterResolution: {
             source: resolved.source,
             adapterType: resolved.adapterType,
@@ -3574,10 +3613,21 @@ async function startServer() {
             companyId,
             companyLike,
             bodyBackend,
-            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env), requireLoaded: true }
           );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const { extractIdempotencyKey, requireIdempotencyKey } = await import("./src/lib/anMigrateIdempotency");
+        const rawKey = extractIdempotencyKey(req);
+        const keyCheck: any = requireIdempotencyKey(rawKey);
+        if (!keyCheck.ok) {
+          return res.status(keyCheck.status).json({
+            ok: false,
+            code: keyCheck.code || "idempotency_key_required",
+            message: keyCheck.message,
+            messageAr: keyCheck.messageAr,
+          });
         }
         const { migrateAccountsToAn } = await import("./src/lib/anMigrateAccounts");
         let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
@@ -3600,9 +3650,11 @@ async function startServer() {
           companyId,
           rows: rows || [],
           adapter: resolved.adapter,
+          batchIdempotencyKey: keyCheck.key,
         });
         res.status(result.writesEnabled ? 200 : 403).json({
           ...result,
+          idempotencyKey: keyCheck.key,
           adapterResolution: {
             source: resolved.source,
             adapterType: resolved.adapterType,

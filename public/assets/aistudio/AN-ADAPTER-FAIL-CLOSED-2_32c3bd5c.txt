@@ -1,0 +1,245 @@
+# AN-ADAPTER-FAIL-CLOSED-2 — Close silent-primary gaps left by FAIL-CLOSED-1 (LEAN)
+# Audit (post-merge wave, guide section 14): after ADP-FC1 two paths still fall back to the
+# process primary adapter without an error:
+#   (a) loadStatus 'skipped' (adminDb missing) -> company config unknown -> silent primary,
+#       so a Dedicated company can be served from the Shared primary DB.
+#   (b) loadStatus 'not_found' on a migrate WRITE route -> a wrong/typo companyId writes into primary.
+# Also: one unreachable duplicate `loadStatus === 'error'` throw inside `!hasExplicit`.
+# Scope: resolver + migrate POST routes + one behavioral verify script. Nothing else.
+
+## HARD RULES
+1. Single goal: close (a) and (b). No refactor of server.ts, no helper extraction (separate package).
+2. Do NOT touch KEMIT/Firebase paths, login, custody, or any env flag defaults.
+3. READ routes keep today's behavior for `not_found` (process_primary with companyDoc 'missing').
+   Only migrate WRITE (POST) routes become strict (`requireLoaded`).
+4. `skipped` is refused only when fail-closed is on. `AN_ADAPTER_FAIL_CLOSED=0` keeps the old
+   dev behavior (primary fallback). Default stays ON when the variable is unset.
+5. Explicit backend (company doc fields or trusted admin `bodyBackend`) is never affected by (a)/(b).
+6. Never print secrets or connection strings; env variable NAMES only.
+7. Do not delete or weaken any check in verifyAnAdapterFailClosed1.ts or verifyAnAdapterRouteTest1.ts.
+8. Stop at first failure. If tsc waits > 2 min: run it once -> build -> steps 9-12. One RESULTS REPORT only.
+
+## PRECHECK (stop with one reason if any is missing)
+- src/lib/anResolveCompanyAdapter.ts exports: CompanyLoadResult, loadCompanyLikeFromFirestore,
+  isAdapterFailClosedEnv, resolveCompanyStorageAdapter, CompanyLike (type)
+- resolveCompanyStorageAdapter has the `options?: { loadStatus?, failClosed? }` parameter (ADP-FC1 applied)
+- server.ts contains these POST routes, each calling resolveCompanyStorageAdapter:
+    /api/an/migrate/inventory/warehouses
+    /api/an/migrate/inventory/items
+    /api/an/migrate/inventory/balances
+    /api/an/migrate/accounting/accounts
+- scripts/verifyAnAdapterFailClosed1.ts and scripts/verifyAnAdapterRouteTest1.ts exist
+- docs/MERGE_STATUS.md has rows up to ADP-RT1 (the local file may be ahead, e.g. MIG-IDEM1: that is fine)
+- OPTIONAL: POST routes /api/an/inventory/pilot-receipt and /api/an/inventory/pilot-issue (if present in
+  the local server.ts) — they are WRITE routes and are patched in STEP 3b exactly like the migrate ones
+
+## STEP 3 — Patch `src/lib/anResolveCompanyAdapter.ts` (minimal edit)
+
+### 3a. Extend the options type of resolveCompanyStorageAdapter
+```typescript
+  options?: {
+    loadStatus?: CompanyLoadResult['status'] | CompanyLoadResult;
+    failClosed?: boolean;
+    /** Write paths: company config must be 'loaded' unless an explicit backend is present. */
+    requireLoaded?: boolean;
+  }
+```
+
+### 3b. Inside `if (!hasExplicit) {` — REPLACE the existing unreachable block
+Remove exactly this (it can never run: the same condition already threw above):
+```typescript
+    if (loadStatus === 'error' && failClosed) {
+      throw new Error('ADAPTER_COMPANY_LOAD_FAILED');
+    }
+```
+and put at the top of the `if (!hasExplicit) {` body:
+```typescript
+    // Gap (a): company config could not even be read (no admin db) -> unknown, not "shared".
+    if (failClosed && loadStatus === 'skipped') {
+      throw new Error(
+        'ADAPTER_COMPANY_CONFIG_UNAVAILABLE: company config cannot be read; refusing silent primary'
+      );
+    }
+    // Gap (b): write paths need a real company document (or an explicit backend).
+    if (options?.requireLoaded === true && loadStatus !== 'loaded') {
+      throw new Error(
+        'ADAPTER_COMPANY_NOT_LOADED: write path requires an existing company config; refusing silent primary'
+      );
+    }
+```
+Keep everything else in the function unchanged (docMeta mapping, process_primary return,
+explicit/Dedicated branch via router.resolveAdapter).
+
+Note: `skipped` with reason `empty_company_id` is not reachable from the A.N routes
+(they return 400 on empty companyId, and dry-run defaults to "default"), so no special casing.
+
+## STEP 3b — `server.ts`: migrate WRITE routes only
+In each of the four migrate POST routes listed in PRECHECK, AND in pilot-receipt / pilot-issue if they
+exist and call resolveCompanyStorageAdapter, change the options object passed to
+resolveCompanyStorageAdapter from:
+```javascript
+{ loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+```
+to:
+```javascript
+{ loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env), requireLoaded: true }
+```
+Report in the RESULTS REPORT how many routes were patched (4, or 6 with the pilots).
+Do NOT change: the migrate dry-run GET, inventory warehouses/items/stock GET routes, or any
+other route. The existing `catch` (400 adapter_resolve_failed) already surfaces the new messages.
+
+## STEP 3c — `.env.example` (comment only, no new variables)
+Extend the existing AN_ADAPTER_FAIL_CLOSED comment with one line:
+```
+# Fail-closed also refuses when company config cannot be read (no admin db) and, on migrate writes, when the company doc is missing.
+```
+
+## STEP 3d — docs/MERGE_STATUS.md
+Table row (after ADP-RT1):
+```markdown
+| ADP-FC2 | Fail-closed gaps: skipped + not_found on writes | DONE | skipped refused when fail-closed; migrate POST requires loaded company; dead throw removed |
+```
+Numbered rule — use the FIRST FREE number in the live file (never overwrite or renumber an existing
+rule; e.g. if MIG-IDEM already took 31, use 32):
+```markdown
+N. **ADAPTER-FAIL-CLOSED-2:** With fail-closed on, an unreadable company config (no admin db) never resolves to the process primary; migrate write routes require an existing company document unless an explicit backend is given. Read routes keep primary fallback for a missing company doc.
+```
+
+## STEP 3e — `scripts/verifyAnAdapterFailClosed2.ts` (14 checks, 9 behavioral + 5 static)
+```typescript
+import fs from 'fs';
+import path from 'path';
+import {
+  resolveCompanyStorageAdapter,
+  type CompanyLike,
+} from '../src/lib/anResolveCompanyAdapter';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) { console.log(`[PASS] ${name}`); passed++; }
+  else { console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`); failed++; }
+}
+function attempt<T>(fn: () => T) {
+  try { return { ok: true as const, res: fn(), msg: '' }; }
+  catch (e: any) { return { ok: false as const, res: null as any, msg: String(e?.message || e) }; }
+}
+
+// Fake router: no database needed; markers prove WHICH path was taken.
+const PRIMARY = { __marker: 'primary' };
+const EXPLICIT = { __marker: 'explicit' };
+const router: any = {
+  getPrimaryAdapter: () => PRIMARY,
+  resolveAdapter: () => EXPLICIT,
+};
+const SKIPPED = { status: 'skipped', reason: 'no_admin_db' } as const;
+
+// --- Behavioral ---
+let r = attempt(() => resolveCompanyStorageAdapter(router, 'c1', null, null,
+  { loadStatus: SKIPPED, failClosed: true }));
+check('B1 skipped + failClosed -> throws CONFIG_UNAVAILABLE',
+  !r.ok && r.msg.includes('ADAPTER_COMPANY_CONFIG_UNAVAILABLE'), r.msg);
+
+r = attempt(() => resolveCompanyStorageAdapter(router, 'c1', null, null,
+  { loadStatus: SKIPPED, failClosed: false }));
+check('B2 skipped + failClosed=false -> primary (dev mode preserved)',
+  r.ok && r.res.source === 'process_primary' && r.res.adapter === PRIMARY && r.res.companyDoc === 'skipped');
+
+const prevRef = process.env.COMPANY_FC2_PROBE_URL;
+process.env.COMPANY_FC2_PROBE_URL = 'postgresql://127.0.0.1:5432/fc2_probe';
+r = attempt(() => resolveCompanyStorageAdapter(router, 'c1', null,
+  { db_backend: 'postgresql', isolation_level: 'Dedicated', connection_ref: 'COMPANY_FC2_PROBE_URL' },
+  { loadStatus: SKIPPED, failClosed: true }));
+check('B3 explicit body backend unaffected by skipped (routes via resolveAdapter)',
+  r.ok && r.res.adapter === EXPLICIT && r.res.source === 'body_override', r.msg);
+
+r = attempt(() => resolveCompanyStorageAdapter(router, 'c1', null, null,
+  { loadStatus: 'not_found', failClosed: true, requireLoaded: true }));
+check('B4 not_found + requireLoaded -> throws NOT_LOADED',
+  !r.ok && r.msg.includes('ADAPTER_COMPANY_NOT_LOADED'), r.msg);
+
+r = attempt(() => resolveCompanyStorageAdapter(router, 'c1', null, null,
+  { loadStatus: 'not_found', failClosed: true }));
+check('B5 not_found on read path -> primary with companyDoc missing',
+  r.ok && r.res.source === 'process_primary' && r.res.companyDoc === 'missing');
+
+const plain: CompanyLike = { id: 'c1' } as CompanyLike;
+r = attempt(() => resolveCompanyStorageAdapter(router, 'c1', plain, null,
+  { loadStatus: 'loaded', failClosed: true, requireLoaded: true }));
+check('B6 loaded shared company + requireLoaded -> primary, companyDoc loaded',
+  r.ok && r.res.adapter === PRIMARY && r.res.companyDoc === 'loaded');
+
+r = attempt(() => resolveCompanyStorageAdapter(router, 'c1', null, null,
+  { loadStatus: 'error', failClosed: true }));
+check('B7 error + failClosed still throws LOAD_FAILED (regression)',
+  !r.ok && r.msg.includes('ADAPTER_COMPANY_LOAD_FAILED'), r.msg);
+
+r = attempt(() => resolveCompanyStorageAdapter(router, 'c1', null, null,
+  { loadStatus: 'error', failClosed: false }));
+check('B8 error + failClosed=false -> primary (dev mode preserved)',
+  r.ok && r.res.source === 'process_primary');
+
+const dedicated: CompanyLike = {
+  id: 'c2', db_backend: 'postgresql', isolation_level: 'Dedicated',
+  connection_ref: 'COMPANY_FC2_PROBE_URL',
+} as CompanyLike;
+r = attempt(() => resolveCompanyStorageAdapter(router, 'c2', dedicated, null,
+  { loadStatus: 'loaded', failClosed: true, requireLoaded: true }));
+check('B9 loaded Dedicated company routes via resolveAdapter, not primary',
+  r.ok && r.res.adapter === EXPLICIT, r.msg);
+
+if (prevRef === undefined) delete process.env.COMPANY_FC2_PROBE_URL;
+else process.env.COMPANY_FC2_PROBE_URL = prevRef;
+
+// --- Static (minimal; behavior is covered above) ---
+const root = process.cwd();
+const src = fs.readFileSync(path.join(root, 'src/lib/anResolveCompanyAdapter.ts'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+
+check('S1 unreachable duplicate throw removed',
+  !/throw new Error\('ADAPTER_COMPANY_LOAD_FAILED'\)/.test(src));
+check('S2 requireLoaded option declared in resolver', src.includes('requireLoaded'));
+check('S3 at least four write routes pass requireLoaded: true',
+  (server.match(/requireLoaded:\s*true/g) || []).length >= 4,
+  `found ${(server.match(/requireLoaded:\s*true/g) || []).length}`);
+check('S4 MERGE_STATUS lists ADP-FC2', statusDoc.includes('ADP-FC2'));
+check('S5 SEC scope + migrate auth still present',
+  server.includes('assertUserCanAccessCompany') && server.includes('requireAnMigrateOperator'));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+If a behavioral check fails only because of the real `CompanyLike` / `companyToBackendConfig`
+contract (field names), adapt the INPUT objects to the real contract — never delete the check.
+
+## STEP 3f — package.json
+Add script (do not touch other scripts):
+```
+"verify:adapter-fc2": "tsx scripts/verifyAnAdapterFailClosed2.ts"
+```
+
+## STEP 8-10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnAdapterFailClosed2.ts
+npx tsx scripts/verifyAnAdapterFailClosed1.ts
+npx tsx scripts/verifyAnAdapterRouteTest1.ts
+npx tsx scripts/verifyAnSecCompanyScope1.ts
+```
+Do not run any migration or set AN_MIGRATE_WRITES=1.
+
+## COMMIT NOTE
+```
+fix(adp-fc2): refuse silent primary on unreadable company config and on migrate writes for missing company
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+8) tsc: 0 errors | build: OK
+9) verifyAnAdapterFailClosed2: Passed: 14 | Failed: 0
+10) regression: FailClosed1 / RouteTest1 / SecCompanyScope1: Passed/Failed per script
+Status: DONE | package: AN-ADAPTER-FAIL-CLOSED-2
+===========================
+```

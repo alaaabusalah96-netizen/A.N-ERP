@@ -32,6 +32,8 @@ export interface KemitBalanceRaw {
   [key: string]: unknown;
 }
 
+import { rowIdempotencyKey } from './anMigrateIdempotency';
+
 export interface BalanceMigrateResult {
   ok: boolean;
   plane: 'an-migrate-write-f4';
@@ -44,6 +46,9 @@ export interface BalanceMigrateResult {
   skippedExisting: number;
   skippedNonPositive: number;
   failed: number;
+  created: number;
+  skipped: number;
+  idempotencyKey?: string;
   errors: string[];
   detail: string;
   detailAr: string;
@@ -56,7 +61,7 @@ function num(v: unknown, d = 0): number {
 
 export async function migrateOpeningBalancesToAn(
   router: StorageRouter,
-  opts: { companyId: string; rows: KemitBalanceRaw[]; env?: NodeJS.ProcessEnv; actorId?: string; adapter?: StoragePort }
+  opts: { companyId: string; rows: KemitBalanceRaw[]; env?: NodeJS.ProcessEnv; actorId?: string; adapter?: StoragePort; batchIdempotencyKey?: string }
 ): Promise<BalanceMigrateResult> {
   const env = opts.env || process.env;
   const companyId = opts.companyId.trim() || 'default';
@@ -67,6 +72,7 @@ export async function migrateOpeningBalancesToAn(
     writesEnabled,
     cutoverApproved: false as const,
     companyId,
+    idempotencyKey: opts.batchIdempotencyKey,
   };
 
   if (!writesEnabled) {
@@ -79,6 +85,8 @@ export async function migrateOpeningBalancesToAn(
       skippedExisting: 0,
       skippedNonPositive: 0,
       failed: 0,
+      created: 0,
+      skipped: 0,
       errors: ['AN_MIGRATE_WRITES not enabled'],
       detail: 'writes_disabled',
       detailAr: 'الكتابة معطّلة',
@@ -96,6 +104,8 @@ export async function migrateOpeningBalancesToAn(
       skippedExisting: 0,
       skippedNonPositive: 0,
       failed: 0,
+      created: 0,
+      skipped: 0,
       errors: ['postgresql env not ready'],
       detail: plane.certifiedNote,
       detailAr: plane.errorAr || 'PostgreSQL غير جاهز',
@@ -137,6 +147,11 @@ export async function migrateOpeningBalancesToAn(
       const itemCode = String(raw.itemCode || raw.item_code || itemId);
       const itemNameAr = String(raw.itemNameAr || raw.item_name || itemCode);
       const totalCost = Math.round(qty * unitCost * 100) / 100;
+      const itemPair = `${warehouseId}:${itemId}`;
+      const idemKey = opts.batchIdempotencyKey
+        ? rowIdempotencyKey(opts.batchIdempotencyKey, itemPair)
+        : `migrate-bal-${docId}`;
+
       const line: StockDocumentLine = {
         id: lineId,
         tenantId: companyId,
@@ -171,7 +186,7 @@ export async function migrateOpeningBalancesToAn(
         performedBy: actorId,
         performedByName: 'migrate-f4',
         timestamp: nowIso,
-        idempotencyKey: `migrate-bal-${docId}`,
+        idempotencyKey: idemKey,
       };
       const doc: StockDocument = {
         id: docId,
@@ -190,7 +205,7 @@ export async function migrateOpeningBalancesToAn(
         movements: [movement],
         performedBy: actorId,
         performedByName: 'migrate-f4',
-        idempotencyKey: `migrate-bal-${docId}`,
+        idempotencyKey: idemKey,
         postedAt: nowIso,
         createdAt: nowIso,
       };
@@ -204,7 +219,7 @@ export async function migrateOpeningBalancesToAn(
       const res = await adapter.postStockDocumentAtomic(
         companyId,
         input,
-        `migrate-bal-${docId}`
+        idemKey
       );
       if (res.success) inserted++;
       else {
@@ -228,6 +243,8 @@ export async function migrateOpeningBalancesToAn(
     skippedExisting,
     skippedNonPositive,
     failed,
+    created: inserted,
+    skipped: skippedExisting + skippedNonPositive,
     errors: errors.slice(0, 30),
     detail: 'opening_balances_migrate_done',
     detailAr: 'انتهى ترحيل الأرصدة الافتتاحية (إن وُجدت)',

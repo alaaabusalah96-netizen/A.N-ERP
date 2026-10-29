@@ -15,7 +15,9 @@
     "test:e2e": "playwright test",
     "verify:merge": "tsx scripts/verifyMergeAll.ts",
     "verify:an-plane": "tsx scripts/verifyAnPlaneAll.ts",
-    "verify:adapter-route": "tsx scripts/verifyAnAdapterRouteTest1.ts"
+    "verify:adapter-route": "tsx scripts/verifyAnAdapterRouteTest1.ts",
+    "verify:mig-idem": "tsx scripts/verifyAnMigIdem1.ts",
+    "verify:adapter-fc2": "tsx scripts/verifyAnAdapterFailClosed2.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

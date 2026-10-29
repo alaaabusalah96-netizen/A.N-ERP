@@ -50,6 +50,8 @@
 | SEC-SCOPE1 | Company scope on A.N inventory APIs | DONE | assertUserCanAccessCompany on inventory reads (+ migrate companyId) |
 | ADP-FC1 | Adapter fail-closed on company load error | DONE | no silent primary when company config load fails |
 | ADP-RT1 | Two-company adapter route proof | DONE | verifyAnAdapterRouteTest1 — shared vs dedicated routing |
+| MIG-IDEM1 | Migrate batch idempotency | DONE | Idempotency-Key required on migrate POSTs; row keys stable for replay |
+| ADP-FC2 | Fail-closed gaps: skipped + not_found on writes | DONE | skipped refused when fail-closed; migrate POST requires loaded company; dead throw removed |
 
 ## Canonical rules (do not regress)
 
@@ -81,6 +83,8 @@
 28. **SEC-COMPANY-SCOPE-1:** companyId on A.N inventory reads requires platform/admin elevation or membership match. 403 company_scope_denied otherwise.
 29. **ADAPTER-FAIL-CLOSED-1:** Company config load errors do not fall back silently to process primary when AN_ADAPTER_FAIL_CLOSED is enabled (default).
 30. **ADAPTER-ROUTE-TEST-1:** Automated proof that Shared vs Dedicated company backend settings do not collapse silently to the same resolve path.
+31. **MIG-IDEM-1:** Write migrate routes require Idempotency-Key; per-row keys prevent duplicate stock/master on retry.
+32. **ADAPTER-FAIL-CLOSED-2:** With fail-closed on, an unreadable company config (no admin db) never resolves to the process primary; migrate write routes require an existing company document unless an explicit backend is given. Read routes keep primary fallback for a missing company doc.
 
 ## Verify
 

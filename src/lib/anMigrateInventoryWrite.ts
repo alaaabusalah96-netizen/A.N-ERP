@@ -42,6 +42,8 @@ export function mapKemitWarehouseToAn(
   };
 }
 
+import { rowIdempotencyKey } from './anMigrateIdempotency';
+
 export interface WarehouseMigrateResult {
   ok: boolean;
   plane: 'an-migrate-write-f2';
@@ -53,6 +55,9 @@ export interface WarehouseMigrateResult {
   inserted: number;
   skippedExisting: number;
   failed: number;
+  created: number;
+  skipped: number;
+  idempotencyKey?: string;
   errors: string[];
   detail: string;
   detailAr: string;
@@ -65,6 +70,7 @@ export async function migrateWarehousesToAn(
     rows: KemitWarehouseRaw[];
     env?: NodeJS.ProcessEnv;
     adapter?: StoragePort;
+    batchIdempotencyKey?: string;
   }
 ): Promise<WarehouseMigrateResult> {
   const env = opts.env || process.env;
@@ -77,6 +83,7 @@ export async function migrateWarehousesToAn(
     writesEnabled,
     cutoverApproved: false as const,
     companyId,
+    idempotencyKey: opts.batchIdempotencyKey,
   };
 
   if (!writesEnabled) {
@@ -88,6 +95,8 @@ export async function migrateWarehousesToAn(
       inserted: 0,
       skippedExisting: 0,
       failed: 0,
+      created: 0,
+      skipped: 0,
       errors: ['AN_MIGRATE_WRITES not enabled'],
       detail: 'writes_disabled',
       detailAr: 'الكتابة معطّلة — اضبط AN_MIGRATE_WRITES=1',
@@ -104,6 +113,8 @@ export async function migrateWarehousesToAn(
       inserted: 0,
       skippedExisting: 0,
       failed: 0,
+      created: 0,
+      skipped: 0,
       errors: ['postgresql env not ready'],
       detail: plane.certifiedNote,
       detailAr: plane.errorAr || 'مستوى PostgreSQL غير جاهز',
@@ -132,7 +143,9 @@ export async function migrateWarehousesToAn(
       continue;
     }
     try {
-      const key = `migrate-wh-${mapped.id}`;
+      const key = opts.batchIdempotencyKey
+        ? rowIdempotencyKey(opts.batchIdempotencyKey, mapped.id)
+        : `migrate-wh-${mapped.id}`;
       const res = await adapter.saveWarehouse(companyId, mapped, key);
       if (res.success) {
         inserted++;
@@ -155,6 +168,8 @@ export async function migrateWarehousesToAn(
     inserted,
     skippedExisting,
     failed,
+    created: inserted,
+    skipped: skippedExisting,
     errors: errors.slice(0, 20),
     detail: 'warehouse_migrate_done',
     detailAr: 'انتهى ترحيل المستودعات (إن وُجدت صفوف)',
