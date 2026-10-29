@@ -48,6 +48,7 @@
 | INV-L1 | A.N inventory list APIs | DONE | GET warehouses/items via company adapter; session required; CustodyDB UI unchanged |
 | INV-S1 | A.N stock balances read | DONE | GET /api/an/inventory/stock; company adapter; session required |
 | SEC-SCOPE1 | Company scope on A.N inventory APIs | DONE | assertUserCanAccessCompany on inventory reads (+ migrate companyId) |
+| ADP-FC1 | Adapter fail-closed on company load error | DONE | no silent primary when company config load fails |
 
 ## Canonical rules (do not regress)
 
@@ -77,6 +78,7 @@
 24. **INV-READ-LIST-1:** Authenticated read lists use per-company adapter resolution. Operational Inventory.tsx still CustodyDB.
 25. **INV-STOCK-READ-1:** Stock balance read uses per-company adapter. No write. CustodyDB UI unchanged.
 28. **SEC-COMPANY-SCOPE-1:** companyId on A.N inventory reads requires platform/admin elevation or membership match. 403 company_scope_denied otherwise.
+29. **ADAPTER-FAIL-CLOSED-1:** Company config load errors do not fall back silently to process primary when AN_ADAPTER_FAIL_CLOSED is enabled (default).
 
 ## Verify
 

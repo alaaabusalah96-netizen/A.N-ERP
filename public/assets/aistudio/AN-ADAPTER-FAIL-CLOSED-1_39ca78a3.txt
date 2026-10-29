@@ -1,0 +1,228 @@
+# AN-ADAPTER-FAIL-CLOSED-1 — No silent primary on company config load failure (LEAN)
+# Audit: loadCompanyLikeFromFirestore returns null on any failure → resolve falls back to process primary.
+# Distinguish not_found vs error; on error (or fail-closed mode) refuse silent primary.
+# Does NOT remove shared-primary when company has no backend fields and doc is truly missing/absent fields.
+
+## HARD RULES
+1. `loadCompanyLikeFromFirestore` must NOT swallow errors as null without status.
+2. If company document **load throws / permission / unavailable** → callers must get 503/400, **not** primary adapter silently.
+3. If company **not_found** and no body backend → primary fallback allowed only with `source: 'process_primary'` and `companyDoc: 'missing'` in resolution metadata.
+4. If company **loaded** with `isolation_level=Dedicated` or non-empty `connection_ref` → must use resolveAdapter; never strip to primary on soft failure.
+5. Env `AN_ADAPTER_FAIL_CLOSED=1` (default **on** when unset for migrate/inventory A.N routes): treat ambiguous load as fail. Set `AN_ADAPTER_FAIL_CLOSED=0` only for local dev.
+6. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- SEC-SCOPE1 done
+- `anResolveCompanyAdapter.ts` exists
+
+## STEP 3 — Replace/extend `src/lib/anResolveCompanyAdapter.ts`
+
+### load result type
+```typescript
+export type CompanyLoadResult =
+  | { status: 'loaded'; company: CompanyLike }
+  | { status: 'not_found' }
+  | { status: 'error'; message: string }
+  | { status: 'skipped'; reason: 'no_admin_db' | 'empty_company_id' };
+```
+
+### loadCompanyLikeFromFirestore
+```typescript
+export async function loadCompanyLikeFromFirestore(
+  adminDb: any,
+  companyId: string
+): Promise<CompanyLoadResult> {
+  if (!companyId?.trim()) return { status: 'skipped', reason: 'empty_company_id' };
+  if (!adminDb) return { status: 'skipped', reason: 'no_admin_db' };
+  try {
+    const snap = await adminDb.collection('companies').doc(companyId).get();
+    if (!snap.exists) return { status: 'not_found' };
+    const data = snap.data() || {};
+    return {
+      status: 'loaded',
+      company: {
+        id: companyId,
+        auth_driver: data.auth_driver,
+        db_backend: data.db_backend,
+        isolation_level: data.isolation_level,
+        connection_ref: data.connection_ref,
+      } as CompanyLike,
+    };
+  } catch (e: any) {
+    return {
+      status: 'error',
+      message: (e?.message || String(e)).slice(0, 200),
+    };
+  }
+}
+```
+
+### Extend CompanyAdapterResolution
+```typescript
+  companyDoc?: 'loaded' | 'missing' | 'error' | 'skipped';
+  failClosed?: boolean;
+```
+
+### resolveCompanyStorageAdapter signature
+```typescript
+export function resolveCompanyStorageAdapter(
+  router: StorageRouter,
+  companyId: string,
+  company: CompanyLike | null,
+  bodyBackend?: Partial<CompanyLike> | null,
+  options?: {
+    loadStatus?: CompanyLoadResult['status'] | CompanyLoadResult;
+    failClosed?: boolean;
+  }
+): CompanyAdapterResolution
+```
+
+Logic:
+```typescript
+  const failClosed =
+    options?.failClosed === true ||
+    (options?.failClosed !== false &&
+      (process.env.AN_ADAPTER_FAIL_CLOSED !== '0' &&
+        process.env.AN_ADAPTER_FAIL_CLOSED !== 'false'));
+
+  const loadStatus =
+    typeof options?.loadStatus === 'object'
+      ? options.loadStatus.status
+      : options?.loadStatus;
+
+  if (loadStatus === 'error' && failClosed) {
+    throw new Error(
+      'ADAPTER_COMPANY_LOAD_FAILED: cannot resolve storage; refusing silent primary'
+    );
+  }
+
+  // merge body + company as today...
+  const hasExplicit = !!(merged.db_backend || merged.isolation_level || merged.connection_ref);
+
+  if (!hasExplicit) {
+    if (loadStatus === 'error') {
+      throw new Error('ADAPTER_COMPANY_LOAD_FAILED');
+    }
+    // missing/skipped → primary OK
+    return {
+      adapter: router.getPrimaryAdapter(),
+      companyId: cid,
+      source: 'process_primary',
+      adapterType: 'postgresql',
+      isolationLevel: 'Shared',
+      connectionRef: 'DATABASE_URL',
+      companyDoc:
+        loadStatus === 'not_found'
+          ? 'missing'
+          : loadStatus === 'skipped'
+            ? 'skipped'
+            : loadStatus === 'loaded'
+              ? 'loaded'
+              : 'missing',
+      failClosed,
+    };
+  }
+
+  // Dedicated / explicit: resolveAdapter — if throws, propagate (no catch-to-primary)
+  const backendConfig = companyToBackendConfig(merged);
+  const tenant = { ... } as TenantCompany;
+  const adapter = router.resolveAdapter(tenant);
+  return { ..., source: bodyBackend?.db_backend ? 'body_override' : 'company_doc', companyDoc: 'loaded', failClosed };
+```
+
+Export helper:
+```typescript
+export function isAdapterFailClosedEnv(env = process.env): boolean {
+  return env.AN_ADAPTER_FAIL_CLOSED !== '0' && env.AN_ADAPTER_FAIL_CLOSED !== 'false';
+}
+```
+
+## STEP 3b — Update **all** server call sites that used:
+```javascript
+const companyLike = await loadCompanyLikeFromFirestore(adminDb, companyId);
+resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, bodyBackend);
+```
+To:
+```javascript
+const loadResult = await loadCompanyLikeFromFirestore(
+  typeof adminDb !== "undefined" ? adminDb : null,
+  companyId
+);
+if (loadResult.status === "error" && isAdapterFailClosedEnv(process.env)) {
+  return res.status(503).json({
+    ok: false,
+    code: "adapter_company_load_failed",
+    message: loadResult.message || "Company config load failed",
+    messageAr: "تعذر تحميل إعدادات قاعدة بيانات الشركة — لن يتم التوجيه الصامت للقاعدة الأساسية",
+  });
+}
+const companyLike = loadResult.status === "loaded" ? loadResult.company : null;
+try {
+  resolved = resolveCompanyStorageAdapter(
+    anStorageRouter,
+    companyId,
+    companyLike,
+    bodyBackend || null,
+    { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+  );
+} catch (e: any) {
+  return res.status(400).json({
+    ok: false,
+    code: "adapter_resolve_failed",
+    message: e?.message || String(e),
+  });
+}
+```
+
+Apply on: migrate*, inventory warehouses/items/stock, pilot-receipt/issue if present.
+
+## STEP 3c — `.env.example`
+```
+# 1/true/unset = refuse silent primary when company config load errors
+AN_ADAPTER_FAIL_CLOSED=1
+```
+
+## STEP 3d — MERGE_STATUS
+```markdown
+| ADP-FC1 | Adapter fail-closed on company load error | DONE | no silent primary when company config load fails |
+```
+```markdown
+29. **ADAPTER-FAIL-CLOSED-1:** Company config load errors do not fall back silently to process primary when AN_ADAPTER_FAIL_CLOSED is enabled (default).
+```
+
+## STEP 3e — `scripts/verifyAnAdapterFailClosed1.ts`
+14 checks:
+- CompanyLoadResult / status error in anResolveCompanyAdapter
+- load returns status not only null
+- ADAPTER_COMPANY_LOAD_FAILED or adapter_company_load_failed
+- isAdapterFailClosedEnv or AN_ADAPTER_FAIL_CLOSED
+- companyDoc metadata
+- server handles loadResult.status === error
+- resolveCompanyStorageAdapter still exists
+- SEC scope still present
+- primary fallback still exists for not_found path (process_primary string)
+- MERGE ADP-FC
+- no catch that maps all errors to getPrimaryAdapter inside resolve when explicit backend
+- inventory stock route still present
+- migrate warehouses still present
+- failClosed option or env
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnAdapterFailClosed1.ts
+npx tsx scripts/verifyAnSecCompanyScope1.ts
+```
+
+## COMMIT NOTE
+```
+fix(adp-fc1): fail closed on company backend load errors (no silent primary)
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnAdapterFailClosed1: Passed: N | Failed: N
+Status: DONE | package: AN-ADAPTER-FAIL-CLOSED-1
+===========================
+```

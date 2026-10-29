@@ -3215,11 +3215,20 @@ async function startServer() {
       try {
         if (!(await requireAnMigrateOperator(req, res))) return;
         const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "default";
-        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
-        const companyLike = await loadCompanyLikeFromFirestore(
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
+        const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
           companyId
         );
+        if (loadResult.status === "error" && isAdapterFailClosedEnv(process.env)) {
+          return res.status(503).json({
+            ok: false,
+            code: "adapter_company_load_failed",
+            message: loadResult.message || "Company config load failed",
+            messageAr: "تعذر تحميل إعدادات قاعدة بيانات الشركة — لن يتم التوجيه الصامت للقاعدة الأساسية",
+          });
+        }
+        const companyLike = loadResult.status === "loaded" ? loadResult.company : null;
         const bodyBackend = req.body?.backend && typeof req.body.backend === "object" ? req.body.backend : null;
         if (bodyBackend && typeof bodyBackend.connection_ref === "string") {
           const ref = String(bodyBackend.connection_ref);
@@ -3229,7 +3238,13 @@ async function startServer() {
         }
         let resolved;
         try {
-          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, bodyBackend);
+          resolved = resolveCompanyStorageAdapter(
+            anStorageRouter,
+            companyId,
+            companyLike,
+            bodyBackend,
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+          );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
         }
@@ -3297,11 +3312,20 @@ async function startServer() {
         if (!companyId) {
           return res.status(400).json({ ok: false, error: "companyId required" });
         }
-        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
-        const companyLike = await loadCompanyLikeFromFirestore(
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
+        const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
           companyId
         );
+        if (loadResult.status === "error" && isAdapterFailClosedEnv(process.env)) {
+          return res.status(503).json({
+            ok: false,
+            code: "adapter_company_load_failed",
+            message: loadResult.message || "Company config load failed",
+            messageAr: "تعذر تحميل إعدادات قاعدة بيانات الشركة — لن يتم التوجيه الصامت للقاعدة الأساسية",
+          });
+        }
+        const companyLike = loadResult.status === "loaded" ? loadResult.company : null;
         const bodyBackend = req.body?.backend && typeof req.body.backend === "object" ? req.body.backend : null;
         if (bodyBackend && typeof bodyBackend.connection_ref === "string") {
           const ref = String(bodyBackend.connection_ref);
@@ -3311,7 +3335,13 @@ async function startServer() {
         }
         let resolved;
         try {
-          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, bodyBackend);
+          resolved = resolveCompanyStorageAdapter(
+            anStorageRouter,
+            companyId,
+            companyLike,
+            bodyBackend,
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+          );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
         }
@@ -3364,11 +3394,20 @@ async function startServer() {
         if (!(await requireAnMigrateOperator(req, res))) return;
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
-        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
-        const companyLike = await loadCompanyLikeFromFirestore(
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
+        const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
           companyId
         );
+        if (loadResult.status === "error" && isAdapterFailClosedEnv(process.env)) {
+          return res.status(503).json({
+            ok: false,
+            code: "adapter_company_load_failed",
+            message: loadResult.message || "Company config load failed",
+            messageAr: "تعذر تحميل إعدادات قاعدة بيانات الشركة — لن يتم التوجيه الصامت للقاعدة الأساسية",
+          });
+        }
+        const companyLike = loadResult.status === "loaded" ? loadResult.company : null;
         const bodyBackend = req.body?.backend && typeof req.body.backend === "object" ? req.body.backend : null;
         if (bodyBackend && typeof bodyBackend.connection_ref === "string") {
           const ref = String(bodyBackend.connection_ref);
@@ -3378,7 +3417,13 @@ async function startServer() {
         }
         let resolved;
         try {
-          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, bodyBackend);
+          resolved = resolveCompanyStorageAdapter(
+            anStorageRouter,
+            companyId,
+            companyLike,
+            bodyBackend,
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+          );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
         }
@@ -3425,11 +3470,20 @@ async function startServer() {
         if (!(await requireAnMigrateOperator(req, res))) return;
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
-        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
-        const companyLike = await loadCompanyLikeFromFirestore(
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
+        const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
           companyId
         );
+        if (loadResult.status === "error" && isAdapterFailClosedEnv(process.env)) {
+          return res.status(503).json({
+            ok: false,
+            code: "adapter_company_load_failed",
+            message: loadResult.message || "Company config load failed",
+            messageAr: "تعذر تحميل إعدادات قاعدة بيانات الشركة — لن يتم التوجيه الصامت للقاعدة الأساسية",
+          });
+        }
+        const companyLike = loadResult.status === "loaded" ? loadResult.company : null;
         const bodyBackend = req.body?.backend && typeof req.body.backend === "object" ? req.body.backend : null;
         if (bodyBackend && typeof bodyBackend.connection_ref === "string") {
           const ref = String(bodyBackend.connection_ref);
@@ -3439,7 +3493,13 @@ async function startServer() {
         }
         let resolved;
         try {
-          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, bodyBackend);
+          resolved = resolveCompanyStorageAdapter(
+            anStorageRouter,
+            companyId,
+            companyLike,
+            bodyBackend,
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+          );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
         }
@@ -3486,11 +3546,20 @@ async function startServer() {
         if (!(await requireAnMigrateOperator(req, res))) return;
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
-        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
-        const companyLike = await loadCompanyLikeFromFirestore(
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
+        const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
           companyId
         );
+        if (loadResult.status === "error" && isAdapterFailClosedEnv(process.env)) {
+          return res.status(503).json({
+            ok: false,
+            code: "adapter_company_load_failed",
+            message: loadResult.message || "Company config load failed",
+            messageAr: "تعذر تحميل إعدادات قاعدة بيانات الشركة — لن يتم التوجيه الصامت للقاعدة الأساسية",
+          });
+        }
+        const companyLike = loadResult.status === "loaded" ? loadResult.company : null;
         const bodyBackend = req.body?.backend && typeof req.body.backend === "object" ? req.body.backend : null;
         if (bodyBackend && typeof bodyBackend.connection_ref === "string") {
           const ref = String(bodyBackend.connection_ref);
@@ -3500,7 +3569,13 @@ async function startServer() {
         }
         let resolved;
         try {
-          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, bodyBackend);
+          resolved = resolveCompanyStorageAdapter(
+            anStorageRouter,
+            companyId,
+            companyLike,
+            bodyBackend,
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+          );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
         }
@@ -3556,15 +3631,29 @@ async function startServer() {
             messageAr: scope.messageAr,
           });
         }
-        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
-        const { listAnWarehouses } = await import("./src/lib/anInventoryLists");
-        const companyLike = await loadCompanyLikeFromFirestore(
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
+        const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
           companyId
         );
+        if (loadResult.status === "error" && isAdapterFailClosedEnv(process.env)) {
+          return res.status(503).json({
+            ok: false,
+            code: "adapter_company_load_failed",
+            message: loadResult.message || "Company config load failed",
+            messageAr: "تعذر تحميل إعدادات قاعدة بيانات الشركة — لن يتم التوجيه الصامت للقاعدة الأساسية",
+          });
+        }
+        const companyLike = loadResult.status === "loaded" ? loadResult.company : null;
         let resolved;
         try {
-          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, null);
+          resolved = resolveCompanyStorageAdapter(
+            anStorageRouter,
+            companyId,
+            companyLike,
+            null,
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+          );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
         }
@@ -3592,15 +3681,29 @@ async function startServer() {
             messageAr: scope.messageAr,
           });
         }
-        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
-        const { listAnStockItems } = await import("./src/lib/anInventoryLists");
-        const companyLike = await loadCompanyLikeFromFirestore(
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
+        const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
           companyId
         );
+        if (loadResult.status === "error" && isAdapterFailClosedEnv(process.env)) {
+          return res.status(503).json({
+            ok: false,
+            code: "adapter_company_load_failed",
+            message: loadResult.message || "Company config load failed",
+            messageAr: "تعذر تحميل إعدادات قاعدة بيانات الشركة — لن يتم التوجيه الصامت للقاعدة الأساسية",
+          });
+        }
+        const companyLike = loadResult.status === "loaded" ? loadResult.company : null;
         let resolved;
         try {
-          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, null);
+          resolved = resolveCompanyStorageAdapter(
+            anStorageRouter,
+            companyId,
+            companyLike,
+            null,
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+          );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
         }
@@ -3630,15 +3733,29 @@ async function startServer() {
         }
         const warehouseId = req.query.warehouseId ? String(req.query.warehouseId).trim() : undefined;
         const itemId = req.query.itemId ? String(req.query.itemId).trim() : undefined;
-        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
-        const { listAnStockBalances } = await import("./src/lib/anInventoryLists");
-        const companyLike = await loadCompanyLikeFromFirestore(
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
+        const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
           companyId
         );
+        if (loadResult.status === "error" && isAdapterFailClosedEnv(process.env)) {
+          return res.status(503).json({
+            ok: false,
+            code: "adapter_company_load_failed",
+            message: loadResult.message || "Company config load failed",
+            messageAr: "تعذر تحميل إعدادات قاعدة بيانات الشركة — لن يتم التوجيه الصامت للقاعدة الأساسية",
+          });
+        }
+        const companyLike = loadResult.status === "loaded" ? loadResult.company : null;
         let resolved;
         try {
-          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, null);
+          resolved = resolveCompanyStorageAdapter(
+            anStorageRouter,
+            companyId,
+            companyLike,
+            null,
+            { loadStatus: loadResult, failClosed: isAdapterFailClosedEnv(process.env) }
+          );
         } catch (e: any) {
           return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
         }
