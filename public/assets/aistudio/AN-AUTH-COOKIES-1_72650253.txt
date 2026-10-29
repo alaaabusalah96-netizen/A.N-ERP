@@ -1,0 +1,176 @@
+# AN-AUTH-COOKIES-1 — HttpOnly cookies for A.N access (and refresh) tokens (LEAN)
+# Claude audit P1-4: stop relying on sessionStorage for an_access_token / an_refresh_token.
+# Sets cookies on successful /api/an/auth/login; authenticateSessionOrBearer reads cookie if no Bearer.
+# Clears cookies on /api/auth/logout (existing) and new optional clear on /api/an/auth/logout stub.
+# OUT OF SCOPE: full refresh rotation endpoint body, role map, Dedicated login, 2FA.
+
+## HARD RULES
+1. Files: `server.ts` (login success cookie set + auth helper cookie read + clearCookie helpers), `src/pages/Login.tsx` (remove or gate sessionStorage for A.N tokens), `src/lib/anAuthCookies.ts` (new helpers), `scripts/verifyAnAuthCookies1.ts`, `package.json` one script, `docs/MERGE_STATUS.md`, `.env.example` comments only.
+2. Cookie names: `an_access` (required), `an_refresh` (optional if refreshToken present).
+3. Flags: `HttpOnly`, `SameSite=Lax` (or `Strict` if already used for `session`), `Secure` when `req.secure` or `NODE_ENV=production` or `COOKIE_SECURE=1`.
+4. Path `/`. Max-Age access = expiresInSec from login (default 900). Refresh Max-Age = 7 days or TokenService policy if documented.
+5. Do NOT put tokens in response body removal if Bridge still needs nothing from body — you MAY keep accessToken in JSON for one release but Login must not write sessionStorage when cookies are the primary store. Prefer: still return tokens in JSON for debugging non-browser clients; browser Login stops sessionStorage writes.
+6. Never log cookie values.
+7. Stop at first failure. tsc >2 min → once → build → verify. One RESULTS REPORT only.
+
+## PRECHECK
+- AUTH-BRIDGE1 DONE
+- cookie-parser already `app.use(cookieParser())`
+- existing `res.cookie('session', ...)` pattern for Secure/sameSite reference
+- authenticateSessionOrBearer exists
+- Login sets sessionStorage an_access_token today
+
+## STEP 3 — Create `src/lib/anAuthCookies.ts`
+
+```typescript
+/**
+ * AN-AUTH-COOKIES-1 — cookie options for A.N tokens (no secret values here).
+ */
+export const AN_ACCESS_COOKIE = 'an_access';
+export const AN_REFRESH_COOKIE = 'an_refresh';
+
+export function anCookieSecure(req?: { secure?: boolean }): boolean {
+  if (process.env.COOKIE_SECURE === '1' || process.env.COOKIE_SECURE === 'true') return true;
+  if (process.env.NODE_ENV === 'production') return true;
+  return !!(req && req.secure);
+}
+
+export function accessCookieOptions(req: any, maxAgeSec: number) {
+  return {
+    httpOnly: true,
+    secure: anCookieSecure(req),
+    sameSite: 'lax' as const,
+    path: '/',
+    maxAge: Math.max(60, maxAgeSec) * 1000,
+  };
+}
+
+export function refreshCookieOptions(req: any, maxAgeSec = 7 * 24 * 3600) {
+  return {
+    httpOnly: true,
+    secure: anCookieSecure(req),
+    sameSite: 'lax' as const,
+    path: '/',
+    maxAge: maxAgeSec * 1000,
+  };
+}
+
+export function clearAnAuthCookieOptions(req: any) {
+  return {
+    httpOnly: true,
+    secure: anCookieSecure(req),
+    sameSite: 'lax' as const,
+    path: '/',
+  };
+}
+```
+
+## STEP 3b — `server.ts` after successful A.N login (including bridge payload)
+
+```javascript
+        const { AN_ACCESS_COOKIE, AN_REFRESH_COOKIE, accessCookieOptions, refreshCookieOptions } =
+          await import("./src/lib/anAuthCookies");
+        const maxAge = Number(payload.expiresInSec) || 900;
+        res.cookie(AN_ACCESS_COOKIE, payload.accessToken, accessCookieOptions(req, maxAge));
+        if (payload.refreshToken) {
+          res.cookie(AN_REFRESH_COOKIE, payload.refreshToken, refreshCookieOptions(req));
+        }
+        return res.status(200).json(payload);
+```
+
+## STEP 3c — `authenticateSessionOrBearer`
+Early in token resolution, after Authorization Bearer attempt fails or is absent:
+
+```javascript
+    // AN-AUTH-COOKIES-1
+    if (!token && req.cookies?.an_access) {
+      token = String(req.cookies.an_access);
+      // then existing A.N JWT verify path (TokenService.verifyAccessToken) applies
+    }
+```
+Ensure the A.N JWT branch runs for cookie-sourced token the same as Bearer.
+
+## STEP 3d — Clear cookies on logout
+In existing `/api/auth/logout` (or equivalent) after clearing `session`:
+
+```javascript
+      const { AN_ACCESS_COOKIE, AN_REFRESH_COOKIE, clearAnAuthCookieOptions } =
+        await import("./src/lib/anAuthCookies");
+      res.clearCookie(AN_ACCESS_COOKIE, clearAnAuthCookieOptions(req));
+      res.clearCookie(AN_REFRESH_COOKIE, clearAnAuthCookieOptions(req));
+```
+
+Optional minimal route:
+```javascript
+    app.post("/api/an/auth/logout", async (req, res) => {
+      const { AN_ACCESS_COOKIE, AN_REFRESH_COOKIE, clearAnAuthCookieOptions } =
+        await import("./src/lib/anAuthCookies");
+      res.clearCookie(AN_ACCESS_COOKIE, clearAnAuthCookieOptions(req));
+      res.clearCookie(AN_REFRESH_COOKIE, clearAnAuthCookieOptions(req));
+      res.status(200).json({ ok: true });
+    });
+```
+
+## STEP 3e — `Login.tsx`
+In A.N login success path:
+- **Remove** `sessionStorage.setItem('an_access_token', ...)` and `an_refresh_token` writes.
+- Keep `signInWithCustomToken` from BRIDGE.
+- Do not read sessionStorage for A.N API calls; browser will send cookies automatically for same-origin `/api/*` if `credentials: 'include'` on fetches.
+
+Scan `src` for `an_access_token` / `an_refresh_token`:
+- Remove client reads that attach `Authorization: Bearer` from sessionStorage **or** leave a fallback only if cookie auth fails (prefer remove for this package purity).
+- Any `fetch('/api/an/...')` must use `credentials: 'include'` (add if missing on A.N inventory strip fetches).
+
+## STEP 3f — `.env.example`
+```
+# AN-AUTH-COOKIES-1: set COOKIE_SECURE=1 behind HTTPS reverse proxy if NODE_ENV is not production
+# COOKIE_SECURE=0
+```
+
+## STEP 3g — MERGE_STATUS
+```markdown
+| AUTH-COOKIES1 | A.N tokens in HttpOnly cookies | DONE | an_access/an_refresh HttpOnly; sessionStorage writes removed from Login A.N path |
+```
+Next free rule:
+```markdown
+N. **AUTH-COOKIES-1:** A.N access/refresh tokens set as HttpOnly cookies on login; authenticateSessionOrBearer reads an_access cookie; Login no longer stores A.N tokens in sessionStorage.
+```
+
+## STEP 3h — `scripts/verifyAnAuthCookies1.ts`
+14 checks:
+- anAuthCookies.ts exists
+- AN_ACCESS_COOKIE / AN_REFRESH_COOKIE
+- accessCookieOptions httpOnly
+- server sets res.cookie with an_access (string match)
+- authenticateSessionOrBearer or auth helper references cookies an_access
+- clearCookie an_access or AN_ACCESS
+- Login.tsx does NOT contain sessionStorage.setItem('an_access_token'
+- AUTH-BRIDGE1 still in MERGE_STATUS
+- cookie-parser still used
+- signInWithCustomToken still in Login (bridge preserved)
+- requireAnMigrateOperator still
+- assertUserCanAccessCompany still
+- FIX-SEC1 still in MERGE
+- package script verify:auth-cookies optional
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnAuthCookies1.ts
+npx tsx scripts/verifyAnAuthBridge1.ts
+```
+
+## COMMIT NOTE
+```
+feat(auth-cookies1): store A.N tokens in HttpOnly cookies instead of sessionStorage
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+8) tsc: N | build: OK/FAIL
+9) verifyAnAuthCookies1: Passed: N | Failed: N
+10) regression: verifyAnAuthBridge1: …
+Status: DONE | package: AN-AUTH-COOKIES-1
+===========================
+```

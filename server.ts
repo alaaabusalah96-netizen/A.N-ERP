@@ -644,6 +644,10 @@ async function startServer() {
     } catch (err) {
       console.error("Logout session revocation error:", err);
     } finally {
+      const { AN_ACCESS_COOKIE, AN_REFRESH_COOKIE, clearAnAuthCookieOptions } =
+        await import("./src/lib/anAuthCookies");
+      res.clearCookie(AN_ACCESS_COOKIE, clearAnAuthCookieOptions(req));
+      res.clearCookie(AN_REFRESH_COOKIE, clearAnAuthCookieOptions(req));
       res.clearCookie('session', {
         httpOnly: true,
         secure: true,
@@ -722,6 +726,25 @@ async function startServer() {
             uid = serverToken.uid;
           }
         }
+      }
+    }
+
+    // AN-AUTH-COOKIES-1: check an_access cookie
+    if (!uid && req.cookies?.an_access) {
+      const token = String(req.cookies.an_access);
+      try {
+        const { TokenService } = await import("./src/an-core/auth/TokenService");
+        const { StorageRouter } = await import("./src/an-core/storage/StorageRouter");
+        const router = new StorageRouter();
+        const tokens = new TokenService(router.getPrimaryAdapter());
+        const verified = await tokens.verifyAccessToken(token);
+        if (verified.valid && verified.payload?.sub) {
+          uid = verified.payload.sub;
+          (req as any).anAuthJwt = true;
+          (req as any).anTenantId = verified.payload.tenantId;
+        }
+      } catch {
+        /* fall through */
       }
     }
 
@@ -3938,6 +3961,13 @@ async function startServer() {
           }
         } catch {
           payload.firebaseBridge = { ok: false, code: "bridge_exception" };
+        }
+        const { AN_ACCESS_COOKIE, AN_REFRESH_COOKIE, accessCookieOptions, refreshCookieOptions } =
+          await import("./src/lib/anAuthCookies");
+        const maxAge = Number(payload.expiresInSec) || 900;
+        res.cookie(AN_ACCESS_COOKIE, payload.accessToken, accessCookieOptions(req, maxAge));
+        if (payload.refreshToken) {
+          res.cookie(AN_REFRESH_COOKIE, payload.refreshToken, refreshCookieOptions(req));
         }
         return res.status(200).json(payload);
       } catch (err: any) {

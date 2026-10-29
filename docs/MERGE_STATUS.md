@@ -56,6 +56,7 @@
 | FIX-STORE1 | StorageRouter hardening | DONE | no silent in-memory under STRICT_PROD_SECURITY; connectionRef allowlist; certification on Dedicated; no eviction of recently-used pools |
 | FIX-SEC1 | A.N login + TokenService hardening | DONE | rate limits (IP + tenant:user), no user enumeration/timing leak, input caps, sanitized errors, audit lines, timing-safe JWT verify, refresh refuses missing/inactive users |
 | AUTH-BRIDGE1 | A.N login → Firebase customToken + JWT accept | DONE | bridge customToken best-effort; authenticateSessionOrBearer accepts A.N access JWT |
+| AUTH-COOKIES1 | A.N tokens in HttpOnly cookies | DONE | an_access/an_refresh HttpOnly; sessionStorage writes removed from Login A.N path |
 
 ## Canonical rules (do not regress)
 
@@ -93,6 +94,7 @@
 34. **FIX-STORE-1:** `resolveAdapter` refuses the in-memory fallback when STRICT_PROD_SECURITY=true unless AN_ALLOW_INMEMORY_FALLBACK=1; connectionRef must match DATABASE_URL(_NAME); adapter certification enforced on Shared and Dedicated; recently used dedicated pools are never evicted (503-style error `dedicated_pool_cap_reached`).
 35. **FIX-SEC-1:** `/api/an/auth/login` is limited per IP and per tenant:username; failures are uniform (`invalid_credentials`) and account state is revealed only after the password is verified; errors never echo internals; TokenService verifies HS256 only with timing-safe compare, checks token family inside the tenant scope, and refuses refresh for missing/inactive users. Durable lockout, 2FA and a persistent audit store are NOT part of this package.
 36. **AUTH-BRIDGE-1:** Successful A.N login may attach firebaseCustomToken; APIs accept A.N Bearer access JWT. Cookies/refresh/me and full role map are out of scope.
+37. **AUTH-COOKIES-1:** A.N access/refresh tokens set as HttpOnly cookies on login; authenticateSessionOrBearer reads an_access cookie; Login no longer stores A.N tokens in sessionStorage.
 
 ## Verify
 

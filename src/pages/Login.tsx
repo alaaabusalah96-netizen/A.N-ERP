@@ -81,12 +81,6 @@ export default function Login({
               : data?.message || data?.error || (isRtl ? 'فشل دخول A.N' : 'A.N login failed')
           );
         }
-        if (data.accessToken) {
-          try {
-            sessionStorage.setItem('an_access_token', data.accessToken);
-            if (data.refreshToken) sessionStorage.setItem('an_refresh_token', data.refreshToken);
-          } catch { /* ignore */ }
-        }
         if (data.firebaseCustomToken) {
           try {
             await signInWithCustomToken(auth, data.firebaseCustomToken);
