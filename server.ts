@@ -3158,8 +3158,26 @@ async function startServer() {
     app.get("/api/an/migrate/inventory/dry-run", async (req: any, res: any) => {
       try {
         if (!(await requireAnMigrateOperator(req, res))) return;
-        const { buildInventoryMigrateDryRun } = await import("./src/lib/anMigrateInventoryDry");
         const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "default";
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
+        const companyLike = await loadCompanyLikeFromFirestore(
+          typeof adminDb !== "undefined" ? adminDb : null,
+          companyId
+        );
+        const bodyBackend = req.body?.backend && typeof req.body.backend === "object" ? req.body.backend : null;
+        if (bodyBackend && typeof bodyBackend.connection_ref === "string") {
+          const ref = String(bodyBackend.connection_ref);
+          if (ref.includes("://") || ref.toLowerCase().includes("password=")) {
+            return res.status(400).json({ ok: false, code: "invalid_connection_ref", message: "connection_ref must be env var name only" });
+          }
+        }
+        let resolved;
+        try {
+          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, bodyBackend);
+        } catch (e: any) {
+          return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const { buildInventoryMigrateDryRun } = await import("./src/lib/anMigrateInventoryDry");
         const countKemit = async (cid: string) => {
           if (typeof adminDb === "undefined" || !adminDb) {
             return { warehouseCount: null, productCount: null, detail: "adminDb_unavailable" };
@@ -3201,8 +3219,17 @@ async function startServer() {
         const report = await buildInventoryMigrateDryRun(anStorageRouter, {
           companyId,
           countKemit,
+          adapter: resolved.adapter,
         });
-        res.json(report);
+        res.json({
+          ...report,
+          adapterResolution: {
+            source: resolved.source,
+            adapterType: resolved.adapterType,
+            isolationLevel: resolved.isolationLevel,
+            connectionRef: resolved.connectionRef,
+          },
+        });
       } catch (err: any) {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
@@ -3210,11 +3237,29 @@ async function startServer() {
     app.post("/api/an/migrate/inventory/warehouses", async (req: any, res: any) => {
       try {
         if (!(await requireAnMigrateOperator(req, res))) return;
-        const { migrateWarehousesToAn } = await import("./src/lib/anMigrateInventoryWrite");
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) {
           return res.status(400).json({ ok: false, error: "companyId required" });
         }
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
+        const companyLike = await loadCompanyLikeFromFirestore(
+          typeof adminDb !== "undefined" ? adminDb : null,
+          companyId
+        );
+        const bodyBackend = req.body?.backend && typeof req.body.backend === "object" ? req.body.backend : null;
+        if (bodyBackend && typeof bodyBackend.connection_ref === "string") {
+          const ref = String(bodyBackend.connection_ref);
+          if (ref.includes("://") || ref.toLowerCase().includes("password=")) {
+            return res.status(400).json({ ok: false, code: "invalid_connection_ref", message: "connection_ref must be env var name only" });
+          }
+        }
+        let resolved;
+        try {
+          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, bodyBackend);
+        } catch (e: any) {
+          return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const { migrateWarehousesToAn } = await import("./src/lib/anMigrateInventoryWrite");
         let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
         if (!rows) {
           // Load from Firestore when adminDb available
@@ -3242,9 +3287,18 @@ async function startServer() {
         const result = await migrateWarehousesToAn(anStorageRouter, {
           companyId,
           rows: rows || [],
+          adapter: resolved.adapter,
         });
         const status = result.writesEnabled ? 200 : 403;
-        res.status(status).json(result);
+        res.status(status).json({
+          ...result,
+          adapterResolution: {
+            source: resolved.source,
+            adapterType: resolved.adapterType,
+            isolationLevel: resolved.isolationLevel,
+            connectionRef: resolved.connectionRef,
+          },
+        });
       } catch (err: any) {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
@@ -3252,9 +3306,27 @@ async function startServer() {
     app.post("/api/an/migrate/inventory/items", async (req: any, res: any) => {
       try {
         if (!(await requireAnMigrateOperator(req, res))) return;
-        const { migrateStockItemsToAn } = await import("./src/lib/anMigrateInventoryItems");
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
+        const companyLike = await loadCompanyLikeFromFirestore(
+          typeof adminDb !== "undefined" ? adminDb : null,
+          companyId
+        );
+        const bodyBackend = req.body?.backend && typeof req.body.backend === "object" ? req.body.backend : null;
+        if (bodyBackend && typeof bodyBackend.connection_ref === "string") {
+          const ref = String(bodyBackend.connection_ref);
+          if (ref.includes("://") || ref.toLowerCase().includes("password=")) {
+            return res.status(400).json({ ok: false, code: "invalid_connection_ref", message: "connection_ref must be env var name only" });
+          }
+        }
+        let resolved;
+        try {
+          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, bodyBackend);
+        } catch (e: any) {
+          return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const { migrateStockItemsToAn } = await import("./src/lib/anMigrateInventoryItems");
         let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
         if (!rows) {
           rows = [];
@@ -3274,8 +3346,20 @@ async function startServer() {
             }
           }
         }
-        const result = await migrateStockItemsToAn(anStorageRouter, { companyId, rows: rows || [] });
-        res.status(result.writesEnabled ? 200 : 403).json(result);
+        const result = await migrateStockItemsToAn(anStorageRouter, {
+          companyId,
+          rows: rows || [],
+          adapter: resolved.adapter,
+        });
+        res.status(result.writesEnabled ? 200 : 403).json({
+          ...result,
+          adapterResolution: {
+            source: resolved.source,
+            adapterType: resolved.adapterType,
+            isolationLevel: resolved.isolationLevel,
+            connectionRef: resolved.connectionRef,
+          },
+        });
       } catch (err: any) {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
@@ -3283,9 +3367,27 @@ async function startServer() {
     app.post("/api/an/migrate/inventory/balances", async (req: any, res: any) => {
       try {
         if (!(await requireAnMigrateOperator(req, res))) return;
-        const { migrateOpeningBalancesToAn } = await import("./src/lib/anMigrateInventoryBalances");
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
+        const companyLike = await loadCompanyLikeFromFirestore(
+          typeof adminDb !== "undefined" ? adminDb : null,
+          companyId
+        );
+        const bodyBackend = req.body?.backend && typeof req.body.backend === "object" ? req.body.backend : null;
+        if (bodyBackend && typeof bodyBackend.connection_ref === "string") {
+          const ref = String(bodyBackend.connection_ref);
+          if (ref.includes("://") || ref.toLowerCase().includes("password=")) {
+            return res.status(400).json({ ok: false, code: "invalid_connection_ref", message: "connection_ref must be env var name only" });
+          }
+        }
+        let resolved;
+        try {
+          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, bodyBackend);
+        } catch (e: any) {
+          return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const { migrateOpeningBalancesToAn } = await import("./src/lib/anMigrateInventoryBalances");
         let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
         if (!rows) {
           rows = [];
@@ -3308,8 +3410,17 @@ async function startServer() {
         const result = await migrateOpeningBalancesToAn(anStorageRouter, {
           companyId,
           rows: rows || [],
+          adapter: resolved.adapter,
         });
-        res.status(result.writesEnabled ? 200 : 403).json(result);
+        res.status(result.writesEnabled ? 200 : 403).json({
+          ...result,
+          adapterResolution: {
+            source: resolved.source,
+            adapterType: resolved.adapterType,
+            isolationLevel: resolved.isolationLevel,
+            connectionRef: resolved.connectionRef,
+          },
+        });
       } catch (err: any) {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
@@ -3317,9 +3428,27 @@ async function startServer() {
     app.post("/api/an/migrate/accounting/accounts", async (req: any, res: any) => {
       try {
         if (!(await requireAnMigrateOperator(req, res))) return;
-        const { migrateAccountsToAn } = await import("./src/lib/anMigrateAccounts");
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
+        const companyLike = await loadCompanyLikeFromFirestore(
+          typeof adminDb !== "undefined" ? adminDb : null,
+          companyId
+        );
+        const bodyBackend = req.body?.backend && typeof req.body.backend === "object" ? req.body.backend : null;
+        if (bodyBackend && typeof bodyBackend.connection_ref === "string") {
+          const ref = String(bodyBackend.connection_ref);
+          if (ref.includes("://") || ref.toLowerCase().includes("password=")) {
+            return res.status(400).json({ ok: false, code: "invalid_connection_ref", message: "connection_ref must be env var name only" });
+          }
+        }
+        let resolved;
+        try {
+          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, bodyBackend);
+        } catch (e: any) {
+          return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const { migrateAccountsToAn } = await import("./src/lib/anMigrateAccounts");
         let rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
         if (!rows) {
           rows = [];
@@ -3336,8 +3465,20 @@ async function startServer() {
             }
           }
         }
-        const result = await migrateAccountsToAn(anStorageRouter, { companyId, rows: rows || [] });
-        res.status(result.writesEnabled ? 200 : 403).json(result);
+        const result = await migrateAccountsToAn(anStorageRouter, {
+          companyId,
+          rows: rows || [],
+          adapter: resolved.adapter,
+        });
+        res.status(result.writesEnabled ? 200 : 403).json({
+          ...result,
+          adapterResolution: {
+            source: resolved.source,
+            adapterType: resolved.adapterType,
+            isolationLevel: resolved.isolationLevel,
+            connectionRef: resolved.connectionRef,
+          },
+        });
       } catch (err: any) {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }

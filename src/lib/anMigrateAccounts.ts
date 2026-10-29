@@ -2,7 +2,7 @@
  * AN-MIGRATE-WRITE-F5 — gated chart-of-accounts upsert into A.N storage.
  */
 import type { StorageRouter } from '../an-core/storage/StorageRouter';
-import type { Account } from '../an-core/storage/StoragePort';
+import type { Account, StoragePort } from '../an-core/storage/StoragePort';
 import { probeDefaultProcessPlane } from './anDataPlane';
 
 export interface KemitAccountRaw {
@@ -71,7 +71,7 @@ export interface AccountMigrateResult {
 
 export async function migrateAccountsToAn(
   router: StorageRouter,
-  opts: { companyId: string; rows: KemitAccountRaw[]; env?: NodeJS.ProcessEnv }
+  opts: { companyId: string; rows: KemitAccountRaw[]; env?: NodeJS.ProcessEnv; adapter?: StoragePort }
 ): Promise<AccountMigrateResult> {
   const env = opts.env || process.env;
   const companyId = opts.companyId.trim() || 'default';
@@ -114,7 +114,8 @@ export async function migrateAccountsToAn(
     };
   }
 
-  const adapter = router.getPrimaryAdapter();
+  // opts.adapter if provided; else primary for backward compat in unit tests
+  const adapter = opts.adapter || router.getPrimaryAdapter();
   let existingCodes = new Set<string>();
   if (typeof adapter.listAccounts === 'function') {
     const listed = await adapter.listAccounts(companyId);

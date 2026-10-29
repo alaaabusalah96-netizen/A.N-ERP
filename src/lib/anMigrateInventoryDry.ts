@@ -2,6 +2,7 @@
  * AN-MIGRATE-DRY-F1 — inventory migration dry-run report (no writes).
  */
 import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import type { StoragePort } from '../an-core/storage/StoragePort';
 import { readInventorySummary } from './anInventoryRead';
 import { probeDefaultProcessPlane } from './anDataPlane';
 
@@ -49,12 +50,29 @@ export async function buildInventoryMigrateDryRun(
     companyId?: string;
     env?: NodeJS.ProcessEnv;
     countKemit?: KemitInventoryCounter;
+    adapter?: StoragePort;
   }
 ): Promise<InventoryDryRunReport> {
   const env = opts.env || process.env;
   const companyId = (opts.companyId || 'default').trim() || 'default';
   const processPlane = probeDefaultProcessPlane(env);
-  const anSummary = await readInventorySummary(router, { companyId, env });
+  let anSummary = await readInventorySummary(router, { companyId, env });
+
+  if (opts.adapter) {
+    try {
+      const wh = await opts.adapter.listWarehouses(companyId);
+      const items = await opts.adapter.listStockItems(companyId);
+      const warehouseCount = wh.success && Array.isArray(wh.data) ? wh.data.length : null;
+      const itemCount = items.success && Array.isArray(items.data) ? items.data.length : null;
+      anSummary = {
+        ...anSummary,
+        warehouseCount,
+        itemCount,
+      };
+    } catch {
+      /* keep default anSummary */
+    }
+  }
 
   let kemit: InventoryDryRunReport['kemit'] = {
     source: 'unavailable',

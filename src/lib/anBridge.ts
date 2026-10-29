@@ -36,7 +36,7 @@ export interface CompanyBackendSettings {
   connection_ref: string;
 }
 
-type CompanyLike = {
+export type CompanyLike = {
   id?: string;
   auth_driver?: AuthDriver;
   db_backend?: AdapterType;

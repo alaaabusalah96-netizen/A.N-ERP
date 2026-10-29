@@ -7,6 +7,7 @@ import type {
   StockDocumentLine,
   StockMovement,
   PostStockDocumentAtomicInput,
+  StoragePort,
 } from '../an-core/storage/StoragePort';
 import { probeDefaultProcessPlane } from './anDataPlane';
 
@@ -55,7 +56,7 @@ function num(v: unknown, d = 0): number {
 
 export async function migrateOpeningBalancesToAn(
   router: StorageRouter,
-  opts: { companyId: string; rows: KemitBalanceRaw[]; env?: NodeJS.ProcessEnv; actorId?: string }
+  opts: { companyId: string; rows: KemitBalanceRaw[]; env?: NodeJS.ProcessEnv; actorId?: string; adapter?: StoragePort }
 ): Promise<BalanceMigrateResult> {
   const env = opts.env || process.env;
   const companyId = opts.companyId.trim() || 'default';
@@ -101,7 +102,8 @@ export async function migrateOpeningBalancesToAn(
     };
   }
 
-  const adapter = router.getPrimaryAdapter();
+  // opts.adapter if provided; else primary for backward compat in unit tests
+  const adapter = opts.adapter || router.getPrimaryAdapter();
   const nowIso = new Date().toISOString();
   let inserted = 0;
   let skippedExisting = 0;

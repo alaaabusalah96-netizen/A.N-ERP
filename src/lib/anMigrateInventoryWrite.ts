@@ -2,7 +2,7 @@
  * AN-MIGRATE-WRITE-F2 — gated warehouse upsert into A.N storage.
  */
 import type { StorageRouter } from '../an-core/storage/StorageRouter';
-import type { Warehouse } from '../an-core/storage/StoragePort';
+import type { Warehouse, StoragePort } from '../an-core/storage/StoragePort';
 import { probeDefaultProcessPlane } from './anDataPlane';
 
 export interface KemitWarehouseRaw {
@@ -64,6 +64,7 @@ export async function migrateWarehousesToAn(
     companyId: string;
     rows: KemitWarehouseRaw[];
     env?: NodeJS.ProcessEnv;
+    adapter?: StoragePort;
   }
 ): Promise<WarehouseMigrateResult> {
   const env = opts.env || process.env;
@@ -109,7 +110,8 @@ export async function migrateWarehousesToAn(
     };
   }
 
-  const adapter = router.getPrimaryAdapter();
+  // opts.adapter if provided; else primary for backward compat in unit tests
+  const adapter = opts.adapter || router.getPrimaryAdapter();
   const existing = await adapter.listWarehouses(companyId);
   const existingIds = new Set(
     existing.success && Array.isArray(existing.data)

@@ -2,7 +2,7 @@
  * AN-MIGRATE-WRITE-F3 — gated stock item upsert into A.N storage.
  */
 import type { StorageRouter } from '../an-core/storage/StorageRouter';
-import type { StockItem } from '../an-core/storage/StoragePort';
+import type { StockItem, StoragePort } from '../an-core/storage/StoragePort';
 import { probeDefaultProcessPlane } from './anDataPlane';
 
 const DEFAULT_INV = '1105';
@@ -95,7 +95,7 @@ export interface ItemMigrateResult {
 
 export async function migrateStockItemsToAn(
   router: StorageRouter,
-  opts: { companyId: string; rows: KemitProductRaw[]; env?: NodeJS.ProcessEnv }
+  opts: { companyId: string; rows: KemitProductRaw[]; env?: NodeJS.ProcessEnv; adapter?: StoragePort }
 ): Promise<ItemMigrateResult> {
   const env = opts.env || process.env;
   const companyId = opts.companyId.trim() || 'default';
@@ -138,7 +138,8 @@ export async function migrateStockItemsToAn(
     };
   }
 
-  const adapter = router.getPrimaryAdapter();
+  // opts.adapter if provided; else primary for backward compat in unit tests
+  const adapter = opts.adapter || router.getPrimaryAdapter();
   const existing = await adapter.listStockItems(companyId);
   const existingIds = new Set(
     existing.success && Array.isArray(existing.data) ? existing.data.map((i) => i.id) : []
