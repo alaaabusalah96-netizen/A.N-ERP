@@ -3483,6 +3483,60 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
+    app.get("/api/an/inventory/warehouses", async (req: any, res: any) => {
+      try {
+        const authResult = await authenticateSessionOrBearer(req);
+        if (!authResult.authenticated) {
+          return res.status(authResult.statusCode || 401).json({ ok: false, message: authResult.message });
+        }
+        const companyId = String(req.query.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
+        const { listAnWarehouses } = await import("./src/lib/anInventoryLists");
+        const companyLike = await loadCompanyLikeFromFirestore(
+          typeof adminDb !== "undefined" ? adminDb : null,
+          companyId
+        );
+        let resolved;
+        try {
+          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, null);
+        } catch (e: any) {
+          return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const result = await listAnWarehouses(resolved.adapter, companyId, resolved);
+        res.status(result.ok ? 200 : 500).json(result);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+
+    app.get("/api/an/inventory/items", async (req: any, res: any) => {
+      try {
+        const authResult = await authenticateSessionOrBearer(req);
+        if (!authResult.authenticated) {
+          return res.status(authResult.statusCode || 401).json({ ok: false, message: authResult.message });
+        }
+        const companyId = String(req.query.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
+        const { listAnStockItems } = await import("./src/lib/anInventoryLists");
+        const companyLike = await loadCompanyLikeFromFirestore(
+          typeof adminDb !== "undefined" ? adminDb : null,
+          companyId
+        );
+        let resolved;
+        try {
+          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, null);
+        } catch (e: any) {
+          return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const result = await listAnStockItems(resolved.adapter, companyId, resolved);
+        res.status(result.ok ? 200 : 500).json(result);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+
     app.get("/api/an/auth/login-target", async (_req: any, res: any) => {
       try {
         const { buildAnLoginTargetStatus } = await import("./src/lib/anAuthLoginTarget");
@@ -3520,7 +3574,7 @@ async function startServer() {
     } catch (bootErr: any) {
       console.warn("[AN-AUTH-G5] platform bootstrap error:", bootErr?.message || bootErr);
     }
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses + migrate/inventory/items + migrate/inventory/balances + migrate/accounting/accounts + auth/login-target + auth/login");
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses + migrate/inventory/items + migrate/inventory/balances + migrate/accounting/accounts + inventory/warehouses + inventory/items + auth/login-target + auth/login");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }

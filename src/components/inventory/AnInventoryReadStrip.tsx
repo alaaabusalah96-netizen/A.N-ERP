@@ -8,14 +8,31 @@ export default function AnInventoryReadStrip(props: {
   const isRtl = props.language === 'ar';
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<any>(null);
+  const [whListCount, setWhListCount] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       const s = await fetchInventorySummary(props.companyId);
+      let listCount: number | null = null;
+      if (props.companyId) {
+        try {
+          const r = await fetch(
+            `/api/an/inventory/warehouses?companyId=${encodeURIComponent(props.companyId)}`,
+            { credentials: 'include' }
+          );
+          if (r.ok) {
+            const j = await r.json();
+            if (typeof j.count === 'number') listCount = j.count;
+          }
+        } catch {
+          /* ignore error, summary remains */
+        }
+      }
       if (!cancelled) {
         setSummary(s);
+        setWhListCount(listCount);
         setLoading(false);
       }
     })();
@@ -41,6 +58,11 @@ export default function AnInventoryReadStrip(props: {
           <li>
             {isRtl ? 'مستودعات' : 'warehouses'}={summary.warehouses ?? summary.warehouseCount ?? '—'}
           </li>
+          {whListCount !== null && (
+            <li>
+              {isRtl ? 'قائمة المستودعات' : 'whList'}={whListCount}
+            </li>
+          )}
           <li>
             {isRtl ? 'أصناف' : 'items'}={summary.items ?? summary.itemCount ?? '—'}
           </li>

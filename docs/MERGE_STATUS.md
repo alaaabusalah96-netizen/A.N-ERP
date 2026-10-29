@@ -45,6 +45,7 @@
 | G5 | Platform admin bootstrap on startup | DONE | runPlatformAdminBootstrapOnStart at boot; fixes empty A.N users for login |
 | SEC-MIG1 | Migrate route AuthZ | DONE | requireAnMigrateOperator on migrate GET/POST; env flag still required for writes |
 | ADP1 | Per-company migrate adapter | DONE | resolveCompanyStorageAdapter on migrate routes; primary fallback |
+| INV-L1 | A.N inventory list APIs | DONE | GET warehouses/items via company adapter; session required; CustodyDB UI unchanged |
 
 ## Canonical rules (do not regress)
 
@@ -71,6 +72,7 @@
 21. **AUTH-G5:** On startup, when PLATFORM_ADMIN_USERNAME/PASSWORD set, bootstrapPlatformAdmin runs on primary adapter (tenant default unless PLATFORM_ADMIN_TENANT_ID set).
 22. **SEC-MIGRATE-1:** /api/an/migrate/* requires authenticated platform/system admin session before AN_MIGRATE_WRITES or dry-run.
 23. **ADAPTER-COMPANY-1:** Migrate uses StorageRouter.resolveAdapter when company backend fields exist; otherwise process primary DATABASE_URL.
+24. **INV-READ-LIST-1:** Authenticated read lists use per-company adapter resolution. Operational Inventory.tsx still CustodyDB.
 
 ## Verify
 

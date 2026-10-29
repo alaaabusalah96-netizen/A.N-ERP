@@ -136,6 +136,18 @@ export const AN_ROUTE_CATALOG = [
   },
   {
     method: 'GET',
+    path: '/api/an/inventory/warehouses',
+    phase: 'INV-L1',
+    purpose: 'List A.N warehouses per company resolved adapter',
+  },
+  {
+    method: 'GET',
+    path: '/api/an/inventory/items',
+    phase: 'INV-L1',
+    purpose: 'List A.N stock items per company resolved adapter',
+  },
+  {
+    method: 'GET',
     path: '/api/an/auth/login-target',
     phase: 'G1',
     purpose: 'A.N login target status (interim Firebase still operational)',
