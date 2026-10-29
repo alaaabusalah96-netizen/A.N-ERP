@@ -1,0 +1,141 @@
+# AN-SEC-MIGRATE-1 — AuthZ guard on A.N migrate write routes (LEAN)
+# Priority from audit: migrate POSTs only had AN_MIGRATE_WRITES env gate — not enough.
+# Require authenticated session + platform/system admin (KEMIT session interim) before any write migrate.
+# Does NOT enable AN_MIGRATE_WRITES. Does NOT change Login. Does NOT migrate data.
+
+## HARD RULES
+1. Apply guard to ALL of:
+   - POST /api/an/migrate/inventory/warehouses
+   - POST /api/an/migrate/inventory/items
+   - POST /api/an/migrate/inventory/balances
+   - POST /api/an/migrate/accounting/accounts
+2. GET dry-run `/api/an/migrate/inventory/dry-run` must also require authentication (same operator class) — no anonymous probing of counts on production.
+3. Unauthenticated → 401. Authenticated but not admin → 403.
+4. Keep AN_MIGRATE_WRITES check **after** auth (order: auth → then writes flag → then work).
+5. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- `authenticateSessionOrBearer` and `isPlatformAdminUser` exist in `server.ts`.
+- Migrate routes exist.
+
+## STEP 3 — Inside `server.ts` (same scope as authenticateSessionOrBearer)
+
+Add helper **after** `authenticateSessionOrBearer` is defined (or immediately before first migrate route if helpers are in outer startServer scope — must see both functions):
+
+```javascript
+  async function requireAnMigrateOperator(req: any, res: any): Promise<boolean> {
+    const authResult = await authenticateSessionOrBearer(req);
+    if (!authResult.authenticated) {
+      res.status(authResult.statusCode || 401).json({
+        ok: false,
+        code: "migrate_unauthorized",
+        message: authResult.message || "Unauthorized",
+        messageAr: "يلزم تسجيل الدخول لتنفيذ الترحيل",
+      });
+      return false;
+    }
+    const user = authResult.user || {};
+    const role = String(user.role || "");
+    const isAdminRole =
+      role === "SystemAdmin" ||
+      role === "Admin" ||
+      role === "super_admin" ||
+      role === "system_admin";
+    let platform = false;
+    try {
+      platform = await isPlatformAdminUser(user.email, user);
+    } catch {
+      platform = false;
+    }
+    if (!platform && !isAdminRole) {
+      res.status(403).json({
+        ok: false,
+        code: "migrate_forbidden",
+        message: "Forbidden: migrate requires platform or system admin",
+        messageAr: "الترحيل متاح لمدير المنصة أو مسؤول النظام فقط",
+      });
+      return false;
+    }
+    (req as any).anMigrateUser = user;
+    return true;
+  }
+```
+
+## STEP 3b — At the **start** of each migrate handler (POST warehouses/items/balances/accounts and GET dry-run), first lines inside try:
+
+```javascript
+        if (!(await requireAnMigrateOperator(req, res))) return;
+```
+
+Place **before** `AN_MIGRATE_WRITES` / business logic.
+
+## STEP 3c — `docs/MERGE_STATUS.md`
+```markdown
+| SEC-MIG1 | Migrate route AuthZ | DONE | requireAnMigrateOperator on migrate GET/POST; env flag still required for writes |
+```
+
+```markdown
+22. **SEC-MIGRATE-1:** /api/an/migrate/* requires authenticated platform/system admin session before AN_MIGRATE_WRITES or dry-run.
+```
+
+## STEP 3d — `scripts/verifyAnSecMigrate1.ts`
+
+```typescript
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+
+const root = process.cwd();
+const server = fs.readFileSync(path.join(root, 'server.ts'), 'utf8');
+const statusDoc = fs.readFileSync(path.join(root, 'docs/MERGE_STATUS.md'), 'utf8');
+
+check('S1 requireAnMigrateOperator defined', server.includes('requireAnMigrateOperator'));
+check('S2 uses authenticateSessionOrBearer', server.includes('authenticateSessionOrBearer'));
+check('S3 platform or admin check', server.includes('migrate_forbidden') || server.includes('isPlatformAdminUser'));
+check('S4 warehouses guarded', /migrate\/inventory\/warehouses[\s\S]{0,800}requireAnMigrateOperator/.test(server));
+check('S5 items guarded', /migrate\/inventory\/items[\s\S]{0,800}requireAnMigrateOperator/.test(server));
+check('S6 balances guarded', /migrate\/inventory\/balances[\s\S]{0,800}requireAnMigrateOperator/.test(server));
+check('S7 accounts guarded', /migrate\/accounting\/accounts[\s\S]{0,800}requireAnMigrateOperator/.test(server));
+check('S8 dry-run guarded', /migrate\/inventory\/dry-run[\s\S]{0,800}requireAnMigrateOperator/.test(server));
+check('S9 AN_MIGRATE_WRITES still referenced', server.includes('AN_MIGRATE_WRITES'));
+check('S10 MERGE SEC-MIG', statusDoc.includes('SEC-MIG') || statusDoc.includes('SEC-MIGRATE'));
+check('S11 401 path migrate_unauthorized', server.includes('migrate_unauthorized'));
+check('S12 no removal of writes flag', server.includes('writesEnabled') || server.includes('AN_MIGRATE_WRITES'));
+check('S13 Login not required to change', fs.existsSync(path.join(root, 'src/pages/Login.tsx')));
+check('S14 authenticateSessionOrBearer still defined', server.includes('async function authenticateSessionOrBearer'));
+
+console.log(`Passed: ${passed} | Failed: ${failed}`);
+process.exit(failed > 0 ? 1 : 0);
+```
+
+If regex distance fails because handlers are long, use: count of `requireAnMigrateOperator` calls >= 5 and each route string still present.
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnSecMigrate1.ts
+```
+
+## COMMIT NOTE
+```
+fix(sec-mig1): require admin session on A.N migrate routes
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnSecMigrate1: Passed: N | Failed: N
+Status: DONE | package: AN-SEC-MIGRATE-1
+===========================
+```

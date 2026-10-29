@@ -3116,8 +3116,48 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
+    // AN-SEC-MIGRATE-1: Require authenticated platform/system admin before any migrate action.
+    // Downstream migrate modules enforce AN_MIGRATE_WRITES flag after this operator check passes.
+    async function requireAnMigrateOperator(req: any, res: any): Promise<boolean> {
+      const authResult = await authenticateSessionOrBearer(req);
+      if (!authResult.authenticated) {
+        res.status(authResult.statusCode || 401).json({
+          ok: false,
+          code: "migrate_unauthorized",
+          message: authResult.message || "Unauthorized",
+          messageAr: "يلزم تسجيل الدخول لتنفيذ الترحيل",
+        });
+        return false;
+      }
+      const user = authResult.user || {};
+      const role = String(user.role || "");
+      const isAdminRole =
+        role === "SystemAdmin" ||
+        role === "Admin" ||
+        role === "super_admin" ||
+        role === "system_admin";
+      let platform = false;
+      try {
+        platform = await isPlatformAdminUser(user.email, user);
+      } catch {
+        platform = false;
+      }
+      if (!platform && !isAdminRole) {
+        res.status(403).json({
+          ok: false,
+          code: "migrate_forbidden",
+          message: "Forbidden: migrate requires platform or system admin",
+          messageAr: "الترحيل متاح لمدير المنصة أو مسؤول النظام فقط",
+        });
+        return false;
+      }
+      (req as any).anMigrateUser = user;
+      return true;
+    }
+
     app.get("/api/an/migrate/inventory/dry-run", async (req: any, res: any) => {
       try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
         const { buildInventoryMigrateDryRun } = await import("./src/lib/anMigrateInventoryDry");
         const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "default";
         const countKemit = async (cid: string) => {
@@ -3169,6 +3209,7 @@ async function startServer() {
     });
     app.post("/api/an/migrate/inventory/warehouses", async (req: any, res: any) => {
       try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
         const { migrateWarehousesToAn } = await import("./src/lib/anMigrateInventoryWrite");
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) {
@@ -3210,6 +3251,7 @@ async function startServer() {
     });
     app.post("/api/an/migrate/inventory/items", async (req: any, res: any) => {
       try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
         const { migrateStockItemsToAn } = await import("./src/lib/anMigrateInventoryItems");
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
@@ -3240,6 +3282,7 @@ async function startServer() {
     });
     app.post("/api/an/migrate/inventory/balances", async (req: any, res: any) => {
       try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
         const { migrateOpeningBalancesToAn } = await import("./src/lib/anMigrateInventoryBalances");
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
@@ -3273,6 +3316,7 @@ async function startServer() {
     });
     app.post("/api/an/migrate/accounting/accounts", async (req: any, res: any) => {
       try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
         const { migrateAccountsToAn } = await import("./src/lib/anMigrateAccounts");
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });

@@ -43,6 +43,7 @@
 | G4 | Prefer A.N login UI | DONE | A.N-only UI when AN_ENABLE_AN_LOGIN; Firebase toggle needs AN_ALLOW_FIREBASE_LOGIN |
 | INV-R1 | Inventory A.N read strip | DONE | AnInventoryReadStrip on Inventory.tsx; CustodyDB flows unchanged |
 | G5 | Platform admin bootstrap on startup | DONE | runPlatformAdminBootstrapOnStart at boot; fixes empty A.N users for login |
+| SEC-MIG1 | Migrate route AuthZ | DONE | requireAnMigrateOperator on migrate GET/POST; env flag still required for writes |
 
 ## Canonical rules (do not regress)
 
@@ -67,6 +68,7 @@
 19. **AUTH-G4:** With AN_ENABLE_AN_LOGIN, UI prefers A.N-only. Firebase login UI requires AN_ALLOW_FIREBASE_LOGIN=1. Server Firebase route remains.
 20. **INV-UI-READ-1:** Inventory page shows A.N read summary only. Document posting remains KEMIT until INV write/cutover packages.
 21. **AUTH-G5:** On startup, when PLATFORM_ADMIN_USERNAME/PASSWORD set, bootstrapPlatformAdmin runs on primary adapter (tenant default unless PLATFORM_ADMIN_TENANT_ID set).
+22. **SEC-MIGRATE-1:** /api/an/migrate/* requires authenticated platform/system admin session before AN_MIGRATE_WRITES or dry-run.
 
 ## Verify
 
