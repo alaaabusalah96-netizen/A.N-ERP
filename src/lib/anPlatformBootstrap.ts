@@ -40,6 +40,24 @@ export async function runPlatformAdminBootstrapOnStart(
         };
       }
     }
+    // Ensure tenant exists
+    if (typeof adapter.saveTenant === 'function') {
+      await adapter.saveTenant(
+        {
+          id: tenantId,
+          code: tenantId,
+          nameAr: 'المنشأة الافتراضية',
+          status: 'ACTIVE',
+          backendConfig: {
+            db_backend: 'postgresql',
+            isolation_level: 'Shared',
+            connection_ref: 'DATABASE_URL',
+          },
+        },
+        'seed-tenant-' + tenantId,
+        true
+      );
+    }
   } catch (e: any) {
     return {
       ran: true,
