@@ -126,3 +126,21 @@ npm start
 2. **Audit & Traceability**: Every transaction update logs an append-only entry in `transaction_history` and `audit_logs`.
 3. **Bilingual & Multi-Tenant Support**: Full Arabic / English support with tenant isolation enforced per company/branch.
 
+
+---
+
+## 🛠️ 6. A.N / KEMIT Merge Plane
+
+The A.N plane integrates a dedicated PostgreSQL data plane and JWT-based authentication driver.
+
+### 6.1 Feature Flags
+A.N features are gated by environment variables. See [docs/ops/AN-DEPLOY-FLAGS.md](docs/ops/AN-DEPLOY-FLAGS.md) for a complete reference.
+
+### 6.2 Database Isolation
+For Shared isolation, ensure the database role does not have superuser or bypassrls privileges. See [docs/ops/PG-ROLE-NO-BYPASSRLS.md](docs/ops/PG-ROLE-NO-BYPASSRLS.md).
+
+### 6.3 Deployment Stack
+- Node.js 20+
+- `npm ci`
+- `npm run build`
+- `npm start`

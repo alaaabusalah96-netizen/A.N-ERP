@@ -39,6 +39,26 @@ jobs:
       - name: Run Unit & Integration Tests
         run: npm test
 
+      - name: Production build
+        run: npm run build
+
+      - name: A.N plane static verifies
+        env:
+          STRICT_PROD_SECURITY: "false"
+          AN_ALLOW_INMEMORY_FALLBACK: "1"
+        run: |
+          npx tsx scripts/verifyMergeAll.ts
+          npx tsx scripts/verifyAnAdapterFailClosed2.ts
+          npx tsx scripts/verifyAnAdapterRouteTest1.ts
+          npx tsx scripts/verifyAnMigIdem1.ts
+          npx tsx scripts/verifyAnFixStore1.ts
+          npx tsx scripts/verifyAnFixSec1.ts
+          npx tsx scripts/verifyAnAuthBridge1.ts
+          npx tsx scripts/verifyAnAuthCookies1.ts
+          npx tsx scripts/verifyAnAuthRefreshMe1.ts
+          npx tsx scripts/verifyAnAuthRoleMap1.ts
+          npx tsx scripts/verifyAnFixPgRole1.ts
+
       - name: Setup Java (for Firebase Emulator)
         uses: actions/setup-java@v4
         with:

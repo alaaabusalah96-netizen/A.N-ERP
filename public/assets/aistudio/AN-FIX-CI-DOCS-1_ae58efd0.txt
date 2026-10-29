@@ -1,0 +1,131 @@
+# AN-FIX-CI-DOCS-1 — CI verify scripts + gitignore + A.N deploy notes (LEAN)
+# Claude phase-4 (partial): wire existing verify:* scripts into CI; tighten .gitignore; document A.N flags in DEPLOYMENT snippet.
+# Does NOT add live PostgreSQL service or Playwright e2e (separate later package).
+# Does NOT delete history tar.gz (document only — force-push history rewrite is out of band).
+
+## HARD RULES
+1. Files: `.github/workflows/ci.yml`, `.gitignore`, `docs/ops/AN-DEPLOY-FLAGS.md` (new short), `DEPLOYMENT.md` OR create if missing (append A.N section only), `scripts/verifyAnFixCiDocs1.ts`, `package.json` optional script, `docs/MERGE_STATUS.md`.
+2. CI steps must call scripts that already exist in package.json verify:* — do not invent missing verify files.
+3. Keep existing lint/test/rules jobs; append a new step "A.N plane verifies" that runs a safe subset without DATABASE_URL.
+4. Never put real secrets in workflow env beyond existing dummy CI values.
+5. Stop at first failure. tsc >2 min → once → build → verify. One RESULTS REPORT only.
+
+## PRECHECK
+- FIX-PGROLE1 DONE
+- package.json contains verify:merge, verify:adapter-fc2, verify:fix-store, verify:auth-bridge (etc.)
+- .github/workflows/ci.yml exists
+
+## STEP 3 — `.github/workflows/ci.yml`
+After "Run Unit & Integration Tests" (or before emulator if slower), add:
+
+```yaml
+      - name: Production build
+        run: npm run build
+
+      - name: A.N plane static verifies
+        env:
+          STRICT_PROD_SECURITY: "false"
+          AN_ALLOW_INMEMORY_FALLBACK: "1"
+        run: |
+          npx tsx scripts/verifyMergeAll.ts
+          npx tsx scripts/verifyAnAdapterFailClosed2.ts
+          npx tsx scripts/verifyAnAdapterRouteTest1.ts
+          npx tsx scripts/verifyAnMigIdem1.ts
+          npx tsx scripts/verifyAnFixStore1.ts
+          npx tsx scripts/verifyAnFixSec1.ts
+          npx tsx scripts/verifyAnAuthBridge1.ts
+          npx tsx scripts/verifyAnAuthCookies1.ts
+          npx tsx scripts/verifyAnAuthRefreshMe1.ts
+          npx tsx scripts/verifyAnAuthRoleMap1.ts
+          npx tsx scripts/verifyAnFixPgRole1.ts
+```
+
+If a script filename differs on disk, use the name from package.json scripts.
+If one script requires DATABASE_URL and fails hard, wrap only that script with `|| true` **only if** documented — prefer fixing script to skip cleanly (exit 0) without DB.
+
+Optional separate job is NOT required in this package.
+
+## STEP 3b — `.gitignore` append if missing
+```
+# AN-FIX-CI-DOCS-1
+test-results/
+playwright-report/
+playwright/.cache/
+*.tar.gz
+*-service-account*.json
+firebase-service-account*.json
+.aistudio/
+_an_erp_legacy_backup/
+```
+Do not ignore `.env.example`.
+
+## STEP 3c — `docs/ops/AN-DEPLOY-FLAGS.md`
+```markdown
+# A.N plane feature flags (deploy)
+
+| Variable | Default safe | Meaning |
+|----------|--------------|---------|
+| AN_ENABLE_AN_LOGIN | 0 | Show/use A.N login path |
+| AN_MIGRATE_WRITES | 0 | Allow migrate POST writes |
+| AN_INV_PILOT_WRITES | 0 | Allow pilot stock movements |
+| AN_ADAPTER_FAIL_CLOSED | 1 | Refuse silent primary on company load errors |
+| AN_ALLOW_INMEMORY_FALLBACK | 0 | Allow in-memory only when STRICT_PROD_SECURITY and no DATABASE_URL |
+| STRICT_PROD_SECURITY | false in CI | When true, no silent in-memory without allow flag |
+| DATABASE_URL | required for real data | Prefer role an_erp_app NOBYPASSRLS |
+| JWT_SECRET | required for A.N tokens | Long random secret |
+| COOKIE_SECURE | auto | Force Secure cookies behind HTTPS |
+
+Do not enable write flags in production until auth bridge + PG role probe pass.
+```
+
+## STEP 3d — `DEPLOYMENT.md`
+If file exists, append section `## A.N / KEMIT merge plane` with link to `docs/ops/AN-DEPLOY-FLAGS.md` and `docs/ops/PG-ROLE-NO-BYPASSRLS.md`.
+If missing, create a short DEPLOYMENT.md with only that section + node 20 + `npm ci` + `npm run build`.
+
+## STEP 3e — `scripts/verifyAnFixCiDocs1.ts`
+14 checks:
+- ci.yml contains `npm run build` or "Production build"
+- ci.yml references verifyAnFixStore1 or verify:fix-store or verifyAnAdapterFailClosed2
+- ci.yml references verifyAnAuthBridge1 or auth-bridge
+- .gitignore has playwright-report or test-results
+- .gitignore has *.tar.gz OR _an_erp_legacy
+- docs/ops/AN-DEPLOY-FLAGS.md exists
+- AN_ENABLE_AN_LOGIN mentioned in flags doc
+- DEPLOYMENT.md mentions A.N or AN-DEPLOY-FLAGS
+- MERGE FIX-CIDOCS1
+- FIX-PGROLE1 still in MERGE
+- package.json still has verify:merge
+- AUTH-ROLEMAP1 still in MERGE
+- no real password in ci.yml
+- JWT_SECRET or DATABASE_URL mentioned in AN-DEPLOY-FLAGS or .env.example
+
+## STEP 3f — MERGE_STATUS
+```markdown
+| FIX-CIDOCS1 | CI verifies + deploy flags doc | DONE | build + A.N static verifies in CI; gitignore; AN-DEPLOY-FLAGS |
+```
+Next free rule:
+```markdown
+N. **FIX-CI-DOCS-1:** CI runs production build and A.N static verify scripts; deploy flags documented; gitignore hardened for reports/archives.
+```
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnFixCiDocs1.ts
+npx tsx scripts/verifyAnFixPgRole1.ts
+```
+
+## COMMIT NOTE
+```
+ci(docs): wire A.N verify scripts into CI and document deploy flags
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+8) tsc: N | build: OK/FAIL
+9) verifyAnFixCiDocs1: Passed: N | Failed: N
+10) regression: verifyAnFixPgRole1: …
+Status: DONE | package: AN-FIX-CI-DOCS-1
+===========================
+```

@@ -6,3 +6,13 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# AN-FIX-CI-DOCS-1
+test-results/
+playwright-report/
+playwright/.cache/
+*.tar.gz
+*-service-account*.json
+firebase-service-account*.json
+.aistudio/
+_an_erp_legacy_backup/
