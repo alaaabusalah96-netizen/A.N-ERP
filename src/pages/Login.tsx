@@ -87,6 +87,13 @@ export default function Login({
             if (data.refreshToken) sessionStorage.setItem('an_refresh_token', data.refreshToken);
           } catch { /* ignore */ }
         }
+        if (data.firebaseCustomToken) {
+          try {
+            await signInWithCustomToken(auth, data.firebaseCustomToken);
+          } catch (e) {
+            console.warn("A.N -> Firebase bridge failed sign-in:", e);
+          }
+        }
         const roleRaw = String(data.user?.role || '');
         const role =
           /system|super|platform/i.test(roleRaw) ? 'SystemAdmin' :

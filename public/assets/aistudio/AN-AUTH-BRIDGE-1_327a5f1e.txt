@@ -1,0 +1,270 @@
+# AN-AUTH-BRIDGE-1 — Connect A.N login to session APIs + Firestore identity (LEAN)
+# Closes Claude audit P0-1 (partial): after A.N password login, issue Firebase customToken when possible;
+# authenticateSessionOrBearer accepts A.N access JWT; Login uses customToken → session cookie path.
+# OUT OF SCOPE (later packages): HttpOnly cookie migration, refresh/logout/me routes, role-map rewrite, Dedicated login adapter, 2FA.
+# Does NOT enable AN_ENABLE_AN_LOGIN by default. Does NOT touch custody business logic.
+
+## HARD RULES
+1. Files allowed: `src/lib/anAuthLogin.ts`, `src/lib/anAuthBridge.ts` (new), `server.ts` (login route + authenticateSessionOrBearer only), `src/pages/Login.tsx` (A.N success path only), `scripts/verifyAnAuthBridge1.ts`, `package.json` (one script), `docs/MERGE_STATUS.md`, `.env.example` comment only.
+2. Do not remove Firebase verify-credentials path.
+3. Do not store tokens in new places beyond what Login already does; if customToken present, prefer Firebase session over relying on sessionStorage alone for API calls.
+4. Never print secrets, tokens, or password hashes.
+5. If Firebase Admin cannot issue customToken, A.N login still returns 200 with tokens; set `firebaseBridge: { ok: false, code: '...' }` — do not fail the whole login.
+6. Stop at first failure. tsc >2 min → once → build → verify. One RESULTS REPORT only.
+
+## PRECHECK
+- FIX-STORE1 and FIX-SEC1 rows in MERGE_STATUS
+- `anStyleLogin` / AnLoginOk in anAuthLogin.ts
+- `authenticateSessionOrBearer` in server.ts
+- `getAdminAuth` / `createCustomToken` pattern exists near verify-credentials
+- Login.tsx has A.N login branch
+
+## STEP 3 — Create `src/lib/anAuthBridge.ts`
+
+```typescript
+/**
+ * AN-AUTH-BRIDGE-1 — map A.N user → Firebase custom token (best-effort).
+ */
+import type { User } from '../an-core/storage/StoragePort';
+
+export interface FirebaseBridgeResult {
+  ok: boolean;
+  customToken?: string;
+  code?: string;
+  firebaseUid?: string;
+}
+
+/**
+ * Find or create a Firestore users doc for the A.N user, then createCustomToken(uid).
+ * adminDb / getAdminAuth injected from server to avoid circular imports.
+ */
+export async function issueFirebaseCustomTokenForAnUser(deps: {
+  adminDb: any;
+  getAdminAuth: () => any;
+  anUser: {
+    id: string;
+    username: string;
+    fullName?: string;
+    role?: string;
+    tenantId: string;
+    email?: string;
+  };
+}): Promise<FirebaseBridgeResult> {
+  const { adminDb, getAdminAuth, anUser } = deps;
+  if (!adminDb || typeof getAdminAuth !== 'function') {
+    return { ok: false, code: 'admin_unavailable' };
+  }
+  try {
+    const email =
+      (anUser.email || '').trim().toLowerCase() ||
+      (anUser.username.includes('@')
+        ? anUser.username.trim().toLowerCase()
+        : `${anUser.username.trim().toLowerCase()}@an-local.invalid`);
+    const users = adminDb.collection('users');
+
+    // Prefer lookup by an_user_id, then email
+    let uid: string | null = null;
+    try {
+      const byAn = await users.where('an_user_id', '==', anUser.id).limit(1).get();
+      if (!byAn.empty) uid = byAn.docs[0].id;
+    } catch {
+      /* index optional */
+    }
+    if (!uid) {
+      try {
+        const byEmail = await users.where('email', '==', email).limit(1).get();
+        if (!byEmail.empty) uid = byEmail.docs[0].id;
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!uid) {
+      // Stable deterministic uid namespace (not a password)
+      const crypto = await import('crypto');
+      uid = 'an_' + crypto.createHash('sha256').update(anUser.tenantId + ':' + anUser.id).digest('hex').slice(0, 28);
+      await users.doc(uid).set(
+        {
+          email,
+          full_name: anUser.fullName || anUser.username,
+          role: anUser.role || 'Admin',
+          company_id: anUser.tenantId === 'default' ? null : anUser.tenantId,
+          an_user_id: anUser.id,
+          an_tenant_id: anUser.tenantId,
+          is_active: true,
+          auth_bridge: 'an-auth-bridge-1',
+          updated_at: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } else {
+      await users.doc(uid).set(
+        {
+          an_user_id: anUser.id,
+          an_tenant_id: anUser.tenantId,
+          auth_bridge: 'an-auth-bridge-1',
+          updated_at: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    }
+
+    const customToken = await getAdminAuth().createCustomToken(uid, {
+      an_user_id: anUser.id,
+      an_tenant_id: anUser.tenantId,
+    });
+    return { ok: true, customToken, firebaseUid: uid };
+  } catch (e: any) {
+    return { ok: false, code: 'custom_token_failed' };
+  }
+}
+```
+
+## STEP 3b — Extend `AnLoginOk` in anAuthLogin.ts
+```typescript
+  firebaseCustomToken?: string;
+  firebaseBridge?: { ok: boolean; code?: string };
+```
+Do not change password verify logic from FIX-SEC-1.
+
+## STEP 3c — `server.ts` POST `/api/an/auth/login`
+After `anStyleLogin` success, before `res.status(200).json(result)`:
+
+```javascript
+        let payload: any = { ...result };
+        try {
+          const { issueFirebaseCustomTokenForAnUser } = await import("./src/lib/anAuthBridge");
+          const bridge = await issueFirebaseCustomTokenForAnUser({
+            adminDb,
+            getAdminAuth: () => getAdminAuth(getAdminApp()),
+            anUser: {
+              id: result.user.id,
+              username: result.user.username,
+              fullName: result.user.fullName,
+              role: result.user.role,
+              tenantId: result.user.tenantId,
+            },
+          });
+          if (bridge.ok && bridge.customToken) {
+            payload.firebaseCustomToken = bridge.customToken;
+            payload.firebaseBridge = { ok: true };
+          } else {
+            payload.firebaseBridge = { ok: false, code: bridge.code || "bridge_failed" };
+          }
+        } catch {
+          payload.firebaseBridge = { ok: false, code: "bridge_exception" };
+        }
+        return res.status(200).json(payload);
+```
+Adjust `getAdminAuth`/`getAdminApp` names to match existing server helpers exactly.
+
+## STEP 3d — `authenticateSessionOrBearer`
+After Bearer token extracted, **before** or **after** Firebase verifyIdToken failure:
+
+```javascript
+        // AN-AUTH-BRIDGE-1: accept A.N access JWT
+        try {
+          const { TokenService } = await import("./src/an-core/auth/TokenService");
+          // Use same storage adapter resolution as login (primary) for family check
+          const { StorageRouter } = await import("./src/an-core/storage/StorageRouter");
+          const router = new StorageRouter();
+          const tokens = new TokenService(router.getPrimaryAdapter());
+          const verified = await tokens.verifyAccessToken(token);
+          if (verified.ok && verified.userId) {
+            uid = verified.userId;
+            // Mark source for downstream if needed
+            (req as any).anAuthJwt = true;
+            (req as any).anTenantId = verified.tenantId;
+          }
+        } catch {
+          /* fall through */
+        }
+```
+**Important:** If `verifyAccessToken` API differs, match TokenService public method names from the repo (claims: sub/userId/tenantId).
+
+When loading user from Firestore: if doc missing and `anAuthJwt`, still allow a minimal user object from JWT claims so `/api/an/*` scope can work:
+```javascript
+      if (!userDoc.exists && (req as any).anAuthJwt) {
+        return {
+          authenticated: true,
+          statusCode: 200,
+          message: "Authorized",
+          user: {
+            id: uid,
+            email: "",
+            role: "Admin",
+            company_id: (req as any).anTenantId || null,
+            an_jwt: true,
+            is_active: true,
+          },
+        };
+      }
+```
+Prefer linking to Firestore user when present (bridge wrote an_user_id).
+
+## STEP 3e — `Login.tsx` A.N success branch
+After successful `/api/an/auth/login` JSON:
+1. If `data.firebaseCustomToken`:
+   - `await signInWithCustomToken(getAuth(), data.firebaseCustomToken)`
+   - then existing `POST /api/auth/session` with idToken if that flow exists
+2. Keep setting AppUser from `data.user`
+3. Optionally still store accessToken for A.N-only calls as Bearer — acceptable for this package
+4. Do **not** `password.trim()` changes here (separate); do not expand role regex rewrite in this package
+
+## STEP 3f — `.env.example`
+```
+# AN-AUTH-BRIDGE-1: A.N login may issue Firebase customToken for custody/session APIs when Admin SDK is configured.
+```
+
+## STEP 3g — MERGE_STATUS
+```markdown
+| AUTH-BRIDGE1 | A.N login → Firebase customToken + JWT accept | DONE | bridge customToken best-effort; authenticateSessionOrBearer accepts A.N access JWT |
+```
+Next free rule number:
+```markdown
+N. **AUTH-BRIDGE-1:** Successful A.N login may attach firebaseCustomToken; APIs accept A.N Bearer access JWT. Cookies/refresh/me and full role map are out of scope.
+```
+
+## STEP 3h — `scripts/verifyAnAuthBridge1.ts`
+14 checks:
+- anAuthBridge.ts exists
+- issueFirebaseCustomTokenForAnUser
+- AnLoginOk or route mentions firebaseCustomToken
+- server login route imports anAuthBridge or firebaseCustomToken
+- authenticateSessionOrBearer path mentions verifyAccessToken or anAuthJwt or TokenService
+- Login.tsx signInWithCustomToken OR firebaseCustomToken handling
+- FIX-SEC1 still in MERGE_STATUS
+- FIX-STORE1 still in MERGE_STATUS
+- requireAnMigrateOperator still present
+- assertUserCanAccessCompany still present
+- verify-credentials route still present
+- no AN_ENABLE_AN_LOGIN forced to 1 in source defaults
+- package script verify:auth-bridge optional
+- plane an-auth still
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnAuthBridge1.ts
+npx tsx scripts/verifyAnFixSec1.ts
+```
+(If verifyAnFixSec1 name differs, use the actual SEC verify script filename.)
+
+## COMMIT NOTE
+```
+feat(auth-bridge1): link A.N login to Firebase customToken and accept A.N JWT on API auth
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+8) tsc: N | build: OK/FAIL
+9) verifyAnAuthBridge1: Passed: N | Failed: N
+10) regression: verifyAnFixSec1: …
+Status: DONE | package: AN-AUTH-BRIDGE-1
+===========================
+```
+
+## AFTER APPLY (user)
+1. Ensure Firebase Admin credentials work in Studio (same as verify-credentials).
+2. AN_ENABLE_AN_LOGIN=1 only on test after bridge verified.
+3. Login A.N → should get firebaseBridge.ok true when Admin works → custody routes see request.auth.

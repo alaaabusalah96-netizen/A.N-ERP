@@ -32,6 +32,8 @@ export interface AnLoginOk {
   familyId: string;
   tokenType: 'Bearer';
   expiresInSec: number;
+  firebaseCustomToken?: string;
+  firebaseBridge?: { ok: boolean; code?: string };
 }
 
 export interface AnLoginErr {

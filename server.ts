@@ -656,10 +656,13 @@ async function startServer() {
   });
 
   // Helper for Authenticating requests via Bearer Token, Server Session Token, or Session Cookie
+  // Helper for Authenticating requests via Bearer Token, Server Session Token, or Session Cookie
   async function authenticateSessionOrBearer(req: express.Request): Promise<{ authenticated: boolean; statusCode: number; message: string; user?: any }> {
     let uid: string | null = null;
+    let anAuthJwt = false;
+    let anTenantId: string | null = null;
 
-    // 1. Check Bearer Token from Authorization Header first (explicit active client token)
+    // 1. Check Bearer Token
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
       const token = authHeader.substring(7).trim();
@@ -672,10 +675,28 @@ async function startServer() {
           const serverToken = verifyServerSessionToken(token);
           if (serverToken.valid && serverToken.uid) {
             uid = serverToken.uid;
+          } else {
+            // AN-AUTH-BRIDGE-1: accept A.N access JWT
+            try {
+              const { TokenService } = await import("./src/an-core/auth/TokenService");
+              const { StorageRouter } = await import("./src/an-core/storage/StorageRouter");
+              const router = new StorageRouter();
+              const tokens = new TokenService(router.getPrimaryAdapter());
+              const verified = await tokens.verifyAccessToken(token);
+              if (verified.valid && verified.payload?.sub) {
+                uid = verified.payload.sub;
+                anAuthJwt = true;
+                anTenantId = verified.payload.tenantId;
+              }
+            } catch {
+              /* fall through */
+            }
           }
         }
       }
     }
+    (req as any).anAuthJwt = anAuthJwt;
+    (req as any).anTenantId = anTenantId;
 
     // 2. Check x-session-token custom header
     if (!uid) {
@@ -688,7 +709,7 @@ async function startServer() {
       }
     }
 
-    // 3. Check Session Cookie if Bearer Token is missing/invalid
+    // 3. Check Session Cookie
     if (!uid) {
       const sessionCookie = req.cookies?.session;
       if (sessionCookie) {
@@ -710,6 +731,21 @@ async function startServer() {
 
     try {
       const userDoc = await adminDb.collection("users").doc(uid).get();
+      if (!userDoc.exists && (req as any).anAuthJwt) {
+        return {
+          authenticated: true,
+          statusCode: 200,
+          message: "Authorized",
+          user: {
+            id: uid,
+            email: "",
+            role: "Admin",
+            company_id: (req as any).anTenantId || null,
+            an_jwt: true,
+            is_active: true,
+          },
+        };
+      }
       if (!userDoc.exists) {
         return { authenticated: false, statusCode: 403, message: "Forbidden: Authenticated user record not found." };
       }
@@ -3880,7 +3916,30 @@ async function startServer() {
         if (!result.ok) {
           return res.status(result.httpStatus || 401).json(result);
         }
-        return res.status(200).json(result);
+        let payload: any = { ...result };
+        try {
+          const { issueFirebaseCustomTokenForAnUser } = await import("./src/lib/anAuthBridge");
+          const bridge = await issueFirebaseCustomTokenForAnUser({
+            adminDb,
+            getAdminAuth: () => getAdminAuth(getAdminApp()),
+            anUser: {
+              id: result.user.id,
+              username: result.user.username,
+              fullName: result.user.fullName,
+              role: result.user.role,
+              tenantId: result.user.tenantId,
+            },
+          });
+          if (bridge.ok && bridge.customToken) {
+            payload.firebaseCustomToken = bridge.customToken;
+            payload.firebaseBridge = { ok: true };
+          } else {
+            payload.firebaseBridge = { ok: false, code: bridge.code || "bridge_failed" };
+          }
+        } catch {
+          payload.firebaseBridge = { ok: false, code: "bridge_exception" };
+        }
+        return res.status(200).json(payload);
       } catch (err: any) {
         console.error("[AN-AUTH] login route error:", err?.name || "Error");
         res.status(500).json({ ok: false, plane: "an-auth-g2", code: "internal_error", messageAr: "خطأ داخلي" });
