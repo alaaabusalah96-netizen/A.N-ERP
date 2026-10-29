@@ -1,0 +1,288 @@
+=====================================================================
+AN-FIX-STORE-1  —  تحصين StorageRouter (حزمة 1 من 5)
+نوع الحزمة: LEAN (بدون SUMS/patch)
+الهدف الوحيد: منع التراجع الصامت للتخزين المؤقت، وتقييد connectionRef، وفرض الاعتماد على كل مسارات resolve، وعدم طرد pool قيد الاستخدام.
+=====================================================================
+
+HARD RULES
+1. لا تلمس إلا: src/an-core/storage/StorageRouter.ts + scripts/verifyAnFixStore1.ts + package.json (سطر سكربت واحد) + .env.example + docs/MERGE_STATUS.md.
+2. السلوك عند وجود DATABASE_URL لا يتغير إطلاقًا.
+3. لا تفعّل أي علم (AN_*_WRITES) ولا تغيّر قيمة موجودة في .env.
+4. لا تطبع أسرارًا أو connection strings. أسماء المتغيرات فقط.
+5. توقف عند أول فشل. لا ترقيع لاختبارات قائمة (إلا الاستثناء المنصوص في الخطوة 6).
+
+---------------------------------------------------------------------
+1) PRECHECK
+---------------------------------------------------------------------
+a. تأكد أن src/an-core/storage/StorageRouter.ts يحتوي على: resolveAdapter, getOrCreateDedicatedAdapter, evictOldestAdapterSync, validateBackendConfig, createAdapterByType, isAdapterCertified, MAX_DEDICATED_POOLS.
+b. نفّذ: grep -rn "resolveAdapter(\|resolveAdapterAsync(\|createAdapterByType(" src server.ts scripts
+   - لا تعدّل الاستدعاءات. فقط تأكد أن كل استدعاء داخل try/catch أو داخل async handler (لأن resolveAdapter قد يرمي خطأ الآن). اذكر في التقرير أي استدعاء خارج try/catch.
+c. تأكد من وجود: scripts/verifyAnAdapterFailClosed2.ts و scripts/verifyAnAdapterRouteTest1.ts و scripts/verifyAnMigIdem1.ts (للانحدار).
+d. نفّذ: grep -rn "MAX_DEDICATED_POOLS\|evictOldestAdapterSync\|getActiveDedicatedPoolsCount" src scripts
+   - سجّل أسماء أي ملفات اختبار تملأ الـ pools (ستحتاجها في الخطوة 6).
+
+---------------------------------------------------------------------
+2) تعديل src/an-core/storage/StorageRouter.ts
+---------------------------------------------------------------------
+
+2.1  أضف أعلى الملف مباشرة بعد سطور import (وقبل interface BackendConfigMigrationContract):
+
+/** AN-FIX-STORE-1: only these env var NAMES may be used as connectionRef */
+export const CONNECTION_REF_PATTERN = /^DATABASE_URL(_[A-Z0-9_]{1,40})?$/;
+
+export function isSafeConnectionRef(ref: unknown): ref is string {
+  return typeof ref === 'string' && CONNECTION_REF_PATTERN.test(ref);
+}
+
+2.2  داخل class StorageRouter أضف بعد سطر `public static readonly DEFAULT_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour` :
+
+  /** AN-FIX-STORE-1: a dedicated pool used within this window is never evicted (tests may set it to 0) */
+  public static MIN_IDLE_BEFORE_EVICT_MS = 60 * 1000;
+
+2.3  أضف داخل الـ class (بعد getPrimaryAdapter مباشرة):
+
+  private warnedInMemory = false;
+
+  /** AN-FIX-STORE-1: in-memory fallback is refused when STRICT_PROD_SECURITY=true unless AN_ALLOW_INMEMORY_FALLBACK=1|true */
+  private inMemoryOrThrow(): StoragePort {
+    const strict = String(process.env.STRICT_PROD_SECURITY || '').toLowerCase() === 'true';
+    const allowRaw = String(process.env.AN_ALLOW_INMEMORY_FALLBACK || '').toLowerCase();
+    const explicitAllow = allowRaw === '1' || allowRaw === 'true';
+    if (strict && !explicitAllow) {
+      const err: any = new Error('an_storage_not_configured: DATABASE_URL is not set and in-memory fallback is not allowed');
+      err.code = 'an_storage_not_configured';
+      throw err;
+    }
+    if (!this.warnedInMemory) {
+      this.warnedInMemory = true;
+      console.warn('[StorageRouter] WARNING: DATABASE_URL not set - using in-memory adapter. Data is lost on restart.');
+    }
+    return this.devInMemoryAdapter;
+  }
+
+2.4  في validateBackendConfig: مباشرة بعد كتلة `Rule 2` الخاصة بـ rawLower (أي بعد الـ if التي ترفض '://' وغيرها) وقبل `// Rule 3`، أضف:
+
+    if (adapterType !== 'inmemory' && !isSafeConnectionRef(connectionRef.trim())) {
+      return {
+        valid: false,
+        errorDetailAr: 'connectionRef يجب أن يكون اسم متغير بيئة يطابق النمط DATABASE_URL أو DATABASE_URL_<NAME> فقط (حروف كبيرة وأرقام وشرطة سفلية).',
+      };
+    }
+
+2.5  في createAdapterByType: استبدل فرع default:
+        default:
+          return new PostgresPrimaryAdapter(connectionString);
+     بـ:
+        default:
+          throw new Error(`unsupported adapterType: ${adapterType}`);
+
+2.6  استبدل الدالة resolveAdapter كاملة بالتالي:
+
+  public resolveAdapter(tenant?: TenantCompany): StoragePort {
+    if (!tenant || !tenant.backendConfig) {
+      if (!process.env.DATABASE_URL) {
+        return this.inMemoryOrThrow();
+      }
+      return this.primaryAdapter;
+    }
+
+    const { adapterType, connectionRef, isolationLevel } = tenant.backendConfig;
+
+    if (adapterType === 'inmemory') {
+      return this.devInMemoryAdapter;
+    }
+
+    // AN-FIX-STORE-1: certification is enforced on EVERY path (Shared and Dedicated)
+    if (!this.isAdapterCertified(adapterType)) {
+      throw new Error(
+        `الـ Adapter المختار (${adapterType}) غير معتمد إنتاجياً حتى الآن. يتطلب اجتياز البطارية الكاملة قبل تشغيل أي شركة حقيقية عليه.`
+      );
+    }
+
+    if (isolationLevel === 'Dedicated') {
+      return this.getOrCreateDedicatedAdapter(tenant.id, adapterType, connectionRef);
+    }
+
+    if (adapterType === 'postgresql') {
+      if (!process.env.DATABASE_URL) {
+        return this.inMemoryOrThrow();
+      }
+      return this.primaryAdapter;
+    }
+
+    if (!isSafeConnectionRef(connectionRef)) {
+      throw new Error('connectionRef غير صالح (يُسمح فقط بأسماء DATABASE_URL أو DATABASE_URL_<NAME>).');
+    }
+    return this.createAdapterByType(adapterType, process.env[connectionRef]);
+  }
+
+2.7  في getOrCreateDedicatedAdapter:
+   (أ) أول سطر داخل الدالة، قبل فحص process.env[connectionRef]:
+    if (!isSafeConnectionRef(connectionRef)) {
+      throw new Error('connectionRef غير صالح للتخزين المخصص (يُسمح فقط بأسماء DATABASE_URL أو DATABASE_URL_<NAME>).');
+    }
+   (ب) استبدل الكتلة:
+      if (this.dedicatedAdapters.size >= StorageRouter.MAX_DEDICATED_POOLS) {
+        this.evictOldestAdapterSync();
+      }
+     بـ:
+      if (this.dedicatedAdapters.size >= StorageRouter.MAX_DEDICATED_POOLS) {
+        const evicted = this.evictOldestAdapterSync();
+        if (!evicted) {
+          const capErr: any = new Error('dedicated_pool_cap_reached: all dedicated pools were used recently');
+          capErr.code = 'dedicated_pool_cap_reached';
+          throw capErr;
+        }
+      }
+
+2.8  استبدل الدالة evictOldestAdapterSync كاملة بـ:
+
+  private evictOldestAdapterSync(): boolean {
+    const now = Date.now();
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    for (const [key, entry] of this.dedicatedAdapters.entries()) {
+      if (now - entry.lastAccessedAt < StorageRouter.MIN_IDLE_BEFORE_EVICT_MS) continue; // in use recently
+      if (entry.lastAccessedAt < oldestTime) {
+        oldestTime = entry.lastAccessedAt;
+        oldestKey = key;
+      }
+    }
+    if (!oldestKey) return false;
+    const entry = this.dedicatedAdapters.get(oldestKey);
+    if (entry && typeof (entry.adapter as any).close === 'function') {
+      try {
+        (entry.adapter as any).close().catch(() => {});
+      } catch (e: any) { console.warn('[StorageRouter] closing evicted dedicated adapter failed:', e?.message); }
+    }
+    this.dedicatedAdapters.delete(oldestKey);
+    return true;
+  }
+
+---------------------------------------------------------------------
+3) .env.example  (أضف في آخر الملف إن لم يكن موجودًا، أسماء بدون أسرار)
+---------------------------------------------------------------------
+# AN-FIX-STORE-1: in-memory fallback is refused when STRICT_PROD_SECURITY=true. Set to 1 ONLY in dev/test without DATABASE_URL.
+AN_ALLOW_INMEMORY_FALLBACK=0
+# Primary PostgreSQL connection (secret). Per-company dedicated DBs use DATABASE_URL_<NAME> only.
+DATABASE_URL=
+
+(إن كان DATABASE_URL موجودًا مسبقًا لا تكرره.)
+
+---------------------------------------------------------------------
+4) package.json — أضف سطر سكربت واحد داخل "scripts" بعد "verify:inv-pilot":
+    "verify:fix-store": "tsx scripts/verifyAnFixStore1.ts"
+(لا تغيّر أي شيء آخر.)
+
+---------------------------------------------------------------------
+5) أنشئ scripts/verifyAnFixStore1.ts بالمحتوى التالي حرفيًا
+---------------------------------------------------------------------
+import fs from 'fs';
+import path from 'path';
+import { StorageRouter, isSafeConnectionRef } from '../src/an-core/storage/StorageRouter';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean): void {
+  if (cond) { passed++; console.log(`PASS  ${name}`); }
+  else { failed++; console.log(`FAIL  ${name}`); }
+}
+function thrownCode(fn: () => unknown): string | null {
+  try { fn(); return null; } catch (e: any) { return String(e?.code || e?.message || 'error'); }
+}
+
+const ENV_KEYS = ['DATABASE_URL', 'STRICT_PROD_SECURITY', 'AN_ALLOW_INMEMORY_FALLBACK', 'AN_STORE1_PROBE'];
+const saved: Record<string, string | undefined> = {};
+for (const k of ENV_KEYS) saved[k] = process.env[k];
+function setEnv(k: string, v?: string): void {
+  if (v === undefined) delete process.env[k]; else process.env[k] = v;
+}
+function restoreEnv(): void {
+  for (const k of ENV_KEYS) setEnv(k, saved[k]);
+}
+
+async function main(): Promise<void> {
+  const router = new StorageRouter();
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/an-core/storage/StorageRouter.ts'), 'utf8');
+
+  check('01 isSafeConnectionRef accepts DATABASE_URL', isSafeConnectionRef('DATABASE_URL'));
+  check('02 isSafeConnectionRef accepts DATABASE_URL_ACME1', isSafeConnectionRef('DATABASE_URL_ACME1'));
+  check('03 isSafeConnectionRef rejects JWT_SECRET', !isSafeConnectionRef('JWT_SECRET'));
+  check('04 isSafeConnectionRef rejects FIREBASE_SERVICE_ACCOUNT', !isSafeConnectionRef('FIREBASE_SERVICE_ACCOUNT'));
+  check('05 isSafeConnectionRef rejects lowercase', !isSafeConnectionRef('database_url'));
+
+  const badCfg: any = { adapterType: 'postgresql', connectionRef: 'JWT_SECRET', isolationLevel: 'Dedicated' };
+  const goodCfg: any = { adapterType: 'postgresql', connectionRef: 'DATABASE_URL_X1', isolationLevel: 'Dedicated' };
+  check('06 validateBackendConfig rejects non-allowlisted connectionRef', router.validateBackendConfig(badCfg).valid === false);
+  check('07 validateBackendConfig accepts DATABASE_URL_X1', router.validateBackendConfig(goodCfg).valid === true);
+
+  setEnv('DATABASE_URL', undefined);
+  setEnv('STRICT_PROD_SECURITY', 'true');
+  setEnv('AN_ALLOW_INMEMORY_FALLBACK', undefined);
+  check('08 strict + no DATABASE_URL -> resolveAdapter throws an_storage_not_configured',
+    (thrownCode(() => router.resolveAdapter(undefined)) || '').includes('an_storage_not_configured'));
+
+  setEnv('AN_ALLOW_INMEMORY_FALLBACK', '1');
+  check('09 explicit allow -> in-memory returned', router.resolveAdapter(undefined) === router.getDevInMemoryAdapter());
+
+  setEnv('STRICT_PROD_SECURITY', undefined);
+  setEnv('AN_ALLOW_INMEMORY_FALLBACK', undefined);
+  check('10 non-strict legacy behaviour kept (in-memory)', router.resolveAdapter(undefined) === router.getDevInMemoryAdapter());
+
+  const mysqlDedicated: any = { id: 't1', backendConfig: { adapterType: 'mysql', connectionRef: 'DATABASE_URL_M', isolationLevel: 'Dedicated' } };
+  check('11 uncertified adapter on Dedicated path is refused', thrownCode(() => router.resolveAdapter(mysqlDedicated)) !== null);
+
+  setEnv('AN_STORE1_PROBE', 'postgres://probe');
+  const probeTenant: any = { id: 't2', backendConfig: { adapterType: 'postgresql', connectionRef: 'AN_STORE1_PROBE', isolationLevel: 'Dedicated' } };
+  check('12 Dedicated with non-allowlisted env name is refused even if env var exists', thrownCode(() => router.resolveAdapter(probeTenant)) !== null);
+  setEnv('AN_STORE1_PROBE', undefined);
+
+  check('13 createAdapterByType throws for unknown type', thrownCode(() => router.createAdapterByType('nope')) !== null);
+  check('14 source has recent-use guard + cap error code',
+    src.includes('MIN_IDLE_BEFORE_EVICT_MS') && src.includes('dedicated_pool_cap_reached'));
+
+  try { await router.closeAll(); } catch { /* ignore */ }
+  restoreEnv();
+  console.log(`\nPassed: ${passed} | Failed: ${failed}`);
+  process.exit(failed === 0 ? 0 : 1);
+}
+
+main().catch((e) => { console.error('verifyAnFixStore1 crashed:', e?.message || e); process.exit(1); });
+
+---------------------------------------------------------------------
+6) انحدار (قبل التوثيق)
+---------------------------------------------------------------------
+- شغّل: npx tsx scripts/verifyAnAdapterFailClosed2.ts  و  npx tsx scripts/verifyAnAdapterRouteTest1.ts  و  npx tsx scripts/verifyAnMigIdem1.ts
+- استثناء وحيد مسموح: إن وُجد اختبار (من PRECHECK-d) يملأ حد MAX_DEDICATED_POOLS ويتوقع الطرد فورًا، أضف في أول الاختبار فقط السطر:
+    StorageRouter.MIN_IDLE_BEFORE_EVICT_MS = 0;
+  وسجّل اسم الملف في التقرير. أي فشل آخر = توقف.
+
+---------------------------------------------------------------------
+7) docs/MERGE_STATUS.md
+---------------------------------------------------------------------
+- أضف صفًا في جدول Phases بعد صف INV-PILOT1:
+| FIX-STORE1 | StorageRouter hardening | DONE | no silent in-memory under STRICT_PROD_SECURITY; connectionRef allowlist; certification on Dedicated; no eviction of recently-used pools |
+- أضف نقطة مرقمة في آخر Canonical rules:
+34. **FIX-STORE-1:** `resolveAdapter` refuses the in-memory fallback when STRICT_PROD_SECURITY=true unless AN_ALLOW_INMEMORY_FALLBACK=1; connectionRef must match DATABASE_URL(_NAME); adapter certification enforced on Shared and Dedicated; recently used dedicated pools are never evicted (503-style error `dedicated_pool_cap_reached`).
+
+---------------------------------------------------------------------
+8) تحقق نهائي
+---------------------------------------------------------------------
+npx tsc --noEmit
+npm run build
+npx tsx scripts/verifyAnFixStore1.ts      (المتوقع: Passed: 14 | Failed: 0)
+(إن طال tsc أكثر من دقيقتين: شغّله مرة واحدة فقط ثم build ثم verify.)
+
+اطبع في النهاية كتلة واحدة فقط:
+===== RESULTS REPORT =====
+PRECHECK-b: <استدعاءات resolveAdapter خارج try/catch إن وُجدت أو none>
+8) tsc: <N errors> | build: <OK/FAIL>
+9) verifyAnFixStore1: Passed: N | Failed: M
+10) regression: FailClosed2 <ok/fail> | RouteTest1 <ok/fail> | MigIdem1 <ok/fail> | pool-test edits: <files or none>
+Status: DONE | package: AN-FIX-STORE-1
+===========================
+
+COMMIT NOTE:
+fix(storage): fail-closed router (no silent in-memory in strict mode, connectionRef allowlist, certification on Dedicated, safe pool eviction)
+
+ملاحظة تشغيلية للمستخدم (لا تنفّذها الحزمة): إن كان تطبيقك على Studio بدون DATABASE_URL وSTRICT_PROD_SECURITY=true، اضبط AN_ALLOW_INMEMORY_FALLBACK=1 في بيئة الاختبار فقط.

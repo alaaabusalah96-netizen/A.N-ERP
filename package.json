@@ -18,7 +18,8 @@
     "verify:adapter-route": "tsx scripts/verifyAnAdapterRouteTest1.ts",
     "verify:mig-idem": "tsx scripts/verifyAnMigIdem1.ts",
     "verify:adapter-fc2": "tsx scripts/verifyAnAdapterFailClosed2.ts",
-    "verify:inv-pilot": "tsx scripts/verifyAnInvPilot1.ts"
+    "verify:inv-pilot": "tsx scripts/verifyAnInvPilot1.ts",
+    "verify:fix-store": "tsx scripts/verifyAnFixStore1.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

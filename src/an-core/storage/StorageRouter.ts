@@ -25,6 +25,13 @@ export interface BackendConfigMigrationContract {
   evidenceRef?: string;
 }
 
+/** AN-FIX-STORE-1: only these env var NAMES may be used as connectionRef */
+export const CONNECTION_REF_PATTERN = /^DATABASE_URL(_[A-Z0-9_]{1,40})?$/;
+
+export function isSafeConnectionRef(ref: unknown): ref is string {
+  return typeof ref === 'string' && CONNECTION_REF_PATTERN.test(ref);
+}
+
 interface DedicatedAdapterEntry {
   adapter: StoragePort;
   lastAccessedAt: number;
@@ -35,6 +42,9 @@ interface DedicatedAdapterEntry {
 export class StorageRouter {
   public static readonly MAX_DEDICATED_POOLS = 20;
   public static readonly DEFAULT_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
+
+  /** AN-FIX-STORE-1: a dedicated pool used within this window is never evicted (tests may set it to 0) */
+  public static MIN_IDLE_BEFORE_EVICT_MS = 60 * 1000;
 
   private primaryAdapter: PostgresPrimaryAdapter;
   private devInMemoryAdapter: InMemoryAdapter;
@@ -61,6 +71,25 @@ export class StorageRouter {
 
   public getPrimaryAdapter(): PostgresPrimaryAdapter {
     return this.primaryAdapter;
+  }
+
+  private warnedInMemory = false;
+
+  /** AN-FIX-STORE-1: in-memory fallback is refused when STRICT_PROD_SECURITY=true unless AN_ALLOW_INMEMORY_FALLBACK=1|true */
+  private inMemoryOrThrow(): StoragePort {
+    const strict = String(process.env.STRICT_PROD_SECURITY || '').toLowerCase() === 'true';
+    const allowRaw = String(process.env.AN_ALLOW_INMEMORY_FALLBACK || '').toLowerCase();
+    const explicitAllow = allowRaw === '1' || allowRaw === 'true';
+    if (strict && !explicitAllow) {
+      const err: any = new Error('an_storage_not_configured: DATABASE_URL is not set and in-memory fallback is not allowed');
+      err.code = 'an_storage_not_configured';
+      throw err;
+    }
+    if (!this.warnedInMemory) {
+      this.warnedInMemory = true;
+      console.warn('[StorageRouter] WARNING: DATABASE_URL not set - using in-memory adapter. Data is lost on restart.');
+    }
+    return this.devInMemoryAdapter;
   }
 
   /** OPS-1: shutdown helper — stops the eviction timer and closes every dedicated adapter and the primary pool. Never throws. */
@@ -127,6 +156,13 @@ export class StorageRouter {
       };
     }
 
+    if (adapterType !== 'inmemory' && !isSafeConnectionRef(connectionRef.trim())) {
+      return {
+        valid: false,
+        errorDetailAr: 'connectionRef يجب أن يكون اسم متغير بيئة يطابق النمط DATABASE_URL أو DATABASE_URL_<NAME> فقط (حروف كبيرة وأرقام وشرطة سفلية).',
+      };
+    }
+
     // Rule 3: Isolation level
     if (isolationLevel !== 'Shared' && isolationLevel !== 'Dedicated') {
       return {
@@ -155,7 +191,7 @@ export class StorageRouter {
       case 'firebase':
         return new FirebaseSmokeAdapter(connectionString);
       default:
-        return new PostgresPrimaryAdapter(connectionString);
+        throw new Error(`unsupported adapterType: ${adapterType}`);
     }
   }
 
@@ -166,7 +202,7 @@ export class StorageRouter {
   public resolveAdapter(tenant?: TenantCompany): StoragePort {
     if (!tenant || !tenant.backendConfig) {
       if (!process.env.DATABASE_URL) {
-        return this.devInMemoryAdapter;
+        return this.inMemoryOrThrow();
       }
       return this.primaryAdapter;
     }
@@ -177,26 +213,27 @@ export class StorageRouter {
       return this.devInMemoryAdapter;
     }
 
-    // If Dedicated isolation is requested:
-    if (isolationLevel === 'Dedicated') {
-      return this.getOrCreateDedicatedAdapter(tenant.id, adapterType, connectionRef);
-    }
-
-    // Shared isolation routes to Primary with tenant_id RLS
-    if (adapterType === 'postgresql') {
-      if (!process.env.DATABASE_URL) {
-        return this.devInMemoryAdapter;
-      }
-      return this.primaryAdapter;
-    }
-
-    // Verify certification for Shared isolation
+    // AN-FIX-STORE-1: certification is enforced on EVERY path (Shared and Dedicated)
     if (!this.isAdapterCertified(adapterType)) {
       throw new Error(
         `الـ Adapter المختار (${adapterType}) غير معتمد إنتاجياً حتى الآن. يتطلب اجتياز البطارية الكاملة قبل تشغيل أي شركة حقيقية عليه.`
       );
     }
 
+    if (isolationLevel === 'Dedicated') {
+      return this.getOrCreateDedicatedAdapter(tenant.id, adapterType, connectionRef);
+    }
+
+    if (adapterType === 'postgresql') {
+      if (!process.env.DATABASE_URL) {
+        return this.inMemoryOrThrow();
+      }
+      return this.primaryAdapter;
+    }
+
+    if (!isSafeConnectionRef(connectionRef)) {
+      throw new Error('connectionRef غير صالح (يُسمح فقط بأسماء DATABASE_URL أو DATABASE_URL_<NAME>).');
+    }
     return this.createAdapterByType(adapterType, process.env[connectionRef]);
   }
 
@@ -206,6 +243,9 @@ export class StorageRouter {
    * 4.6E: Enforces maximum connection pool capacity (20) with LRU eviction.
    */
   private getOrCreateDedicatedAdapter(tenantId: string, adapterType: string, connectionRef: string): StoragePort {
+    if (!isSafeConnectionRef(connectionRef)) {
+      throw new Error('connectionRef غير صالح للتخزين المخصص (يُسمح فقط بأسماء DATABASE_URL أو DATABASE_URL_<NAME>).');
+    }
     if (!connectionRef || !process.env[connectionRef]) {
       throw new Error(
         `مرجع اتصال المخزن المخصص لهذه الشركة (${connectionRef || 'غير محدد'}) غير مُهيأ في متغيرات البيئة — تعذّر تنفيذ العملية.`
@@ -216,7 +256,12 @@ export class StorageRouter {
     if (!entry) {
       // 4.6E: Enforce max dedicated pools cap by evicting LRU if at or over limit
       if (this.dedicatedAdapters.size >= StorageRouter.MAX_DEDICATED_POOLS) {
-        this.evictOldestAdapterSync();
+        const evicted = this.evictOldestAdapterSync();
+        if (!evicted) {
+          const capErr: any = new Error('dedicated_pool_cap_reached: all dedicated pools were used recently');
+          capErr.code = 'dedicated_pool_cap_reached';
+          throw capErr;
+        }
       }
 
       const connectionString = process.env[connectionRef];
@@ -302,27 +347,26 @@ export class StorageRouter {
     return evictedCount;
   }
 
-  /**
-   * 4.6E: Synchronous helper to evict the oldest (LRU) dedicated adapter when cap is hit.
-   */
-  private evictOldestAdapterSync(): void {
+  private evictOldestAdapterSync(): boolean {
+    const now = Date.now();
     let oldestKey: string | null = null;
     let oldestTime = Infinity;
     for (const [key, entry] of this.dedicatedAdapters.entries()) {
+      if (now - entry.lastAccessedAt < StorageRouter.MIN_IDLE_BEFORE_EVICT_MS) continue; // in use recently
       if (entry.lastAccessedAt < oldestTime) {
         oldestTime = entry.lastAccessedAt;
         oldestKey = key;
       }
     }
-    if (oldestKey) {
-      const entry = this.dedicatedAdapters.get(oldestKey);
-      if (entry && typeof (entry.adapter as any).close === 'function') {
-        try {
-          (entry.adapter as any).close().catch(() => {});
-        } catch (e: any) { console.warn('[StorageRouter] closing evicted dedicated adapter failed:', e?.message); }
-      }
-      this.dedicatedAdapters.delete(oldestKey);
+    if (!oldestKey) return false;
+    const entry = this.dedicatedAdapters.get(oldestKey);
+    if (entry && typeof (entry.adapter as any).close === 'function') {
+      try {
+        (entry.adapter as any).close().catch(() => {});
+      } catch (e: any) { console.warn('[StorageRouter] closing evicted dedicated adapter failed:', e?.message); }
     }
+    this.dedicatedAdapters.delete(oldestKey);
+    return true;
   }
 
   public getActiveDedicatedPoolsCount(): number {

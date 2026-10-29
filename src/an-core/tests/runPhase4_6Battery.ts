@@ -33,6 +33,7 @@ export async function runPhase46Battery(): Promise<Phase46BatterySuiteResult> {
   const startTime = Date.now();
   const results: Phase46BatteryTestResult[] = [];
   const router = new StorageRouter();
+  StorageRouter.MIN_IDLE_BEFORE_EVICT_MS = 0;
   const primary = router.getPrimaryAdapter();
 
   await primary.initializeSchema();
