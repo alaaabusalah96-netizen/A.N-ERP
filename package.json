@@ -26,7 +26,8 @@
     "verify:auth-refresh": "tsx scripts/verifyAnAuthRefreshMe1.ts",
     "verify:auth-rolemap": "tsx scripts/verifyAnAuthRoleMap1.ts",
     "verify:fix-pg-role": "tsx scripts/verifyAnFixPgRole1.ts",
-    "verify:fix-ci-docs": "tsx scripts/verifyAnFixCiDocs1.ts"
+    "verify:fix-ci-docs": "tsx scripts/verifyAnFixCiDocs1.ts",
+    "verify:auth-bypass": "tsx scripts/verifyAnDevPreviewBypass1.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

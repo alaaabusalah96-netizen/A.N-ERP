@@ -61,6 +61,7 @@
 | AUTH-ROLEMAP1 | Explicit UI role map | DONE | no /admin/i elevation; no password.trim on A.N login; duplicate me route removed if any |
 | FIX-PGROLE1 | PG role NOBYPASSRLS ops pack | DONE | SQL an_erp_app + docs + probe; CONFIG until DATABASE_URL uses the role |
 | FIX-CIDOCS1 | CI verifies + deploy flags doc | DONE | build + A.N static verifies in CI; gitignore; AN-DEPLOY-FLAGS |
+| DEV-PREVIEW1 | Dev preview full-admin bypass | DONE | AN_PREVIEW_BYPASS shows SystemAdmin local enter; blocked under STRICT_PROD_SECURITY |
 
 ## Canonical rules (do not regress)
 
@@ -103,6 +104,7 @@
 39. **AUTH-ROLE-MAP-1:** Login maps A.N roles via explicit table (Accountant/Auditor/WarehouseKeeper/…); unknown → StationAdmin; passwords are not trimmed.
 40. **FIX-PG-ROLE-1:** Ship SQL/docs for an_erp_app NOSUPERUSER NOBYPASSRLS. Runtime remains CONFIG until operator points DATABASE_URL at that role and probe passes.
 41. **FIX-CI-DOCS-1:** CI runs production build and A.N static verify scripts; deploy flags documented; gitignore hardened for reports/archives.
+42. **DEV-PREVIEW-BYPASS-1:** When AN_PREVIEW_BYPASS=1 (and not strict prod), Login offers a local SystemAdmin session for UI preview without credentials. Not for production.
 
 ## Verify
 

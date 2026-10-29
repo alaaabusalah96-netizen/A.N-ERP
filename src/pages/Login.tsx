@@ -4,8 +4,9 @@ import { auth } from '../firebase';
 import { CustodyDB } from '../db';
 import { Language, Theme, AppUser } from '../types';
 import kemitLogo from '../assets/images/kemit_logo_1784280480891.jpg';
-import { Mail, Lock, Eye, EyeOff, Globe, Loader2, ShieldCheck } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, Globe, Loader2, ShieldCheck, AlertTriangle, ArrowRight } from 'lucide-react';
 import { mapAnRoleToAppUiRole, defaultPermissionsForRole } from '../lib/anRoleMap';
+import { buildPreviewAdminUser } from '../lib/anPreviewBypass';
 
 interface LoginProps {
   language: Language;
@@ -29,6 +30,7 @@ export default function Login({
   const [anLoginAvailable, setAnLoginAvailable] = useState(false);
   const [firebaseEscapeAllowed, setFirebaseEscapeAllowed] = useState(false);
   const [tenantId, setTenantId] = useState('default');
+  const [previewBypassEnabled, setPreviewBypassEnabled] = useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -44,6 +46,16 @@ export default function Login({
         }
       } catch {
         /* keep firebase-only */
+      }
+
+      try {
+        const res = await fetch('/api/an/auth/preview-bypass-status');
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && data?.enabled === true) {
+          setPreviewBypassEnabled(true);
+        }
+      } catch {
+        /* silent */
       }
     })();
     return () => {
@@ -309,7 +321,6 @@ export default function Login({
                 </button>
               </div>
             </div>
-
             <button
               type="submit"
               disabled={loading}
@@ -325,6 +336,43 @@ export default function Login({
               )}
             </button>
           </form>
+
+          {previewBypassEnabled && (
+            <div className="mt-8 space-y-4 pt-6 border-t border-slate-100 dark:border-slate-700/50">
+              <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50">
+                <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-500 shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-800 dark:text-amber-300">
+                  <p className="font-bold mb-1">
+                    {isRtl ? 'وضع المعاينة (تطوير)' : 'Preview Mode (Dev)'}
+                  </p>
+                  <p>
+                    {isRtl 
+                      ? 'للتطوير فقط — لا يستخدم في الإنتاج. يسمح بالدخول بصلاحيات مدير النظام لمعاينة الشاشات.' 
+                      : 'For development only. Allows entry as System Admin to preview UI screens.'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const user = buildPreviewAdminUser(isRtl ? 'ar' : 'en');
+                  try {
+                    CustodyDB.setActiveUser(user as any);
+                  } catch (e) {
+                    console.warn('[Bypass] Failed to set active user:', e);
+                  }
+                  onLoginSuccess(user);
+                }}
+                className="group w-full flex justify-between items-center py-2.5 px-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-semibold text-slate-700 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 hover:border-emerald-500/50 transition-all shadow-xs"
+              >
+                <span>
+                  {isRtl ? 'دخول معاينة — صلاحيات كاملة' : 'Preview enter — full admin'}
+                </span>
+                <ArrowRight className="h-4 w-4 text-slate-400 group-hover:text-emerald-500 group-hover:translate-x-1 rtl:group-hover:-translate-x-1 transition-all" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

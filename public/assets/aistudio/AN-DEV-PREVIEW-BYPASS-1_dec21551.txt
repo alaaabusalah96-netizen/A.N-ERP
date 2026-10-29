@@ -1,0 +1,189 @@
+# AN-DEV-PREVIEW-BYPASS-1 — Dev-only full-admin preview entry (LEAN)
+# Goal: enter the app in Preview without real user/password while secrets are not ready.
+# Creates a local SystemAdmin session with broad UI permissions when AN_PREVIEW_BYPASS=1.
+# HARD: blocked when STRICT_PROD_SECURITY=true unless AN_PREVIEW_BYPASS_FORCE=1 (discouraged).
+
+## HARD RULES
+1. Files: `src/lib/anPreviewBypass.ts` (new), `src/pages/Login.tsx`, `server.ts` (`GET /api/an/auth/preview-bypass-status` only), `scripts/verifyAnDevPreviewBypass1.ts`, `package.json` one script, `.env.example`, `docs/MERGE_STATUS.md`.
+2. Default OFF: bypass UI hidden unless server says enabled.
+3. Preview user MUST be `role: 'SystemAdmin'`, `is_platform_owner: true`, rich `permissions` so sidebars/screens that check Admin/SystemAdmin open.
+4. Do NOT accept arbitrary role from the client for bypass — fixed server/client template only.
+5. Do NOT write production users to Postgres/Firestore from this package.
+6. Never enable bypass in production docs as recommended; document as dev-only.
+7. Stop at first failure. tsc >2 min → once → build → verify. One RESULTS REPORT only.
+
+## PRECHECK
+- Login.tsx uses onLoginSuccess(AppUser)
+- AppUser has role, permissions, is_platform_owner
+- cookie-parser / fetch patterns exist
+
+## STEP 3 — `src/lib/anPreviewBypass.ts`
+
+```typescript
+/**
+ * AN-DEV-PREVIEW-BYPASS-1 — local full-admin AppUser for UI preview only.
+ */
+import type { AppUser } from '../types';
+
+export const PREVIEW_BYPASS_USER_ID = 'dev-preview-admin';
+
+/** Broad UI permissions: keys used across KEMIT gates; unknown keys are harmless. */
+export function buildPreviewAdminPermissions(): Record<string, boolean> {
+  return {
+    platform: true,
+    admin: true,
+    accounting: true,
+    audit: true,
+    inventory: true,
+    purchasing: true,
+    sales: true,
+    hr: true,
+    custody: true,
+    reports: true,
+    settings: true,
+    users: true,
+    companies: true,
+    warehouses: true,
+    all: true,
+  };
+}
+
+export function buildPreviewAdminUser(language: 'ar' | 'en' = 'ar'): AppUser {
+  return {
+    id: PREVIEW_BYPASS_USER_ID,
+    email: 'preview-admin@local.dev',
+    full_name: language === 'ar' ? 'مدير معاينة (تطوير)' : 'Preview Admin (dev)',
+    name: language === 'ar' ? 'معاينة' : 'Preview',
+    role: 'SystemAdmin',
+    userRoles: ['SystemAdmin', 'Admin'],
+    assigned_roles: ['SystemAdmin'],
+    permissions: buildPreviewAdminPermissions() as any,
+    is_active: true,
+    is_platform_owner: true,
+    must_change_password: false,
+    company_id: undefined,
+    tenantId: 'default',
+  };
+}
+
+export function isPreviewBypassEnvEnabled(env: {
+  AN_PREVIEW_BYPASS?: string;
+  AN_PREVIEW_BYPASS_FORCE?: string;
+  STRICT_PROD_SECURITY?: string;
+}): boolean {
+  const on =
+    env.AN_PREVIEW_BYPASS === '1' ||
+    env.AN_PREVIEW_BYPASS === 'true';
+  if (!on) return false;
+  const strict =
+    String(env.STRICT_PROD_SECURITY || '').toLowerCase() === 'true';
+  if (strict) {
+    return env.AN_PREVIEW_BYPASS_FORCE === '1' || env.AN_PREVIEW_BYPASS_FORCE === 'true';
+  }
+  return true;
+}
+```
+
+## STEP 3b — `server.ts`
+Near other `/api/an/auth/*`:
+
+```javascript
+    app.get("/api/an/auth/preview-bypass-status", (_req: any, res: any) => {
+      const { isPreviewBypassEnvEnabled } = require("./src/lib/anPreviewBypass");
+      // prefer dynamic import if project is ESM; match local style
+      res.status(200).json({
+        ok: true,
+        enabled: isPreviewBypassEnvEnabled(process.env),
+        role: "SystemAdmin",
+        note: "dev only",
+      });
+    });
+```
+Use `await import("./src/lib/anPreviewBypass")` if the file is TS ESM like the rest of server.
+
+Do **not** add a POST that issues real JWT unless you also want API access without secrets — UI-only bypass is enough for “see screens”. APIs may still 401 without secrets; that is acceptable for layout preview.
+
+## STEP 3c — `Login.tsx`
+1. State: `previewBypassEnabled` from fetch `/api/an/auth/preview-bypass-status`.
+2. When enabled, show a full-width button below the form:
+
+Arabic: «دخول معاينة — صلاحيات كاملة (تطوير)»  
+English: «Preview enter — full admin (dev only)»
+
+3. onClick:
+```typescript
+import { buildPreviewAdminUser } from '../lib/anPreviewBypass';
+// ...
+const user = buildPreviewAdminUser(isRtl ? 'ar' : 'en');
+try {
+  CustodyDB.setActiveUser(user as any);
+} catch { /* optional */ }
+onLoginSuccess(user);
+```
+
+4. Visual: amber/warning banner — «للتطوير فقط — لا يستخدم في الإنتاج».
+
+5. Button hidden when `previewBypassEnabled === false`.
+
+## STEP 3d — `.env.example`
+```
+# AN-DEV-PREVIEW-BYPASS-1: UI-only full SystemAdmin enter for Preview while secrets are not ready.
+# Never set to 1 in production. Blocked when STRICT_PROD_SECURITY=true unless AN_PREVIEW_BYPASS_FORCE=1.
+AN_PREVIEW_BYPASS=0
+# AN_PREVIEW_BYPASS_FORCE=0
+```
+
+## STEP 3e — MERGE_STATUS
+```markdown
+| DEV-PREVIEW1 | Dev preview full-admin bypass | DONE | AN_PREVIEW_BYPASS shows SystemAdmin local enter; blocked under STRICT_PROD_SECURITY |
+```
+Next free rule:
+```markdown
+N. **DEV-PREVIEW-BYPASS-1:** When AN_PREVIEW_BYPASS=1 (and not strict prod), Login offers a local SystemAdmin session for UI preview without credentials. Not for production.
+```
+
+## STEP 3f — `scripts/verifyAnDevPreviewBypass1.ts`
+14 checks:
+- anPreviewBypass.ts exists
+- buildPreviewAdminUser role SystemAdmin
+- is_platform_owner true in source
+- isPreviewBypassEnvEnabled
+- Login fetches preview-bypass-status or AN_PREVIEW_BYPASS
+- Login contains buildPreviewAdminUser
+- server route preview-bypass-status
+- STRICT_PROD_SECURITY mentioned in bypass helper
+- .env.example AN_PREVIEW_BYPASS
+- MERGE DEV-PREVIEW
+- default enabled is not hardcoded true in isPreviewBypassEnvEnabled without env
+- AUTH-ROLEMAP map still present in project
+- requireAnMigrateOperator still
+- no password for preview user required in Login bypass handler
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnDevPreviewBypass1.ts
+npx tsx scripts/verifyAnAuthRoleMap1.ts
+```
+
+## COMMIT NOTE
+```
+feat(dev): optional preview bypass as full SystemAdmin for UI testing
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+8) tsc: N | build: OK/FAIL
+9) verifyAnDevPreviewBypass1: Passed: N | Failed: N
+Status: DONE | package: AN-DEV-PREVIEW-BYPASS-1
+===========================
+```
+
+## USER AFTER APPLY (Studio Secrets)
+```
+AN_PREVIEW_BYPASS=1
+STRICT_PROD_SECURITY=false
+```
+Reload Preview → زر الدخول للمعاينة → SystemAdmin لكل الشاشات المعتمدة على الدور في الواجهة.
+Note: بعض /api/* قد تبقى 401 بدون Firebase/DB — المعاينة للشكل والتنقل؛ البيانات الحية تحتاج أسرار لاحقًا.

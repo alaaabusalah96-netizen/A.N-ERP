@@ -4067,7 +4067,19 @@ async function startServer() {
         return res.status(500).json({ ok: false, code: "internal_error" });
       }
     });
-
+    app.get("/api/an/auth/preview-bypass-status", async (_req: any, res: any) => {
+      try {
+        const { isPreviewBypassEnvEnabled } = await import("./src/lib/anPreviewBypass");
+        res.status(200).json({
+          ok: true,
+          enabled: isPreviewBypassEnvEnabled(process.env as any),
+          role: "SystemAdmin",
+          note: "dev only",
+        });
+      } catch (err) {
+        res.status(500).json({ ok: false, enabled: false });
+      }
+    });
 
 
     try {
