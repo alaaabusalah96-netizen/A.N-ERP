@@ -1,0 +1,256 @@
+# AN-AUTH-REFRESH-ME-1 — A.N refresh / logout / me routes (LEAN)
+# After COOKIES + BRIDGE: expose token lifecycle APIs for A.N plane.
+# Uses TokenService.rotateRefreshToken / revokeSessionAndFamily / verifyAccessToken.
+# OUT OF SCOPE: role-map regex fix, Dedicated login, 2FA enroll, cookie Secure policy changes.
+
+## HARD RULES
+1. Files: `server.ts` (three routes under A.N bridge mount), `src/lib/anAuthSessionRoutes.ts` (optional helpers), `scripts/verifyAnAuthRefreshMe1.ts`, `package.json` one script, `docs/MERGE_STATUS.md`.
+2. Reuse TokenService only — do not reimplement JWT.
+3. Refresh: read refresh from body.refreshToken OR cookie `an_refresh`; on success set new `an_access` + `an_refresh` cookies (same helpers as COOKIES-1); do not print tokens in logs.
+4. Logout: clear an_access + an_refresh cookies; if refresh provided, revoke family/session via TokenService.
+5. Me: require authenticateSessionOrBearer (or inline same); return safe user fields only (id, username/email, role, tenant/company_id) — no passwordHash.
+6. Rate-limit refresh with existing authRateLimiter or sessionRateLimiter.
+7. Stop at first failure. tsc >2 min → once → build → verify. One RESULTS REPORT only.
+
+## PRECHECK
+- AUTH-COOKIES1 DONE (`anAuthCookies.ts`)
+- TokenService has `rotateRefreshToken`, `verifyAccessToken`, `revokeSessionAndFamily` or `revokeFamily`
+- A.N storage router `anStorageRouter` available where login is mounted
+- cookie-parser enabled
+
+## STEP 3 — Create `src/lib/anAuthSessionRoutes.ts`
+
+```typescript
+/**
+ * AN-AUTH-REFRESH-ME-1 — helpers for refresh/logout responses (no Express types required).
+ */
+import { TokenService } from '../an-core/auth/TokenService';
+import type { StoragePort } from '../an-core/storage/StoragePort';
+import {
+  AN_ACCESS_COOKIE,
+  AN_REFRESH_COOKIE,
+  accessCookieOptions,
+  refreshCookieOptions,
+  clearAnAuthCookieOptions,
+} from './anAuthCookies';
+
+export function createAnTokenService(adapter: StoragePort): TokenService {
+  return new TokenService(adapter);
+}
+
+export async function rotateAnRefresh(
+  adapter: StoragePort,
+  plainRefreshToken: string
+): Promise<
+  | { ok: true; accessToken: string; refreshToken: string; expiresInSec: number; userId: string; tenantId?: string }
+  | { ok: false; code: string; message: string; messageAr: string; httpStatus: number }
+> {
+  const tokens = createAnTokenService(adapter);
+  try {
+    const rotated = await tokens.rotateRefreshToken(plainRefreshToken);
+    // Adapt to actual TokenService return shape:
+    // expected fields may be: accessToken, refreshToken, userId, tenantId, expiresInSec / session
+    if (!(rotated as any)?.accessToken && !(rotated as any)?.ok) {
+      const err = rotated as any;
+      return {
+        ok: false,
+        code: err?.code || 'invalid_refresh',
+        message: 'Invalid or expired refresh token',
+        messageAr: 'جلسة التجديد غير صالحة أو منتهية',
+        httpStatus: 401,
+      };
+    }
+    const accessToken = (rotated as any).accessToken || (rotated as any).tokens?.accessToken;
+    const refreshToken = (rotated as any).refreshToken || (rotated as any).tokens?.refreshToken;
+    const expiresInSec = Number((rotated as any).expiresInSec) || 900;
+    const userId = String((rotated as any).userId || (rotated as any).user?.id || '');
+    const tenantId = (rotated as any).tenantId || (rotated as any).user?.tenantId;
+    if (!accessToken || !refreshToken) {
+      return {
+        ok: false,
+        code: 'invalid_refresh',
+        message: 'Invalid or expired refresh token',
+        messageAr: 'جلسة التجديد غير صالحة أو منتهية',
+        httpStatus: 401,
+      };
+    }
+    return { ok: true, accessToken, refreshToken, expiresInSec, userId, tenantId };
+  } catch {
+    return {
+      ok: false,
+      code: 'invalid_refresh',
+      message: 'Invalid or expired refresh token',
+      messageAr: 'جلسة التجديد غير صالحة أو منتهية',
+      httpStatus: 401,
+    };
+  }
+}
+
+export { AN_ACCESS_COOKIE, AN_REFRESH_COOKIE, accessCookieOptions, refreshCookieOptions, clearAnAuthCookieOptions };
+```
+
+**Critical:** Read `TokenService.rotateRefreshToken` return type in the live file and map fields exactly (do not invent property names).
+
+## STEP 3b — `server.ts` routes (near other `/api/an/auth/*`)
+
+### POST `/api/an/auth/refresh`
+```javascript
+    app.post("/api/an/auth/refresh", authRateLimiter, async (req: any, res: any) => {
+      try {
+        const plain =
+          String(req.body?.refreshToken || "").trim() ||
+          String(req.cookies?.an_refresh || "").trim();
+        if (!plain) {
+          return res.status(400).json({
+            ok: false,
+            code: "refresh_required",
+            messageAr: "رمز التجديد مطلوب",
+          });
+        }
+        const { rotateAnRefresh, AN_ACCESS_COOKIE, AN_REFRESH_COOKIE, accessCookieOptions, refreshCookieOptions } =
+          await import("./src/lib/anAuthSessionRoutes");
+        const adapter = anStorageRouter.getPrimaryAdapter();
+        const out = await rotateAnRefresh(adapter, plain);
+        if (!out.ok) {
+          return res.status(out.httpStatus).json(out);
+        }
+        res.cookie(AN_ACCESS_COOKIE, out.accessToken, accessCookieOptions(req, out.expiresInSec));
+        res.cookie(AN_REFRESH_COOKIE, out.refreshToken, refreshCookieOptions(req));
+        return res.status(200).json({
+          ok: true,
+          plane: "an-auth-refresh-me-1",
+          expiresInSec: out.expiresInSec,
+          tokenType: "Bearer",
+          // tokens optional in body for non-browser clients
+          accessToken: out.accessToken,
+          refreshToken: out.refreshToken,
+        });
+      } catch (e: any) {
+        console.error("[AN-AUTH] refresh error:", e?.name || "Error");
+        return res.status(500).json({ ok: false, code: "internal_error", messageAr: "خطأ داخلي" });
+      }
+    });
+```
+
+### POST `/api/an/auth/logout`
+```javascript
+    app.post("/api/an/auth/logout", async (req: any, res: any) => {
+      try {
+        const plain =
+          String(req.body?.refreshToken || "").trim() ||
+          String(req.cookies?.an_refresh || "").trim();
+        if (plain) {
+          try {
+            const { TokenService } = await import("./src/an-core/auth/TokenService");
+            const tokens = new TokenService(anStorageRouter.getPrimaryAdapter());
+            // Prefer public API if exists: revoke by refresh token
+            if (typeof (tokens as any).revokeByRefreshToken === "function") {
+              await (tokens as any).revokeByRefreshToken(plain);
+            } else if (typeof (tokens as any).rotateRefreshToken === "function") {
+              // best-effort: decode/revoke family if TokenService exposes helpers
+              const rotated = await tokens.rotateRefreshToken(plain).catch(() => null);
+              if (rotated && (rotated as any).familyId && typeof tokens.revokeFamily === "function") {
+                await tokens.revokeFamily((rotated as any).familyId, "LOGOUT");
+              }
+            }
+          } catch {
+            /* still clear cookies */
+          }
+        }
+        const { AN_ACCESS_COOKIE, AN_REFRESH_COOKIE, clearAnAuthCookieOptions } =
+          await import("./src/lib/anAuthCookies");
+        res.clearCookie(AN_ACCESS_COOKIE, clearAnAuthCookieOptions(req));
+        res.clearCookie(AN_REFRESH_COOKIE, clearAnAuthCookieOptions(req));
+        return res.status(200).json({ ok: true, plane: "an-auth-refresh-me-1" });
+      } catch {
+        return res.status(200).json({ ok: true, plane: "an-auth-refresh-me-1" });
+      }
+    });
+```
+Prefer reading TokenService for a clean `revoke*` that accepts refresh token; if only familyId path exists, use whatever FIX-SEC implemented.
+
+### GET `/api/an/auth/me`
+```javascript
+    app.get("/api/an/auth/me", async (req: any, res: any) => {
+      try {
+        const auth = await authenticateSessionOrBearer(req);
+        if (!auth.authenticated) {
+          return res.status(auth.statusCode || 401).json({
+            ok: false,
+            code: "unauthorized",
+            message: auth.message,
+          });
+        }
+        const u = auth.user || {};
+        return res.status(200).json({
+          ok: true,
+          plane: "an-auth-refresh-me-1",
+          user: {
+            id: u.id || u.uid || null,
+            email: u.email || null,
+            username: u.username || null,
+            fullName: u.full_name || u.fullName || null,
+            role: u.role || null,
+            company_id: u.company_id || u.companyId || null,
+            an_tenant_id: u.an_tenant_id || null,
+            an_jwt: !!u.an_jwt,
+          },
+        });
+      } catch {
+        return res.status(500).json({ ok: false, code: "internal_error" });
+      }
+    });
+```
+
+Add the three paths to the A.N console.log mount line.
+
+## STEP 3c — Login.tsx (minimal, optional)
+If there is a logout button for A.N mode, call `POST /api/an/auth/logout` with `credentials: 'include'`. If none, skip UI changes.
+
+## STEP 3d — MERGE_STATUS
+```markdown
+| AUTH-REFRESH1 | A.N refresh/logout/me | DONE | POST refresh+logout, GET me; cookies rotated/cleared |
+```
+Next free rule number in live file:
+```markdown
+N. **AUTH-REFRESH-ME-1:** A.N plane exposes /api/an/auth/refresh, /logout, /me; refresh rotates tokens and re-sets HttpOnly cookies.
+```
+
+## STEP 3e — `scripts/verifyAnAuthRefreshMe1.ts`
+14 checks:
+- routes `/api/an/auth/refresh`, `/api/an/auth/logout`, `/api/an/auth/me` in server.ts
+- rotateRefreshToken referenced from session helper or server
+- anAuthCookies still used on refresh success (res.cookie an_access)
+- clearCookie on an logout
+- me uses authenticateSessionOrBearer
+- no passwordHash in me response builder
+- AUTH-COOKIES1 still in MERGE_STATUS
+- AUTH-BRIDGE1 still in MERGE_STATUS
+- authRateLimiter or rate limit on refresh
+- TokenService import remains
+- FIX-SEC1 still listed
+- package script verify:auth-refresh optional
+- plane an-auth-refresh-me-1 string
+- requireAnMigrateOperator still present
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnAuthRefreshMe1.ts
+npx tsx scripts/verifyAnAuthCookies1.ts
+```
+
+## COMMIT NOTE
+```
+feat(auth-refresh1): A.N refresh, logout, and me endpoints with cookie rotation
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+8) tsc: N | build: OK/FAIL
+9) verifyAnAuthRefreshMe1: Passed: N | Failed: N
+10) regression: verifyAnAuthCookies1: …
+Status: DONE | package: AN-AUTH-REFRESH-ME-1
+===========================
+```

@@ -778,7 +778,8 @@ async function startServer() {
         return { authenticated: false, statusCode: 403, message: "Forbidden: User account is inactive." };
       }
 
-      return { authenticated: true, statusCode: 200, message: "Authorized", user: { ...userData, id: uid } };
+      const { passwordHash, ...safeUser } = userData as any;
+      return { authenticated: true, statusCode: 200, message: "Authorized", user: { ...safeUser, id: uid } };
     } catch (err: any) {
       console.error("Auth check error in authenticateSessionOrBearer:", err);
       return { authenticated: false, statusCode: 500, message: "Server error during authentication check." };
@@ -3975,6 +3976,128 @@ async function startServer() {
         res.status(500).json({ ok: false, plane: "an-auth-g2", code: "internal_error", messageAr: "خطأ داخلي" });
       }
     });
+    app.post("/api/an/auth/refresh", authRateLimiter, async (req: any, res: any) => {
+      try {
+        const plain =
+          String(req.body?.refreshToken || "").trim() ||
+          String(req.cookies?.an_refresh || "").trim();
+        if (!plain) {
+          return res.status(400).json({
+            ok: false,
+            code: "refresh_required",
+            messageAr: "رمز التجديد مطلوب",
+          });
+        }
+        const { rotateAnRefresh, AN_ACCESS_COOKIE, AN_REFRESH_COOKIE, accessCookieOptions, refreshCookieOptions } =
+          await import("./src/lib/anAuthSessionRoutes");
+        const adapter = anStorageRouter.getPrimaryAdapter();
+        const out = await rotateAnRefresh(adapter, plain);
+        if (!out.ok) {
+          return res.status((out as any).httpStatus).json(out);
+        }
+        res.cookie(AN_ACCESS_COOKIE, out.accessToken, accessCookieOptions(req, out.expiresInSec));
+        res.cookie(AN_REFRESH_COOKIE, out.refreshToken, refreshCookieOptions(req));
+        return res.status(200).json({
+          ok: true,
+          plane: "an-auth-refresh-me-1",
+          expiresInSec: out.expiresInSec,
+          tokenType: "Bearer",
+          accessToken: out.accessToken,
+          refreshToken: out.refreshToken,
+        });
+      } catch (e: any) {
+        console.error("[AN-AUTH] refresh error:", e?.name || "Error");
+        return res.status(500).json({ ok: false, code: "internal_error", messageAr: "خطأ داخلي" });
+      }
+    });
+
+    app.post("/api/an/auth/logout", async (req: any, res: any) => {
+      try {
+        const plain =
+          String(req.body?.refreshToken || "").trim() ||
+          String(req.cookies?.an_refresh || "").trim();
+        if (plain) {
+          try {
+            const { TokenService } = await import("./src/an-core/auth/TokenService");
+            const tokens = new TokenService(anStorageRouter.getPrimaryAdapter());
+            const rotated = await tokens.rotateRefreshToken(plain).catch(() => null);
+            if (rotated && (rotated as any).familyId && typeof tokens.revokeFamily === "function") {
+              await tokens.revokeFamily((rotated as any).familyId, "LOGOUT");
+            }
+          } catch {
+            /* still clear cookies */
+          }
+        }
+        const { AN_ACCESS_COOKIE, AN_REFRESH_COOKIE, clearAnAuthCookieOptions } =
+          await import("./src/lib/anAuthSessionRoutes");
+        res.clearCookie(AN_ACCESS_COOKIE, clearAnAuthCookieOptions(req));
+        res.clearCookie(AN_REFRESH_COOKIE, clearAnAuthCookieOptions(req));
+        return res.status(200).json({ ok: true, plane: "an-auth-refresh-me-1" });
+      } catch {
+        return res.status(200).json({ ok: true, plane: "an-auth-refresh-me-1" });
+      }
+    });
+
+    app.get("/api/an/auth/me", async (req: any, res: any) => {
+      try {
+        const auth = await authenticateSessionOrBearer(req);
+        if (!auth.authenticated) {
+          return res.status(auth.statusCode || 401).json({
+            ok: false,
+            code: "unauthorized",
+            message: auth.message,
+          });
+        }
+        const u = auth.user || {};
+        return res.status(200).json({
+          ok: true,
+          plane: "an-auth-refresh-me-1",
+          user: {
+            id: u.id || u.uid || null,
+            email: u.email || null,
+            username: u.username || null,
+            fullName: u.full_name || u.fullName || null,
+            role: u.role || null,
+            company_id: u.company_id || u.companyId || null,
+            an_tenant_id: u.an_tenant_id || null,
+            an_jwt: !!u.an_jwt,
+          },
+        });
+      } catch {
+        return res.status(500).json({ ok: false, code: "internal_error" });
+      }
+    });
+
+    app.get("/api/an/auth/me", async (req: any, res: any) => {
+      try {
+        const auth = await authenticateSessionOrBearer(req);
+        if (!auth.authenticated) {
+          return res.status(auth.statusCode || 401).json({
+            ok: false,
+            code: "unauthorized",
+            message: auth.message,
+          });
+        }
+        const u = auth.user || {};
+        return res.status(200).json({
+          ok: true,
+          plane: "an-auth-refresh-me-1",
+          user: {
+            id: u.id || u.uid || null,
+            email: u.email || null,
+            username: u.username || null,
+            fullName: u.full_name || u.fullName || null,
+            role: u.role || null,
+            company_id: u.company_id || u.companyId || null,
+            an_tenant_id: u.an_tenant_id || null,
+            an_jwt: !!u.an_jwt,
+          },
+        });
+      } catch {
+        return res.status(500).json({ ok: false, code: "internal_error" });
+      }
+    });
+
     try {
       const { runPlatformAdminBootstrapOnStart } = await import("./src/lib/anPlatformBootstrap");
       const boot = await runPlatformAdminBootstrapOnStart(anStorageRouter, process.env);
@@ -3988,7 +4111,7 @@ async function startServer() {
     } catch (bootErr: any) {
       console.warn("[AN-AUTH-G5] platform bootstrap error:", bootErr?.message || bootErr);
     }
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses + migrate/inventory/items + migrate/inventory/balances + migrate/accounting/accounts + inventory/warehouses + inventory/items + inventory/stock + inventory/pilot/movement + auth/login-target + auth/login");
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses + migrate/inventory/items + migrate/inventory/balances + migrate/accounting/accounts + inventory/warehouses + inventory/items + inventory/stock + inventory/pilot/movement + auth/login-target + auth/login + auth/refresh + auth/logout + auth/me");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }
