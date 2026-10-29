@@ -1,0 +1,167 @@
+# AN-AUTH-ROLE-MAP-1 — Explicit App role map + stop password.trim on A.N login (LEAN)
+# Claude P1-8: Login.tsx maps any role matching /admin/i → Admin else StationAdmin; password.trim() alters secrets.
+# Replace with explicit map; unknown roles → safe default StationAdmin with empty permissions still allowed but logged once.
+# Also fix duplicate GET /api/an/auth/me if still present (keep a single handler).
+# OUT OF SCOPE: cookies, refresh, Dedicated adapter login, 2FA.
+
+## HARD RULES
+1. Files allowed: `src/pages/Login.tsx`, `src/lib/anRoleMap.ts` (new), `server.ts` ONLY if duplicate `/api/an/auth/me` must be removed, `scripts/verifyAnAuthRoleMap1.ts`, `package.json` one script, `docs/MERGE_STATUS.md`.
+2. Do not use regex `/admin/i` for role elevation.
+3. A.N login path: do **not** call `.trim()` on password (username/tenantId trim OK).
+4. Firebase verify-credentials path: prefer stop password.trim as well if the same lines are shared; if separate, fix both when touching Login password variable used for both.
+5. Preserve AUTH-BRIDGE customToken flow and COOKIES (no sessionStorage regression).
+6. Stop at first failure. tsc >2 min → once → build → verify. One RESULTS REPORT only.
+
+## PRECHECK
+- AUTH-REFRESH1 DONE
+- Login.tsx contains `/admin/i` or `StationAdmin` mapping
+- password.trim present near login handlers
+
+## STEP 3 — Create `src/lib/anRoleMap.ts`
+
+```typescript
+/**
+ * AN-AUTH-ROLE-MAP-1 — explicit A.N / KEMIT UI role mapping (no regex elevation).
+ */
+export type AppUiRole = 'SystemAdmin' | 'Admin' | 'StationAdmin' | 'Accountant' | 'Auditor' | 'WarehouseKeeper';
+
+const ROLE_MAP: Record<string, AppUiRole> = {
+  // platform / system
+  systemadmin: 'SystemAdmin',
+  system_admin: 'SystemAdmin',
+  super_admin: 'SystemAdmin',
+  superadmin: 'SystemAdmin',
+  platform_admin: 'SystemAdmin',
+  platformadmin: 'SystemAdmin',
+  // company admin
+  admin: 'Admin',
+  company_admin: 'Admin',
+  companyadmin: 'Admin',
+  // finance
+  accountant: 'Accountant',
+  accounting: 'Accountant',
+  finance: 'Accountant',
+  // audit
+  auditor: 'Auditor',
+  audit: 'Auditor',
+  // warehouse
+  warehouse_keeper: 'WarehouseKeeper',
+  warehousekeeper: 'WarehouseKeeper',
+  storekeeper: 'WarehouseKeeper',
+  inventory: 'WarehouseKeeper',
+  // station / default operational
+  stationadmin: 'StationAdmin',
+  station_admin: 'StationAdmin',
+  operator: 'StationAdmin',
+  user: 'StationAdmin',
+};
+
+export function mapAnRoleToAppUiRole(raw: string | null | undefined): AppUiRole {
+  const key = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (!key) return 'StationAdmin';
+  if (ROLE_MAP[key]) return ROLE_MAP[key];
+  // exact known UI roles already
+  const asIs = String(raw || '').trim();
+  const allowed: AppUiRole[] = [
+    'SystemAdmin',
+    'Admin',
+    'StationAdmin',
+    'Accountant',
+    'Auditor',
+    'WarehouseKeeper',
+  ];
+  if (allowed.includes(asIs as AppUiRole)) return asIs as AppUiRole;
+  return 'StationAdmin';
+}
+
+export function defaultPermissionsForRole(role: AppUiRole): Record<string, boolean> {
+  switch (role) {
+    case 'SystemAdmin':
+      return { platform: true, admin: true };
+    case 'Admin':
+      return { admin: true };
+    case 'Accountant':
+      return { accounting: true };
+    case 'Auditor':
+      return { audit: true };
+    case 'WarehouseKeeper':
+      return { inventory: true };
+    default:
+      return {};
+  }
+}
+```
+
+## STEP 3b — `Login.tsx`
+1. Import `mapAnRoleToAppUiRole`, `defaultPermissionsForRole`.
+2. Replace block:
+```typescript
+/system|super|platform/i.test(roleRaw) ? 'SystemAdmin' :
+/admin/i.test(roleRaw) ? 'Admin' : 'StationAdmin';
+```
+with:
+```typescript
+const uiRole = mapAnRoleToAppUiRole(roleRaw);
+const permissions = defaultPermissionsForRole(uiRole);
+```
+3. Password handling for A.N (and shared variable if any):
+```typescript
+// use password as entered — do not password.trim()
+const cleanPassword = password;
+```
+Username/email may still `.trim()`.
+
+## STEP 3c — `server.ts` (only if needed)
+If two consecutive `app.get("/api/an/auth/me"` exist, **delete the duplicate** handler entirely (keep one correct implementation from REFRESH-ME).
+
+## STEP 3d — MERGE_STATUS
+```markdown
+| AUTH-ROLEMAP1 | Explicit UI role map | DONE | no /admin/i elevation; no password.trim on A.N login; duplicate me route removed if any |
+```
+Next free rule:
+```markdown
+N. **AUTH-ROLE-MAP-1:** Login maps A.N roles via explicit table (Accountant/Auditor/WarehouseKeeper/…); unknown → StationAdmin; passwords are not trimmed.
+```
+
+## STEP 3e — `scripts/verifyAnAuthRoleMap1.ts`
+14 checks:
+- anRoleMap.ts exists
+- mapAnRoleToAppUiRole
+- ROLE_MAP contains accountant and auditor
+- Login imports anRoleMap or mapAnRoleToAppUiRole
+- Login does not contain `/admin/i`
+- Login does not contain `password.trim()` (allow email.trim)
+- defaultPermissionsForRole present
+- AUTH-REFRESH1 still in MERGE_STATUS
+- AUTH-COOKIES1 still
+- AUTH-BRIDGE1 still
+- single or at least not-broken me route: count of `app.get("/api/an/auth/me"` in server <= 1 (or == 1)
+- signInWithCustomToken still in Login
+- requireAnMigrateOperator still
+- plane or package string AUTH-ROLEMAP in MERGE
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnAuthRoleMap1.ts
+npx tsx scripts/verifyAnAuthRefreshMe1.ts
+```
+
+## COMMIT NOTE
+```
+fix(auth-rolemap1): explicit App role mapping; stop password.trim on login
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+8) tsc: N | build: OK/FAIL
+9) verifyAnAuthRoleMap1: Passed: N | Failed: N
+10) regression: verifyAnAuthRefreshMe1: …
+Status: DONE | package: AN-AUTH-ROLE-MAP-1
+Note: duplicate /me handlers removed: yes/no/count
+===========================
+```

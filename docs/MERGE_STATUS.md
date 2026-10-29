@@ -58,6 +58,7 @@
 | AUTH-BRIDGE1 | A.N login → Firebase customToken + JWT accept | DONE | bridge customToken best-effort; authenticateSessionOrBearer accepts A.N access JWT |
 | AUTH-COOKIES1 | A.N tokens in HttpOnly cookies | DONE | an_access/an_refresh HttpOnly; sessionStorage writes removed from Login A.N path |
 | AUTH-REFRESH1 | A.N refresh/logout/me | DONE | POST refresh+logout, GET me; cookies rotated/cleared |
+| AUTH-ROLEMAP1 | Explicit UI role map | DONE | no /admin/i elevation; no password.trim on A.N login; duplicate me route removed if any |
 
 ## Canonical rules (do not regress)
 
@@ -97,6 +98,7 @@
 36. **AUTH-BRIDGE-1:** Successful A.N login may attach firebaseCustomToken; APIs accept A.N Bearer access JWT. Cookies/refresh/me and full role map are out of scope.
 37. **AUTH-COOKIES-1:** A.N access/refresh tokens set as HttpOnly cookies on login; authenticateSessionOrBearer reads an_access cookie; Login no longer stores A.N tokens in sessionStorage.
 38. **AUTH-REFRESH-ME-1:** A.N plane exposes /api/an/auth/refresh, /logout, /me; refresh rotates tokens and re-sets HttpOnly cookies.
+39. **AUTH-ROLE-MAP-1:** Login maps A.N roles via explicit table (Accountant/Auditor/WarehouseKeeper/…); unknown → StationAdmin; passwords are not trimmed.
 
 ## Verify
 

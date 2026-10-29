@@ -4068,35 +4068,7 @@ async function startServer() {
       }
     });
 
-    app.get("/api/an/auth/me", async (req: any, res: any) => {
-      try {
-        const auth = await authenticateSessionOrBearer(req);
-        if (!auth.authenticated) {
-          return res.status(auth.statusCode || 401).json({
-            ok: false,
-            code: "unauthorized",
-            message: auth.message,
-          });
-        }
-        const u = auth.user || {};
-        return res.status(200).json({
-          ok: true,
-          plane: "an-auth-refresh-me-1",
-          user: {
-            id: u.id || u.uid || null,
-            email: u.email || null,
-            username: u.username || null,
-            fullName: u.full_name || u.fullName || null,
-            role: u.role || null,
-            company_id: u.company_id || u.companyId || null,
-            an_tenant_id: u.an_tenant_id || null,
-            an_jwt: !!u.an_jwt,
-          },
-        });
-      } catch {
-        return res.status(500).json({ ok: false, code: "internal_error" });
-      }
-    });
+
 
     try {
       const { runPlatformAdminBootstrapOnStart } = await import("./src/lib/anPlatformBootstrap");

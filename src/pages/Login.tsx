@@ -5,6 +5,7 @@ import { CustodyDB } from '../db';
 import { Language, Theme, AppUser } from '../types';
 import kemitLogo from '../assets/images/kemit_logo_1784280480891.jpg';
 import { Mail, Lock, Eye, EyeOff, Globe, Loader2, ShieldCheck } from 'lucide-react';
+import { mapAnRoleToAppUiRole, defaultPermissionsForRole } from '../lib/anRoleMap';
 
 interface LoginProps {
   language: Language;
@@ -55,7 +56,7 @@ export default function Login({
     setError(null);
 
     const cleanEmail = email.trim();
-    const cleanPassword = password.trim();
+    const cleanPassword = password; // AN-AUTH-ROLE-MAP-1: do not trim password
     if (!cleanEmail || !cleanPassword) {
       setError(isRtl ? 'يرجى إدخال البريد الإلكتروني وكلمة السر' : 'Please enter both email and password');
       return;
@@ -89,16 +90,15 @@ export default function Login({
           }
         }
         const roleRaw = String(data.user?.role || '');
-        const role =
-          /system|super|platform/i.test(roleRaw) ? 'SystemAdmin' :
-          /admin/i.test(roleRaw) ? 'Admin' : 'StationAdmin';
+        const uiRole = mapAnRoleToAppUiRole(roleRaw);
+        const permissions = defaultPermissionsForRole(uiRole);
         const appUser: AppUser = {
           id: data.user.id,
           email: data.user.username,
           full_name: data.user.fullName || data.user.username,
           name: data.user.fullName || data.user.username,
-          role: role as any,
-          permissions: {},
+          role: uiRole as any,
+          permissions: permissions,
           company_id: data.user.tenantId,
           tenantId: data.user.tenantId,
           is_active: true,
