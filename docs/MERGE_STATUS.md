@@ -46,6 +46,7 @@
 | SEC-MIG1 | Migrate route AuthZ | DONE | requireAnMigrateOperator on migrate GET/POST; env flag still required for writes |
 | ADP1 | Per-company migrate adapter | DONE | resolveCompanyStorageAdapter on migrate routes; primary fallback |
 | INV-L1 | A.N inventory list APIs | DONE | GET warehouses/items via company adapter; session required; CustodyDB UI unchanged |
+| INV-S1 | A.N stock balances read | DONE | GET /api/an/inventory/stock; company adapter; session required |
 
 ## Canonical rules (do not regress)
 
@@ -73,6 +74,7 @@
 22. **SEC-MIGRATE-1:** /api/an/migrate/* requires authenticated platform/system admin session before AN_MIGRATE_WRITES or dry-run.
 23. **ADAPTER-COMPANY-1:** Migrate uses StorageRouter.resolveAdapter when company backend fields exist; otherwise process primary DATABASE_URL.
 24. **INV-READ-LIST-1:** Authenticated read lists use per-company adapter resolution. Operational Inventory.tsx still CustodyDB.
+25. **INV-STOCK-READ-1:** Stock balance read uses per-company adapter. No write. CustodyDB UI unchanged.
 
 ## Verify
 

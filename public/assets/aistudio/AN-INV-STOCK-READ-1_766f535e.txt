@@ -1,0 +1,152 @@
+# AN-INV-STOCK-READ-1 — A.N warehouse stock balances read API (LEAN)
+# After INV-L1 lists: expose read-only stock balances via company adapter.
+# Needed before any non-prod movement pilot (evaluation step 4).
+# Does NOT post/issue stock. CustodyDB UI unchanged.
+
+## HARD RULES
+1. GET only. Require authenticateSessionOrBearer.
+2. Use resolveCompanyStorageAdapter + listWarehouseStock / getWarehouseStock.
+3. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- INV-L1 routes exist
+- StoragePort: listWarehouseStock(tenantId, warehouseId?, itemId?)
+
+## STEP 3 — Extend `src/lib/anInventoryLists.ts` (or new `anInventoryStockRead.ts`)
+
+```typescript
+export interface StockBalanceRow {
+  warehouseId: string;
+  itemId: string;
+  currentQty: number;
+  reservedQty?: number;
+  availableQty?: number;
+  averageCost?: number;
+  totalValue?: number;
+}
+
+export async function listAnStockBalances(
+  adapter: StoragePort,
+  companyId: string,
+  opts?: { warehouseId?: string; itemId?: string },
+  resolution?: CompanyAdapterResolution
+): Promise<InventoryListResult<StockBalanceRow>> {
+  try {
+    const res = await adapter.listWarehouseStock(
+      companyId,
+      opts?.warehouseId,
+      opts?.itemId
+    );
+    if (!res.success) {
+      return {
+        ok: false,
+        companyId,
+        count: 0,
+        items: [],
+        error: res.error || 'listWarehouseStock failed',
+      };
+    }
+    const items: StockBalanceRow[] = (res.data || []).map((s: any) => ({
+      warehouseId: s.warehouseId,
+      itemId: s.itemId,
+      currentQty: Number(s.currentQty ?? 0),
+      reservedQty: s.reservedQty != null ? Number(s.reservedQty) : undefined,
+      availableQty: s.availableQty != null ? Number(s.availableQty) : undefined,
+      averageCost: s.averageCost != null ? Number(s.averageCost) : undefined,
+      totalValue: s.totalValue != null ? Number(s.totalValue) : undefined,
+    }));
+    return {
+      ok: true,
+      companyId,
+      count: items.length,
+      items,
+      adapterResolution: resolution
+        ? {
+            source: resolution.source,
+            adapterType: resolution.adapterType,
+            isolationLevel: resolution.isolationLevel,
+            connectionRef: resolution.connectionRef,
+          }
+        : undefined,
+    };
+  } catch (e: any) {
+    return {
+      ok: false,
+      companyId,
+      count: 0,
+      items: [],
+      error: (e?.message || String(e)).slice(0, 200),
+    };
+  }
+}
+```
+
+## STEP 3b — `server.ts`
+```javascript
+    app.get("/api/an/inventory/stock", async (req: any, res: any) => {
+      try {
+        const authResult = await authenticateSessionOrBearer(req);
+        if (!authResult.authenticated) {
+          return res.status(authResult.statusCode || 401).json({ ok: false, message: authResult.message });
+        }
+        const companyId = String(req.query.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const warehouseId = req.query.warehouseId ? String(req.query.warehouseId).trim() : undefined;
+        const itemId = req.query.itemId ? String(req.query.itemId).trim() : undefined;
+        const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
+        const { listAnStockBalances } = await import("./src/lib/anInventoryLists");
+        const companyLike = await loadCompanyLikeFromFirestore(
+          typeof adminDb !== "undefined" ? adminDb : null,
+          companyId
+        );
+        let resolved;
+        try {
+          resolved = resolveCompanyStorageAdapter(anStorageRouter, companyId, companyLike, null);
+        } catch (e: any) {
+          return res.status(400).json({ ok: false, code: "adapter_resolve_failed", message: e?.message || String(e) });
+        }
+        const result = await listAnStockBalances(
+          resolved.adapter,
+          companyId,
+          { warehouseId, itemId },
+          resolved
+        );
+        res.status(result.ok ? 200 : 500).json(result);
+      } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message || String(err) });
+      }
+    });
+```
+
+## STEP 3c — anApi catalog + MERGE_STATUS
+```markdown
+| INV-S1 | A.N stock balances read | DONE | GET /api/an/inventory/stock; company adapter; session required |
+```
+```markdown
+25. **INV-STOCK-READ-1:** Stock balance read uses per-company adapter. No write. CustodyDB UI unchanged.
+```
+
+## STEP 3d — Optional strip: show stock count from this endpoint when companyId set.
+
+## STEP 3e — `scripts/verifyAnInvStockRead1.ts`
+14 checks: listAnStockBalances, route /api/an/inventory/stock, auth, resolveCompany, listWarehouseStock, MERGE INV-S1, no postStockDocument in list module for this feature, warehouses route still present, SEC migrate still, ADP1 still, credentials session, companyId required, itemId optional query, InventoryModule retained in Inventory.tsx.
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnInvStockRead1.ts
+npx tsx scripts/verifyAnInvReadList1.ts
+```
+
+## COMMIT NOTE
+```
+feat(inv-s1): read A.N warehouse stock balances via company adapter
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnInvStockRead1: Passed: N | Failed: N
+Status: DONE | package: AN-INV-STOCK-READ-1
+===========================
+```

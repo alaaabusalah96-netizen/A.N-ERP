@@ -9,6 +9,7 @@ export default function AnInventoryReadStrip(props: {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<any>(null);
   const [whListCount, setWhListCount] = useState<number | null>(null);
+  const [stockCount, setStockCount] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -16,6 +17,7 @@ export default function AnInventoryReadStrip(props: {
       setLoading(true);
       const s = await fetchInventorySummary(props.companyId);
       let listCount: number | null = null;
+      let sCount: number | null = null;
       if (props.companyId) {
         try {
           const r = await fetch(
@@ -29,10 +31,23 @@ export default function AnInventoryReadStrip(props: {
         } catch {
           /* ignore error, summary remains */
         }
+        try {
+          const r2 = await fetch(
+            `/api/an/inventory/stock?companyId=${encodeURIComponent(props.companyId)}`,
+            { credentials: 'include' }
+          );
+          if (r2.ok) {
+            const j2 = await r2.json();
+            if (typeof j2.count === 'number') sCount = j2.count;
+          }
+        } catch {
+          /* ignore error */
+        }
       }
       if (!cancelled) {
         setSummary(s);
         setWhListCount(listCount);
+        setStockCount(sCount);
         setLoading(false);
       }
     })();
@@ -61,6 +76,11 @@ export default function AnInventoryReadStrip(props: {
           {whListCount !== null && (
             <li>
               {isRtl ? 'قائمة المستودعات' : 'whList'}={whListCount}
+            </li>
+          )}
+          {stockCount !== null && (
+            <li>
+              {isRtl ? 'سجلات الرصيد' : 'stockRows'}={stockCount}
             </li>
           )}
           <li>

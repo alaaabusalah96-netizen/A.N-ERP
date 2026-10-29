@@ -125,3 +125,77 @@ export async function listAnStockItems(
     };
   }
 }
+
+export interface StockBalanceRow {
+  warehouseId: string;
+  itemId: string;
+  currentQty: number;
+  reservedQty?: number;
+  availableQty?: number;
+  averageCost?: number;
+  totalValue?: number;
+}
+
+export async function listAnStockBalances(
+  adapter: StoragePort,
+  companyId: string,
+  opts?: { warehouseId?: string; itemId?: string },
+  resolution?: CompanyAdapterResolution
+): Promise<InventoryListResult<StockBalanceRow>> {
+  try {
+    const res = await adapter.listWarehouseStock(
+      companyId,
+      opts?.warehouseId,
+      opts?.itemId
+    );
+    if (!res.success) {
+      return {
+        ok: false,
+        companyId,
+        count: 0,
+        items: [],
+        error: (res.error?.detail || res.error?.title || 'listWarehouseStock failed'),
+        adapterResolution: resolution
+          ? {
+              source: resolution.source,
+              adapterType: resolution.adapterType,
+              isolationLevel: resolution.isolationLevel,
+              connectionRef: resolution.connectionRef,
+            }
+          : undefined,
+      };
+    }
+    const items: StockBalanceRow[] = (res.data || []).map((s: any) => ({
+      warehouseId: s.warehouseId,
+      itemId: s.itemId,
+      currentQty: Number(s.currentQty ?? 0),
+      reservedQty: s.reservedQty != null ? Number(s.reservedQty) : undefined,
+      availableQty: s.availableQty != null ? Number(s.availableQty) : undefined,
+      averageCost: s.averageCost != null ? Number(s.averageCost) : undefined,
+      totalValue: s.totalValue != null ? Number(s.totalValue) : undefined,
+    }));
+    return {
+      ok: true,
+      companyId,
+      count: items.length,
+      items,
+      adapterResolution: resolution
+        ? {
+            source: resolution.source,
+            adapterType: resolution.adapterType,
+            isolationLevel: resolution.isolationLevel,
+            connectionRef: resolution.connectionRef,
+          }
+        : undefined,
+    };
+  } catch (e: any) {
+    return {
+      ok: false,
+      companyId,
+      count: 0,
+      items: [],
+      error: (e?.message || String(e)).slice(0, 200),
+    };
+  }
+}
+
