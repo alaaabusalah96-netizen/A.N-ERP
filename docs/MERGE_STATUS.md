@@ -52,6 +52,7 @@
 | ADP-RT1 | Two-company adapter route proof | DONE | verifyAnAdapterRouteTest1 — shared vs dedicated routing |
 | MIG-IDEM1 | Migrate batch idempotency | DONE | Idempotency-Key required on migrate POSTs; row keys stable for replay |
 | ADP-FC2 | Fail-closed gaps: skipped + not_found on writes | DONE | skipped refused when fail-closed; migrate POST requires loaded company; dead throw removed |
+| INV-PILOT1 | A.N inventory pilot movement (gated) | DONE | POST /api/an/inventory/pilot/movement; AN_INV_PILOT_WRITES=0 default; RECEIPT/ISSUE via company adapter; UI unchanged |
 
 ## Canonical rules (do not regress)
 
@@ -85,6 +86,7 @@
 30. **ADAPTER-ROUTE-TEST-1:** Automated proof that Shared vs Dedicated company backend settings do not collapse silently to the same resolve path.
 31. **MIG-IDEM-1:** Write migrate routes require Idempotency-Key; per-row keys prevent duplicate stock/master on retry.
 32. **ADAPTER-FAIL-CLOSED-2:** With fail-closed on, an unreadable company config (no admin db) never resolves to the process primary; migrate write routes require an existing company document unless an explicit backend is given. Read routes keep primary fallback for a missing company doc.
+33. **INV-PILOT-1:** A.N inventory pilot writes (RECEIPT/ISSUE, single line) only when AN_INV_PILOT_WRITES=1, after operator auth + company scope + fail-closed adapter + Idempotency-Key. KEMIT Inventory.tsx and custody stay on CustodyDB/Firestore. cutoverApproved remains false.
 
 ## Verify
 

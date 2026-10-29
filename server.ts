@@ -3826,6 +3826,17 @@ async function startServer() {
       }
     });
 
+    // AN-INV-PILOT-1: gated single-line stock movement (AN_INV_PILOT_WRITES=1); see docs/ops/AN-INV-PILOT-1.md
+    {
+      const { mountAnInventoryPilotRoute } = await import("./src/lib/anInventoryPilotRoute");
+      mountAnInventoryPilotRoute(app, {
+        router: anStorageRouter,
+        adminDb: typeof adminDb !== "undefined" ? adminDb : null,
+        requireOperator: requireAnMigrateOperator,
+        assertCompanyScope: assertUserCanAccessCompany,
+      });
+    }
+
     app.get("/api/an/auth/login-target", async (_req: any, res: any) => {
       try {
         const { buildAnLoginTargetStatus } = await import("./src/lib/anAuthLoginTarget");
@@ -3863,7 +3874,7 @@ async function startServer() {
     } catch (bootErr: any) {
       console.warn("[AN-AUTH-G5] platform bootstrap error:", bootErr?.message || bootErr);
     }
-    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses + migrate/inventory/items + migrate/inventory/balances + migrate/accounting/accounts + inventory/warehouses + inventory/items + inventory/stock + auth/login-target + auth/login");
+    console.log("A.N core bridge mounted: /api/an/storage-status + company-backend + auth-policy + routes + data-plane/status + data-plane/company/:id + data-plane/live-check + session-plane + inventory/summary + accounting/summary + purchasing/summary + modules/overview + shadow/status + map/entities + migration/readiness + ops/runbook + migrate/inventory/dry-run + migrate/inventory/warehouses + migrate/inventory/items + migrate/inventory/balances + migrate/accounting/accounts + inventory/warehouses + inventory/items + inventory/stock + inventory/pilot/movement + auth/login-target + auth/login");
   } catch (anErr) {
     console.error("A.N core bridge failed to mount:", anErr);
   }

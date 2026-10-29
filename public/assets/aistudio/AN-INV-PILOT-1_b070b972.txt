@@ -1,0 +1,527 @@
+AN-INV-PILOT-1 — LEAN PACKAGE (designed from live repo head 94f73f0, after ADP-FC2)
+=====================================================================================
+GOAL (single): add a gated A.N inventory pilot write path (RECEIPT/ISSUE, one line) so the A.N engine
+posts real stock movements for a company, behind AN_INV_PILOT_WRITES=0 by default. Chain item 7 of AN-PACKAGE-EXECUTION-GUIDE.
+
+HARD RULES
+- One package only. Do not widen scope. Stop at the first failure; no manual patching outside this text.
+- Do NOT touch Inventory.tsx, CustodyDB, Firestore/KEMIT paths, login, migrate routes, or MERGE_DECISIONS.md.
+- Do NOT print secrets. Do NOT enable AN_INV_PILOT_WRITES in any real .env (names only in .env.example, value 0).
+- Do not run a real migration or set AN_MIGRATE_WRITES=1 / AN_INV_PILOT_WRITES=1 against production.
+- If tsc takes > 2 min: run once `npx tsc --noEmit`, then `npm run build`, then steps 9-11, then print the report.
+
+1) PRECHECK (fail -> STOP, report the missing symbol)
+- server.ts contains: requireAnMigrateOperator, assertUserCanAccessCompany, anStorageRouter, `app.get("/api/an/auth/login-target"`.
+- src/lib/anResolveCompanyAdapter.ts exports loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv
+  (resolve options accept loadStatus, failClosed, requireLoaded).
+- src/lib/anMigrateIdempotency.ts exports extractIdempotencyKey, requireIdempotencyKey, rowIdempotencyKey.
+- StoragePort has getWarehouse, getStockItem, getWarehouseStock, getStockDocument, postStockDocumentAtomic.
+If a TypeScript type differs from the code below, adapt the implementation to the real StoragePort types keeping
+the same exported names and the same behaviour (the verify script depends on names and codes).
+
+2) CREATE src/lib/anInventoryPilot.ts
+-----8<-----
+/**
+ * AN-INV-PILOT-1 — gated single-line stock movement (RECEIPT | ISSUE) on the A.N inventory engine.
+ * Writes only when AN_INV_PILOT_WRITES=1. Never touches KEMIT / CustodyDB / Firestore. No UI cutover.
+ */
+import type {
+  StockDocument,
+  StockDocumentLine,
+  StockMovement,
+  PostStockDocumentAtomicInput,
+  StoragePort,
+} from '../an-core/storage/StoragePort';
+import { rowIdempotencyKey } from './anMigrateIdempotency';
+
+export type PilotMovementType = 'RECEIPT' | 'ISSUE';
+export const PILOT_MOVEMENT_TYPES: readonly PilotMovementType[] = ['RECEIPT', 'ISSUE'];
+
+export interface PilotMovementInput {
+  companyId: string;
+  warehouseId?: unknown;
+  itemId?: unknown;
+  movementType?: unknown;
+  quantity?: unknown;
+  unitCost?: unknown;
+  notes?: unknown;
+}
+
+export interface PilotMovementResult {
+  ok: boolean;
+  plane: 'an-inv-pilot-1';
+  httpStatus: number;
+  writesEnabled: boolean;
+  writesPerformed: boolean;
+  cutoverApproved: false;
+  companyId: string;
+  code?: string;
+  message: string;
+  messageAr: string;
+  idempotencyKey?: string;
+  documentId?: string;
+  movementType?: PilotMovementType;
+  quantity?: number;
+  balanceAfterQty?: number;
+}
+
+export function isPilotWritesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.AN_INV_PILOT_WRITES === '1' || env.AN_INV_PILOT_WRITES === 'true';
+}
+
+function toNum(v: unknown): number {
+  if (typeof v === 'string' && v.trim() === '') return NaN;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+export async function postPilotMovement(
+  adapter: StoragePort,
+  opts: {
+    input: PilotMovementInput;
+    batchIdempotencyKey: string;
+    env?: NodeJS.ProcessEnv;
+    actorId?: string;
+    actorName?: string;
+  }
+): Promise<PilotMovementResult> {
+  const env = opts.env || process.env;
+  const companyId = String(opts.input.companyId || '').trim() || 'default';
+  const writesEnabled = isPilotWritesEnabled(env);
+  const idemBase = opts.batchIdempotencyKey;
+  const base = {
+    plane: 'an-inv-pilot-1' as const,
+    writesEnabled,
+    writesPerformed: false,
+    cutoverApproved: false as const,
+    companyId,
+    idempotencyKey: idemBase,
+  };
+  const fail = (httpStatus: number, code: string, message: string, messageAr: string): PilotMovementResult => ({
+    ...base,
+    ok: false,
+    httpStatus,
+    code,
+    message,
+    messageAr,
+  });
+
+  if (!writesEnabled) {
+    return fail(403, 'pilot_writes_disabled', 'AN_INV_PILOT_WRITES not enabled', 'كتابة الطيار معطّلة');
+  }
+
+  const movementType = String(opts.input.movementType || '').trim().toUpperCase() as PilotMovementType;
+  if (!PILOT_MOVEMENT_TYPES.includes(movementType)) {
+    return fail(400, 'invalid_movement_type', 'movementType must be RECEIPT or ISSUE', 'نوع الحركة يجب أن يكون RECEIPT أو ISSUE');
+  }
+  const warehouseId = String(opts.input.warehouseId || '').trim();
+  const itemId = String(opts.input.itemId || '').trim();
+  if (!warehouseId || !itemId) {
+    return fail(400, 'warehouse_item_required', 'warehouseId and itemId required', 'المستودع والصنف مطلوبان');
+  }
+  const qty = toNum(opts.input.quantity);
+  if (!(qty > 0)) {
+    return fail(400, 'invalid_quantity', 'quantity must be a positive number', 'الكمية يجب أن تكون رقمًا موجبًا');
+  }
+  const hasCost = opts.input.unitCost !== undefined && opts.input.unitCost !== null && opts.input.unitCost !== '';
+  const providedCost = hasCost ? toNum(opts.input.unitCost) : NaN;
+  if (hasCost && !(providedCost >= 0)) {
+    return fail(400, 'invalid_unit_cost', 'unitCost must be a non-negative number', 'تكلفة الوحدة يجب أن تكون صفرًا أو أكثر');
+  }
+  const notes = typeof opts.input.notes === 'string' ? opts.input.notes.trim().slice(0, 500) : '';
+
+  const actorId = opts.actorId || 'inv-pilot-1';
+  const actorName = opts.actorName || 'inv-pilot-1';
+  const docId = `pilot-${movementType.toLowerCase()}-${companyId}-${idemBase}`.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
+
+  try {
+    // Idempotent replay: same key => same document, never a second posting.
+    const prior = await adapter.getStockDocument(companyId, docId);
+    if (prior.success && prior.data && prior.data.status === 'POSTED') {
+      return {
+        ...base,
+        ok: true,
+        httpStatus: 200,
+        code: 'idempotent_replay',
+        message: 'already posted for this Idempotency-Key',
+        messageAr: 'تم الترحيل مسبقًا بنفس مفتاح عدم التكرار',
+        documentId: docId,
+        movementType,
+        quantity: qty,
+      };
+    }
+
+    const whRes = await adapter.getWarehouse(companyId, warehouseId);
+    if (!whRes.success || !whRes.data || whRes.data.isActive === false) {
+      return fail(404, 'warehouse_not_found', 'warehouse not found or inactive', 'المستودع غير موجود أو غير نشط');
+    }
+    const itemRes = await adapter.getStockItem(companyId, itemId);
+    if (!itemRes.success || !itemRes.data) {
+      return fail(404, 'item_not_found', 'item not found', 'الصنف غير موجود');
+    }
+    const item = itemRes.data;
+    const stockRes = await adapter.getWarehouseStock(companyId, warehouseId, itemId);
+    const currentQty = stockRes.success && stockRes.data ? Number(stockRes.data.currentQty) || 0 : 0;
+    const avgCost = stockRes.success && stockRes.data ? Number(stockRes.data.averageCost) || 0 : Number(item.averageCost) || 0;
+
+    if (movementType === 'ISSUE' && qty > currentQty) {
+      return fail(422, 'insufficient_stock', `available ${currentQty} < requested ${qty}`, 'الرصيد غير كافٍ للصرف');
+    }
+
+    const unitCost = movementType === 'RECEIPT' ? (hasCost ? providedCost : Number(item.averageCost) || 0) : avgCost;
+    const totalCost = round2(qty * unitCost);
+    const balanceAfterQty = movementType === 'RECEIPT' ? currentQty + qty : currentQty - qty;
+    const nowIso = new Date().toISOString();
+    const lineId = `${docId}-L1`.slice(0, 128);
+    const movId = `${docId}-M1`.slice(0, 128);
+    const rowKey = rowIdempotencyKey(idemBase, `${warehouseId}:${itemId}`);
+
+    const line: StockDocumentLine = {
+      id: lineId,
+      tenantId: companyId,
+      companyId,
+      documentId: docId,
+      lineNumber: 1,
+      itemId,
+      itemCode: item.itemCode,
+      itemNameAr: item.nameAr,
+      uom: item.uom || 'unit',
+      quantity: qty,
+      unitCost,
+      totalCost,
+      notes: notes || undefined,
+    };
+    const movement: StockMovement = {
+      id: movId,
+      tenantId: companyId,
+      companyId,
+      movementNumber: movId,
+      movementType,
+      warehouseId,
+      warehouseNameAr: whRes.data.nameAr,
+      itemId,
+      itemCode: item.itemCode,
+      itemNameAr: item.nameAr,
+      quantity: qty,
+      unitCost,
+      totalCost,
+      balanceAfterQty,
+      sourceDocumentType: 'StockDocument',
+      sourceDocumentId: docId,
+      sourceDocumentNumber: docId,
+      notes: notes || undefined,
+      performedBy: actorId,
+      performedByName: actorName,
+      timestamp: nowIso,
+      idempotencyKey: rowKey,
+    };
+    const doc: StockDocument = {
+      id: docId,
+      tenantId: companyId,
+      companyId,
+      documentNumber: docId,
+      documentType: movementType,
+      warehouseId,
+      warehouseNameAr: whRes.data.nameAr,
+      status: 'POSTED',
+      totalQuantity: qty,
+      totalCost,
+      referenceType: 'AN_INV_PILOT',
+      referenceId: docId,
+      notes: notes || 'A.N inventory pilot movement',
+      lines: [line],
+      movements: [movement],
+      performedBy: actorId,
+      performedByName: actorName,
+      idempotencyKey: rowKey,
+      createdAt: nowIso,
+      postedAt: nowIso,
+    };
+    const input: PostStockDocumentAtomicInput = {
+      doc,
+      movements: [movement],
+      allowNegative: false,
+      useProvidedCost: movementType === 'RECEIPT',
+    };
+    const res = await adapter.postStockDocumentAtomic(companyId, input, rowKey);
+    if (!res.success) {
+      const status = res.error?.status && res.error.status >= 400 ? res.error.status : 500;
+      return fail(status, 'post_failed', (res.error?.detail || 'post failed').slice(0, 200), 'فشل ترحيل حركة المخزون');
+    }
+    return {
+      ...base,
+      ok: true,
+      httpStatus: 200,
+      writesPerformed: true,
+      message: 'pilot movement posted',
+      messageAr: 'تم ترحيل حركة الطيار',
+      documentId: docId,
+      movementType,
+      quantity: qty,
+      balanceAfterQty,
+    };
+  } catch (e: any) {
+    return fail(500, 'pilot_exception', String(e?.message || e).slice(0, 200), 'خطأ غير متوقع في حركة الطيار');
+  }
+}
+-----8<-----
+
+3) CREATE src/lib/anInventoryPilotRoute.ts
+-----8<-----
+/**
+ * AN-INV-PILOT-1 — POST /api/an/inventory/pilot/movement
+ * Chain: operator auth -> company scope -> flag gate -> fail-closed company adapter -> Idempotency-Key -> post.
+ * No backend override from the request body (company config only).
+ */
+import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import { isPilotWritesEnabled, postPilotMovement } from './anInventoryPilot';
+import { extractIdempotencyKey, requireIdempotencyKey } from './anMigrateIdempotency';
+
+export interface PilotRouteDeps {
+  router: StorageRouter;
+  adminDb: any;
+  requireOperator: (req: any, res: any) => Promise<boolean>;
+  assertCompanyScope: (user: any, companyId: string) => Promise<any>;
+}
+
+export function mountAnInventoryPilotRoute(app: any, deps: PilotRouteDeps): void {
+  app.post('/api/an/inventory/pilot/movement', async (req: any, res: any) => {
+    try {
+      if (!(await deps.requireOperator(req, res))) return;
+      const companyId = String(req.body?.companyId || req.query?.companyId || '').trim();
+      if (!companyId) return res.status(400).json({ ok: false, error: 'companyId required' });
+      const scope: any = await deps.assertCompanyScope(req.anMigrateUser, companyId);
+      if (!scope.ok) {
+        return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr });
+      }
+      if (!isPilotWritesEnabled(process.env)) {
+        return res.status(403).json({
+          ok: false,
+          plane: 'an-inv-pilot-1',
+          code: 'pilot_writes_disabled',
+          writesEnabled: false,
+          writesPerformed: false,
+          cutoverApproved: false,
+          message: 'AN_INV_PILOT_WRITES not enabled',
+          messageAr: 'كتابة الطيار معطّلة',
+        });
+      }
+      if (req.body?.backend !== undefined) {
+        return res.status(400).json({ ok: false, code: 'backend_override_not_allowed', message: 'pilot uses company backend config only' });
+      }
+      const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import('./anResolveCompanyAdapter');
+      const loadResult = await loadCompanyLikeFromFirestore(deps.adminDb || null, companyId);
+      if (loadResult.status === 'error' && isAdapterFailClosedEnv(process.env)) {
+        return res.status(503).json({
+          ok: false,
+          code: 'adapter_company_load_failed',
+          message: loadResult.message || 'Company config load failed',
+          messageAr: 'تعذر تحميل إعدادات قاعدة بيانات الشركة — لن يتم التوجيه الصامت للقاعدة الأساسية',
+        });
+      }
+      const companyLike = loadResult.status === 'loaded' ? loadResult.company : null;
+      let resolved: any;
+      try {
+        resolved = resolveCompanyStorageAdapter(deps.router, companyId, companyLike, null, {
+          loadStatus: loadResult,
+          failClosed: isAdapterFailClosedEnv(process.env),
+          requireLoaded: true,
+        });
+      } catch (e: any) {
+        return res.status(400).json({ ok: false, code: 'adapter_resolve_failed', message: e?.message || String(e) });
+      }
+      const keyCheck: any = requireIdempotencyKey(extractIdempotencyKey(req));
+      if (!keyCheck.ok) {
+        return res.status(keyCheck.status).json({ ok: false, code: keyCheck.code || 'idempotency_key_required', message: keyCheck.message, messageAr: keyCheck.messageAr });
+      }
+      const actor = req.anMigrateUser || {};
+      const result = await postPilotMovement(resolved.adapter, {
+        input: {
+          companyId,
+          warehouseId: req.body?.warehouseId,
+          itemId: req.body?.itemId,
+          movementType: req.body?.movementType,
+          quantity: req.body?.quantity,
+          unitCost: req.body?.unitCost,
+          notes: req.body?.notes,
+        },
+        batchIdempotencyKey: keyCheck.key,
+        actorId: String(actor.id || actor.email || 'inv-pilot-1'),
+        actorName: String(actor.full_name || actor.email || 'inv-pilot-1'),
+      });
+      return res.status(result.httpStatus).json({
+        ...result,
+        adapterResolution: {
+          source: resolved.source,
+          adapterType: resolved.adapterType,
+          isolationLevel: resolved.isolationLevel,
+          connectionRef: resolved.connectionRef,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+}
+-----8<-----
+
+4) EDIT server.ts (two minimal edits)
+4a. Immediately BEFORE the line  app.get("/api/an/auth/login-target", async (_req: any, res: any) => {  insert:
+-----8<-----
+    // AN-INV-PILOT-1: gated single-line stock movement (AN_INV_PILOT_WRITES=1); see docs/ops/AN-INV-PILOT-1.md
+    {
+      const { mountAnInventoryPilotRoute } = await import("./src/lib/anInventoryPilotRoute");
+      mountAnInventoryPilotRoute(app, {
+        router: anStorageRouter,
+        adminDb: typeof adminDb !== "undefined" ? adminDb : null,
+        requireOperator: requireAnMigrateOperator,
+        assertCompanyScope: assertUserCanAccessCompany,
+      });
+    }
+
+-----8<-----
+4b. In the console.log("A.N core bridge mounted: ...") string replace
+    "inventory/stock + auth/login-target"  with  "inventory/stock + inventory/pilot/movement + auth/login-target".
+
+5) EDIT .env.example — append after the AN_MIGRATE_WRITES=0 line:
+AN_INV_PILOT_WRITES=0
+
+6) EDIT package.json — add to "scripts" (after verify:adapter-fc2):
+    "verify:inv-pilot": "tsx scripts/verifyAnInvPilot1.ts"
+
+7) CREATE scripts/verifyAnInvPilot1.ts
+-----8<-----
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) {
+    console.log(`[PASS] ${name}`);
+    passed++;
+  } else {
+    console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`);
+    failed++;
+  }
+}
+const root = process.cwd();
+const read = (p: string) => (fs.existsSync(path.join(root, p)) ? fs.readFileSync(path.join(root, p), 'utf8') : '');
+
+async function main() {
+  const lib = read('src/lib/anInventoryPilot.ts');
+  const route = read('src/lib/anInventoryPilotRoute.ts');
+  const server = read('server.ts');
+  const envEx = read('.env.example');
+  const doc = read('docs/ops/AN-INV-PILOT-1.md');
+
+  check('P1 anInventoryPilot.ts + route module exist', !!lib && !!route);
+  check('P2 exports postPilotMovement + isPilotWritesEnabled', lib.includes('export async function postPilotMovement') && lib.includes('export function isPilotWritesEnabled'));
+  check('P3 flag AN_INV_PILOT_WRITES gated in lib', lib.includes('AN_INV_PILOT_WRITES'));
+  check('P4 .env.example has AN_INV_PILOT_WRITES=0', /^AN_INV_PILOT_WRITES=0\s*$/m.test(envEx));
+  check('P5 route POST /api/an/inventory/pilot/movement', route.includes("app.post('/api/an/inventory/pilot/movement'"));
+  check(
+    'P6 route security chain (operator, scope, fail-closed, requireLoaded, idempotency)',
+    route.includes('requireOperator') &&
+      route.includes('assertCompanyScope') &&
+      route.includes('adapter_company_load_failed') &&
+      route.includes('requireLoaded: true') &&
+      route.includes('requireIdempotencyKey')
+  );
+  check('P7 server.ts mounts anInventoryPilotRoute', server.includes('anInventoryPilotRoute') && server.includes('mountAnInventoryPilotRoute'));
+  check('P8 atomic post with allowNegative false', lib.includes('postStockDocumentAtomic') && lib.includes('allowNegative: false'));
+  check('P9 no getPrimaryAdapter in pilot files', !lib.includes('getPrimaryAdapter') && !route.includes('getPrimaryAdapter'));
+  check('P10 doc AN-INV-PILOT-1.md present with MERGE row text', doc.includes('INV-PILOT1'));
+  check('P11 existing gates intact (requireAnMigrateOperator, AN_MIGRATE_WRITES, idempotency_key_required)', server.includes('requireAnMigrateOperator') && read('src/lib/anMigrateInventoryWrite.ts').includes('AN_MIGRATE_WRITES') && read('src/lib/anMigrateIdempotency.ts').includes('idempotency_key_required'));
+
+  const mod: any = await import(path.join(root, 'src/lib/anInventoryPilot.ts'));
+  const boom: any = new Proxy({}, { get: () => { throw new Error('adapter must not be touched'); } });
+  let touched = false;
+  try {
+    const r = await mod.postPilotMovement(boom, { input: { companyId: 'c1', warehouseId: 'w', itemId: 'i', movementType: 'RECEIPT', quantity: 1 }, batchIdempotencyKey: 'k1', env: {} });
+    check('P12 flag off => 403 pilot_writes_disabled, adapter untouched', r.httpStatus === 403 && r.code === 'pilot_writes_disabled' && r.writesPerformed === false);
+  } catch {
+    touched = true;
+    check('P12 flag off => 403 pilot_writes_disabled, adapter untouched', false, 'adapter was touched');
+  }
+  const on = { AN_INV_PILOT_WRITES: '1' } as any;
+  const bad1 = await mod.postPilotMovement(boom, { input: { companyId: 'c1', warehouseId: 'w', itemId: 'i', movementType: 'RECEIPT', quantity: -2 }, batchIdempotencyKey: 'k2', env: on });
+  const bad2 = await mod.postPilotMovement(boom, { input: { companyId: 'c1', warehouseId: 'w', itemId: 'i', movementType: 'TRANSFER_IN', quantity: 2 }, batchIdempotencyKey: 'k3', env: on });
+  check('P13 invalid quantity / movementType => 400 before any adapter call', bad1.httpStatus === 400 && bad1.code === 'invalid_quantity' && bad2.httpStatus === 400 && bad2.code === 'invalid_movement_type' && !touched);
+
+  // in-memory adapter: RECEIPT, replay, ISSUE ok, ISSUE insufficient
+  const docs = new Map<string, any>();
+  let qty = 0;
+  const fake: any = {
+    getStockDocument: async (_t: string, id: string) => ({ success: true, data: docs.get(id) || null }),
+    getWarehouse: async () => ({ success: true, data: { id: 'w', nameAr: 'مخزن', isActive: true } }),
+    getStockItem: async () => ({ success: true, data: { id: 'i', itemCode: 'I1', nameAr: 'صنف', uom: 'pc', averageCost: 5, isActive: true } }),
+    getWarehouseStock: async () => ({ success: true, data: { currentQty: qty, availableQty: qty, averageCost: 5 } }),
+    postStockDocumentAtomic: async (_t: string, input: any) => {
+      const d = input.doc;
+      qty += d.documentType === 'RECEIPT' ? d.totalQuantity : -d.totalQuantity;
+      docs.set(d.id, d);
+      return { success: true, data: d };
+    },
+  };
+  const mk = (type: string, q: number, key: string) => mod.postPilotMovement(fake, { input: { companyId: 'c1', warehouseId: 'w', itemId: 'i', movementType: type, quantity: q, unitCost: 5 }, batchIdempotencyKey: key, env: on });
+  const r1 = await mk('RECEIPT', 10, 'ka');
+  const r1b = await mk('RECEIPT', 10, 'ka');
+  const r2 = await mk('ISSUE', 4, 'kb');
+  const r3 = await mk('ISSUE', 99, 'kc');
+  check(
+    'P14 RECEIPT posts once, replay is idempotent, ISSUE ok, over-issue 422',
+    r1.ok && r1.writesPerformed && r1.balanceAfterQty === 10 && r1b.ok && r1b.code === 'idempotent_replay' && !r1b.writesPerformed && qty === 6 && r2.ok && r2.balanceAfterQty === 6 && r3.httpStatus === 422 && r3.code === 'insufficient_stock'
+  );
+
+  console.log(`Passed: ${passed} | Failed: ${failed}`);
+  process.exit(failed > 0 ? 1 : 0);
+}
+main().catch((e) => {
+  console.log('[FAIL] verify crashed —', e?.message || e);
+  process.exit(1);
+});
+-----8<-----
+
+8) CREATE docs/ops/AN-INV-PILOT-1.md
+-----8<-----
+# AN-INV-PILOT-1 — A.N inventory pilot movement (gated)
+
+**Endpoint:** `POST /api/an/inventory/pilot/movement`
+**Flag:** `AN_INV_PILOT_WRITES` (default `0`; writes allowed only when `1`/`true`)
+**Scope:** single-line `RECEIPT` or `ISSUE` through the per-company adapter. No UI change, no custody, no accounting journal, no Firestore write.
+
+## Request
+Headers: session/bearer auth (platform or system admin) + `Idempotency-Key`.
+Body: `{ companyId, warehouseId, itemId, movementType: "RECEIPT"|"ISSUE", quantity, unitCost?, notes? }`
+`backend` override in the body is rejected (400): pilot uses company config only.
+
+## Guards (order)
+operator auth -> company scope -> flag gate (403 `pilot_writes_disabled`) -> fail-closed company adapter (`requireLoaded`) -> Idempotency-Key -> validation -> atomic post (`allowNegative=false`).
+Same key = same document (replay returns `idempotent_replay`, no second posting).
+
+## MERGE_STATUS (add when package is DONE)
+Table row: `| INV-PILOT1 | A.N inventory pilot movement (gated) | DONE | POST /api/an/inventory/pilot/movement; AN_INV_PILOT_WRITES=0 default; RECEIPT/ISSUE via company adapter; UI unchanged |`
+Rule: `33. **INV-PILOT-1:** A.N inventory pilot writes (RECEIPT/ISSUE, single line) only when AN_INV_PILOT_WRITES=1, after operator auth + company scope + fail-closed adapter + Idempotency-Key. KEMIT Inventory.tsx and custody stay on CustodyDB/Firestore. cutoverApproved remains false.`
+-----8<-----
+Then update docs/MERGE_STATUS.md: add the table row and rule 33 exactly as written in that doc
+(row after ADP-FC2 in the Phases table; rule 33 after rule 32).
+
+9) RUN: npx tsc --noEmit   then   npm run build
+10) RUN: npx tsx scripts/verifyAnInvPilot1.ts        (expected: Passed: 14 | Failed: 0)
+11) REGRESSION: npx tsx scripts/verifyAnMigIdem1.ts ; npx tsx scripts/verifyAnAdapterFailClosed2.ts ; npx tsx scripts/verifyMergeAll.ts
+
+RESULTS REPORT (print ONLY this block at the end)
+===== RESULTS REPORT =====
+9) tsc: <n> errors | build: <OK|FAIL>
+10) verifyAnInvPilot1: Passed: <n> | Failed: <n>
+11) regression: MigIdem1 <n/n> | FailClosed2 <n/n> | MergeAll <n/n>
+Status: DONE | package: AN-INV-PILOT-1
+===========================
+(on failure: Status: FAIL / Step: <n> / Reason: <one sentence>)
+
+COMMIT NOTE: feat(inventory): gated A.N pilot stock movement (AN-INV-PILOT-1, AN_INV_PILOT_WRITES=0 default)
