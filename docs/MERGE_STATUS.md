@@ -59,6 +59,7 @@
 | AUTH-COOKIES1 | A.N tokens in HttpOnly cookies | DONE | an_access/an_refresh HttpOnly; sessionStorage writes removed from Login A.N path |
 | AUTH-REFRESH1 | A.N refresh/logout/me | DONE | POST refresh+logout, GET me; cookies rotated/cleared |
 | AUTH-ROLEMAP1 | Explicit UI role map | DONE | no /admin/i elevation; no password.trim on A.N login; duplicate me route removed if any |
+| FIX-PGROLE1 | PG role NOBYPASSRLS ops pack | DONE | SQL an_erp_app + docs + probe; CONFIG until DATABASE_URL uses the role |
 
 ## Canonical rules (do not regress)
 
@@ -99,6 +100,7 @@
 37. **AUTH-COOKIES-1:** A.N access/refresh tokens set as HttpOnly cookies on login; authenticateSessionOrBearer reads an_access cookie; Login no longer stores A.N tokens in sessionStorage.
 38. **AUTH-REFRESH-ME-1:** A.N plane exposes /api/an/auth/refresh, /logout, /me; refresh rotates tokens and re-sets HttpOnly cookies.
 39. **AUTH-ROLE-MAP-1:** Login maps A.N roles via explicit table (Accountant/Auditor/WarehouseKeeper/…); unknown → StationAdmin; passwords are not trimmed.
+40. **FIX-PG-ROLE-1:** Ship SQL/docs for an_erp_app NOSUPERUSER NOBYPASSRLS. Runtime remains CONFIG until operator points DATABASE_URL at that role and probe passes.
 
 ## Verify
 

@@ -1,0 +1,201 @@
+# AN-FIX-PG-ROLE-1 — Production DB role without BYPASSRLS (LEAN docs+SQL+verify)
+# Claude audit phase-1 item 3 / P1-10: Shared isolation is ineffective if the app role has rolbypassrls=true.
+# Delivers: SQL to create an_erp_app NOSUPERUSER NOBYPASSRLS, ops checklist, static verify, optional live probe script.
+# Does NOT change application query logic. Does NOT force user to run SQL against production from Studio.
+# OUT OF SCOPE: full CI Postgres service, RLS policy authoring for every table, AUTH cookies.
+
+## HARD RULES
+1. Files: `scripts/ops/create_an_erp_app_role.sql`, `docs/ops/PG-ROLE-NO-BYPASSRLS.md`, `scripts/verifyAnFixPgRole1.ts`, `scripts/ops/probePgRole.ts` (optional read-only probe), `package.json` one script, `.env.example` comments, `docs/MERGE_STATUS.md`.
+2. SQL must use: NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS (and LOGIN).
+3. Never put real passwords in SQL committed to repo — use `\password` instruction or env placeholder comment only.
+4. verify script is primarily static; live probe runs only if DATABASE_URL set and AN_PG_ROLE_PROBE=1.
+5. Stop at first failure. tsc >2 min → once → build → verify. One RESULTS REPORT only.
+
+## PRECHECK
+- AUTH-ROLEMAP1 DONE (or at least prior auth packages present)
+- Project uses PostgreSQL via DATABASE_URL for A.N plane
+
+## STEP 3 — `scripts/ops/create_an_erp_app_role.sql`
+
+```sql
+-- AN-FIX-PG-ROLE-1
+-- Run as a superuser on the TARGET database once.
+-- Replace passwords out-of-band; do not commit secrets.
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'an_erp_app') THEN
+    CREATE ROLE an_erp_app LOGIN
+      NOSUPERUSER
+      NOCREATEDB
+      NOCREATEROLE
+      NOINHERIT
+      NOBYPASSRLS
+      CONNECTION LIMIT 50;
+  ELSE
+    ALTER ROLE an_erp_app WITH
+      LOGIN
+      NOSUPERUSER
+      NOCREATEDB
+      NOCREATEROLE
+      NOBYPASSRLS;
+  END IF;
+END
+$$;
+
+-- Grant connect on current DB (run while connected to the app database):
+-- GRANT CONNECT ON DATABASE current_database() TO an_erp_app;
+GRANT USAGE ON SCHEMA public TO an_erp_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO an_erp_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO an_erp_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO an_erp_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO an_erp_app;
+
+-- Force RLS awareness reminder (policies must already exist for tenant columns):
+-- ALTER TABLE ... ENABLE ROW LEVEL SECURITY;
+
+COMMENT ON ROLE an_erp_app IS 'AN-FIX-PG-ROLE-1: app role without BYPASSRLS for multi-tenant Shared isolation';
+```
+
+## STEP 3b — `docs/ops/PG-ROLE-NO-BYPASSRLS.md`
+
+```markdown
+# PostgreSQL app role without BYPASSRLS
+
+## Why
+If `DATABASE_URL` connects as a role with `rolbypassrls=true`, Row Level Security never applies and Shared multi-tenant isolation is ineffective.
+
+## One-time setup
+1. Connect as superuser to the application database.
+2. Run `scripts/ops/create_an_erp_app_role.sql`.
+3. Set a strong password for `an_erp_app` (psql `\password an_erp_app`).
+4. Point application `DATABASE_URL` at:
+   `postgresql://an_erp_app:***@host:5432/dbname`
+5. Verify:
+```sql
+SELECT rolname, rolsuper, rolbypassrls
+FROM pg_roles
+WHERE rolname = current_user;
+```
+Expected: `rolsuper=false`, `rolbypassrls=false`.
+
+## Optional probe
+```bash
+AN_PG_ROLE_PROBE=1 npx tsx scripts/ops/probePgRole.ts
+```
+
+## Studio / Google AI Studio
+You cannot complete production DB grants from the app container alone. Run SQL on your managed Postgres (Neon/Supabase/Cloud SQL/etc.), then update the secret `DATABASE_URL`.
+```
+
+## STEP 3c — `scripts/ops/probePgRole.ts`
+
+```typescript
+/**
+ * Read-only probe: reports current_user rolsuper/rolbypassrls when AN_PG_ROLE_PROBE=1.
+ */
+import pg from 'pg';
+
+async function main() {
+  if (process.env.AN_PG_ROLE_PROBE !== '1' && process.env.AN_PG_ROLE_PROBE !== 'true') {
+    console.log('SKIP probe (set AN_PG_ROLE_PROBE=1 to run)');
+    process.exit(0);
+  }
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    console.error('DATABASE_URL not set');
+    process.exit(1);
+  }
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  const r = await client.query(
+    `SELECT current_user AS user,
+            rolsuper,
+            rolbypassrls
+     FROM pg_roles WHERE rolname = current_user`
+  );
+  console.log(JSON.stringify(r.rows[0] || {}, null, 2));
+  const row = r.rows[0];
+  if (row?.rolbypassrls === true) {
+    console.error('FAIL: rolbypassrls=true — not safe for Shared RLS multi-tenant');
+    await client.end();
+    process.exit(2);
+  }
+  if (row?.rolsuper === true) {
+    console.error('FAIL: rolsuper=true');
+    await client.end();
+    process.exit(2);
+  }
+  console.log('PASS: role is non-superuser and NOBYPASSRLS');
+  await client.end();
+}
+
+main().catch((e) => {
+  console.error(e?.message || e);
+  process.exit(1);
+});
+```
+If `pg` is not a dependency, use existing Postgres client import path from the project (e.g. from adapter) or mark probe optional and skip with message when module missing.
+
+## STEP 3d — `scripts/verifyAnFixPgRole1.ts`
+14 static checks:
+- create_an_erp_app_role.sql exists
+- SQL contains NOBYPASSRLS and NOSUPERUSER
+- SQL contains an_erp_app
+- docs/ops/PG-ROLE-NO-BYPASSRLS.md exists
+- doc mentions rolbypassrls
+- probePgRole.ts exists or documented
+- MERGE row FIX-PGROLE1
+- AUTH-ROLEMAP1 still in MERGE
+- AUTH-REFRESH1 still
+- FIX-STORE1 still
+- no password assignment like PASSWORD 'secret' in SQL file
+- .env.example mentions an_erp_app or PG role doc pointer
+- package script verify:fix-pg-role
+- CONNECTION_REF or DATABASE_URL still referenced in project
+
+## STEP 3e — `.env.example`
+```
+# AN-FIX-PG-ROLE-1: production DATABASE_URL should use role an_erp_app (NOSUPERUSER NOBYPASSRLS). See docs/ops/PG-ROLE-NO-BYPASSRLS.md
+# AN_PG_ROLE_PROBE=0
+```
+
+## STEP 3f — package.json
+```
+"verify:fix-pg-role": "tsx scripts/verifyAnFixPgRole1.ts"
+```
+
+## STEP 3g — MERGE_STATUS
+```markdown
+| FIX-PGROLE1 | PG role NOBYPASSRLS ops pack | DONE | SQL an_erp_app + docs + probe; CONFIG until DATABASE_URL uses the role |
+```
+Next free rule:
+```markdown
+N. **FIX-PG-ROLE-1:** Ship SQL/docs for an_erp_app NOSUPERUSER NOBYPASSRLS. Runtime remains CONFIG until operator points DATABASE_URL at that role and probe passes.
+```
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnFixPgRole1.ts
+npx tsx scripts/verifyAnAuthRoleMap1.ts
+```
+Do not require live probe for DONE.
+
+## COMMIT NOTE
+```
+docs(ops): an_erp_app role SQL without BYPASSRLS + verify pack
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+8) tsc: N | build: OK/FAIL
+9) verifyAnFixPgRole1: Passed: N | Failed: N
+10) regression: verifyAnAuthRoleMap1: …
+Status: DONE | package: AN-FIX-PG-ROLE-1
+Note: live DB still CONFIG until operator runs SQL and switches DATABASE_URL
+===========================
+```

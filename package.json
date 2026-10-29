@@ -24,7 +24,8 @@
     "verify:auth-bridge": "tsx scripts/verifyAnAuthBridge1.ts",
     "verify:auth-cookies": "tsx scripts/verifyAnAuthCookies1.ts",
     "verify:auth-refresh": "tsx scripts/verifyAnAuthRefreshMe1.ts",
-    "verify:auth-rolemap": "tsx scripts/verifyAnAuthRoleMap1.ts"
+    "verify:auth-rolemap": "tsx scripts/verifyAnAuthRoleMap1.ts",
+    "verify:fix-pg-role": "tsx scripts/verifyAnFixPgRole1.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
