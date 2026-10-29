@@ -1,0 +1,249 @@
+# AN-INV-PILOT-ISSUE-1 — Single gated A.N ISSUE pilot (LEAN)
+# After pilot RECEIPT: one atomic ISSUE (out) for non-prod cycle test.
+# Same flags/auth as INV-P1: AN_INV_PILOT_WRITES=1 + requireAnMigrateOperator + company adapter.
+# Does NOT switch Inventory.tsx. Rejects qty that would go negative unless allowNegative false (default).
+
+## HARD RULES
+1. POST only when AN_INV_PILOT_WRITES=1|true.
+2. requireAnMigrateOperator first.
+3. resolveCompanyStorageAdapter for companyId.
+4. documentType ISSUE / movementType ISSUE via postStockDocumentAtomic.
+5. idempotencyKey required. qty > 0. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- INV-P1 pilot-receipt exists (or implement both modules if missing).
+- postStockDocumentAtomic, requireAnMigrateOperator, resolveCompanyStorageAdapter.
+
+## STEP 3 — Create `src/lib/anInventoryPilotIssue.ts`
+
+Mirror `anInventoryPilotReceipt.ts` with these differences:
+- plane: `'an-inv-pilot-issue-1'`
+- documentType: `'ISSUE'`
+- movementType: `'ISSUE'`
+- referenceType: `'PILOT_ISSUE'`
+- notes: `'AN-INV-PILOT-ISSUE-1'`
+- export `postPilotIssue` + reuse `isPilotWritesEnabled` from receipt module **or** duplicate the same env check.
+
+```typescript
+/**
+ * AN-INV-PILOT-ISSUE-1 — single ISSUE post for non-prod pilot.
+ */
+import type { StoragePort } from '../an-core/storage/StoragePort';
+import type {
+  StockDocument,
+  StockDocumentLine,
+  StockMovement,
+  PostStockDocumentAtomicInput,
+} from '../an-core/storage/StoragePort';
+import { isPilotWritesEnabled } from './anInventoryPilotReceipt';
+
+export interface PilotIssueInput {
+  companyId: string;
+  warehouseId: string;
+  itemId: string;
+  itemCode?: string;
+  itemNameAr?: string;
+  qty: number;
+  unitCost?: number;
+  idempotencyKey: string;
+  actorId?: string;
+}
+
+export interface PilotIssueResult {
+  ok: boolean;
+  plane: 'an-inv-pilot-issue-1';
+  writesEnabled: boolean;
+  documentId?: string;
+  error?: string;
+  errorAr?: string;
+}
+
+export async function postPilotIssue(
+  adapter: StoragePort,
+  input: PilotIssueInput,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<PilotIssueResult> {
+  if (!isPilotWritesEnabled(env)) {
+    return {
+      ok: false,
+      plane: 'an-inv-pilot-issue-1',
+      writesEnabled: false,
+      error: 'AN_INV_PILOT_WRITES not enabled',
+      errorAr: 'كتابة الطيار غير مفعّلة',
+    };
+  }
+
+  const companyId = input.companyId.trim();
+  const warehouseId = input.warehouseId.trim();
+  const itemId = input.itemId.trim();
+  const qty = Number(input.qty);
+  const unitCost = Number(input.unitCost ?? 0);
+  const idempotencyKey = String(input.idempotencyKey || '').trim();
+  const actorId = input.actorId || 'pilot';
+
+  if (!companyId || !warehouseId || !itemId || !idempotencyKey) {
+    return {
+      ok: false,
+      plane: 'an-inv-pilot-issue-1',
+      writesEnabled: true,
+      error: 'companyId, warehouseId, itemId, idempotencyKey required',
+      errorAr: 'حقول إلزامية ناقصة',
+    };
+  }
+  if (!(qty > 0)) {
+    return {
+      ok: false,
+      plane: 'an-inv-pilot-issue-1',
+      writesEnabled: true,
+      error: 'qty must be > 0',
+      errorAr: 'الكمية يجب أن تكون أكبر من صفر',
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  const docId = `pilot-iss-${idempotencyKey}`.slice(0, 120);
+  const itemCode = input.itemCode || itemId;
+  const itemNameAr = input.itemNameAr || itemCode;
+  const totalCost = Math.round(qty * unitCost * 100) / 100;
+
+  const line: StockDocumentLine = {
+    id: `${docId}-L1`,
+    tenantId: companyId,
+    companyId,
+    documentId: docId,
+    lineNumber: 1,
+    itemId,
+    itemCode,
+    itemNameAr,
+    uom: 'unit',
+    quantity: qty,
+    unitCost,
+    totalCost,
+  };
+
+  const movement: StockMovement = {
+    id: `${docId}-M1`,
+    tenantId: companyId,
+    companyId,
+    movementNumber: `${docId}-M1`,
+    movementType: 'ISSUE',
+    warehouseId,
+    itemId,
+    itemCode,
+    itemNameAr,
+    quantity: qty,
+    unitCost,
+    totalCost,
+    balanceAfterQty: 0,
+    sourceDocumentType: 'StockDocument',
+    sourceDocumentId: docId,
+    sourceDocumentNumber: docId,
+    performedBy: actorId,
+    performedByName: 'pilot-issue',
+    timestamp: nowIso,
+    idempotencyKey,
+  };
+
+  const doc = {
+    id: docId,
+    tenantId: companyId,
+    companyId,
+    documentNumber: docId,
+    documentType: 'ISSUE' as const,
+    warehouseId,
+    status: 'POSTED' as const,
+    totalQuantity: qty,
+    totalCost,
+    referenceType: 'PILOT_ISSUE',
+    referenceId: idempotencyKey,
+    notes: 'AN-INV-PILOT-ISSUE-1',
+    lines: [line],
+    postedAt: nowIso,
+    postedBy: actorId,
+    createdAt: nowIso,
+    movements: [movement],
+  };
+
+  const payload: PostStockDocumentAtomicInput = {
+    doc: doc as StockDocument,
+    movements: [movement],
+    allowNegative: false,
+    useProvidedCost: true,
+  };
+
+  try {
+    const res = await adapter.postStockDocumentAtomic(companyId, payload, idempotencyKey);
+    if (!res.success) {
+      return {
+        ok: false,
+        plane: 'an-inv-pilot-issue-1',
+        writesEnabled: true,
+        error: res.error || 'post_failed',
+        errorAr: 'فشل ترحيل إذن الصرف (قد يكون الرصيد غير كافٍ)',
+      };
+    }
+    return {
+      ok: true,
+      plane: 'an-inv-pilot-issue-1',
+      writesEnabled: true,
+      documentId: res.data?.id || docId,
+    };
+  } catch (e: any) {
+    return {
+      ok: false,
+      plane: 'an-inv-pilot-issue-1',
+      writesEnabled: true,
+      error: (e?.message || String(e)).slice(0, 200),
+      errorAr: 'استثناء أثناء الصرف',
+    };
+  }
+}
+```
+
+If `isPilotWritesEnabled` is not exported from receipt module, export it there or duplicate the one-liner in this file.
+
+## STEP 3b — `server.ts`
+Mirror pilot-receipt route as:
+`POST /api/an/inventory/pilot-issue`
+calling `postPilotIssue` with same auth + adapter resolution pattern.
+
+## STEP 3c — MERGE_STATUS
+```markdown
+| INV-P2 | Pilot single ISSUE | DONE | POST /api/an/inventory/pilot-issue; same gates as pilot-receipt |
+```
+```markdown
+27. **INV-PILOT-ISSUE-1:** One atomic ISSUE for non-prod pilots. allowNegative=false. CustodyDB UI unchanged.
+```
+
+## STEP 3d — `scripts/verifyAnInvPilotIssue1.ts`
+14 checks: anInventoryPilotIssue, postPilotIssue, ISSUE type, pilot-issue route, requireAnMigrateOperator, AN_INV_PILOT_WRITES, allowNegative false, pilot-receipt still present, stock GET still present, MERGE INV-P2, resolveCompanyStorageAdapter, idempotencyKey, Inventory.tsx not sole pilot, SEC-MIG still.
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnInvPilotIssue1.ts
+npx tsx scripts/verifyAnInvPilotReceipt1.ts
+```
+
+## OPERATOR cycle (non-prod)
+```
+1) AN_INV_PILOT_WRITES=1 + admin session
+2) pilot-receipt qty 5
+3) GET stock — expect qty>=5
+4) pilot-issue qty 2
+5) GET stock — expect reduced
+6) pilot-issue qty huge — expect fail (no negative)
+```
+
+## COMMIT NOTE
+```
+feat(inv-p2): gated single A.N pilot ISSUE via company adapter
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnInvPilotIssue1: Passed: N | Failed: N
+Status: DONE | package: AN-INV-PILOT-ISSUE-1
+===========================
+```

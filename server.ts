@@ -247,6 +247,62 @@ async function startServer() {
     return false;
   }
 
+  function userMayAccessCompany(user: any, companyId: string): boolean {
+    const cid = String(companyId || "").trim();
+    if (!cid || !user) return false;
+    const primary = String(user.company_id || user.companyId || user.tenantId || "").trim();
+    if (primary && primary === cid) return true;
+    const lists = [user.company_ids, user.assigned_company_ids, user.companies]
+      .filter(Array.isArray) as any[][];
+    for (const list of lists) {
+      for (const entry of list) {
+        const id = typeof entry === "string" ? entry : entry?.id || entry?.company_id;
+        if (id && String(id).trim() === cid) return true;
+      }
+    }
+    return false;
+  }
+
+  async function assertUserCanAccessCompany(
+    user: any,
+    companyId: string
+  ): Promise<{ ok: true } | { ok: false; status: number; code: string; message: string; messageAr: string }> {
+    const cid = String(companyId || "").trim();
+    if (!cid) {
+      return {
+        ok: false,
+        status: 400,
+        code: "company_id_required",
+        message: "companyId required",
+        messageAr: "معرّف الشركة مطلوب",
+      };
+    }
+    let platform = false;
+    try {
+      platform = await isPlatformAdminUser(user?.email, user);
+    } catch {
+      platform = false;
+    }
+    const role = String(user?.role || "");
+    const elevated =
+      platform ||
+      role === "SystemAdmin" ||
+      role === "super_admin" ||
+      role === "system_admin" ||
+      user?.is_platform_owner === true;
+
+    if (elevated) return { ok: true };
+    if (userMayAccessCompany(user, cid)) return { ok: true };
+
+    return {
+      ok: false,
+      status: 403,
+      code: "company_scope_denied",
+      message: "Forbidden: user cannot access this companyId",
+      messageAr: "غير مصرح بالوصول لبيانات هذه الشركة",
+    };
+  }
+
   // Middleware helper to verify Firebase ID token and user role
   async function verifyUserRole(req: express.Request, allowedRoles: string[]): Promise<{ authorized: boolean; statusCode: number; message: string; user?: any }> {
     const authHeader = req.headers.authorization;
@@ -3491,6 +3547,15 @@ async function startServer() {
         }
         const companyId = String(req.query.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const scope = await assertUserCanAccessCompany(authResult.user, companyId);
+        if (!scope.ok) {
+          return res.status(scope.status).json({
+            ok: false,
+            code: scope.code,
+            message: scope.message,
+            messageAr: scope.messageAr,
+          });
+        }
         const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
         const { listAnWarehouses } = await import("./src/lib/anInventoryLists");
         const companyLike = await loadCompanyLikeFromFirestore(
@@ -3518,6 +3583,15 @@ async function startServer() {
         }
         const companyId = String(req.query.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const scope = await assertUserCanAccessCompany(authResult.user, companyId);
+        if (!scope.ok) {
+          return res.status(scope.status).json({
+            ok: false,
+            code: scope.code,
+            message: scope.message,
+            messageAr: scope.messageAr,
+          });
+        }
         const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");
         const { listAnStockItems } = await import("./src/lib/anInventoryLists");
         const companyLike = await loadCompanyLikeFromFirestore(
@@ -3545,6 +3619,15 @@ async function startServer() {
         }
         const companyId = String(req.query.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const scope = await assertUserCanAccessCompany(authResult.user, companyId);
+        if (!scope.ok) {
+          return res.status(scope.status).json({
+            ok: false,
+            code: scope.code,
+            message: scope.message,
+            messageAr: scope.messageAr,
+          });
+        }
         const warehouseId = req.query.warehouseId ? String(req.query.warehouseId).trim() : undefined;
         const itemId = req.query.itemId ? String(req.query.itemId).trim() : undefined;
         const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter } = await import("./src/lib/anResolveCompanyAdapter");

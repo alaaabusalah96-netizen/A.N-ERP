@@ -1,0 +1,148 @@
+# AN-SEC-COMPANY-SCOPE-1 — Company access guard on A.N inventory reads (LEAN)
+# Audit: session auth alone does not prove user may access requested companyId.
+# Add assertUserCanAccessCompany; enforce on GET inventory warehouses/items/stock.
+# Platform/SystemAdmin may access any companyId. Others only matching company_id (and optional company_ids[]).
+# Does NOT change adapter fail-closed (next package). Does NOT cut Inventory UI.
+
+## HARD RULES
+1. Apply guard **after** authenticateSessionOrBearer succeeds, **before** adapter resolve/list.
+2. Missing companyId → 400. Scope fail → 403 with code `company_scope_denied`.
+3. Platform owner / SystemAdmin / super_admin → allow any companyId.
+4. Else allow if `user.company_id === companyId` OR `companyId` in `user.company_ids` / `user.assigned_company_ids` (if arrays exist).
+5. Stop at first failure. tsc wait >2 min → once → build → 9–12. One RESULTS REPORT only.
+
+## PRECHECK
+- GET `/api/an/inventory/warehouses`, `/items`, `/stock` use authenticateSessionOrBearer.
+- `isPlatformAdminUser` exists in server.ts.
+
+## STEP 3 — In `server.ts` near other auth helpers (same scope as isPlatformAdminUser)
+
+```javascript
+  function userMayAccessCompany(user: any, companyId: string): boolean {
+    const cid = String(companyId || "").trim();
+    if (!cid || !user) return false;
+    const primary = String(user.company_id || user.companyId || user.tenantId || "").trim();
+    if (primary && primary === cid) return true;
+    const lists = [user.company_ids, user.assigned_company_ids, user.companies]
+      .filter(Array.isArray) as any[][];
+    for (const list of lists) {
+      for (const entry of list) {
+        const id = typeof entry === "string" ? entry : entry?.id || entry?.company_id;
+        if (id && String(id).trim() === cid) return true;
+      }
+    }
+    return false;
+  }
+
+  async function assertUserCanAccessCompany(
+    user: any,
+    companyId: string
+  ): Promise<{ ok: true } | { ok: false; status: number; code: string; message: string; messageAr: string }> {
+    const cid = String(companyId || "").trim();
+    if (!cid) {
+      return {
+        ok: false,
+        status: 400,
+        code: "company_id_required",
+        message: "companyId required",
+        messageAr: "معرّف الشركة مطلوب",
+      };
+    }
+    let platform = false;
+    try {
+      platform = await isPlatformAdminUser(user?.email, user);
+    } catch {
+      platform = false;
+    }
+    const role = String(user?.role || "");
+    const elevated =
+      platform ||
+      role === "SystemAdmin" ||
+      role === "super_admin" ||
+      role === "system_admin" ||
+      user?.is_platform_owner === true;
+
+    if (elevated) return { ok: true };
+    if (userMayAccessCompany(user, cid)) return { ok: true };
+
+    return {
+      ok: false,
+      status: 403,
+      code: "company_scope_denied",
+      message: "Forbidden: user cannot access this companyId",
+      messageAr: "غير مصرح بالوصول لبيانات هذه الشركة",
+    };
+  }
+```
+
+## STEP 3b — On each of GET warehouses, items, stock (after auth success):
+
+```javascript
+        const scope = await assertUserCanAccessCompany(authResult.user, companyId);
+        if (!scope.ok) {
+          return res.status(scope.status).json({
+            ok: false,
+            code: scope.code,
+            message: scope.message,
+            messageAr: scope.messageAr,
+          });
+        }
+```
+
+## STEP 3c — Also on migrate POST/GET dry-run **after** requireAnMigrateOperator (defense in depth):
+Operators are usually platform admin (already elevated). Still call assertUserCanAccessCompany for non-elevated Admin limited to own company if you allow Admin role in requireAnMigrateOperator — keeps consistency.
+
+```javascript
+        // after requireAnMigrateOperator and companyId parsed:
+        const scope = await assertUserCanAccessCompany((req as any).anMigrateUser || {}, companyId);
+        if (!scope.ok) {
+          return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr });
+        }
+```
+
+Note: requireAnMigrateOperator must set `req.anMigrateUser` (already in SEC-MIG1).
+
+## STEP 3d — MERGE_STATUS
+```markdown
+| SEC-SCOPE1 | Company scope on A.N inventory APIs | DONE | assertUserCanAccessCompany on inventory reads (+ migrate companyId) |
+```
+```markdown
+28. **SEC-COMPANY-SCOPE-1:** companyId on A.N inventory reads requires platform/admin elevation or membership match. 403 company_scope_denied otherwise.
+```
+
+## STEP 3e — `scripts/verifyAnSecCompanyScope1.ts`
+14 checks:
+- assertUserCanAccessCompany in server
+- userMayAccessCompany in server
+- company_scope_denied
+- warehouses handler calls assertUserCanAccessCompany (string proximity or count >= 3)
+- items + stock similarly
+- isPlatformAdminUser still used
+- authenticateSessionOrBearer still on reads
+- MERGE SEC-SCOPE
+- requireAnMigrateOperator still present
+- no removal of companyId required checks
+- Inventory.tsx still exists
+- code company_id_required optional
+- elevated roles SystemAdmin
+- ADP1 resolve still present
+
+## STEP 8–10
+```
+npx tsc --noEmit && npm run build
+npx tsx scripts/verifyAnSecCompanyScope1.ts
+npx tsx scripts/verifyAnInvStockRead1.ts
+```
+
+## COMMIT NOTE
+```
+fix(sec-scope1): enforce company access on A.N inventory read APIs
+```
+
+## RESULTS REPORT
+```
+===== RESULTS REPORT =====
+9) verifyAnSecCompanyScope1: Passed: N | Failed: N
+Status: DONE | package: AN-SEC-COMPANY-SCOPE-1
+===========================
+```
