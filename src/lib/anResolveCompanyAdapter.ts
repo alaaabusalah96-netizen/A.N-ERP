@@ -5,6 +5,7 @@
 import type { StorageRouter } from '../an-core/storage/StorageRouter';
 import type { StoragePort, TenantCompany } from '../an-core/storage/StoragePort';
 import { companyToBackendConfig, type CompanyLike } from './anBridge';
+export type { CompanyLike };
 
 export type CompanyLoadResult =
   | { status: 'loaded'; company: CompanyLike }

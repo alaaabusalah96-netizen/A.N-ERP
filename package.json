@@ -14,7 +14,8 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "verify:merge": "tsx scripts/verifyMergeAll.ts",
-    "verify:an-plane": "tsx scripts/verifyAnPlaneAll.ts"
+    "verify:an-plane": "tsx scripts/verifyAnPlaneAll.ts",
+    "verify:adapter-route": "tsx scripts/verifyAnAdapterRouteTest1.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

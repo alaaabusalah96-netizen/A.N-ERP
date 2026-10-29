@@ -49,9 +49,9 @@ export async function runPlatformAdminBootstrapOnStart(
           nameAr: 'المنشأة الافتراضية',
           status: 'ACTIVE',
           backendConfig: {
-            db_backend: 'postgresql',
-            isolation_level: 'Shared',
-            connection_ref: 'DATABASE_URL',
+            adapterType: 'postgresql',
+            isolationLevel: 'Shared',
+            connectionRef: 'DATABASE_URL',
           },
         },
         'seed-tenant-' + tenantId,
@@ -72,11 +72,12 @@ export async function runPlatformAdminBootstrapOnStart(
     if (result.ok) {
       return { ran: true, outcome: result.outcome };
     }
+    const errRes = result as any;
     return {
       ran: true,
       outcome: 'failed',
-      code: result.code,
-      message: result.message,
+      code: errRes.code,
+      message: errRes.message,
     };
   } catch (e: any) {
     return {

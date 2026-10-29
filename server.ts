@@ -3622,7 +3622,7 @@ async function startServer() {
         }
         const companyId = String(req.query.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
-        const scope = await assertUserCanAccessCompany(authResult.user, companyId);
+        const scope: any = await assertUserCanAccessCompany(authResult.user, companyId);
         if (!scope.ok) {
           return res.status(scope.status).json({
             ok: false,
@@ -3632,6 +3632,7 @@ async function startServer() {
           });
         }
         const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
+        const { listAnWarehouses } = await import("./src/lib/anInventoryLists");
         const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
           companyId
@@ -3672,7 +3673,7 @@ async function startServer() {
         }
         const companyId = String(req.query.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
-        const scope = await assertUserCanAccessCompany(authResult.user, companyId);
+        const scope: any = await assertUserCanAccessCompany(authResult.user, companyId);
         if (!scope.ok) {
           return res.status(scope.status).json({
             ok: false,
@@ -3682,6 +3683,7 @@ async function startServer() {
           });
         }
         const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
+        const { listAnStockItems } = await import("./src/lib/anInventoryLists");
         const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
           companyId
@@ -3722,7 +3724,7 @@ async function startServer() {
         }
         const companyId = String(req.query.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
-        const scope = await assertUserCanAccessCompany(authResult.user, companyId);
+        const scope: any = await assertUserCanAccessCompany(authResult.user, companyId);
         if (!scope.ok) {
           return res.status(scope.status).json({
             ok: false,
@@ -3734,6 +3736,7 @@ async function startServer() {
         const warehouseId = req.query.warehouseId ? String(req.query.warehouseId).trim() : undefined;
         const itemId = req.query.itemId ? String(req.query.itemId).trim() : undefined;
         const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
+        const { listAnStockBalances } = await import("./src/lib/anInventoryLists");
         const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
           companyId
@@ -3782,13 +3785,13 @@ async function startServer() {
     app.post("/api/an/auth/login", async (req: any, res: any) => {
       try {
         const { anStyleLogin } = await import("./src/lib/anAuthLogin");
-        const result = await anStyleLogin(anStorageRouter, {
+        const result: any = await anStyleLogin(anStorageRouter, {
           username: req.body?.username,
           password: req.body?.password,
           tenantId: req.body?.tenantId,
         });
         if (!result.ok) {
-          return res.status(result.httpStatus).json(result);
+          return res.status(result.httpStatus || 401).json(result);
         }
         return res.status(200).json(result);
       } catch (err: any) {

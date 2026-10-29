@@ -49,6 +49,7 @@
 | INV-S1 | A.N stock balances read | DONE | GET /api/an/inventory/stock; company adapter; session required |
 | SEC-SCOPE1 | Company scope on A.N inventory APIs | DONE | assertUserCanAccessCompany on inventory reads (+ migrate companyId) |
 | ADP-FC1 | Adapter fail-closed on company load error | DONE | no silent primary when company config load fails |
+| ADP-RT1 | Two-company adapter route proof | DONE | verifyAnAdapterRouteTest1 — shared vs dedicated routing |
 
 ## Canonical rules (do not regress)
 
@@ -79,6 +80,7 @@
 25. **INV-STOCK-READ-1:** Stock balance read uses per-company adapter. No write. CustodyDB UI unchanged.
 28. **SEC-COMPANY-SCOPE-1:** companyId on A.N inventory reads requires platform/admin elevation or membership match. 403 company_scope_denied otherwise.
 29. **ADAPTER-FAIL-CLOSED-1:** Company config load errors do not fall back silently to process primary when AN_ADAPTER_FAIL_CLOSED is enabled (default).
+30. **ADAPTER-ROUTE-TEST-1:** Automated proof that Shared vs Dedicated company backend settings do not collapse silently to the same resolve path.
 
 ## Verify
 
