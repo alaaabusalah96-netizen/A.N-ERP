@@ -228,6 +228,25 @@ async function startServer() {
     legacyHeaders: false,
   });
 
+  // AN-FIX-SEC-1: per tenant+username limiter for A.N login (in-memory; per instance)
+  const anLoginUserLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    skip: () => isRelaxedAuthRateLimit,
+    skipSuccessfulRequests: true,
+    keyGenerator: (req: any) =>
+      `${String(req.body?.tenantId || 'default').toLowerCase().slice(0, 64)}:${String(req.body?.username || '').toLowerCase().slice(0, 128)}`,
+    message: {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'too_many_attempts',
+      message: 'Too many attempts. Try again later.',
+      messageAr: 'محاولات كثيرة. حاول لاحقًا.'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
   const PLATFORM_OWNER_EMAIL = (process.env.PLATFORM_OWNER_EMAIL || "").toLowerCase().trim();
 
   async function isPlatformAdminUser(email?: string, userData?: any): Promise<boolean> {
@@ -3845,20 +3864,26 @@ async function startServer() {
         res.status(500).json({ ok: false, error: err?.message || String(err) });
       }
     });
-    app.post("/api/an/auth/login", async (req: any, res: any) => {
+    app.post("/api/an/auth/login", authRateLimiter, anLoginUserLimiter, async (req: any, res: any) => {
       try {
         const { anStyleLogin } = await import("./src/lib/anAuthLogin");
-        const result: any = await anStyleLogin(anStorageRouter, {
-          username: req.body?.username,
-          password: req.body?.password,
-          tenantId: req.body?.tenantId,
-        });
+        const result: any = await anStyleLogin(
+          anStorageRouter,
+          {
+            username: req.body?.username,
+            password: req.body?.password,
+            tenantId: req.body?.tenantId,
+          },
+          process.env,
+          { ip: req.ip }
+        );
         if (!result.ok) {
           return res.status(result.httpStatus || 401).json(result);
         }
         return res.status(200).json(result);
       } catch (err: any) {
-        res.status(500).json({ ok: false, error: err?.message || String(err) });
+        console.error("[AN-AUTH] login route error:", err?.name || "Error");
+        res.status(500).json({ ok: false, plane: "an-auth-g2", code: "internal_error", messageAr: "خطأ داخلي" });
       }
     });
     try {

@@ -26,6 +26,13 @@ export class TokenService {
 
   constructor(private readonly storage: StoragePort) {}
 
+  /** AN-FIX-SEC-1: constant-time string comparison */
+  private static safeEqual(a: string, b: string): boolean {
+    const ab = Buffer.from(a);
+    const bb = Buffer.from(b);
+    return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+  }
+
   /**
    * Retrieves JWT secret strictly from environment.
    * Throws error immediately if missing — zero fallback keys permitted.
@@ -81,24 +88,46 @@ export class TokenService {
       }
 
       const [b64Header, b64Payload, signature] = parts;
+
+      let header: any;
+      try {
+        header = JSON.parse(Buffer.from(b64Header, 'base64url').toString('utf8'));
+      } catch {
+        return { valid: false, error: 'صيغة التوكن غير صحيحة' };
+      }
+      if (!header || header.alg !== 'HS256' || header.typ !== 'JWT') {
+        return { valid: false, error: 'خوارزمية التوكن غير مدعومة' };
+      }
+
       const expectedSig = crypto
         .createHmac('sha256', this.getSecret())
         .update(`${b64Header}.${b64Payload}`)
         .digest('base64url');
 
-      if (signature !== expectedSig) {
+      if (!TokenService.safeEqual(signature, expectedSig)) {
         return { valid: false, error: 'توقيع التوكن غير صالح' };
       }
 
       const payload: JWTPayload = JSON.parse(Buffer.from(b64Payload, 'base64url').toString('utf8'));
-      const nowSec = Math.floor(Date.now() / 1000);
+      if (
+        !payload ||
+        typeof payload.sub !== 'string' ||
+        typeof payload.tenantId !== 'string' ||
+        typeof payload.familyId !== 'string' ||
+        typeof payload.exp !== 'number'
+      ) {
+        return { valid: false, error: 'محتوى التوكن غير صالح' };
+      }
 
+      const nowSec = Math.floor(Date.now() / 1000);
       if (payload.exp < nowSec) {
         return { valid: false, error: 'انتهت صلاحية الجلسة (15 دقيقة)' };
       }
 
-      // FIX-SESSION-REVOKE-1: fail-closed on family lookup; reject invalidated or missing family
-      const familyRes = await this.storage.getTokenFamily(payload.familyId);
+      // FIX-SESSION-REVOKE-1 + AN-FIX-SEC-1: family lookup runs inside the token's own tenant scope, fail-closed
+      const familyRes = await this.storage.withTenantScope(payload.tenantId, () =>
+        this.storage.getTokenFamily(payload.familyId)
+      );
       if (!familyRes.success) {
         return { valid: false, error: 'تعذر التحقق من حالة الجلسة' };
       }
@@ -268,6 +297,19 @@ export class TokenService {
         };
       }
 
+      // AN-FIX-SEC-1: the user must still exist and be active BEFORE any new token is issued
+      const userRes = await this.storage.getUser(record.tenantId, record.userId);
+      if (!userRes.success || !userRes.data) {
+        await this.storage.invalidateTokenFamily(record.familyId, 'USER_NOT_FOUND');
+        return { success: false, error: 'المستخدم غير موجود — تم إبطال الجلسة', familyRevoked: true };
+      }
+      const userStatus = (userRes.data as any).status;
+      if (userStatus && String(userStatus).toUpperCase() !== 'ACTIVE') {
+        await this.storage.invalidateTokenFamily(record.familyId, 'USER_NOT_ACTIVE');
+        return { success: false, error: 'المستخدم غير نشط — تم إبطال الجلسة', familyRevoked: true };
+      }
+      const role = userRes.data.role;
+
       // Rotate: Issue new refresh token & access token in same family
       const nextSeq = record.sequence + 1;
       const newRefreshToken = await this.issueNewRefreshToken(
@@ -277,10 +319,6 @@ export class TokenService {
         record.tenantId,
         record.sessionId
       );
-
-      // Fetch user for correct role
-      const userRes = await this.storage.getUser(record.tenantId, record.userId);
-      const role = userRes.success && userRes.data ? userRes.data.role : 'auditor';
 
       const newAccessToken = this.generateAccessToken({
         userId: record.userId,

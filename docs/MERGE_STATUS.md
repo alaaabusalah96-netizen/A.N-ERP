@@ -54,6 +54,7 @@
 | ADP-FC2 | Fail-closed gaps: skipped + not_found on writes | DONE | skipped refused when fail-closed; migrate POST requires loaded company; dead throw removed |
 | INV-PILOT1 | A.N inventory pilot movement (gated) | DONE | POST /api/an/inventory/pilot/movement; AN_INV_PILOT_WRITES=0 default; RECEIPT/ISSUE via company adapter; UI unchanged |
 | FIX-STORE1 | StorageRouter hardening | DONE | no silent in-memory under STRICT_PROD_SECURITY; connectionRef allowlist; certification on Dedicated; no eviction of recently-used pools |
+| FIX-SEC1 | A.N login + TokenService hardening | DONE | rate limits (IP + tenant:user), no user enumeration/timing leak, input caps, sanitized errors, audit lines, timing-safe JWT verify, refresh refuses missing/inactive users |
 
 ## Canonical rules (do not regress)
 
@@ -89,6 +90,7 @@
 32. **ADAPTER-FAIL-CLOSED-2:** With fail-closed on, an unreadable company config (no admin db) never resolves to the process primary; migrate write routes require an existing company document unless an explicit backend is given. Read routes keep primary fallback for a missing company doc.
 33. **INV-PILOT-1:** A.N inventory pilot writes (RECEIPT/ISSUE, single line) only when AN_INV_PILOT_WRITES=1, after operator auth + company scope + fail-closed adapter + Idempotency-Key. KEMIT Inventory.tsx and custody stay on CustodyDB/Firestore. cutoverApproved remains false.
 34. **FIX-STORE-1:** `resolveAdapter` refuses the in-memory fallback when STRICT_PROD_SECURITY=true unless AN_ALLOW_INMEMORY_FALLBACK=1; connectionRef must match DATABASE_URL(_NAME); adapter certification enforced on Shared and Dedicated; recently used dedicated pools are never evicted (503-style error `dedicated_pool_cap_reached`).
+35. **FIX-SEC-1:** `/api/an/auth/login` is limited per IP and per tenant:username; failures are uniform (`invalid_credentials`) and account state is revealed only after the password is verified; errors never echo internals; TokenService verifies HS256 only with timing-safe compare, checks token family inside the tenant scope, and refuses refresh for missing/inactive users. Durable lockout, 2FA and a persistent audit store are NOT part of this package.
 
 ## Verify
 

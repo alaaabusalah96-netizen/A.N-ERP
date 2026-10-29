@@ -1,5 +1,7 @@
 /**
- * AN-AUTH-G2 — server-side A.N-style password verify + access/refresh issue.
+ * AN-AUTH-G2 + AN-FIX-SEC-1 — server-side A.N-style password verify + access/refresh issue.
+ * Hardening: constant-cost failures (no user enumeration), password verified BEFORE any status reveal,
+ * input length caps, sanitized errors, structured audit lines (no secrets).
  */
 import argon2 from 'argon2';
 import crypto from 'crypto';
@@ -41,31 +43,63 @@ export interface AnLoginErr {
   httpStatus: number;
 }
 
+const MAX_USERNAME_LEN = 128;
+const MAX_PASSWORD_LEN = 1024;
+const TENANT_ID_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
+
+let dummyHashPromise: Promise<string> | null = null;
+function getDummyHash(): Promise<string> {
+  if (!dummyHashPromise) {
+    dummyHashPromise = argon2.hash(crypto.randomBytes(16).toString('hex'));
+  }
+  return dummyHashPromise as Promise<string>;
+}
+
+/** Spend roughly the same time as a real verification when the user does not exist. */
+async function burnVerify(password: string): Promise<void> {
+  try {
+    await argon2.verify(await getDummyHash(), password);
+  } catch {
+    /* intentional: timing equalisation only */
+  }
+}
+
+function fail(code: string, message: string, messageAr: string, httpStatus: number): AnLoginErr {
+  return { ok: false, plane: 'an-auth-g2', code, message, messageAr, httpStatus };
+}
+
+function invalidCredentials(): AnLoginErr {
+  return fail('invalid_credentials', 'Invalid username or password', 'اسم المستخدم أو كلمة المرور غير صحيحة', 401);
+}
+
+function userTag(username: string): string {
+  return crypto.createHash('sha256').update(username.toLowerCase()).digest('hex').slice(0, 12);
+}
+
+function audit(event: string, fields: Record<string, unknown>): void {
+  try {
+    console.warn('[AN-AUTH-AUDIT] ' + JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
+  } catch {
+    /* never throw from audit */
+  }
+}
+
+function isActiveStatus(status: unknown): boolean {
+  return !status || String(status).toUpperCase() === 'ACTIVE';
+}
+
 export async function anStyleLogin(
   router: StorageRouter,
   body: AnLoginBody,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  meta: { ip?: string } = {}
 ): Promise<AnLoginOk | AnLoginErr> {
   if (!resolveAnLoginFlag(env)) {
-    return {
-      ok: false,
-      plane: 'an-auth-g2',
-      code: 'an_login_disabled',
-      message: 'AN_ENABLE_AN_LOGIN is not enabled',
-      messageAr: 'مسار دخول A.N غير مفعّل (AN_ENABLE_AN_LOGIN)',
-      httpStatus: 403,
-    };
+    return fail('an_login_disabled', 'AN_ENABLE_AN_LOGIN is not enabled', 'مسار دخول A.N غير مفعّل (AN_ENABLE_AN_LOGIN)', 403);
   }
 
   if (!env.JWT_SECRET || !String(env.JWT_SECRET).trim()) {
-    return {
-      ok: false,
-      plane: 'an-auth-g2',
-      code: 'jwt_secret_missing',
-      message: 'JWT_SECRET is required for A.N login',
-      messageAr: 'JWT_SECRET مطلوب لدخول A.N',
-      httpStatus: 503,
-    };
+    return fail('jwt_secret_missing', 'JWT_SECRET is required for A.N login', 'JWT_SECRET مطلوب لدخول A.N', 503);
   }
 
   const username = String(body.username || '').trim();
@@ -73,64 +107,31 @@ export async function anStyleLogin(
   const tenantId = String(body.tenantId || 'default').trim() || 'default';
 
   if (!username || !password) {
-    return {
-      ok: false,
-      plane: 'an-auth-g2',
-      code: 'missing_credentials',
-      message: 'username and password required',
-      messageAr: 'اسم المستخدم وكلمة المرور مطلوبان',
-      httpStatus: 400,
-    };
+    return fail('missing_credentials', 'username and password required', 'اسم المستخدم وكلمة المرور مطلوبان', 400);
+  }
+
+  // Input caps: never run argon2 on oversized input; answer exactly like a bad login.
+  if (username.length > MAX_USERNAME_LEN || password.length > MAX_PASSWORD_LEN || !TENANT_ID_PATTERN.test(tenantId)) {
+    audit('AN_LOGIN_FAILED', { tenantId: tenantId.slice(0, 64), user: userTag(username), ip: meta.ip, reason: 'bad_input' });
+    return invalidCredentials();
   }
 
   const adapter = router.getPrimaryAdapter();
-  let userRes;
+  let userRes: any;
   try {
     userRes = await adapter.getUserByUsername(tenantId, username);
   } catch (e: any) {
-    return {
-      ok: false,
-      plane: 'an-auth-g2',
-      code: 'storage_error',
-      message: (e?.message || 'storage_error').slice(0, 160),
-      messageAr: 'فشل قراءة المستخدم من التخزين',
-      httpStatus: 500,
-    };
+    console.error('[AN-AUTH] storage_error', e?.name || 'Error');
+    return fail('storage_error', 'Authentication service unavailable', 'الخدمة غير متاحة مؤقتًا', 503);
   }
 
-  if (!userRes?.success || !userRes.data) {
-    return {
-      ok: false,
-      plane: 'an-auth-g2',
-      code: 'invalid_credentials',
-      message: 'Invalid username or password',
-      messageAr: 'اسم المستخدم أو كلمة المرور غير صحيحة',
-      httpStatus: 401,
-    };
-  }
+  const user: any = userRes?.success ? userRes.data : null;
+  const hash: string = user?.passwordHash || '';
 
-  const user = userRes.data;
-  if (user.status === 'INACTIVE') {
-    return {
-      ok: false,
-      plane: 'an-auth-g2',
-      code: 'user_inactive',
-      message: 'User is inactive',
-      messageAr: 'المستخدم غير نشط',
-      httpStatus: 403,
-    };
-  }
-
-  const hash = user.passwordHash || '';
-  if (!hash) {
-    return {
-      ok: false,
-      plane: 'an-auth-g2',
-      code: 'password_not_set',
-      message: 'User has no password hash',
-      messageAr: 'لا توجد كلمة مرور مخزّنة لهذا المستخدم',
-      httpStatus: 401,
-    };
+  if (!user || !hash) {
+    await burnVerify(password);
+    audit('AN_LOGIN_FAILED', { tenantId, user: userTag(username), ip: meta.ip, reason: user ? 'no_password' : 'unknown_user' });
+    return invalidCredentials();
   }
 
   let match = false;
@@ -140,14 +141,18 @@ export async function anStyleLogin(
     match = false;
   }
   if (!match) {
-    return {
-      ok: false,
-      plane: 'an-auth-g2',
-      code: 'invalid_credentials',
-      message: 'Invalid username or password',
-      messageAr: 'اسم المستخدم أو كلمة المرور غير صحيحة',
-      httpStatus: 401,
-    };
+    audit('AN_LOGIN_FAILED', { tenantId, user: userTag(username), ip: meta.ip, reason: 'bad_password' });
+    return invalidCredentials();
+  }
+
+  // Password is correct from here on: only now may we reveal account state.
+  if (!isActiveStatus(user.status)) {
+    audit('AN_LOGIN_FAILED', { tenantId, userId: user.id, ip: meta.ip, reason: 'inactive' });
+    return fail('user_inactive', 'User is inactive', 'المستخدم غير نشط', 403);
+  }
+  if (user.tenantId && user.tenantId !== tenantId) {
+    audit('AN_LOGIN_FAILED', { tenantId, userId: user.id, ip: meta.ip, reason: 'tenant_mismatch' });
+    return invalidCredentials();
   }
 
   const tokens = new TokenService(adapter);
@@ -159,36 +164,25 @@ export async function anStyleLogin(
     familyId = fam.familyId;
     refreshToken = fam.refreshToken;
   } catch (e: any) {
-    return {
-      ok: false,
-      plane: 'an-auth-g2',
-      code: 'token_family_failed',
-      message: (e?.message || 'token_family_failed').slice(0, 160),
-      messageAr: 'فشل إنشاء عائلة التوكن',
-      httpStatus: 500,
-    };
+    console.error('[AN-AUTH] token_family_failed', e?.name || 'Error');
+    return fail('token_family_failed', 'Could not start session', 'فشل بدء الجلسة', 500);
   }
 
   let accessToken: string;
   try {
     accessToken = tokens.generateAccessToken({
       userId: user.id,
-      tenantId: user.tenantId || tenantId,
+      tenantId,
       role: user.role || 'user',
       sessionId,
       familyId,
     });
   } catch (e: any) {
-    return {
-      ok: false,
-      plane: 'an-auth-g2',
-      code: 'access_token_failed',
-      message: (e?.message || 'access_token_failed').slice(0, 160),
-      messageAr: 'فشل إصدار توكن الوصول',
-      httpStatus: 500,
-    };
+    console.error('[AN-AUTH] access_token_failed', e?.name || 'Error');
+    return fail('access_token_failed', 'Could not issue token', 'فشل إصدار توكن الوصول', 500);
   }
 
+  audit('AN_LOGIN_OK', { tenantId, userId: user.id, ip: meta.ip });
   return {
     ok: true,
     plane: 'an-auth-g2',
@@ -197,7 +191,7 @@ export async function anStyleLogin(
       username: user.username,
       fullName: user.fullName || user.username,
       role: user.role,
-      tenantId: user.tenantId || tenantId,
+      tenantId,
       requiresPasswordChange: !!user.requiresPasswordChange,
     },
     accessToken,

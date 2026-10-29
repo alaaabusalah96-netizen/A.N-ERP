@@ -1,0 +1,532 @@
+=====================================================================
+AN-FIX-SEC-1  —  تحصين دخول A.N و TokenService (حزمة 2 من 5)
+نوع الحزمة: LEAN
+الشرط المسبق: تم تنفيذ AN-FIX-STORE-1 بنجاح (Status: DONE).
+الهدف الوحيد: سد ثغرات المصادقة في /api/an/auth/login و TokenService بدون تغيير شكل الاستجابة الناجحة.
+=====================================================================
+
+HARD RULES
+1. لا تلمس إلا: src/lib/anAuthLogin.ts + src/an-core/auth/TokenService.ts + server.ts (كتلتان فقط: تعريف limiter + مسار /api/an/auth/login) + scripts/verifyAnFixSec1.ts + package.json (سطر سكربت) + docs/MERGE_STATUS.md.
+2. شكل استجابة النجاح (AnLoginOk) يبقى كما هو. لا تضف 2FA ولا تغيّر Login.tsx (حزمة لاحقة).
+3. لا تطبع كلمات مرور أو hash أو JWT أو connection strings في أي log.
+4. لا تغيّر مسار Firebase (/api/auth/*) إطلاقًا.
+5. توقف عند أول فشل بلا ترقيع خارج الحزمة.
+
+---------------------------------------------------------------------
+1) PRECHECK
+---------------------------------------------------------------------
+a. تأكد من وجود: src/lib/anAuthLogin.ts (دالة anStyleLogin)، src/lib/anAuthLoginTarget.ts (resolveAnLoginFlag)، src/an-core/auth/TokenService.ts، src/an-core/storage/adapters/InMemoryAdapter.ts.
+b. افتح src/lib/anAuthLoginTarget.ts واذكر في التقرير القيم التي يقبلها resolveAnLoginFlag (مثل "1" أو "true"). استخدم نفس القيمة في سكربت التحقق (الخطوة 5) إن اختلفت عن "1".
+c. في src/an-core/storage/StoragePort.ts: ابحث عن نوع حالة المستخدم (status) واذكر القيم الممكنة (مثل ACTIVE/INACTIVE/LOCKED...). الكود الجديد يسمح فقط بـ ACTIVE (أو غياب الحقل).
+d. تأكد أن server.ts يحتوي: `const authRateLimiter`, `const adminRateLimiter`, `isRelaxedAuthRateLimit`, و app.set("trust proxy", 1).
+e. تأكد أن مسار `app.post("/api/an/auth/login"` موجود مرة واحدة فقط.
+
+---------------------------------------------------------------------
+2) استبدل src/lib/anAuthLogin.ts بالكامل بالمحتوى التالي
+---------------------------------------------------------------------
+/**
+ * AN-AUTH-G2 + AN-FIX-SEC-1 — server-side A.N-style password verify + access/refresh issue.
+ * Hardening: constant-cost failures (no user enumeration), password verified BEFORE any status reveal,
+ * input length caps, sanitized errors, structured audit lines (no secrets).
+ */
+import argon2 from 'argon2';
+import crypto from 'crypto';
+import type { StorageRouter } from '../an-core/storage/StorageRouter';
+import { TokenService } from '../an-core/auth/TokenService';
+import { resolveAnLoginFlag } from './anAuthLoginTarget';
+
+export interface AnLoginBody {
+  username?: string;
+  password?: string;
+  tenantId?: string;
+}
+
+export interface AnLoginOk {
+  ok: true;
+  plane: 'an-auth-g2';
+  user: {
+    id: string;
+    username: string;
+    fullName: string;
+    role: string;
+    tenantId: string;
+    requiresPasswordChange?: boolean;
+  };
+  accessToken: string;
+  refreshToken: string;
+  sessionId: string;
+  familyId: string;
+  tokenType: 'Bearer';
+  expiresInSec: number;
+}
+
+export interface AnLoginErr {
+  ok: false;
+  plane: 'an-auth-g2';
+  code: string;
+  message: string;
+  messageAr: string;
+  httpStatus: number;
+}
+
+const MAX_USERNAME_LEN = 128;
+const MAX_PASSWORD_LEN = 1024;
+const TENANT_ID_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
+
+let dummyHashPromise: Promise<string> | null = null;
+function getDummyHash(): Promise<string> {
+  if (!dummyHashPromise) {
+    dummyHashPromise = argon2.hash(crypto.randomBytes(16).toString('hex'));
+  }
+  return dummyHashPromise as Promise<string>;
+}
+
+/** Spend roughly the same time as a real verification when the user does not exist. */
+async function burnVerify(password: string): Promise<void> {
+  try {
+    await argon2.verify(await getDummyHash(), password);
+  } catch {
+    /* intentional: timing equalisation only */
+  }
+}
+
+function fail(code: string, message: string, messageAr: string, httpStatus: number): AnLoginErr {
+  return { ok: false, plane: 'an-auth-g2', code, message, messageAr, httpStatus };
+}
+
+function invalidCredentials(): AnLoginErr {
+  return fail('invalid_credentials', 'Invalid username or password', 'اسم المستخدم أو كلمة المرور غير صحيحة', 401);
+}
+
+function userTag(username: string): string {
+  return crypto.createHash('sha256').update(username.toLowerCase()).digest('hex').slice(0, 12);
+}
+
+function audit(event: string, fields: Record<string, unknown>): void {
+  try {
+    console.warn('[AN-AUTH-AUDIT] ' + JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
+  } catch {
+    /* never throw from audit */
+  }
+}
+
+function isActiveStatus(status: unknown): boolean {
+  return !status || String(status).toUpperCase() === 'ACTIVE';
+}
+
+export async function anStyleLogin(
+  router: StorageRouter,
+  body: AnLoginBody,
+  env: NodeJS.ProcessEnv = process.env,
+  meta: { ip?: string } = {}
+): Promise<AnLoginOk | AnLoginErr> {
+  if (!resolveAnLoginFlag(env)) {
+    return fail('an_login_disabled', 'AN_ENABLE_AN_LOGIN is not enabled', 'مسار دخول A.N غير مفعّل (AN_ENABLE_AN_LOGIN)', 403);
+  }
+
+  if (!env.JWT_SECRET || !String(env.JWT_SECRET).trim()) {
+    return fail('jwt_secret_missing', 'JWT_SECRET is required for A.N login', 'JWT_SECRET مطلوب لدخول A.N', 503);
+  }
+
+  const username = String(body.username || '').trim();
+  const password = String(body.password || '');
+  const tenantId = String(body.tenantId || 'default').trim() || 'default';
+
+  if (!username || !password) {
+    return fail('missing_credentials', 'username and password required', 'اسم المستخدم وكلمة المرور مطلوبان', 400);
+  }
+
+  // Input caps: never run argon2 on oversized input; answer exactly like a bad login.
+  if (username.length > MAX_USERNAME_LEN || password.length > MAX_PASSWORD_LEN || !TENANT_ID_PATTERN.test(tenantId)) {
+    audit('AN_LOGIN_FAILED', { tenantId: tenantId.slice(0, 64), user: userTag(username), ip: meta.ip, reason: 'bad_input' });
+    return invalidCredentials();
+  }
+
+  const adapter = router.getPrimaryAdapter();
+  let userRes: any;
+  try {
+    userRes = await adapter.getUserByUsername(tenantId, username);
+  } catch (e: any) {
+    console.error('[AN-AUTH] storage_error', e?.name || 'Error');
+    return fail('storage_error', 'Authentication service unavailable', 'الخدمة غير متاحة مؤقتًا', 503);
+  }
+
+  const user: any = userRes?.success ? userRes.data : null;
+  const hash: string = user?.passwordHash || '';
+
+  if (!user || !hash) {
+    await burnVerify(password);
+    audit('AN_LOGIN_FAILED', { tenantId, user: userTag(username), ip: meta.ip, reason: user ? 'no_password' : 'unknown_user' });
+    return invalidCredentials();
+  }
+
+  let match = false;
+  try {
+    match = await argon2.verify(hash, password);
+  } catch {
+    match = false;
+  }
+  if (!match) {
+    audit('AN_LOGIN_FAILED', { tenantId, user: userTag(username), ip: meta.ip, reason: 'bad_password' });
+    return invalidCredentials();
+  }
+
+  // Password is correct from here on: only now may we reveal account state.
+  if (!isActiveStatus(user.status)) {
+    audit('AN_LOGIN_FAILED', { tenantId, userId: user.id, ip: meta.ip, reason: 'inactive' });
+    return fail('user_inactive', 'User is inactive', 'المستخدم غير نشط', 403);
+  }
+  if (user.tenantId && user.tenantId !== tenantId) {
+    audit('AN_LOGIN_FAILED', { tenantId, userId: user.id, ip: meta.ip, reason: 'tenant_mismatch' });
+    return invalidCredentials();
+  }
+
+  const tokens = new TokenService(adapter);
+  const sessionId = `sess-${crypto.randomUUID()}`;
+  let familyId: string;
+  let refreshToken: string;
+  try {
+    const fam = await tokens.createRefreshTokenFamily(user.id, tenantId, sessionId);
+    familyId = fam.familyId;
+    refreshToken = fam.refreshToken;
+  } catch (e: any) {
+    console.error('[AN-AUTH] token_family_failed', e?.name || 'Error');
+    return fail('token_family_failed', 'Could not start session', 'فشل بدء الجلسة', 500);
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = tokens.generateAccessToken({
+      userId: user.id,
+      tenantId,
+      role: user.role || 'user',
+      sessionId,
+      familyId,
+    });
+  } catch (e: any) {
+    console.error('[AN-AUTH] access_token_failed', e?.name || 'Error');
+    return fail('access_token_failed', 'Could not issue token', 'فشل إصدار توكن الوصول', 500);
+  }
+
+  audit('AN_LOGIN_OK', { tenantId, userId: user.id, ip: meta.ip });
+  return {
+    ok: true,
+    plane: 'an-auth-g2',
+    user: {
+      id: user.id,
+      username: user.username,
+      fullName: user.fullName || user.username,
+      role: user.role,
+      tenantId,
+      requiresPasswordChange: !!user.requiresPasswordChange,
+    },
+    accessToken,
+    refreshToken,
+    sessionId,
+    familyId,
+    tokenType: 'Bearer',
+    expiresInSec: 15 * 60,
+  };
+}
+
+---------------------------------------------------------------------
+3) src/an-core/auth/TokenService.ts  (تعديلات محددة)
+---------------------------------------------------------------------
+3.1  داخل class TokenService، مباشرة بعد سطر `constructor(private readonly storage: StoragePort) {}` أضف:
+
+  /** AN-FIX-SEC-1: constant-time string comparison */
+  private static safeEqual(a: string, b: string): boolean {
+    const ab = Buffer.from(a);
+    const bb = Buffer.from(b);
+    return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+  }
+
+3.2  استبدل الدالة verifyAccessToken كاملة بـ:
+
+  public async verifyAccessToken(token: string): Promise<{ valid: boolean; payload?: JWTPayload; error?: string }> {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        return { valid: false, error: 'صيغة التوكن غير صحيحة' };
+      }
+
+      const [b64Header, b64Payload, signature] = parts;
+
+      let header: any;
+      try {
+        header = JSON.parse(Buffer.from(b64Header, 'base64url').toString('utf8'));
+      } catch {
+        return { valid: false, error: 'صيغة التوكن غير صحيحة' };
+      }
+      if (!header || header.alg !== 'HS256' || header.typ !== 'JWT') {
+        return { valid: false, error: 'خوارزمية التوكن غير مدعومة' };
+      }
+
+      const expectedSig = crypto
+        .createHmac('sha256', this.getSecret())
+        .update(`${b64Header}.${b64Payload}`)
+        .digest('base64url');
+
+      if (!TokenService.safeEqual(signature, expectedSig)) {
+        return { valid: false, error: 'توقيع التوكن غير صالح' };
+      }
+
+      const payload: JWTPayload = JSON.parse(Buffer.from(b64Payload, 'base64url').toString('utf8'));
+      if (
+        !payload ||
+        typeof payload.sub !== 'string' ||
+        typeof payload.tenantId !== 'string' ||
+        typeof payload.familyId !== 'string' ||
+        typeof payload.exp !== 'number'
+      ) {
+        return { valid: false, error: 'محتوى التوكن غير صالح' };
+      }
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (payload.exp < nowSec) {
+        return { valid: false, error: 'انتهت صلاحية الجلسة (15 دقيقة)' };
+      }
+
+      // FIX-SESSION-REVOKE-1 + AN-FIX-SEC-1: family lookup runs inside the token's own tenant scope, fail-closed
+      const familyRes = await this.storage.withTenantScope(payload.tenantId, () =>
+        this.storage.getTokenFamily(payload.familyId)
+      );
+      if (!familyRes.success) {
+        return { valid: false, error: 'تعذر التحقق من حالة الجلسة' };
+      }
+      if (!familyRes.data) {
+        return { valid: false, error: 'سلسلة الجلسة غير معروفة' };
+      }
+      if (familyRes.data.isInvalidated) {
+        return { valid: false, error: 'تم إبطال سلسلة الجلسة بالكامل' };
+      }
+
+      return { valid: true, payload };
+    } catch (e: any) {
+      return { valid: false, error: e.message };
+    }
+  }
+
+3.3  في rotateRefreshToken: ابحث عن الكتلة التالية (تبدأ بالتعليق `// Rotate: Issue new refresh token & access token in same family` وتنتهي عند `const newAccessToken = this.generateAccessToken({`):
+
+      // Rotate: Issue new refresh token & access token in same family
+      const nextSeq = record.sequence + 1;
+      const newRefreshToken = await this.issueNewRefreshToken(
+        record.familyId,
+        nextSeq,
+        record.userId,
+        record.tenantId,
+        record.sessionId
+      );
+
+      // Fetch user for correct role
+      const userRes = await this.storage.getUser(record.tenantId, record.userId);
+      const role = userRes.success && userRes.data ? userRes.data.role : 'auditor';
+
+      const newAccessToken = this.generateAccessToken({
+
+   واستبدلها بـ:
+
+      // AN-FIX-SEC-1: the user must still exist and be active BEFORE any new token is issued
+      const userRes = await this.storage.getUser(record.tenantId, record.userId);
+      if (!userRes.success || !userRes.data) {
+        await this.storage.invalidateTokenFamily(record.familyId, 'USER_NOT_FOUND');
+        return { success: false, error: 'المستخدم غير موجود — تم إبطال الجلسة', familyRevoked: true };
+      }
+      const userStatus = (userRes.data as any).status;
+      if (userStatus && String(userStatus).toUpperCase() !== 'ACTIVE') {
+        await this.storage.invalidateTokenFamily(record.familyId, 'USER_NOT_ACTIVE');
+        return { success: false, error: 'المستخدم غير نشط — تم إبطال الجلسة', familyRevoked: true };
+      }
+      const role = userRes.data.role;
+
+      // Rotate: Issue new refresh token & access token in same family
+      const nextSeq = record.sequence + 1;
+      const newRefreshToken = await this.issueNewRefreshToken(
+        record.familyId,
+        nextSeq,
+        record.userId,
+        record.tenantId,
+        record.sessionId
+      );
+
+      const newAccessToken = this.generateAccessToken({
+
+   (ما بعد ذلك يبقى كما هو.) إن لم يتطابق النص الأصلي حرفيًا، توقف واذكر السبب.
+
+---------------------------------------------------------------------
+4) server.ts  (كتلتان فقط)
+---------------------------------------------------------------------
+4.1  مباشرة بعد تعريف `const adminRateLimiter = rateLimit({ ... });` أضف:
+
+  // AN-FIX-SEC-1: per tenant+username limiter for A.N login (in-memory; per instance)
+  const anLoginUserLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    skip: () => isRelaxedAuthRateLimit,
+    skipSuccessfulRequests: true,
+    keyGenerator: (req: any) =>
+      `${String(req.body?.tenantId || 'default').toLowerCase().slice(0, 64)}:${String(req.body?.username || '').toLowerCase().slice(0, 128)}`,
+    message: {
+      ok: false,
+      plane: 'an-auth-g2',
+      code: 'too_many_attempts',
+      message: 'Too many attempts. Try again later.',
+      messageAr: 'محاولات كثيرة. حاول لاحقًا.'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+4.2  استبدل مسار `app.post("/api/an/auth/login", ...)` كاملًا (من السطر الذي يبدأ بـ app.post حتى `});` الذي يغلقه) بـ:
+
+    app.post("/api/an/auth/login", authRateLimiter, anLoginUserLimiter, async (req: any, res: any) => {
+      try {
+        const { anStyleLogin } = await import("./src/lib/anAuthLogin");
+        const result: any = await anStyleLogin(
+          anStorageRouter,
+          {
+            username: req.body?.username,
+            password: req.body?.password,
+            tenantId: req.body?.tenantId,
+          },
+          process.env,
+          { ip: req.ip }
+        );
+        if (!result.ok) {
+          return res.status(result.httpStatus || 401).json(result);
+        }
+        return res.status(200).json(result);
+      } catch (err: any) {
+        console.error("[AN-AUTH] login route error:", err?.name || "Error");
+        res.status(500).json({ ok: false, plane: "an-auth-g2", code: "internal_error", messageAr: "خطأ داخلي" });
+      }
+    });
+
+---------------------------------------------------------------------
+5) package.json — أضف سطر سكربت واحد بعد "verify:fix-store":
+    "verify:fix-sec": "tsx scripts/verifyAnFixSec1.ts"
+---------------------------------------------------------------------
+
+---------------------------------------------------------------------
+6) أنشئ scripts/verifyAnFixSec1.ts بالمحتوى التالي حرفيًا
+---------------------------------------------------------------------
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import argon2 from 'argon2';
+import { TokenService } from '../src/an-core/auth/TokenService';
+import { InMemoryAdapter } from '../src/an-core/storage/adapters/InMemoryAdapter';
+import { anStyleLogin } from '../src/lib/anAuthLogin';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean): void {
+  if (cond) { passed++; console.log(`PASS  ${name}`); }
+  else { failed++; console.log(`FAIL  ${name}`); }
+}
+const read = (p: string): string => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
+const b64 = (o: unknown): string => Buffer.from(JSON.stringify(o)).toString('base64url');
+const SECRET = 'unit-test-secret-not-a-real-secret';
+const sign = (h: string, p: string): string => crypto.createHmac('sha256', SECRET).update(`${h}.${p}`).digest('base64url');
+// If PRECHECK-b showed resolveAnLoginFlag needs a different value than '1', change it here.
+const LOGIN_ENV: any = { AN_ENABLE_AN_LOGIN: '1', JWT_SECRET: SECRET };
+const mkRouter = (adapter: any): any => ({ getPrimaryAdapter: () => adapter });
+
+async function main(): Promise<void> {
+  const prevSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = SECRET;
+
+  // ---- TokenService (functional) ----
+  const tokens = new TokenService(new InMemoryAdapter() as any);
+  const fam = await tokens.createRefreshTokenFamily('u1', 't1', 's1');
+  const access = tokens.generateAccessToken({ userId: 'u1', tenantId: 't1', role: 'auditor', sessionId: 's1', familyId: fam.familyId });
+  const [h, p, s] = access.split('.');
+
+  check('01 valid access token verifies', (await tokens.verifyAccessToken(access)).valid === true);
+  const flipped = s.slice(0, -1) + (s.endsWith('A') ? 'B' : 'A');
+  check('02 tampered signature rejected', (await tokens.verifyAccessToken(`${h}.${p}.${flipped}`)).valid === false);
+  check('03 alg=none rejected', (await tokens.verifyAccessToken(`${b64({ alg: 'none', typ: 'JWT' })}.${p}.`)).valid === false);
+  const h512 = b64({ alg: 'HS512', typ: 'JWT' });
+  check('04 wrong alg header rejected even if HMAC matches', (await tokens.verifyAccessToken(`${h512}.${p}.${sign(h512, p)}`)).valid === false);
+  const expPayload = b64({ sub: 'u1', tenantId: 't1', role: 'x', sessionId: 's1', familyId: fam.familyId, iat: 1, exp: Math.floor(Date.now() / 1000) - 10 });
+  check('05 expired token rejected', (await tokens.verifyAccessToken(`${h}.${expPayload}.${sign(h, expPayload)}`)).valid === false);
+
+  const rot1: any = await tokens.rotateRefreshToken(fam.refreshToken);
+  check('06 rotate for missing user fails and issues no tokens', rot1.success === false && !rot1.newAccessToken && !rot1.newRefreshToken);
+  const rot2: any = await tokens.rotateRefreshToken(fam.refreshToken);
+  check('07 replay after failed rotate stays rejected', rot2.success === false);
+
+  // ---- anStyleLogin (functional, stub adapters) ----
+  const goodHash = await argon2.hash('Correct#Pass1');
+  let calls = 0;
+  const unknownAdapter = { getUserByUsername: async () => { calls++; return { success: true, data: null }; } };
+  const t0 = Date.now();
+  const r1: any = await anStyleLogin(mkRouter(unknownAdapter), { username: 'ghost', password: 'whatever1', tenantId: 'default' }, LOGIN_ENV);
+  const elapsed = Date.now() - t0;
+  check('08 unknown user -> invalid_credentials 401', r1.ok === false && r1.code === 'invalid_credentials' && r1.httpStatus === 401);
+  check('09 unknown user still spends verification time (>=3ms)', elapsed >= 3);
+
+  const inactiveAdapter = { getUserByUsername: async () => ({ success: true, data: { id: 'u9', username: 'bob', status: 'INACTIVE', passwordHash: goodHash, tenantId: 'default', role: 'x' } }) };
+  const r2: any = await anStyleLogin(mkRouter(inactiveAdapter), { username: 'bob', password: 'Wrong#Pass9', tenantId: 'default' }, LOGIN_ENV);
+  check('10 inactive user + wrong password -> invalid_credentials (no state leak)', r2.ok === false && r2.code === 'invalid_credentials');
+  const r3: any = await anStyleLogin(mkRouter(inactiveAdapter), { username: 'bob', password: 'Correct#Pass1', tenantId: 'default' }, LOGIN_ENV);
+  check('11 inactive user + correct password -> user_inactive 403', r3.ok === false && r3.code === 'user_inactive' && r3.httpStatus === 403);
+
+  const boomAdapter = { getUserByUsername: async () => { throw new Error('secret-conn-string-xyz'); } };
+  const r4: any = await anStyleLogin(mkRouter(boomAdapter), { username: 'bob', password: 'Correct#Pass1', tenantId: 'default' }, LOGIN_ENV);
+  check('12 storage error is sanitized (503, no internal text)', r4.httpStatus === 503 && !JSON.stringify(r4).includes('secret-conn-string-xyz'));
+
+  calls = 0;
+  const r5: any = await anStyleLogin(mkRouter(unknownAdapter), { username: 'bob', password: 'x'.repeat(2000), tenantId: 'default' }, LOGIN_ENV);
+  check('13 oversized password rejected before any storage call', r5.ok === false && r5.httpStatus === 401 && calls === 0);
+
+  // ---- static source checks ----
+  const ts = read('src/an-core/auth/TokenService.ts');
+  const al = read('src/lib/anAuthLogin.ts');
+  const sv = read('server.ts');
+  check('14 TokenService uses timingSafeEqual and no plain signature compare', ts.includes('timingSafeEqual') && !ts.includes('signature !== expectedSig'));
+  check('15 TokenService has no auditor fallback role', !ts.includes("'auditor'"));
+  check('16 anAuthLogin has burnVerify + input caps and no raw e.message in responses',
+    al.includes('burnVerify') && al.includes('MAX_PASSWORD_LEN') && !/message:\s*\(e\?\.message/.test(al));
+  const idx = sv.indexOf('app.post("/api/an/auth/login"');
+  const routeHead = idx >= 0 ? sv.slice(idx, idx + 220) : '';
+  const routeBody = idx >= 0 ? sv.slice(idx, idx + 1100) : '';
+  check('17 login route uses authRateLimiter + anLoginUserLimiter', routeHead.includes('authRateLimiter') && routeHead.includes('anLoginUserLimiter'));
+  check('18 login route does not echo err.message', idx >= 0 && !routeBody.includes('err?.message'));
+
+  if (prevSecret === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = prevSecret;
+  console.log(`\nPassed: ${passed} | Failed: ${failed}`);
+  process.exit(failed === 0 ? 0 : 1);
+}
+
+main().catch((e) => { console.error('verifyAnFixSec1 crashed:', e?.message || e); process.exit(1); });
+
+---------------------------------------------------------------------
+7) docs/MERGE_STATUS.md
+---------------------------------------------------------------------
+- صف جديد بعد FIX-STORE1:
+| FIX-SEC1 | A.N login + TokenService hardening | DONE | rate limits (IP + tenant:user), no user enumeration/timing leak, input caps, sanitized errors, audit lines, timing-safe JWT verify, refresh refuses missing/inactive users |
+- نقطة مرقمة:
+35. **FIX-SEC-1:** `/api/an/auth/login` is limited per IP and per tenant:username; failures are uniform (`invalid_credentials`) and account state is revealed only after the password is verified; errors never echo internals; TokenService verifies HS256 only with timing-safe compare, checks token family inside the tenant scope, and refuses refresh for missing/inactive users. Durable lockout, 2FA and a persistent audit store are NOT part of this package.
+
+---------------------------------------------------------------------
+8) تحقق نهائي
+---------------------------------------------------------------------
+npx tsc --noEmit
+npm run build
+npx tsx scripts/verifyAnFixSec1.ts          (المتوقع: Passed: 18 | Failed: 0)
+انحدار: npx tsx scripts/verifyAnFixStore1.ts  و  npm run verify:merge
+(إن طال tsc أكثر من دقيقتين: مرة واحدة فقط ثم build ثم verify.)
+
+===== RESULTS REPORT =====
+PRECHECK-b: resolveAnLoginFlag accepts: <values>
+PRECHECK-c: user status values: <list>
+8) tsc: <N errors> | build: <OK/FAIL>
+9) verifyAnFixSec1: Passed: N | Failed: M
+10) regression: FixStore1 <ok/fail> | verify:merge <ok/fail>
+Status: DONE | package: AN-FIX-SEC-1
+===========================
+
+COMMIT NOTE:
+fix(auth): harden A.N login (rate limits, uniform failures, input caps, sanitized errors) and TokenService (timing-safe verify, tenant-scoped family check, no fallback role)
