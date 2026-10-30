@@ -63,6 +63,7 @@
 | FIX-CIDOCS1 | CI verifies + deploy flags doc | DONE | build + A.N static verifies in CI; gitignore; AN-DEPLOY-FLAGS |
 | DEV-PREVIEW1 | Dev preview full-admin bypass | DONE | AN_PREVIEW_BYPASS shows SystemAdmin local enter; blocked under STRICT_PROD_SECURITY |
 | SEC-SURFACE1 | Close unauth/cross-tenant/secret-fallback holes | DONE | F1-F5; SESSION_SECRET required in prod |
+| SEC-AUTH1 | Auth bridge hardening (no email linking, real roles, real logout) | DONE | N1-N7 |
 
 ## Canonical rules (do not regress)
 
@@ -107,6 +108,7 @@
 41. **FIX-CI-DOCS-1:** CI runs production build and A.N static verify scripts; deploy flags documented; gitignore hardened for reports/archives.
 42. **DEV-PREVIEW-BYPASS-1:** When AN_PREVIEW_BYPASS=1 (and not strict prod), Login offers a local SystemAdmin session for UI preview without credentials. Not for production.
 43. **SEC-SURFACE-1:** SESSION_SECRET is mandatory (>=32) in production/strict; company-backend, live-check and all migrate routes require operator + company scope; connection_ref must pass isSafeConnectionRef; /assets/aistudio is never served.
+44. **SEC-AUTH-1:** KEMIT users are linked to A.N users only by (an_user_id, an_tenant_id), never by email/username; A.N JWT identity uses the token's own role (elevated roles only on tenant "default"); logout revokes the refresh-token family; company-backend writes are platform/system-admin only.
 
 ## Verify
 

@@ -1,0 +1,544 @@
+AN-SEC-AUTH-1 — LEAN PACKAGE (designed from live repo head e072f75, after SEC-SURFACE-1 + the auth-bridge/cookies/refresh commits)
+==========================================================================================================================
+GOAL (single): close the privilege-escalation and account-takeover holes in the new A.N <-> KEMIT auth bridge BEFORE any further merge phase.
+No new features, no UI change, no schema change.
+
+REVIEW OF PREVIOUS PACKAGES: INV-PILOT-1 and SEC-SURFACE-1 were applied correctly (13/13 structural checks pass on the live server.ts).
+
+FINDINGS THIS PACKAGE CLOSES
+ N1 CRITICAL  anAuthBridge.ts links a KEMIT Firestore user BY EMAIL derived from the A.N username. A tenant-local A.N user named
+              "boss@corp.com" gets a Firebase custom token for the KEMIT account with that email (incl. SystemAdmin) = account takeover.
+              Role for new docs also defaulted to 'Admin' and copied raw A.N role (even SystemAdmin from any tenant).
+ N2 CRITICAL  authenticateSessionOrBearer: for an A.N JWT the Firestore lookup uses the JWT sub (an A.N user id, never a Firestore uid),
+              so the hard-coded fallback fires for EVERY A.N user: role "Admin" regardless of the real role (viewer/accountant become Admin,
+              pass requireAnMigrateOperator and can use migrate / company-backend inside their tenant).
+ N3 HIGH      authenticateSessionOrBearer builds `new StorageRouter()` (new Postgres pool + timer) PER REQUEST, and any unknown bearer token
+              reaches it -> unauthenticated pool/connection exhaustion.
+ N4 HIGH      /api/an/auth/logout calls rotateRefreshToken (which has no familyId in its result), so revokeFamily never runs and a NEW
+              refresh token is minted and left valid for 7 days: logout does not revoke anything.
+ N5 MEDIUM    POST /api/an/company-backend lets a company "Admin" re-point the company DB (connection_ref). Now platform/system admin only.
+ N6 MEDIUM    anConnectionRefGuard allowed names the router would later reject; now identical to StorageRouter CONNECTION_REF_PATTERN.
+ N7 LOW       isPreviewBypassEnvEnabled ignores NODE_ENV: AN_PREVIEW_BYPASS=1 works in production unless STRICT_PROD_SECURITY=true.
+
+HARD RULES
+- One package only. Stop at first failure. Do NOT touch Inventory.tsx, CustodyDB, Firestore rules, migrate/pilot logic, TokenService.ts.
+- Do NOT print secrets. Do NOT change any env values.
+- Leave the existing duplicated "// Helper for Authenticating ..." comment lines as they are (only the anchors below are edited).
+
+1) PRECHECK (fail -> STOP and report): every ANCHOR in step 4 and 6 matches exactly once; src/an-core/storage/StorageRouter.ts exports
+   globalStorageRouter and CONNECTION_REF_PATTERN = /^DATABASE_URL(_[A-Z0-9_]{1,40})?$/; src/lib/anAuthBridge.ts exists.
+
+2) REPLACE WHOLE FILE src/lib/anAuthBridge.ts with:
+-----8<-----
+/**
+ * AN-AUTH-BRIDGE-1 / AN-SEC-AUTH-1 — map A.N user -> Firebase custom token (best-effort).
+ * SECURITY: a KEMIT users doc is linked ONLY by (an_user_id, an_tenant_id). Never by email/username:
+ * tenant-local usernames must never be able to claim an existing KEMIT account.
+ */
+import crypto from 'crypto';
+
+export interface FirebaseBridgeResult {
+  ok: boolean;
+  customToken?: string;
+  code?: string;
+  firebaseUid?: string;
+}
+
+const ELEVATED_ROLES = new Set(['SystemAdmin', 'super_admin', 'system_admin']);
+
+/** A.N role -> KEMIT users.role. Elevated roles only survive on the platform tenant ('default'). Missing role never defaults to Admin. */
+export function mapAnRoleToKemitRole(role: unknown, tenantId: string): string {
+  const r = String(role || '').trim();
+  if (!r) return 'User';
+  if (ELEVATED_ROLES.has(r)) return tenantId === 'default' ? r : 'Admin';
+  return r;
+}
+
+export async function issueFirebaseCustomTokenForAnUser(deps: {
+  adminDb: any;
+  getAdminAuth: () => any;
+  anUser: {
+    id: string;
+    username: string;
+    fullName?: string;
+    role?: string;
+    tenantId: string;
+    email?: string;
+  };
+}): Promise<FirebaseBridgeResult> {
+  const { adminDb, getAdminAuth, anUser } = deps;
+  if (!adminDb || typeof getAdminAuth !== 'function') {
+    return { ok: false, code: 'admin_unavailable' };
+  }
+  try {
+    const users = adminDb.collection('users');
+    let uid: string | null = null;
+
+    // Link ONLY by the (an_user_id, an_tenant_id) pair. A failed lookup is fail-closed (no email fallback).
+    let byAn: any;
+    try {
+      byAn = await users.where('an_user_id', '==', anUser.id).where('an_tenant_id', '==', anUser.tenantId).limit(1).get();
+    } catch {
+      return { ok: false, code: 'lookup_failed' };
+    }
+    if (!byAn.empty) uid = byAn.docs[0].id;
+
+    if (!uid) {
+      const detUid = 'an_' + crypto.createHash('sha256').update(anUser.tenantId + ':' + anUser.id).digest('hex').slice(0, 28);
+      const existing = await users.doc(detUid).get();
+      if (existing.exists) {
+        const d = existing.data() || {};
+        if (d.an_user_id && (d.an_user_id !== anUser.id || d.an_tenant_id !== anUser.tenantId)) {
+          return { ok: false, code: 'uid_conflict' };
+        }
+      }
+      // Use the real email only if no other KEMIT user owns it; otherwise a synthetic, unique one.
+      const wanted =
+        (anUser.email || '').trim().toLowerCase() ||
+        (anUser.username.includes('@') ? anUser.username.trim().toLowerCase() : '');
+      let email = `${detUid}@an-local.invalid`;
+      if (wanted) {
+        const owner = await users.where('email', '==', wanted).limit(1).get();
+        if (owner.empty) email = wanted;
+      }
+      uid = detUid;
+      await users.doc(uid).set(
+        {
+          email,
+          full_name: anUser.fullName || anUser.username,
+          role: mapAnRoleToKemitRole(anUser.role, anUser.tenantId),
+          company_id: anUser.tenantId === 'default' ? null : anUser.tenantId,
+          an_user_id: anUser.id,
+          an_tenant_id: anUser.tenantId,
+          is_active: true,
+          auth_bridge: 'an-auth-bridge-1',
+          updated_at: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } else {
+      await users.doc(uid).set(
+        { an_user_id: anUser.id, an_tenant_id: anUser.tenantId, auth_bridge: 'an-auth-bridge-1', updated_at: new Date().toISOString() },
+        { merge: true }
+      );
+    }
+
+    const customToken = await getAdminAuth().createCustomToken(uid, {
+      an_user_id: anUser.id,
+      an_tenant_id: anUser.tenantId,
+    });
+    return { ok: true, customToken, firebaseUid: uid };
+  } catch {
+    return { ok: false, code: 'custom_token_failed' };
+  }
+}
+-----8<-----
+
+3) CREATE src/an-core/auth/anTokenRevoke.ts
+-----8<-----
+/**
+ * AN-SEC-AUTH-1 — logout that really revokes: invalidate the refresh token's whole family
+ * (no rotation, so no new refresh token is minted on logout).
+ */
+import crypto from 'crypto';
+
+export async function revokeFamilyByRefreshToken(
+  storage: {
+    withTenantScope<T>(tenantId: string, fn: () => Promise<T>): Promise<T>;
+    getRefreshToken(tokenHash: string): Promise<{ success: boolean; data?: { familyId: string } | null }>;
+    invalidateTokenFamily(familyId: string, reason: string): Promise<unknown>;
+  },
+  plainToken: string,
+  reason = 'LOGOUT'
+): Promise<boolean> {
+  const parts = String(plainToken || '').split('.');
+  if (parts.length !== 3 || parts[0] !== 'rt' || !parts[1]) return false;
+  let tenantId = '';
+  try {
+    tenantId = String(JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))?.tenantId || '');
+  } catch {
+    return false;
+  }
+  if (!tenantId) return false;
+  const tokenHash = crypto.createHash('sha256').update(plainToken).digest('hex');
+  try {
+    return await storage.withTenantScope(tenantId, async () => {
+      const rec = await storage.getRefreshToken(tokenHash);
+      if (!rec.success || !rec.data?.familyId) return false;
+      await storage.invalidateTokenFamily(rec.data.familyId, reason);
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
+-----8<-----
+   REPLACE WHOLE FILE src/lib/anConnectionRefGuard.ts with:
+-----8<-----
+/**
+ * connection_ref must be the NAME of a DB connection env var.
+ * Keep in sync with CONNECTION_REF_PATTERN in src/an-core/storage/StorageRouter.ts (verifyAnSecAuth1 checks this).
+ */
+const PATTERN = /^DATABASE_URL(_[A-Z0-9_]{1,40})?$/;
+
+export function isSafeConnectionRef(ref: unknown): boolean {
+  return typeof ref === 'string' && PATTERN.test(ref.trim());
+}
+-----8<-----
+
+4) EDIT server.ts — 8 exact replacements (each ANCHOR must match exactly once; replace with REPLACEMENT verbatim)
+--- A0: track the role carried by the A.N access token
+ANCHOR:
+-----8<-----
+    let anAuthJwt = false;
+    let anTenantId: string | null = null;
+
+-----8<-----
+REPLACEMENT:
+-----8<-----
+    let anAuthJwt = false;
+    let anTenantId: string | null = null;
+    let anRole = "";
+
+-----8<-----
+--- A1: shared verifier helper (inserted above the function)
+ANCHOR:
+-----8<-----
+  // Helper for Authenticating requests via Bearer Token, Server Session Token, or Session Cookie
+  async function authenticateSessionOrBearer(
+-----8<-----
+REPLACEMENT:
+-----8<-----
+  // AN-SEC-AUTH-1: A.N access-JWT verification with ONE shared router (never a router/pool per request)
+  async function verifyAnAccessTokenShared(token: string) {
+    const { TokenService } = await import("./src/an-core/auth/TokenService");
+    const { globalStorageRouter } = await import("./src/an-core/storage/StorageRouter");
+    const tokens = new TokenService(globalStorageRouter.getPrimaryAdapter());
+    return tokens.verifyAccessToken(token);
+  }
+
+  // Helper for Authenticating requests via Bearer Token, Server Session Token, or Session Cookie
+  async function authenticateSessionOrBearer(
+-----8<-----
+--- A2: Bearer path: shared verifier + role
+ANCHOR:
+-----8<-----
+              const { TokenService } = await import("./src/an-core/auth/TokenService");
+              const { StorageRouter } = await import("./src/an-core/storage/StorageRouter");
+              const router = new StorageRouter();
+              const tokens = new TokenService(router.getPrimaryAdapter());
+              const verified = await tokens.verifyAccessToken(token);
+              if (verified.valid && verified.payload?.sub) {
+                uid = verified.payload.sub;
+                anAuthJwt = true;
+                anTenantId = verified.payload.tenantId;
+              }
+-----8<-----
+REPLACEMENT:
+-----8<-----
+              const verified = await verifyAnAccessTokenShared(token);
+              if (verified.valid && verified.payload?.sub) {
+                uid = verified.payload.sub;
+                anAuthJwt = true;
+                anTenantId = verified.payload.tenantId;
+                anRole = String(verified.payload.role || "");
+              }
+-----8<-----
+--- A3: expose role on req
+ANCHOR:
+-----8<-----
+    (req as any).anAuthJwt = anAuthJwt;
+    (req as any).anTenantId = anTenantId;
+
+-----8<-----
+REPLACEMENT:
+-----8<-----
+    (req as any).anAuthJwt = anAuthJwt;
+    (req as any).anTenantId = anTenantId;
+    (req as any).anRole = anRole;
+
+-----8<-----
+--- A4: Cookie path: shared verifier + role
+ANCHOR:
+-----8<-----
+      try {
+        const { TokenService } = await import("./src/an-core/auth/TokenService");
+        const { StorageRouter } = await import("./src/an-core/storage/StorageRouter");
+        const router = new StorageRouter();
+        const tokens = new TokenService(router.getPrimaryAdapter());
+        const verified = await tokens.verifyAccessToken(token);
+        if (verified.valid && verified.payload?.sub) {
+          uid = verified.payload.sub;
+          (req as any).anAuthJwt = true;
+          (req as any).anTenantId = verified.payload.tenantId;
+        }
+      } catch {
+-----8<-----
+REPLACEMENT:
+-----8<-----
+      try {
+        const verified = await verifyAnAccessTokenShared(token);
+        if (verified.valid && verified.payload?.sub) {
+          uid = verified.payload.sub;
+          (req as any).anAuthJwt = true;
+          (req as any).anTenantId = verified.payload.tenantId;
+          (req as any).anRole = String(verified.payload.role || "");
+        }
+      } catch {
+-----8<-----
+--- A5: A.N JWT identity from the token (no Firestore lookup by sub, no hard-coded Admin)
+ANCHOR:
+-----8<-----
+    try {
+      const userDoc = await adminDb.collection("users").doc(uid).get();
+      if (!userDoc.exists && (req as any).anAuthJwt) {
+        return {
+          authenticated: true,
+          statusCode: 200,
+          message: "Authorized",
+          user: {
+            id: uid,
+            email: "",
+            role: "Admin",
+            company_id: (req as any).anTenantId || null,
+            an_jwt: true,
+            is_active: true,
+          },
+        };
+      }
+
+-----8<-----
+REPLACEMENT:
+-----8<-----
+    try {
+      if ((req as any).anAuthJwt) {
+        // AN-SEC-AUTH-1: the A.N token is the identity. Its own role is used (never a hard-coded Admin);
+        // elevated roles only count on the platform tenant ('default').
+        const tenant = String((req as any).anTenantId || "");
+        const rawRole = String((req as any).anRole || "");
+        const elevatedRole = rawRole === "SystemAdmin" || rawRole === "super_admin" || rawRole === "system_admin";
+        const role = elevatedRole && tenant !== "default" ? "Admin" : rawRole;
+        return {
+          authenticated: true,
+          statusCode: 200,
+          message: "Authorized",
+          user: {
+            id: uid,
+            email: "",
+            role,
+            company_id: tenant && tenant !== "default" ? tenant : null,
+            an_tenant_id: tenant || null,
+            an_jwt: true,
+            is_active: true,
+          },
+        };
+      }
+      const userDoc = await adminDb.collection("users").doc(uid).get();
+
+-----8<-----
+--- A6: logout really revokes the token family (no rotation)
+ANCHOR:
+-----8<-----
+          try {
+            const { TokenService } = await import("./src/an-core/auth/TokenService");
+            const tokens = new TokenService(anStorageRouter.getPrimaryAdapter());
+            const rotated = await tokens.rotateRefreshToken(plain).catch(() => null);
+            if (rotated && (rotated as any).familyId && typeof tokens.revokeFamily === "function") {
+              await tokens.revokeFamily((rotated as any).familyId, "LOGOUT");
+            }
+          } catch {
+-----8<-----
+REPLACEMENT:
+-----8<-----
+          try {
+            const { revokeFamilyByRefreshToken } = await import("./src/an-core/auth/anTokenRevoke");
+            await revokeFamilyByRefreshToken(anStorageRouter.getPrimaryAdapter() as any, plain, "LOGOUT");
+          } catch {
+-----8<-----
+--- A7: company-backend POST: platform/system admin only
+ANCHOR:
+-----8<-----
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = String(req.params.companyId || "").trim();
+
+-----8<-----
+REPLACEMENT:
+-----8<-----
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        {
+          // AN-SEC-AUTH-1: re-pointing a company's database is platform/system-admin only (not a company Admin)
+          const bu: any = (req as any).anMigrateUser || {};
+          let platformBu = false;
+          try {
+            platformBu = await isPlatformAdminUser(bu.email, bu);
+          } catch {
+            platformBu = false;
+          }
+          const br = String(bu.role || "");
+          if (!platformBu && br !== "SystemAdmin" && br !== "super_admin" && br !== "system_admin") {
+            return res.status(403).json({
+              ok: false,
+              code: "backend_change_forbidden",
+              message: "Changing a company's database backend requires platform or system admin",
+              messageAr: "تغيير قاعدة بيانات الشركة متاح لمدير المنصة أو مسؤول النظام فقط",
+            });
+          }
+        }
+        const companyId = String(req.params.companyId || "").trim();
+
+-----8<-----
+
+5) EDIT scripts/verifyAnSecSurface1.ts (guard is now stricter; keep that script green)
+   - replace the line   const okRefs = ['DATABASE_URL', 'MYSQL_URL', 'MONGODB_URL', 'TENANT_A_DB_URL'];
+     with               const okRefs = ['DATABASE_URL', 'DATABASE_URL_TENANT_A', 'DATABASE_URL_X1'];
+   - replace the text   const badRefs = ['SESSION_SECRET',
+     with               const badRefs = ['MYSQL_URL', 'MONGODB_URL', 'TENANT_A_DB_URL', 'SESSION_SECRET',
+   (if either text is not found exactly once, report it and continue; do not rewrite the script)
+
+6) EDIT src/lib/anPreviewBypass.ts (two small replacements)
+   6a. ANCHOR: "  STRICT_PROD_SECURITY?: string;\n}): boolean {"
+       REPLACEMENT: "  STRICT_PROD_SECURITY?: string;\n  NODE_ENV?: string;\n}): boolean {"
+   6b. ANCHOR: "  const strict =\n    String(env.STRICT_PROD_SECURITY || '').toLowerCase() === 'true';"
+       REPLACEMENT: "  const strict =\n    String(env.STRICT_PROD_SECURITY || '').toLowerCase() === 'true' || env.NODE_ENV === 'production';"
+
+7) CREATE scripts/verifyAnSecAuth1.ts
+-----8<-----
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) { console.log(`[PASS] ${name}`); passed++; }
+  else { console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`); failed++; }
+}
+const root = process.cwd();
+const read = (p: string) => (fs.existsSync(path.join(root, p)) ? fs.readFileSync(path.join(root, p), 'utf8') : '');
+
+/** minimal Firestore double: collection('users').where().where().limit().get(), .doc(id).get()/.set() */
+function fakeDb(seed: Record<string, any>) {
+  const docs: Record<string, any> = { ...seed };
+  const sets: Array<{ id: string; data: any }> = [];
+  const mkQuery = (filters: Array<[string, any]>) => ({
+    where(f: string, _op: string, v: any) { return mkQuery([...filters, [f, v]]); },
+    limit() { return this; },
+    async get() {
+      const hit = Object.entries(docs).filter(([, d]) => filters.every(([f, v]) => d[f] === v));
+      return { empty: hit.length === 0, docs: hit.slice(0, 1).map(([id, d]) => ({ id, data: () => d })) };
+    },
+  });
+  return {
+    docs, sets,
+    collection() {
+      return {
+        where: (f: string, op: string, v: any) => mkQuery([[f, v]]).where.length ? mkQuery([[f, v]]) : mkQuery([]),
+        doc: (id: string) => ({
+          async get() { return { exists: id in docs, data: () => docs[id] }; },
+          async set(data: any) { docs[id] = { ...(docs[id] || {}), ...data }; sets.push({ id, data }); },
+        }),
+      };
+    },
+  };
+}
+
+async function main() {
+  const server = read('server.ts');
+  const fnStart = server.indexOf('async function authenticateSessionOrBearer');
+  const fnEnd = server.indexOf('// API Route - Unified Secure User Provisioning', fnStart);
+  const authFn = server.slice(fnStart, fnEnd);
+
+  check('A1 no hard-coded Admin for A.N JWT users', !/role:\s*"Admin",\s*\n\s*company_id:\s*\(req as any\)\.anTenantId/.test(authFn) && authFn.includes('anRole'));
+  check('A2 no per-request StorageRouter in auth', !authFn.includes('new StorageRouter()') && server.includes('verifyAnAccessTokenShared'));
+  check('A3 both bearer and cookie paths use shared verifier', (authFn.match(/verifyAnAccessTokenShared\(/g) || []).length === 2);
+  check('A4 elevated A.N roles only on platform tenant', authFn.includes('tenant !== "default"') && authFn.includes('"Admin" : rawRole'));
+  const logout = server.slice(server.indexOf('app.post("/api/an/auth/logout"'), server.indexOf('app.get("/api/an/auth/me"'));
+  check('A5 logout revokes family (no rotation)', logout.includes('revokeFamilyByRefreshToken') && !logout.includes('rotateRefreshToken'));
+  const i0 = server.indexOf('app.post("/api/an/company-backend/:companyId"');
+  const cb = server.slice(i0, server.indexOf('\n    app.', i0 + 40));
+  check('A6 company-backend POST is platform/system-admin only', cb.includes('backend_change_forbidden') && cb.includes('isPlatformAdminUser'));
+
+  const bridge: any = await import(path.join(root, 'src/lib/anAuthBridge.ts'));
+  // B1: attacker A.N user whose username equals a KEMIT SystemAdmin email must NOT be linked to it
+  const victim = { email: 'boss@corp.com', role: 'SystemAdmin', is_active: true };
+  const db1 = fakeDb({ 'kemit-uid-1': victim });
+  let mintedFor = '';
+  const auth1 = { createCustomToken: async (uid: string) => { mintedFor = uid; return 'tok'; } };
+  const r1 = await bridge.issueFirebaseCustomTokenForAnUser({ adminDb: db1, getAdminAuth: () => auth1, anUser: { id: 'u-evil', username: 'boss@corp.com', role: 'Admin', tenantId: 'acme' } });
+  check('A7 bridge: email-matching A.N user is NOT linked to the KEMIT account',
+    r1.ok && mintedFor !== 'kemit-uid-1' && mintedFor.startsWith('an_') && !db1.docs['kemit-uid-1'].an_user_id && db1.docs[mintedFor].email !== 'boss@corp.com');
+  // B2: role mapping
+  const db2 = fakeDb({});
+  await bridge.issueFirebaseCustomTokenForAnUser({ adminDb: db2, getAdminAuth: () => auth1, anUser: { id: 'u2', username: 'bob', role: 'SystemAdmin', tenantId: 'acme' } });
+  const db3 = fakeDb({});
+  await bridge.issueFirebaseCustomTokenForAnUser({ adminDb: db3, getAdminAuth: () => auth1, anUser: { id: 'u3', username: 'carol', tenantId: 'acme' } });
+  const db4 = fakeDb({});
+  await bridge.issueFirebaseCustomTokenForAnUser({ adminDb: db4, getAdminAuth: () => auth1, anUser: { id: 'u4', username: 'root', role: 'SystemAdmin', tenantId: 'default' } });
+  const roleOf = (db: any) => (Object.values(db.docs)[0] as any).role;
+  check('A8 bridge role mapping: tenant SystemAdmin->Admin, missing->User, platform SystemAdmin kept',
+    roleOf(db2) === 'Admin' && roleOf(db3) === 'User' && roleOf(db4) === 'SystemAdmin');
+  // B3: already linked pair -> same uid, role untouched
+  const db5 = fakeDb({ an_linked: { an_user_id: 'u5', an_tenant_id: 'acme', role: 'Viewer', email: 'x@y.z' } });
+  const r5 = await bridge.issueFirebaseCustomTokenForAnUser({ adminDb: db5, getAdminAuth: () => auth1, anUser: { id: 'u5', username: 'dave', role: 'SystemAdmin', tenantId: 'acme' } });
+  check('A9 bridge: linked (id+tenant) reuses uid and never rewrites role', r5.firebaseUid === 'an_linked' && db5.docs['an_linked'].role === 'Viewer');
+  // B4: same an_user_id in ANOTHER tenant must not link
+  const r6 = await bridge.issueFirebaseCustomTokenForAnUser({ adminDb: db5, getAdminAuth: () => auth1, anUser: { id: 'u5', username: 'dave', role: 'Admin', tenantId: 'other' } });
+  check('A10 bridge: same user id in another tenant is a different identity', r6.ok === true && r6.firebaseUid !== 'an_linked');
+
+  const rv: any = await import(path.join(root, 'src/an-core/auth/anTokenRevoke.ts'));
+  const calls: string[] = [];
+  const storage: any = {
+    withTenantScope: async (_t: string, fn: any) => fn(),
+    getRefreshToken: async () => ({ success: true, data: { familyId: 'fam-1' } }),
+    invalidateTokenFamily: async (f: string, why: string) => { calls.push(`${f}:${why}`); },
+  };
+  const tok = 'rt.' + Buffer.from(JSON.stringify({ tenantId: 'acme', familyId: 'fam-1' })).toString('base64url') + '.abcd';
+  const ok1 = await rv.revokeFamilyByRefreshToken(storage, tok, 'LOGOUT');
+  const bad1 = await rv.revokeFamilyByRefreshToken(storage, 'garbage', 'LOGOUT');
+  const bad2 = await rv.revokeFamilyByRefreshToken({ ...storage, getRefreshToken: async () => ({ success: true, data: null }) }, tok, 'LOGOUT');
+  check('A11 revoke: valid refresh token invalidates its family; garbage/unknown do nothing', ok1 === true && calls.length === 1 && calls[0] === 'fam-1:LOGOUT' && bad1 === false && bad2 === false);
+
+  const pb: any = await import(path.join(root, 'src/lib/anPreviewBypass.ts'));
+  check('A12 preview bypass: off in production unless FORCE; on in dev',
+    pb.isPreviewBypassEnvEnabled({ AN_PREVIEW_BYPASS: '1', NODE_ENV: 'production' }) === false &&
+    pb.isPreviewBypassEnvEnabled({ AN_PREVIEW_BYPASS: '1', NODE_ENV: 'production', AN_PREVIEW_BYPASS_FORCE: '1' }) === true &&
+    pb.isPreviewBypassEnvEnabled({ AN_PREVIEW_BYPASS: '1', NODE_ENV: 'development' }) === true &&
+    pb.isPreviewBypassEnvEnabled({ NODE_ENV: 'development' }) === false);
+
+  const g: any = await import(path.join(root, 'src/lib/anConnectionRefGuard.ts'));
+  const routerSrc = read('src/an-core/storage/StorageRouter.ts');
+  check('A13 connection_ref guard = StorageRouter pattern (DATABASE_URL[_NAME] only)',
+    routerSrc.includes('/^DATABASE_URL(_[A-Z0-9_]{1,40})?$/') &&
+    ['DATABASE_URL', 'DATABASE_URL_TENANT_A'].every((r) => g.isSafeConnectionRef(r)) &&
+    ['MYSQL_URL', 'SESSION_SECRET', 'JWT_SECRET', 'postgres://u:p@h/db', 'DATABASE_URL_', 'database_url', ''].every((r) => !g.isSafeConnectionRef(r)));
+  check('A14 MERGE_STATUS records SEC-AUTH1', read('docs/MERGE_STATUS.md').includes('SEC-AUTH1'));
+
+  console.log(`Passed: ${passed} | Failed: ${failed}`);
+  process.exit(failed > 0 ? 1 : 0);
+}
+main().catch((e) => { console.log('[FAIL] verify crashed —', e?.message || e); process.exit(1); });
+-----8<-----
+   package.json: add script  "verify:sec-auth": "tsx scripts/verifyAnSecAuth1.ts"
+
+8) docs/MERGE_STATUS.md: add Phase row  | SEC-AUTH1 | Auth bridge hardening (no email linking, real roles, real logout) | DONE | N1-N7 |
+   and rule 35: `35. **SEC-AUTH-1:** KEMIT users are linked to A.N users only by (an_user_id, an_tenant_id), never by email/username; A.N JWT identity uses the token's own role (elevated roles only on tenant "default"); logout revokes the refresh-token family; company-backend writes are platform/system-admin only.`
+
+9) RUN: npx tsc --noEmit  then  npm run build
+   If tsc reports that TokenService.withTenantScope / getRefreshToken / invalidateTokenFamily signatures differ from the structural type in
+   anTokenRevoke.ts, adapt ONLY the parameter type in anTokenRevoke.ts (keep behaviour) and report it.
+10) RUN: npx tsx scripts/verifyAnSecAuth1.ts   (expected: Passed: 14 | Failed: 0)
+11) REGRESSION: npx tsx scripts/verifyAnSecSurface1.ts ; npx tsx scripts/verifyAnInvPilot1.ts ; npx tsx scripts/verifyAnMigIdem1.ts ; npx tsx scripts/verifyMergeAll.ts
+12) MANUAL SMOKE (report PASS/FAIL only, no secrets): (a) A.N login as a NON-admin A.N user, then call POST /api/an/migrate/inventory/warehouses with that
+    session -> must be 403 migrate_forbidden; (b) log out, then call POST /api/an/auth/refresh with the OLD refresh token -> must be rejected;
+    (c) platform admin can still save Company Settings > backend panel; a company Admin gets 403 backend_change_forbidden.
+
+RESULTS REPORT (print ONLY this block at the end)
+===== RESULTS REPORT =====
+9) tsc: <n> errors | build: <OK|FAIL>
+10) verifyAnSecAuth1: Passed: <n> | Failed: <n>
+11) regression: SecSurface1 <n/n> | InvPilot1 <n/n> | MigIdem1 <n/n> | MergeAll <n/n>
+12) smoke: a=<..> b=<..> c=<..>
+Status: DONE | package: AN-SEC-AUTH-1
+===========================
+(on failure: Status: FAIL / Step: <n> / Reason: <one sentence>)
+
+COMMIT NOTE: fix(security): bridge links by an_user_id+tenant only, real A.N roles, real logout, shared token verifier (AN-SEC-AUTH-1)

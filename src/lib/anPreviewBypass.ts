@@ -48,13 +48,14 @@ export function isPreviewBypassEnvEnabled(env: {
   AN_PREVIEW_BYPASS?: string;
   AN_PREVIEW_BYPASS_FORCE?: string;
   STRICT_PROD_SECURITY?: string;
+  NODE_ENV?: string;
 }): boolean {
   const on =
     env.AN_PREVIEW_BYPASS === '1' ||
     env.AN_PREVIEW_BYPASS === 'true';
   if (!on) return false;
   const strict =
-    String(env.STRICT_PROD_SECURITY || '').toLowerCase() === 'true';
+    String(env.STRICT_PROD_SECURITY || '').toLowerCase() === 'true' || env.NODE_ENV === 'production';
   if (strict) {
     return env.AN_PREVIEW_BYPASS_FORCE === '1' || env.AN_PREVIEW_BYPASS_FORCE === 'true';
   }

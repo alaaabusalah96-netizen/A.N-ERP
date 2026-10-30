@@ -669,11 +669,20 @@ async function startServer() {
   });
 
   // Helper for Authenticating requests via Bearer Token, Server Session Token, or Session Cookie
+  // AN-SEC-AUTH-1: A.N access-JWT verification with ONE shared router (never a router/pool per request)
+  async function verifyAnAccessTokenShared(token: string) {
+    const { TokenService } = await import("./src/an-core/auth/TokenService");
+    const { globalStorageRouter } = await import("./src/an-core/storage/StorageRouter");
+    const tokens = new TokenService(globalStorageRouter.getPrimaryAdapter());
+    return tokens.verifyAccessToken(token);
+  }
+
   // Helper for Authenticating requests via Bearer Token, Server Session Token, or Session Cookie
   async function authenticateSessionOrBearer(req: express.Request): Promise<{ authenticated: boolean; statusCode: number; message: string; user?: any }> {
     let uid: string | null = null;
     let anAuthJwt = false;
     let anTenantId: string | null = null;
+    let anRole = "";
 
     // 1. Check Bearer Token
     const authHeader = req.headers.authorization;
@@ -691,15 +700,12 @@ async function startServer() {
           } else {
             // AN-AUTH-BRIDGE-1: accept A.N access JWT
             try {
-              const { TokenService } = await import("./src/an-core/auth/TokenService");
-              const { StorageRouter } = await import("./src/an-core/storage/StorageRouter");
-              const router = new StorageRouter();
-              const tokens = new TokenService(router.getPrimaryAdapter());
-              const verified = await tokens.verifyAccessToken(token);
+              const verified = await verifyAnAccessTokenShared(token);
               if (verified.valid && verified.payload?.sub) {
                 uid = verified.payload.sub;
                 anAuthJwt = true;
                 anTenantId = verified.payload.tenantId;
+                anRole = String(verified.payload.role || "");
               }
             } catch {
               /* fall through */
@@ -710,6 +716,7 @@ async function startServer() {
     }
     (req as any).anAuthJwt = anAuthJwt;
     (req as any).anTenantId = anTenantId;
+    (req as any).anRole = anRole;
 
     // 2. Check x-session-token custom header
     if (!uid) {
@@ -742,15 +749,12 @@ async function startServer() {
     if (!uid && req.cookies?.an_access) {
       const token = String(req.cookies.an_access);
       try {
-        const { TokenService } = await import("./src/an-core/auth/TokenService");
-        const { StorageRouter } = await import("./src/an-core/storage/StorageRouter");
-        const router = new StorageRouter();
-        const tokens = new TokenService(router.getPrimaryAdapter());
-        const verified = await tokens.verifyAccessToken(token);
+        const verified = await verifyAnAccessTokenShared(token);
         if (verified.valid && verified.payload?.sub) {
           uid = verified.payload.sub;
           (req as any).anAuthJwt = true;
           (req as any).anTenantId = verified.payload.tenantId;
+          (req as any).anRole = String(verified.payload.role || "");
         }
       } catch {
         /* fall through */
@@ -762,8 +766,13 @@ async function startServer() {
     }
 
     try {
-      const userDoc = await adminDb.collection("users").doc(uid).get();
-      if (!userDoc.exists && (req as any).anAuthJwt) {
+      if ((req as any).anAuthJwt) {
+        // AN-SEC-AUTH-1: the A.N token is the identity. Its own role is used (never a hard-coded Admin);
+        // elevated roles only count on the platform tenant ('default').
+        const tenant = String((req as any).anTenantId || "");
+        const rawRole = String((req as any).anRole || "");
+        const elevatedRole = rawRole === "SystemAdmin" || rawRole === "super_admin" || rawRole === "system_admin";
+        const role = elevatedRole && tenant !== "default" ? "Admin" : rawRole;
         return {
           authenticated: true,
           statusCode: 200,
@@ -771,13 +780,15 @@ async function startServer() {
           user: {
             id: uid,
             email: "",
-            role: "Admin",
-            company_id: (req as any).anTenantId || null,
+            role,
+            company_id: tenant && tenant !== "default" ? tenant : null,
+            an_tenant_id: tenant || null,
             an_jwt: true,
             is_active: true,
           },
         };
       }
+      const userDoc = await adminDb.collection("users").doc(uid).get();
       if (!userDoc.exists) {
         return { authenticated: false, statusCode: 403, message: "Forbidden: Authenticated user record not found." };
       }
@@ -2821,6 +2832,25 @@ async function startServer() {
     app.post("/api/an/company-backend/:companyId", async (req: any, res: any) => {
       try {
         if (!(await requireAnMigrateOperator(req, res))) return;
+        {
+          // AN-SEC-AUTH-1: re-pointing a company's database is platform/system-admin only (not a company Admin)
+          const bu: any = (req as any).anMigrateUser || {};
+          let platformBu = false;
+          try {
+            platformBu = await isPlatformAdminUser(bu.email, bu);
+          } catch {
+            platformBu = false;
+          }
+          const br = String(bu.role || "");
+          if (!platformBu && br !== "SystemAdmin" && br !== "super_admin" && br !== "system_admin") {
+            return res.status(403).json({
+              ok: false,
+              code: "backend_change_forbidden",
+              message: "Changing a company's database backend requires platform or system admin",
+              messageAr: "تغيير قاعدة بيانات الشركة متاح لمدير المنصة أو مسؤول النظام فقط",
+            });
+          }
+        }
         const companyId = String(req.params.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
         { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
@@ -4046,12 +4076,8 @@ async function startServer() {
           String(req.cookies?.an_refresh || "").trim();
         if (plain) {
           try {
-            const { TokenService } = await import("./src/an-core/auth/TokenService");
-            const tokens = new TokenService(anStorageRouter.getPrimaryAdapter());
-            const rotated = await tokens.rotateRefreshToken(plain).catch(() => null);
-            if (rotated && (rotated as any).familyId && typeof tokens.revokeFamily === "function") {
-              await tokens.revokeFamily((rotated as any).familyId, "LOGOUT");
-            }
+            const { revokeFamilyByRefreshToken } = await import("./src/an-core/auth/anTokenRevoke");
+            await revokeFamilyByRefreshToken(anStorageRouter.getPrimaryAdapter() as any, plain, "LOGOUT");
           } catch {
             /* still clear cookies */
           }

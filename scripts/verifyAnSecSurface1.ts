@@ -56,8 +56,8 @@ async function main() {
   check('S10 build prunes dist/assets/aistudio', /"build"\s*:\s*"(?:[^"\\]|\\.)*aistudio/.test(pkg));
 
   const g: any = await import(path.join(root, 'src/lib/anConnectionRefGuard.ts'));
-  const okRefs = ['DATABASE_URL', 'MYSQL_URL', 'MONGODB_URL', 'TENANT_A_DB_URL'];
-  const badRefs = ['SESSION_SECRET', 'JWT_SECRET', 'APP_PEPPER', 'FIREBASE_API_KEY', 'GEMINI_API_KEY', 'postgres://u:p@h/db', 'lower_case', '', 'A', 'MY_API_KEY', 'ADMIN_PASSWORD', 'PATH'];
+  const okRefs = ['DATABASE_URL', 'DATABASE_URL_TENANT_A', 'DATABASE_URL_X1'];
+  const badRefs = ['MYSQL_URL', 'MONGODB_URL', 'TENANT_A_DB_URL', 'SESSION_SECRET', 'JWT_SECRET', 'APP_PEPPER', 'FIREBASE_API_KEY', 'GEMINI_API_KEY', 'postgres://u:p@h/db', 'lower_case', '', 'A', 'MY_API_KEY', 'ADMIN_PASSWORD', 'PATH'];
   check('S11 isSafeConnectionRef accepts DB env names', okRefs.every((r) => g.isSafeConnectionRef(r)));
   check('S12 isSafeConnectionRef rejects secrets/URLs/invalid', badRefs.every((r) => !g.isSafeConnectionRef(r)), badRefs.filter((r) => g.isSafeConnectionRef(r)).join(','));
   check('S13 existing gates intact (migrate operator, AN_MIGRATE_WRITES, pilot mount)',

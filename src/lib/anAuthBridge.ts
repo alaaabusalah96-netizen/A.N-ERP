@@ -1,7 +1,8 @@
 /**
- * AN-AUTH-BRIDGE-1 — map A.N user → Firebase custom token (best-effort).
+ * AN-AUTH-BRIDGE-1 / AN-SEC-AUTH-1 — map A.N user -> Firebase custom token (best-effort).
+ * SECURITY: a KEMIT users doc is linked ONLY by (an_user_id, an_tenant_id). Never by email/username:
+ * tenant-local usernames must never be able to claim an existing KEMIT account.
  */
-import type { User } from '../an-core/storage/StoragePort';
 import crypto from 'crypto';
 
 export interface FirebaseBridgeResult {
@@ -11,10 +12,16 @@ export interface FirebaseBridgeResult {
   firebaseUid?: string;
 }
 
-/**
- * Find or create a Firestore users doc for the A.N user, then createCustomToken(uid).
- * adminDb / getAdminAuth injected from server to avoid circular imports.
- */
+const ELEVATED_ROLES = new Set(['SystemAdmin', 'super_admin', 'system_admin']);
+
+/** A.N role -> KEMIT users.role. Elevated roles only survive on the platform tenant ('default'). Missing role never defaults to Admin. */
+export function mapAnRoleToKemitRole(role: unknown, tenantId: string): string {
+  const r = String(role || '').trim();
+  if (!r) return 'User';
+  if (ELEVATED_ROLES.has(r)) return tenantId === 'default' ? r : 'Admin';
+  return r;
+}
+
 export async function issueFirebaseCustomTokenForAnUser(deps: {
   adminDb: any;
   getAdminAuth: () => any;
@@ -32,37 +39,42 @@ export async function issueFirebaseCustomTokenForAnUser(deps: {
     return { ok: false, code: 'admin_unavailable' };
   }
   try {
-    const email =
-      (anUser.email || '').trim().toLowerCase() ||
-      (anUser.username.includes('@')
-        ? anUser.username.trim().toLowerCase()
-        : `${anUser.username.trim().toLowerCase()}@an-local.invalid`);
     const users = adminDb.collection('users');
-
-    // Prefer lookup by an_user_id, then email
     let uid: string | null = null;
+
+    // Link ONLY by the (an_user_id, an_tenant_id) pair. A failed lookup is fail-closed (no email fallback).
+    let byAn: any;
     try {
-      const byAn = await users.where('an_user_id', '==', anUser.id).limit(1).get();
-      if (!byAn.empty) uid = byAn.docs[0].id;
+      byAn = await users.where('an_user_id', '==', anUser.id).where('an_tenant_id', '==', anUser.tenantId).limit(1).get();
     } catch {
-      /* index optional */
+      return { ok: false, code: 'lookup_failed' };
     }
+    if (!byAn.empty) uid = byAn.docs[0].id;
+
     if (!uid) {
-      try {
-        const byEmail = await users.where('email', '==', email).limit(1).get();
-        if (!byEmail.empty) uid = byEmail.docs[0].id;
-      } catch {
-        /* ignore */
+      const detUid = 'an_' + crypto.createHash('sha256').update(anUser.tenantId + ':' + anUser.id).digest('hex').slice(0, 28);
+      const existing = await users.doc(detUid).get();
+      if (existing.exists) {
+        const d = existing.data() || {};
+        if (d.an_user_id && (d.an_user_id !== anUser.id || d.an_tenant_id !== anUser.tenantId)) {
+          return { ok: false, code: 'uid_conflict' };
+        }
       }
-    }
-    if (!uid) {
-      // Stable deterministic uid namespace (not a password)
-      uid = 'an_' + crypto.createHash('sha256').update(anUser.tenantId + ':' + anUser.id).digest('hex').slice(0, 28);
+      // Use the real email only if no other KEMIT user owns it; otherwise a synthetic, unique one.
+      const wanted =
+        (anUser.email || '').trim().toLowerCase() ||
+        (anUser.username.includes('@') ? anUser.username.trim().toLowerCase() : '');
+      let email = `${detUid}@an-local.invalid`;
+      if (wanted) {
+        const owner = await users.where('email', '==', wanted).limit(1).get();
+        if (owner.empty) email = wanted;
+      }
+      uid = detUid;
       await users.doc(uid).set(
         {
           email,
           full_name: anUser.fullName || anUser.username,
-          role: anUser.role || 'Admin',
+          role: mapAnRoleToKemitRole(anUser.role, anUser.tenantId),
           company_id: anUser.tenantId === 'default' ? null : anUser.tenantId,
           an_user_id: anUser.id,
           an_tenant_id: anUser.tenantId,
@@ -74,12 +86,7 @@ export async function issueFirebaseCustomTokenForAnUser(deps: {
       );
     } else {
       await users.doc(uid).set(
-        {
-          an_user_id: anUser.id,
-          an_tenant_id: anUser.tenantId,
-          auth_bridge: 'an-auth-bridge-1',
-          updated_at: new Date().toISOString(),
-        },
+        { an_user_id: anUser.id, an_tenant_id: anUser.tenantId, auth_bridge: 'an-auth-bridge-1', updated_at: new Date().toISOString() },
         { merge: true }
       );
     }
@@ -89,7 +96,7 @@ export async function issueFirebaseCustomTokenForAnUser(deps: {
       an_tenant_id: anUser.tenantId,
     });
     return { ok: true, customToken, firebaseUid: uid };
-  } catch (e: any) {
+  } catch {
     return { ok: false, code: 'custom_token_failed' };
   }
 }
