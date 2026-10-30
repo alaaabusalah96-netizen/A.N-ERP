@@ -47,7 +47,7 @@
 | ADP1 | Per-company migrate adapter | DONE | resolveCompanyStorageAdapter on migrate routes; primary fallback |
 | INV-L1 | A.N inventory list APIs | DONE | GET warehouses/items via company adapter; session required; CustodyDB UI unchanged |
 | INV-S1 | A.N stock balances read | DONE | GET /api/an/inventory/stock; company adapter; session required |
-| SEC-SCOPE1 | Company scope on A.N inventory APIs | DONE | assertUserCanAccessCompany on inventory reads (+ migrate companyId) |
+| SEC-SCOPE1 | Company scope on A.N inventory APIs | DONE | assertUserCanAccessCompany on inventory reads (migrate scope added in SEC-SURFACE1) |
 | ADP-FC1 | Adapter fail-closed on company load error | DONE | no silent primary when company config load fails |
 | ADP-RT1 | Two-company adapter route proof | DONE | verifyAnAdapterRouteTest1 — shared vs dedicated routing |
 | MIG-IDEM1 | Migrate batch idempotency | DONE | Idempotency-Key required on migrate POSTs; row keys stable for replay |
@@ -62,6 +62,7 @@
 | FIX-PGROLE1 | PG role NOBYPASSRLS ops pack | DONE | SQL an_erp_app + docs + probe; CONFIG until DATABASE_URL uses the role |
 | FIX-CIDOCS1 | CI verifies + deploy flags doc | DONE | build + A.N static verifies in CI; gitignore; AN-DEPLOY-FLAGS |
 | DEV-PREVIEW1 | Dev preview full-admin bypass | DONE | AN_PREVIEW_BYPASS shows SystemAdmin local enter; blocked under STRICT_PROD_SECURITY |
+| SEC-SURFACE1 | Close unauth/cross-tenant/secret-fallback holes | DONE | F1-F5; SESSION_SECRET required in prod |
 
 ## Canonical rules (do not regress)
 
@@ -105,6 +106,7 @@
 40. **FIX-PG-ROLE-1:** Ship SQL/docs for an_erp_app NOSUPERUSER NOBYPASSRLS. Runtime remains CONFIG until operator points DATABASE_URL at that role and probe passes.
 41. **FIX-CI-DOCS-1:** CI runs production build and A.N static verify scripts; deploy flags documented; gitignore hardened for reports/archives.
 42. **DEV-PREVIEW-BYPASS-1:** When AN_PREVIEW_BYPASS=1 (and not strict prod), Login offers a local SystemAdmin session for UI preview without credentials. Not for production.
+43. **SEC-SURFACE-1:** SESSION_SECRET is mandatory (>=32) in production/strict; company-backend, live-check and all migrate routes require operator + company scope; connection_ref must pass isSafeConnectionRef; /assets/aistudio is never served.
 
 ## Verify
 

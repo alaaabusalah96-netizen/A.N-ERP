@@ -429,7 +429,16 @@ async function startServer() {
     }
   });
 
-  const SERVER_SESSION_SECRET = process.env.SESSION_SECRET || "kemit_server_session_secret_fallback_key_2026";
+  const SERVER_SESSION_SECRET: string = (() => {
+    const s = String(process.env.SESSION_SECRET || "").trim();
+    if (s.length >= 32) return s;
+    if (isProductionOrStrict) {
+      console.error("CRITICAL SECURITY ERROR: SESSION_SECRET (>= 32 chars) is not set in production/strict mode. Refusing to start.");
+      process.exit(1);
+    }
+    console.warn("[Security Notice] SESSION_SECRET missing/short — using an ephemeral dev secret (sessions reset on restart).");
+    return crypto.randomBytes(32).toString("hex");
+  })();
 
   function signServerSessionToken(payload: { uid: string; email: string; role?: string; company_id?: string; timestamp?: number }): string {
     const data = JSON.stringify({ ...payload, timestamp: payload.timestamp || Date.now() });
@@ -2811,8 +2820,11 @@ async function startServer() {
     });
     app.post("/api/an/company-backend/:companyId", async (req: any, res: any) => {
       try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
         const companyId = String(req.params.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
+        const { isSafeConnectionRef } = await import("./src/lib/anConnectionRefGuard");
         const body = req.body || {};
         const db_backend = body.db_backend || "firebase";
         const auth_driver = body.auth_driver || "firebase";
@@ -2833,8 +2845,8 @@ async function startServer() {
         if (needsRef && !connection_ref) {
           return res.status(400).json({ ok: false, error: "connection_ref required" });
         }
-        if (connection_ref && (connection_ref.includes("://") || connection_ref.length > 128)) {
-          return res.status(400).json({ ok: false, error: "connection_ref must be env var name only" });
+        if (connection_ref && (connection_ref.includes("://") || connection_ref.length > 128 || !isSafeConnectionRef(connection_ref))) {
+          return res.status(400).json({ ok: false, error: "connection_ref must be a DB connection env var name only" });
         }
         if (!connection_ref && db_backend === "postgresql") connection_ref = "DATABASE_URL";
         const settings = { auth_driver, db_backend, isolation_level, connection_ref };
@@ -2970,10 +2982,15 @@ async function startServer() {
     });
     app.get("/api/an/data-plane/company/:companyId", async (req: any, res: any) => {
       try {
+        const authResult = await authenticateSessionOrBearer(req);
+        if (!authResult.authenticated) {
+          return res.status(authResult.statusCode || 401).json({ ok: false, message: authResult.message });
+        }
         const companyId = String(req.params.companyId || "").trim();
         if (!companyId) {
           return res.status(400).json({ ok: false, error: "companyId required" });
         }
+        { const scope: any = await assertUserCanAccessCompany(authResult.user, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
         const { probeCompanyPlane } = await import("./src/lib/anDataPlane");
         let record: Record<string, unknown> | null = null;
         let source: "firestore" | "unavailable" = "unavailable";
@@ -3019,11 +3036,16 @@ async function startServer() {
     });
     app.get("/api/an/data-plane/live-check", async (req: any, res: any) => {
       try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
         const { liveCheckDefaultProcess, liveCheckBackend } = await import("./src/lib/anDataPlane");
+        const { isSafeConnectionRef } = await import("./src/lib/anConnectionRefGuard");
         const q = req.query || {};
         const hasOverride =
           typeof q.db_backend === "string" ||
           typeof q.connection_ref === "string";
+        if (typeof q.connection_ref === "string" && q.connection_ref.trim() && !isSafeConnectionRef(q.connection_ref)) {
+          return res.status(400).json({ ok: false, code: "unsafe_connection_ref", error: "connection_ref must be a DB connection env var name only" });
+        }
         let live;
         let probeMeta = null;
         if (hasOverride) {
@@ -3068,6 +3090,7 @@ async function startServer() {
         const { buildSessionPlane } = await import("./src/lib/anSessionPlane");
         const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "";
         const runLive = req.query.live === "1" || req.query.live === "true";
+        if (runLive && !(await requireAnMigrateOperator(req, res))) return;
         let record: Record<string, unknown> | null = null;
         let companySource: "firestore" | "process-default" | "unavailable" = "process-default";
         if (companyId) {
@@ -3294,6 +3317,7 @@ async function startServer() {
       try {
         if (!(await requireAnMigrateOperator(req, res))) return;
         const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "default";
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
         const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
         const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
@@ -3391,6 +3415,7 @@ async function startServer() {
         if (!companyId) {
           return res.status(400).json({ ok: false, error: "companyId required" });
         }
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
         const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
         const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
@@ -3486,6 +3511,7 @@ async function startServer() {
         if (!(await requireAnMigrateOperator(req, res))) return;
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
         const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
         const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
@@ -3575,6 +3601,7 @@ async function startServer() {
         if (!(await requireAnMigrateOperator(req, res))) return;
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
         const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
         const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
@@ -3664,6 +3691,7 @@ async function startServer() {
         if (!(await requireAnMigrateOperator(req, res))) return;
         const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
         if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
         const { loadCompanyLikeFromFirestore, resolveCompanyStorageAdapter, isAdapterFailClosedEnv } = await import("./src/lib/anResolveCompanyAdapter");
         const loadResult = await loadCompanyLikeFromFirestore(
           typeof adminDb !== "undefined" ? adminDb : null,
@@ -4134,6 +4162,8 @@ async function startServer() {
     });
   } else {
     const distPath = path.join(process.cwd(), "dist");
+    // AN-SEC-SURFACE-1: AI Studio package files/zips must never be served publicly.
+    app.use("/assets/aistudio", (_req: any, res: any) => res.status(404).end());
     app.use(express.static(distPath));
     app.get("*", (req: any, res: any, next: any) => {
       if ((req.originalUrl || req.url || "").startsWith("/api")) return next();

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "SERVE_DIST=1 tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && node -e \"require('fs').rmSync('dist/assets/aistudio',{recursive:true,force:true})\"",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
@@ -27,7 +27,8 @@
     "verify:auth-rolemap": "tsx scripts/verifyAnAuthRoleMap1.ts",
     "verify:fix-pg-role": "tsx scripts/verifyAnFixPgRole1.ts",
     "verify:fix-ci-docs": "tsx scripts/verifyAnFixCiDocs1.ts",
-    "verify:auth-bypass": "tsx scripts/verifyAnDevPreviewBypass1.ts"
+    "verify:auth-bypass": "tsx scripts/verifyAnDevPreviewBypass1.ts",
+    "verify:sec-surface": "tsx scripts/verifyAnSecSurface1.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

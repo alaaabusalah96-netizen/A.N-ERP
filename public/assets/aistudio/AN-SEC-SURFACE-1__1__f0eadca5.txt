@@ -1,0 +1,373 @@
+AN-SEC-SURFACE-1 — LEAN PACKAGE (designed from live repo head da3a508, after INV-PILOT-1)
+==========================================================================================
+GOAL (single): close the unauthenticated / cross-tenant / secret-fallback holes found in the A.N bridge BEFORE
+any further merge phase. No new features, no schema change, no UI change.
+
+FINDINGS THIS PACKAGE CLOSES
+ F1 CRITICAL  server.ts SERVER_SESSION_SECRET falls back to a public hard-coded string when SESSION_SECRET is unset
+              -> anyone can forge a session token for any uid/role.
+ F2 CRITICAL  POST /api/an/company-backend/:companyId has NO auth: anyone can rewrite any company's db_backend /
+              connection_ref (adapter routing hijack).
+ F3 HIGH      the 5 /api/an/migrate/* routes check operator role only, NOT company scope: a company "Admin" of company A
+              can run migrate (when AN_MIGRATE_WRITES=1) against company B. (MERGE_STATUS claims scope on migrate; code does not.)
+ F4 HIGH      GET /api/an/data-plane/live-check is public and accepts connection_ref override (probes arbitrary env var names);
+              /data-plane/company/:id and /session-plane?live=1 are public.
+ F5 HIGH      public/assets/aistudio/ (all packages + 2 zips incl. full app source) is copied into dist and served statically.
+
+HARD RULES
+- One package only. Stop at first failure. Do NOT touch Inventory.tsx, CustodyDB, Firestore rules, login flows, pilot/migrate logic.
+- Do NOT print secrets. Do NOT set any real SESSION_SECRET value in repo files (name only in .env.example).
+- DEPLOY NOTE (must appear in your final report): production now REFUSES TO START without SESSION_SECRET (>=32 chars);
+  set it in the host env BEFORE deploying. Existing sessions signed with the old fallback become invalid (users re-login).
+
+1) PRECHECK (fail -> STOP, report): server.ts contains every ANCHOR text listed in step 3 exactly once;
+   `isProductionOrStrict` is a module-level const; `crypto` is imported; requireAnMigrateOperator and
+   assertUserCanAccessCompany exist (note: function declarations are hoisted within the same block as the routes;
+   if tsc reports "used before declaration", move NOTHING — report it).
+
+2) CREATE src/lib/anConnectionRefGuard.ts
+-----8<-----
+/**
+ * AN-SEC-SURFACE-1 — connection_ref must be the NAME of a DB connection env var, never a secret/app env var.
+ */
+const NAME_RE = /^[A-Z][A-Z0-9_]{1,63}$/;
+const DENY_EXACT = new Set([
+  'SESSION_SECRET', 'JWT_SECRET', 'APP_PEPPER', 'GEMINI_API_KEY', 'PLATFORM_ADMIN_PASSWORD',
+  'PLATFORM_ADMIN_EMAIL', 'GOOGLE_APPLICATION_CREDENTIALS', 'NODE_ENV', 'PATH', 'HOME',
+]);
+const DENY_PREFIX = ['FIREBASE_', 'VITE_', 'GOOGLE_', 'AWS_', 'ANTHROPIC_', 'OPENAI_', 'GEMINI_'];
+
+export function isSafeConnectionRef(ref: unknown): boolean {
+  if (typeof ref !== 'string') return false;
+  const r = ref.trim();
+  if (!NAME_RE.test(r)) return false;
+  if (DENY_EXACT.has(r)) return false;
+  if (DENY_PREFIX.some((p) => r.startsWith(p))) return false;
+  if (/(SECRET|PASSWORD|PEPPER|TOKEN|PRIVATE_KEY|API_KEY)/.test(r)) return false;
+  return true;
+}
+-----8<-----
+
+3) EDIT server.ts — 12 exact replacements (each ANCHOR must match exactly once; replace with REPLACEMENT verbatim)
+--- E1: Session secret fail-closed (no public fallback).
+ANCHOR:
+-----8<-----
+  const SERVER_SESSION_SECRET = process.env.SESSION_SECRET || "kemit_server_session_secret_fallback_key_2026";
+-----8<-----
+REPLACEMENT:
+-----8<-----
+  const SERVER_SESSION_SECRET: string = (() => {
+    const s = String(process.env.SESSION_SECRET || "").trim();
+    if (s.length >= 32) return s;
+    if (isProductionOrStrict) {
+      console.error("CRITICAL SECURITY ERROR: SESSION_SECRET (>= 32 chars) is not set in production/strict mode. Refusing to start.");
+      process.exit(1);
+    }
+    console.warn("[Security Notice] SESSION_SECRET missing/short — using an ephemeral dev secret (sessions reset on restart).");
+    return crypto.randomBytes(32).toString("hex");
+  })();
+-----8<-----
+--- E2: company-backend POST: operator + scope.
+ANCHOR:
+-----8<-----
+        const companyId = String(req.params.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        const body = req.body || {};
+-----8<-----
+REPLACEMENT:
+-----8<-----
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = String(req.params.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
+        const { isSafeConnectionRef } = await import("./src/lib/anConnectionRefGuard");
+        const body = req.body || {};
+-----8<-----
+--- E3: company-backend POST: safe connection_ref.
+ANCHOR:
+-----8<-----
+        if (connection_ref && (connection_ref.includes("://") || connection_ref.length > 128)) {
+          return res.status(400).json({ ok: false, error: "connection_ref must be env var name only" });
+        }
+-----8<-----
+REPLACEMENT:
+-----8<-----
+        if (connection_ref && (connection_ref.includes("://") || connection_ref.length > 128 || !isSafeConnectionRef(connection_ref))) {
+          return res.status(400).json({ ok: false, error: "connection_ref must be a DB connection env var name only" });
+        }
+-----8<-----
+--- E4a: scope: items
+ANCHOR:
+-----8<-----
+app.post("/api/an/migrate/inventory/items", async (req: any, res: any) => {
+      try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+
+-----8<-----
+REPLACEMENT:
+-----8<-----
+app.post("/api/an/migrate/inventory/items", async (req: any, res: any) => {
+      try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
+
+-----8<-----
+--- E4b: scope: balances
+ANCHOR:
+-----8<-----
+app.post("/api/an/migrate/inventory/balances", async (req: any, res: any) => {
+      try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+
+-----8<-----
+REPLACEMENT:
+-----8<-----
+app.post("/api/an/migrate/inventory/balances", async (req: any, res: any) => {
+      try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
+
+-----8<-----
+--- E4c: scope: accounts
+ANCHOR:
+-----8<-----
+app.post("/api/an/migrate/accounting/accounts", async (req: any, res: any) => {
+      try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+
+-----8<-----
+REPLACEMENT:
+-----8<-----
+app.post("/api/an/migrate/accounting/accounts", async (req: any, res: any) => {
+      try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) return res.status(400).json({ ok: false, error: "companyId required" });
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
+
+-----8<-----
+--- E4d: scope: warehouses
+ANCHOR:
+-----8<-----
+app.post("/api/an/migrate/inventory/warehouses", async (req: any, res: any) => {
+      try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) {
+          return res.status(400).json({ ok: false, error: "companyId required" });
+        }
+
+-----8<-----
+REPLACEMENT:
+-----8<-----
+app.post("/api/an/migrate/inventory/warehouses", async (req: any, res: any) => {
+      try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = String(req.body?.companyId || req.query?.companyId || "").trim();
+        if (!companyId) {
+          return res.status(400).json({ ok: false, error: "companyId required" });
+        }
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
+
+-----8<-----
+--- E4e: scope: dry-run
+ANCHOR:
+-----8<-----
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "default";
+
+-----8<-----
+REPLACEMENT:
+-----8<-----
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const companyId = typeof req.query.companyId === "string" ? req.query.companyId.trim() : "default";
+        { const scope: any = await assertUserCanAccessCompany((req as any).anMigrateUser, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
+
+-----8<-----
+--- E5: live-check: operator + safe ref.
+ANCHOR:
+-----8<-----
+    app.get("/api/an/data-plane/live-check", async (req: any, res: any) => {
+      try {
+        const { liveCheckDefaultProcess, liveCheckBackend } = await import("./src/lib/anDataPlane");
+        const q = req.query || {};
+        const hasOverride =
+          typeof q.db_backend === "string" ||
+          typeof q.connection_ref === "string";
+-----8<-----
+REPLACEMENT:
+-----8<-----
+    app.get("/api/an/data-plane/live-check", async (req: any, res: any) => {
+      try {
+        if (!(await requireAnMigrateOperator(req, res))) return;
+        const { liveCheckDefaultProcess, liveCheckBackend } = await import("./src/lib/anDataPlane");
+        const { isSafeConnectionRef } = await import("./src/lib/anConnectionRefGuard");
+        const q = req.query || {};
+        const hasOverride =
+          typeof q.db_backend === "string" ||
+          typeof q.connection_ref === "string";
+        if (typeof q.connection_ref === "string" && q.connection_ref.trim() && !isSafeConnectionRef(q.connection_ref)) {
+          return res.status(400).json({ ok: false, code: "unsafe_connection_ref", error: "connection_ref must be a DB connection env var name only" });
+        }
+-----8<-----
+--- E6: data-plane/company: auth + scope.
+ANCHOR:
+-----8<-----
+    app.get("/api/an/data-plane/company/:companyId", async (req: any, res: any) => {
+      try {
+        const companyId = String(req.params.companyId || "").trim();
+        if (!companyId) {
+          return res.status(400).json({ ok: false, error: "companyId required" });
+        }
+
+-----8<-----
+REPLACEMENT:
+-----8<-----
+    app.get("/api/an/data-plane/company/:companyId", async (req: any, res: any) => {
+      try {
+        const authResult = await authenticateSessionOrBearer(req);
+        if (!authResult.authenticated) {
+          return res.status(authResult.statusCode || 401).json({ ok: false, message: authResult.message });
+        }
+        const companyId = String(req.params.companyId || "").trim();
+        if (!companyId) {
+          return res.status(400).json({ ok: false, error: "companyId required" });
+        }
+        { const scope: any = await assertUserCanAccessCompany(authResult.user, companyId); if (!scope.ok) { return res.status(scope.status).json({ ok: false, code: scope.code, message: scope.message, messageAr: scope.messageAr }); } }
+
+-----8<-----
+--- E7: session-plane live probe: operator.
+ANCHOR:
+-----8<-----
+        const runLive = req.query.live === "1" || req.query.live === "true";
+
+-----8<-----
+REPLACEMENT:
+-----8<-----
+        const runLive = req.query.live === "1" || req.query.live === "true";
+        if (runLive && !(await requireAnMigrateOperator(req, res))) return;
+
+-----8<-----
+--- E8: block /assets/aistudio
+ANCHOR:
+-----8<-----
+    app.use(express.static(distPath));
+-----8<-----
+REPLACEMENT:
+-----8<-----
+    // AN-SEC-SURFACE-1: AI Studio package files/zips must never be served publicly.
+    app.use("/assets/aistudio", (_req: any, res: any) => res.status(404).end());
+    app.use(express.static(distPath));
+-----8<-----
+
+4) EDIT .env.example — add (name only, no value):
+SESSION_SECRET=
+
+5) EDIT package.json — append to the EXISTING "build" script (keep its current content, add after it):
+   && node -e "require('fs').rmSync('dist/assets/aistudio',{recursive:true,force:true})"
+   and add script:  "verify:sec-surface": "tsx scripts/verifyAnSecSurface1.ts"
+
+6) CREATE scripts/verifyAnSecSurface1.ts
+-----8<-----
+import fs from 'fs';
+import path from 'path';
+
+let passed = 0;
+let failed = 0;
+function check(name: string, cond: boolean, detail = '') {
+  if (cond) { console.log(`[PASS] ${name}`); passed++; }
+  else { console.log(`[FAIL] ${name}${detail ? ' — ' + detail : ''}`); failed++; }
+}
+const root = process.cwd();
+const read = (p: string) => (fs.existsSync(path.join(root, p)) ? fs.readFileSync(path.join(root, p), 'utf8') : '');
+
+/** text of one route: from its app.<verb>("<path>" up to the next "\n    app." registration */
+function routeBlock(src: string, marker: string): string {
+  const i = src.indexOf(marker);
+  if (i < 0) return '';
+  const j = src.indexOf('\n    app.', i + marker.length);
+  return src.slice(i, j < 0 ? i + 6000 : j);
+}
+
+async function main() {
+  const server = read('server.ts');
+  const pkg = read('package.json');
+  const envEx = read('.env.example');
+
+  check('S1 hard-coded session secret fallback removed', !server.includes('kemit_server_session_secret_fallback_key_2026'));
+  check('S2 SESSION_SECRET refuses start in production/strict', /SESSION_SECRET[\s\S]{0,400}isProductionOrStrict[\s\S]{0,300}process\.exit\(1\)/.test(server));
+  check('S3 .env.example documents SESSION_SECRET (name only)', /^SESSION_SECRET=\s*$/m.test(envEx));
+
+  const cb = routeBlock(server, 'app.post("/api/an/company-backend/:companyId"');
+  check('S4 company-backend POST: operator + company scope + safe connection_ref',
+    cb.includes('requireAnMigrateOperator') && cb.includes('assertUserCanAccessCompany') && cb.includes('isSafeConnectionRef'));
+
+  const migrate = [
+    'app.get("/api/an/migrate/inventory/dry-run"',
+    'app.post("/api/an/migrate/inventory/warehouses"',
+    'app.post("/api/an/migrate/inventory/items"',
+    'app.post("/api/an/migrate/inventory/balances"',
+    'app.post("/api/an/migrate/accounting/accounts"',
+  ];
+  const missing = migrate.filter((m) => !routeBlock(server, m).includes('assertUserCanAccessCompany'));
+  check('S5 all 5 migrate routes enforce company scope', missing.length === 0, missing.join(', '));
+
+  const live = routeBlock(server, 'app.get("/api/an/data-plane/live-check"');
+  check('S6 live-check requires operator + safe connection_ref', live.includes('requireAnMigrateOperator') && live.includes('isSafeConnectionRef'));
+
+  const dp = routeBlock(server, 'app.get("/api/an/data-plane/company/:companyId"');
+  check('S7 data-plane/company requires auth + company scope', dp.includes('authenticateSessionOrBearer') && dp.includes('assertUserCanAccessCompany'));
+
+  const sp = routeBlock(server, 'app.get("/api/an/session-plane"');
+  check('S8 session-plane live probe requires operator', sp.includes('runLive') && sp.includes('requireAnMigrateOperator'));
+
+  const iGuard = server.indexOf('"/assets/aistudio"');
+  const iStatic = server.indexOf('express.static(distPath)');
+  check('S9 /assets/aistudio blocked before static serving', iGuard > 0 && iStatic > 0 && iGuard < iStatic);
+  check('S10 build prunes dist/assets/aistudio', /"build"\s*:\s*"(?:[^"\\]|\\.)*aistudio/.test(pkg));
+
+  const g: any = await import(path.join(root, 'src/lib/anConnectionRefGuard.ts'));
+  const okRefs = ['DATABASE_URL', 'MYSQL_URL', 'MONGODB_URL', 'TENANT_A_DB_URL'];
+  const badRefs = ['SESSION_SECRET', 'JWT_SECRET', 'APP_PEPPER', 'FIREBASE_API_KEY', 'GEMINI_API_KEY', 'postgres://u:p@h/db', 'lower_case', '', 'A', 'MY_API_KEY', 'ADMIN_PASSWORD', 'PATH'];
+  check('S11 isSafeConnectionRef accepts DB env names', okRefs.every((r) => g.isSafeConnectionRef(r)));
+  check('S12 isSafeConnectionRef rejects secrets/URLs/invalid', badRefs.every((r) => !g.isSafeConnectionRef(r)), badRefs.filter((r) => g.isSafeConnectionRef(r)).join(','));
+  check('S13 existing gates intact (migrate operator, AN_MIGRATE_WRITES, pilot mount)',
+    server.includes('async function requireAnMigrateOperator') && read('src/lib/anMigrateInventoryWrite.ts').includes('AN_MIGRATE_WRITES') && server.includes('mountAnInventoryPilotRoute'));
+
+  console.log(`Passed: ${passed} | Failed: ${failed}`);
+  process.exit(failed > 0 ? 1 : 0);
+}
+main().catch((e) => { console.log('[FAIL] verify crashed —', e?.message || e); process.exit(1); });
+-----8<-----
+
+7) docs/MERGE_STATUS.md: add Phase row `| SEC-SURFACE1 | Close unauth/cross-tenant/secret-fallback holes | DONE | F1-F5; SESSION_SECRET required in prod |`
+   and rule 34: `34. **SEC-SURFACE-1:** SESSION_SECRET is mandatory (>=32) in production/strict; company-backend, live-check and all migrate routes require operator + company scope; connection_ref must pass isSafeConnectionRef; /assets/aistudio is never served.`
+   Also correct rule 28/SEC-SCOPE1 wording if it claims migrate scope before this package.
+
+8) RUN: npx tsc --noEmit  then  npm run build
+9) RUN: npx tsx scripts/verifyAnSecSurface1.ts   (expected: Passed: 13 | Failed: 0)
+10) REGRESSION: npx tsx scripts/verifyAnMigIdem1.ts ; npx tsx scripts/verifyAnInvPilot1.ts ; npx tsx scripts/verifyAnAdapterFailClosed2.ts ; npx tsx scripts/verifyMergeAll.ts
+11) MANUAL SMOKE (report result only, no secrets): with a valid admin session in the browser, open Company Settings > backend panel and
+    save once (must still work); then call POST /api/an/company-backend/<id> with NO cookie (must be 401).
+
+RESULTS REPORT (print ONLY this block at the end)
+===== RESULTS REPORT =====
+8) tsc: <n> errors | build: <OK|FAIL>
+9) verifyAnSecSurface1: Passed: <n> | Failed: <n>
+10) regression: MigIdem1 <n/n> | InvPilot1 <n/n> | FailClosed2 <n/n> | MergeAll <n/n>
+11) smoke: <PASS|FAIL|SKIPPED>
+Status: DONE | package: AN-SEC-SURFACE-1   (and: "SESSION_SECRET must be set in host env before deploy")
+===========================
+(on failure: Status: FAIL / Step: <n> / Reason: <one sentence>)
+
+COMMIT NOTE: fix(security): require SESSION_SECRET, auth+scope on company-backend/migrate/live-check, hide aistudio assets (AN-SEC-SURFACE-1)
