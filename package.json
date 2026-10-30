@@ -29,7 +29,8 @@
     "verify:fix-ci-docs": "tsx scripts/verifyAnFixCiDocs1.ts",
     "verify:auth-bypass": "tsx scripts/verifyAnDevPreviewBypass1.ts",
     "verify:sec-surface": "tsx scripts/verifyAnSecSurface1.ts",
-    "verify:sec-auth": "tsx scripts/verifyAnSecAuth1.ts"
+    "verify:sec-auth": "tsx scripts/verifyAnSecAuth1.ts",
+    "verify:ci-deps": "tsx scripts/verifyAnCiDependencyRepair1.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
