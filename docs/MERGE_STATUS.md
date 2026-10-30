@@ -64,6 +64,7 @@
 | DEV-PREVIEW1 | Dev preview full-admin bypass | DONE | AN_PREVIEW_BYPASS shows SystemAdmin local enter; blocked under STRICT_PROD_SECURITY |
 | SEC-SURFACE1 | Close unauth/cross-tenant/secret-fallback holes | DONE | F1-F5; SESSION_SECRET required in prod |
 | SEC-AUTH1 | Auth bridge hardening (no email linking, real roles, real logout) | DONE | N1-N7 |
+| CI-DEP-VERIFIER-HARDEN-1 | CI dependency verifier hardening | PENDING | Runtime, Java/Firebase, A.N static verifier and Rule 45 checks hardened with negative self-tests |
 | CI-DEP-1 | CI dependency/CI runtime repair | PENDING | Lockfile regenerated from package.json; Node 22.23.2 pinned; dependency contract verifier runs immediately after npm ci |
 
 ## Canonical rules (do not regress)
@@ -110,7 +111,9 @@
 42. **DEV-PREVIEW-BYPASS-1:** When AN_PREVIEW_BYPASS=1 (and not strict prod), Login offers a local SystemAdmin session for UI preview without credentials. Not for production.
 43. **SEC-SURFACE-1:** SESSION_SECRET is mandatory (>=32) in production/strict; company-backend, live-check and all migrate routes require operator + company scope; connection_ref must pass isSafeConnectionRef; /assets/aistudio is never served.
 44. **SEC-AUTH-1:** KEMIT users are linked to A.N users only by (an_user_id, an_tenant_id), never by email/username; A.N JWT identity uses the token's own role (elevated roles only on tenant "default"); logout revokes the refresh-token family; company-backend writes are platform/system-admin only.
-45. **CI-DEP-1:** `.nvmrc` pins the project/CI runtime to Node 22.23.2; `actions/setup-node` reads that file; `npm ci` installs from a lockfile generated from the unchanged package.json dependency declarations; `verify:ci-deps` checks lock identity, root dependency maps, and required CI steps before lint/tests/build. This rule does not claim Node 22.23.2 is a dependency engine minimum.
+45. **CI-DEP-1:** .nvmrc pins the project/CI runtime to Node 22.23.2; `actions/setup-node` reads that file; `npm ci` installs from a lockfile generated from the unchanged package.json dependency declarations; `verify:ci-deps` checks lock identity, root dependency maps, and required CI steps before lint/tests/build. This rule does not claim Node 22.23.2 is a dependency engine minimum.
+
+46. **CI-DEP-VERIFIER-HARDEN-1:** The CI dependency verifier checks the actual Node runtime against .nvmrc, validates Java 21 and Firebase CLI/test:rules workflow requirements, verifies every existing A.N static verification command in CI, validates the canonical CI-DEP-1 Rule 45 entry, and runs negative self-tests proving that missing or incorrect requirements are rejected.
 
 ## Verify
 

@@ -35,6 +35,8 @@ jobs:
 
       - name: Verify CI dependency contract
         run: npm run verify:ci-deps
+      - name: Verify CI dependency verifier negative tests
+        run: npm run verify:ci-deps:self-test
 
       - name: Run Type Check & Lint
         run: npm run lint
